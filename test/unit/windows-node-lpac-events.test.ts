@@ -64,25 +64,30 @@ it("refuses an unbounded selection window, invalid PID and unsupported expected 
   }
 });
 
-const stageNames = ["script-start", "encoding-ready", "inputs-ready", "module-ready", "provider-ready", "schema-ready", "query-ready", "selection-ready", "result-ready"];
+const stageNames = ["script-start", "encoding-object-created", "encoding-ready", "inputs-ready", "module-ready", "provider-ready", "schema-ready", "query-ready", "selection-ready", "result-ready"];
 const progress = (count = stageNames.length) => stageNames.slice(0, count).map((stage, index) => JSON.stringify({ type: "stage", stage, elapsedMs: index * 10 })).join("\n") + "\n";
 it("retains only ordered fixed stage timings alongside a revalidated complete own-process receipt", () => {
   const result = selectWindowsNodeEventTrace(progress() + output([genuine()]) + "\n", expected);
-  expect(result).toMatchObject({ status: "found", code: "0x80000003", module: "node.exe", stage: "result-ready", elapsedMs: 80 });
-  expect(result.stages).toHaveLength(9); expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(1024); expect(JSON.stringify(result)).not.toContain(expected.image);
+  expect(result).toMatchObject({ status: "found", code: "0x80000003", module: "node.exe", stage: "result-ready", elapsedMs: 90 });
+  expect(result.stages).toHaveLength(10); expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(1024); expect(JSON.stringify(result)).not.toContain(expected.image);
 });
 
 it("classifies the actual exec timeout code and reports the last completed fixed phase without inspecting a fragment", () => {
-  const result = windowsNodeEventProcessFailure({ code: "ETIMEDOUT", stdout: Buffer.from(progress(4) + '{"private":"unfinished secret'), stderr: "private error", message: "private command" }, expected);
-  expect(result).toMatchObject({ status: "unavailable", reason: "timeout", stage: "module-ready", elapsedMs: 30 });
-  expect(result.stages).toHaveLength(4); expect(JSON.stringify(result)).not.toMatch(/private|secret|command/);
+  const result = windowsNodeEventProcessFailure({ code: "ETIMEDOUT", stdout: Buffer.from(progress(5) + '{"private":"unfinished secret'), stderr: "private error", message: "private command" }, expected);
+  expect(result).toMatchObject({ status: "unavailable", reason: "timeout", stage: "module-ready", elapsedMs: 40 });
+  expect(result.stages).toHaveLength(5); expect(JSON.stringify(result)).not.toMatch(/private|secret|command/);
   expect(windowsNodeEventProcessFailure({ code: "ETIMEDOUT", stdout: "" }, expected)).toEqual({ status: "unavailable", reason: "timeout", stage: "process-start", elapsedMs: null, stages: [] });
 });
 
 it("does not infer timeout from a raw message, signal or a query envelope", () => {
-  expect(windowsNodeEventProcessFailure({ code: "OTHER", message: "ETIMEDOUT", signal: "SIGTERM", stdout: progress(2) }, expected)).toMatchObject({ reason: "event-api", stage: "encoding-ready" });
-  expect(selectWindowsNodeEventTrace(progress(2) + JSON.stringify({ version: 1, status: "unavailable", reason: "timeout" }) + "\n", expected)).toMatchObject({ reason: "parse" });
-  expect(selectWindowsNodeEventTrace(progress(2) + JSON.stringify({ version: 1, status: "unavailable", reason: "event-api" }) + "\n", expected)).toMatchObject({ reason: "event-api", stage: "encoding-ready" });
+  expect(windowsNodeEventProcessFailure({ code: "OTHER", message: "ETIMEDOUT", signal: "SIGTERM", stdout: progress(3) }, expected)).toMatchObject({ reason: "event-api", stage: "encoding-ready" });
+  expect(selectWindowsNodeEventTrace(progress(3) + JSON.stringify({ version: 1, status: "unavailable", reason: "timeout" }) + "\n", expected)).toMatchObject({ reason: "parse" });
+  expect(selectWindowsNodeEventTrace(progress(3) + JSON.stringify({ version: 1, status: "unavailable", reason: "event-api" }) + "\n", expected)).toMatchObject({ reason: "event-api", stage: "encoding-ready" });
+});
+
+it("distinguishes completion of the direct encoding constructor from completion of the console setter", () => {
+  expect(windowsNodeEventProcessFailure({ code: "ETIMEDOUT", stdout: progress(2) }, expected)).toMatchObject({ reason: "timeout", stage: "encoding-object-created", elapsedMs: 10 });
+  expect(windowsNodeEventProcessFailure({ code: "ETIMEDOUT", stdout: progress(3) }, expected)).toMatchObject({ reason: "timeout", stage: "encoding-ready", elapsedMs: 20 });
 });
 
 it.each([
@@ -92,7 +97,7 @@ it.each([
   [{ type: "stage", stage: "script-start", elapsedMs: 0.5 }],
   [{ type: "stage", stage: "script-start", elapsedMs: 0, private: "secret" }],
   [{ type: "stage", stage: "encoding-ready", elapsedMs: 0 }],
-  [{ type: "stage", stage: "script-start", elapsedMs: 10 }, { type: "stage", stage: "encoding-ready", elapsedMs: 9 }],
+  [{ type: "stage", stage: "script-start", elapsedMs: 10 }, { type: "stage", stage: "encoding-object-created", elapsedMs: 9 }],
   [{ type: "stage", stage: "script-start", elapsedMs: 0 }, { type: "stage", stage: "script-start", elapsedMs: 1 }],
 ])("rejects untrusted stage values, bounds and ordering without echoing data: %j", (...records) => {
   const result = selectWindowsNodeEventTrace(records.map(record => JSON.stringify(record)).join("\n") + "\n", expected, "event-api");

@@ -5,13 +5,15 @@ $ProgressPreference = 'SilentlyContinue'
 $WarningPreference = 'SilentlyContinue'
 $eventTimer = [Diagnostics.Stopwatch]::StartNew()
 function Emit-Stage([string]$Stage) {
-  if (@('script-start', 'encoding-ready', 'inputs-ready', 'module-ready', 'provider-ready', 'schema-ready', 'query-ready', 'selection-ready', 'result-ready') -cnotcontains $Stage) { throw 'event-schema' }
+  if (@('script-start', 'encoding-object-created', 'encoding-ready', 'inputs-ready', 'module-ready', 'provider-ready', 'schema-ready', 'query-ready', 'selection-ready', 'result-ready') -cnotcontains $Stage) { throw 'event-schema' }
   # Fixed ASCII JSON avoids module autoload/serialization before the first observable stage.
   [Console]::WriteLine('{"type":"stage","stage":"' + $Stage + '","elapsedMs":' + $eventTimer.ElapsedMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture) + '}')
   [Console]::Out.Flush()
 }
 Emit-Stage 'script-start'
-[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$eventEncoding = [System.Text.UTF8Encoding]::new($false)
+Emit-Stage 'encoding-object-created'
+[Console]::OutputEncoding = $eventEncoding
 Emit-Stage 'encoding-ready'
 function Emit-Unavailable([string]$Reason) {
   if (@('bounds', 'event-api', 'event-schema', 'record-limit') -cnotcontains $Reason) { $Reason = 'event-api' }
