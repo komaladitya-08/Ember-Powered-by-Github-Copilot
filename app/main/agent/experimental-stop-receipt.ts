@@ -62,7 +62,15 @@ export class ExperimentalNamespaceReceipt {
       let stat: string;
       try { stat = await fs.readFile(`/proc/${this.pid}/stat`, "utf8"); }
       catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") return;
+        // proc_single_show can lose its task after stat was opened and return ESRCH from read. That alone is not
+        // an exit witness: reopen the current PID path, within the same budget, and require the normal proof below.
+        const remaining = end - performance.now();
+        if (code === "ESRCH" && remaining > 0) {
+          await new Promise<void>(resolve => setTimeout(resolve, Math.min(20, remaining)));
+          if (performance.now() < end) continue;
+        }
         throw new Error("The namespace shutdown could not be verified.", { cause: error });
       }
       if (startTime(stat, this.pid) !== this.started) throw new Error("The namespace PID was reused; shutdown is unverified.");

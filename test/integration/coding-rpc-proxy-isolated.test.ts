@@ -11,10 +11,12 @@ import { CodingModelRequestHandler } from "../../app/main/agent/coding-model-req
 import { ExperimentalIsolatedRuntime } from "../../app/main/agent/experimental-isolated-runtime";
 import { DEFAULT_CODING_RPC_FRAMING_LIMITS } from "../../app/main/agent/coding-rpc-framing";
 import { locateRuntime, runtimeFor } from "../../app/main/agent/runtime";
+import { trustedCodingTestNodeOrSkip } from "../fixtures/coding/trusted-node";
+import type { TrustedCodingTestNode } from "../fixtures/coding/trusted-node";
 // @ts-expect-error -- plain JavaScript offline fixture
 import { startMockLlm } from "../mock-llm/server.mjs";
 
-async function fixture() {
+async function fixture(node: TrustedCodingTestNode) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ember-bounded-proxy-"));
   fs.chmodSync(root, 0o700);
   const source = path.join(root, "project"), baseDir = path.join(root, "copies"), privateDir = path.join(root, "private"), exportBase = path.join(root, "exports");
@@ -35,7 +37,7 @@ async function fixture() {
   return { root, source, baseDir, privateDir, exportBase, credential, mock, handler,
     input: { source, baseDir, protectedPaths: [privateDir], runtimePath, requestHandler: handler,
       sessionForTest: { sessionId, model: "mock-model" }, privateProcForTest: true,
-      proxyForTest: { nodePath: fs.realpathSync(process.execPath), helperPath } },
+      proxyForTest: { nodePath: node.nodePath, helperPath } },
   };
 }
 
@@ -43,14 +45,53 @@ const available = () => {
   const probe = spawnSync("/usr/bin/bwrap", ["--unshare-net", "--ro-bind", "/", "/", "--proc", "/proc", "--", "/usr/bin/true"], { stdio: "ignore", timeout: 5000 });
   return !probe.error && probe.status === 0;
 };
-const receiptOf = (base: string) => JSON.parse(fs.readFileSync(path.join(base,
-  fs.readdirSync(base).find(name => name.startsWith("ember-isolation-state-"))!, "namespace-receipt.json"), "utf8"));
+const receiptOf = (base: string, startupFailure?: { error: unknown }) => {
+  const state = fs.readdirSync(base).find(name => name.startsWith("ember-isolation-state-"));
+  if (!state) {
+    if (startupFailure) throw startupFailure.error;
+    throw new Error("The coding namespace did not write a receipt.");
+  }
+  try { return JSON.parse(fs.readFileSync(path.join(base, state, "namespace-receipt.json"), "utf8")); }
+  catch (error) {
+    if (startupFailure && (error as NodeJS.ErrnoException).code === "ENOENT") throw startupFailure.error;
+    throw error;
+  }
+};
+
+async function withCleanupPreservingFailure(operation: () => Promise<void>, cleanup: () => Promise<void>): Promise<void> {
+  let failure: { error: unknown } | null = null;
+  try { await operation(); }
+  catch (error) { failure = { error }; }
+  finally {
+    try { await cleanup(); }
+    catch (error) { failure ??= { error }; }
+  }
+  if (failure) throw failure.error;
+}
+
+it.each([false, true])("preserves the startup failure without a namespace receipt, even if cleanup fails (state directory: %s)", async stateExists => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "ember-missing-proxy-receipt-"));
+  const startupError = new Error("The trusted proxy Node was rejected before namespace startup.");
+  let cleanupAttempted = false;
+  try {
+    if (stateExists) fs.mkdirSync(path.join(base, "ember-isolation-state-test"));
+    await expect(withCleanupPreservingFailure(async () => {
+      receiptOf(base, { error: startupError });
+    }, async () => {
+      cleanupAttempted = true;
+      throw new Error("Fixture cleanup failed.");
+    })).rejects.toBe(startupError);
+    expect(cleanupAttempted).toBe(true);
+    expect(fs.existsSync(base)).toBe(true);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
 
 it.skipIf(process.platform !== "linux" || process.arch !== "x64")("edits and exports through the real framed proxy, host broker and no-network namespace", async ctx => {
+  const node = await trustedCodingTestNodeOrSkip(ctx);
   if (!available()) { ctx.skip(); return; }
-  const f = await fixture();
+  const f = await fixture(node);
   let instance: ExperimentalIsolatedRuntime | undefined;
-  try {
+  await withCleanupPreservingFailure(async () => {
     instance = await ExperimentalIsolatedRuntime.start(f.input);
     const copy = instance.copyPath;
     const receipt = receiptOf(f.baseDir);
@@ -73,14 +114,21 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("edits and exp
     const proposal = exported.review.proposed.find(e => e.path === "project.txt");
     expect(proposal?.kind === "file" && Buffer.from(proposal.base64, "base64").toString()).toBe("proposed\n");
     await instance.close();
-  } finally { f.handler.retire(); await instance?.close(); await f.mock.close(); fs.rmSync(f.root, { recursive: true, force: true }); }
+  }, async () => {
+    f.handler.retire();
+    const ended = await Promise.allSettled([instance ? instance.close() : Promise.resolve(), f.mock.close()]);
+    if (instance && ended[0].status === "fulfilled") fs.rmSync(f.root, { recursive: true, force: true });
+    const failed = ended.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failed) throw failed.reason;
+  });
 }, 60_000);
 
 it.skipIf(process.platform !== "linux" || process.arch !== "x64")("withholds an oversized declared runtime frame and kills its actual namespace before SDK decoding", async ctx => {
+  const node = await trustedCodingTestNodeOrSkip(ctx);
   if (!available()) { ctx.skip(); return; }
-  const f = await fixture();
+  const f = await fixture(node);
   let instance: ExperimentalIsolatedRuntime | undefined, verifiedExit = false;
-  try {
+  await withCleanupPreservingFailure(async () => {
     // A host-created hostile-runtime fixture exercises the outgoing pipe without assuming a native child can open
     // another process's /proc fd. It runs inside the real namespace and only emits a header, never its declared body.
     const runtimeDir = path.join(f.root, "hostile-runtime"); fs.mkdirSync(runtimeDir, { mode: 0o700 });
@@ -89,10 +137,14 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("withholds an 
     fs.writeFileSync(runtimePath, `#!/usr/bin/bash\nprintf 'Content-Length: ${advertised}\\r\\n\\r\\n'\nsleep 10\nprintf survived > /work/after-frame\n`, { mode: 0o700 });
     fs.writeFileSync(path.join(runtimeDir, "runtime.node"), "not loaded by the fixture", { mode: 0o600 });
     const started = performance.now();
-    await expect(ExperimentalIsolatedRuntime.start({ ...f.input, runtimePath }).then(value => { instance = value; return value; })).rejects.toThrow();
+    const startupFailure = await ExperimentalIsolatedRuntime.start({ ...f.input, runtimePath }).then(value => {
+      instance = value;
+      expect.fail("The hostile runtime unexpectedly started.");
+    }, (error: unknown) => ({ error }));
+    const elapsed = performance.now() - started;
+    const receipt = receiptOf(f.baseDir, startupFailure);
     // An unguarded Content-Length reader would wait for the absent body. The proxy must close the pipe and namespace.
-    expect(performance.now() - started).toBeLessThan(8000);
-    const receipt = receiptOf(f.baseDir);
+    expect(elapsed).toBeLessThan(8000);
     await expect.poll(() => {
       try { return fs.readlinkSync(`/proc/${receipt["child-pid"]}/ns/mnt`); }
       catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return "exited"; throw error; }
@@ -104,10 +156,10 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("withholds an 
     expect(fs.existsSync(path.join(copy, "after-frame"))).toBe(false);
     expect(f.mock.requests).toHaveLength(0);
     expect(fs.readFileSync(path.join(f.source, "project.txt"), "utf8")).toBe("original\n");
-  } finally {
+  }, async () => {
     f.handler.retire();
     try { await instance?.close(); } catch { /* A broken SDK transport can report unconfirmed cleanup even after this test observed init exit. */ }
     await f.mock.close();
     if (verifiedExit) fs.rmSync(f.root, { recursive: true, force: true });
-  }
+  });
 }, 60_000);
