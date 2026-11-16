@@ -167,7 +167,10 @@ export class WindowsScopedCodingFiles implements CodingFileBroker {
     const captured = Array.isArray(paths) ? [...paths] : [];
     return this.#lease(async tree => {
       if (!Array.isArray(paths) || captured.length > 200) throw new ScopedCodingFileError("limit");
-      const folder = windowsCodingRelative(cwd); if (folder && tree.entries.get(folder)?.info.kind !== "directory") throw new ScopedCodingFileError("path");
+      const folded = new Map([...tree.entries.values()].map(entry => [windowsCodingFold(entry.path), entry]));
+      const requestedFolder = windowsCodingRelative(cwd), directory = requestedFolder ? folded.get(windowsCodingFold(requestedFolder)) : undefined;
+      if (requestedFolder && directory?.info.kind !== "directory") throw new ScopedCodingFileError("path");
+      const folder = directory?.path ?? "";
       return captured.map(value => {
         const unknown: PathFact = { exists: null, real: null };
         try {
@@ -175,9 +178,14 @@ export class WindowsScopedCodingFiles implements CodingFileBroker {
           const relative = windowsCodingRelative(value.startsWith("/") ? value : folder ? `${folder}/${value}` : value);
           if (this.#isExcluded(relative)) return unknown;
           if (!relative) return { exists: true, real: "/work", dir: true };
-          const entry = tree.entries.get(relative); if (entry) return this.#privacyProblem(entry, tree) ? unknown : { exists: true, real: windowsCodingVirtual(relative), ...(entry.info.kind === "directory" ? { dir: true } : {}) };
-          for (let i = 1, parts = relative.split("/"); i < parts.length; i++) if (tree.entries.get(parts.slice(0, i).join("/"))?.info.kind === "file") return unknown;
-          return { exists: false, real: windowsCodingVirtual(relative) };
+          const entry = folded.get(windowsCodingFold(relative)); if (entry) return this.#privacyProblem(entry, tree) ? unknown : { exists: true, real: windowsCodingVirtual(entry.path), ...(entry.info.kind === "directory" ? { dir: true } : {}) };
+          let canonical = "";
+          for (const part of relative.split("/")) {
+            const prefix = canonical ? `${canonical}/${part}` : part, parent = folded.get(windowsCodingFold(prefix));
+            if (parent && (parent.info.kind === "file" || this.#privacyProblem(parent, tree))) return unknown;
+            canonical = parent?.path ?? prefix;
+          }
+          return { exists: false, real: windowsCodingVirtual(canonical) };
         } catch { return unknown; }
       });
     });
