@@ -25,6 +25,7 @@ Hosted Server 2022/2025 evidence now includes the following exact heads; record 
 
 | Candidate proof | Completed evidence | Remaining limit |
 |---|---|---|
+| Full LPAC regular-file workflow `8c893a52`, [run 43956921968](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43956921968) | Per server: 405 portable cases, 32 Linux-only logic skips and one required native case. All eight operations, twelve protected/three revoked denials, four host/four in-run ACL controls, genuine Stop/revoke, stable snapshot and known source/tree/profile cleanup passed against the reviewed manifest. | Fixed C proof; Node adaptation, asset enforcement, canonical product transfer and packaged acceptance remain unfinished. Original MoveFileEx proof is unchanged. |
 | C output lifecycle `0c9bd07d`, [run 43948135820](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43948135820) | Per server: 201 portable and three actual native cases. Complete natural nonzero output, automatic overflow/cancellation Stop, drained pipes, stable snapshot and known tree/profile cleanup passed. | Fixed C proof; Windows Node/product execution and native canonical transfer remain unproved. |
 | Ordinary-host POSIX replacement `dc8b4cc4`, [run 43949773571](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43949773571) | Both unpinned and metadata-pinned targets replaced on each server; the old pinned object had links 0 and DeletePending 1. Identity/security/streams/source matching, root-only Stop and known cleanup passed. | Regular-file compatibility control only. Full LPAC workload and Node rename support remain separate software gates. |
 | Current integrated product `a970a983`, [controller run 43935924838](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43935924838) | All six Windows jobs passed, including both files-only Electron journeys. The remote matrix passed all 11 eligible jobs. Ordinary CI43935924802 completed with five successful jobs, two failures and two gated skips. | The existing Windows LPAC stage-18 refusal and a RHEL saved-workspace Save-button timeout keep CI red. The latter's test and renderer/IPC implementation are unchanged from #236 and are being investigated. Windows commands, live account and physical acceptance remain unfinished. |
@@ -43,8 +44,11 @@ attempted. Verification on the chosen account still needs sign-in; it is not int
 Later disabled transfer/asset foundations have passed their dedicated hosted regression workflows. The asset
 foundation's ordinary CI also passed macOS and RHEL; its Windows job retained the same old LPAC failure. RHEL's
 earlier Save-button failure did not recur, but its cause remains unknown. The redaction optimisation's Linux and
-RHEL gates passed; its macOS job was cancelled and supplies no confirmation. The current native asset lifecycle
-and Windows Node workspace are still under implementation/review. None of these results enables Windows commands
+RHEL gates passed; after its cancelled PR job, exact-head macOS-only run 43956411177 passed 19,453 units, the
+unchanged redaction budget assertion and the full build/native/smoke/app-bundle job. The disabled native owner
+`5ef8b2fc` has passed local gates, but full coordinator composition found a shared-task cancellation gap before
+output matching; its correction and actual explicit/default-Medium parent enforcement remain unfinished.
+Worker startup fix `bec2e6ad` passed all six existing Windows controller/ZIP/files-only Electron jobs. None of these results enables Windows commands
 in the product or closes live-account and physical-laptop acceptance.
 
 ## Prepare a fresh acceptance profile

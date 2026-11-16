@@ -256,9 +256,14 @@ The separate ordinary-host [POSIX replacement control #254](https://github.com/k
 at `dc8b4cc4` passed [manual run 43949773571](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43949773571)
 on both Server images. Both unpinned and metadata-pinned regular targets replaced through FileRenameInfoEx with
 flags 3. The old pinned object had links 0 and DeletePending 1; identity, security, streams, source matching,
-root-only Stop and known cleanup passed. The original failing LPAC proof is unchanged. A separate full eight-operation
-LPAC witness is reviewed locally and awaiting final types/publication/native execution; no Node patch or rebuild
-has been justified by that pending result.
+root-only Stop and known cleanup passed. The original failing LPAC proof is unchanged. The separate full LPAC
+[witness #256](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/256) at `8c893a52` then passed
+[manual run 43956921968](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43956921968)
+on both images. Each passed 405 portable cases (32 Linux-only logic skips) and the native case requiring all eight
+operations, twelve protected and three revoked-work denials, four host ACL controls, four in-run ACL denials,
+genuine Stop/revoke, stable snapshot, unchanged source and complete tree/profile cleanup. Both receipts match the
+reviewed source manifest; no retry or assertion change occurred. A separate regular-file Node adaptation is now
+being implemented, with an SDK ABI preflight required before a new source build. No new Node runtime is verified yet.
 
 The corrected bounded-output foundation [#249](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/249)
 at `e9deced4` passed 1,801 focused cases and full types. Its separate fixed C witness
@@ -281,7 +286,19 @@ and six real pinned-artifact checks plus full types. Its dedicated [asset workfl
 also passed; ordinary CI passed Linux/RHEL/package/evaluation/voice and macOS (19,456 units), with only the old Windows
 LPAC failure. Packaging supplies no native execution authority. The dedicated native asset owner and Windows
 Node-only workspace are being implemented and reviewed separately; authentic cancellation, composition and native
-product verification remain unfinished.
+product verification remain unfinished. The disabled native owner [#257](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/257)
+at `5ef8b2fc` passed 1,104 affected cases, 90 final focused cases, full types and source review. Ordinary CI passed
+20,547 macOS and 20,497 Windows units; the Windows job still fails the old LPAC fixture. Full default-factory
+coordinator composition exposed shared-task cancellation before output matching: it can currently become an
+unknown-cleanup fence. A narrowly authenticated returned-child cleanup correction, typed failure propagation,
+coordinator integration and actual native asset/parent enforcement remain under implementation/review. The existing
+five-second timeout and initial typing failures remain disclosed in that foundation's validation document.
+
+The separate worker startup correction [#258](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/258)
+at `bec2e6ad` preserves genuine native/artifact/seed cleanup uncertainty when a factory rejects before returning a
+workspace. It passed 21 worker cases, full types and build; its hosted controller workflow passed all six jobs,
+including both files-only Electron journeys. This prevents a retained owner from becoming a positive disposal or
+safe handoff. It does not enable the Windows command backend.
 
 The separate [observer ABI control #246](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/246)
 passed [run 43935627569](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43935627569):
@@ -325,7 +342,11 @@ impossible MySQL password search when its literal `-p` prerequisite is absent, r
 reference and budget. Its 457 focused cases, full types, lint and build passed.
 [CI 43949496691](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43949496691)
 passed 19,802 Linux units, the existing integrations, renderer/Electron and RHEL/package/evaluation/voice checks.
-Windows retained the old LPAC failure; macOS was cancelled, so the changed redactor still lacks hosted macOS confirmation.
+Windows retained the old LPAC failure; macOS was cancelled. The single subsequent macOS-only
+[run 43956411177](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43956411177)
+at unchanged `f6a5b209` passed the full job, including 19,453 units and the unchanged 300 ms budget assertion.
+Build, native accessibility, smoke and app-bundle checks also passed. Other platform/release jobs were intentionally
+skipped. This closes the cancelled-job verification gap without establishing a cause for the earlier timing failure.
 
 The preceding integrated product candidate was [draft #236](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/236)
 at `88106606726e0f24e43f8ae7f5d430f899ab0f34`, including the session review change from
