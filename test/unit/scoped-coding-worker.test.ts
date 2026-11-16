@@ -5,7 +5,8 @@ import type { IsolatedCommandWorkspace } from "../../app/main/agent/isolated-com
 import type { CommandService } from "../../app/main/commands/types";
 import type { TaskSpec } from "../../app/main/agent/worker";
 import { CodingPrivacyCleanupError } from "../../app/main/agent/coding-privacy-scanner";
-import { CustomCodingController } from "../../app/main/agent/custom-coding-controller";
+import { CustomCodingController, CodingControllerCleanupError } from "../../app/main/agent/custom-coding-controller";
+import type { CodingFileBroker, CodingReviewWorkspace, CodingWorkspaceReview } from "../../app/main/agent/coding-platform";
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 function fixture() {
@@ -123,4 +124,55 @@ it("retains an unknown privacy-worker exit during startup as an unsafe disposal 
   expect(await f.worker.run(new AbortController().signal)).toMatchObject({ success: false, summary: expect.stringContaining("blocked") });
   expect(await f.worker.disposed).toBe(false); expect(f.worker.handoffSafe()).toBe(false);
   await expect(f.worker.dispose()).rejects.toThrow("verified as closed"); expect(f.facts).not.toHaveBeenCalled();
+});
+
+function sealedFixture(controllerClose: () => Promise<void>, filesClose: () => Promise<void>) {
+  const f = fileOnlyFixture(), output = { directory: "/review", review: {}, cleanup: "complete" } as CodingWorkspaceReview;
+  const seal = vi.fn(async () => undefined), publish = vi.fn(async () => ({} as never));
+  const workspace: CodingReviewWorkspace = { executionRoot: "/work", files: operation => operation("/copy"),
+    stop: vi.fn(async () => undefined), close: vi.fn(async () => undefined), sealForReview: seal,
+    exportReview: vi.fn(async () => output) };
+  const options: FileOnlyScopedCodingWorkerOptions = { ...f.options, createWorkspace: async () => workspace, publish,
+    platform: { files: async () => ({ close: filesClose }) as CodingFileBroker } };
+  const start = vi.spyOn(CustomCodingController, "start").mockImplementationOnce(async captured => {
+    await captured.files(new AbortController().signal);
+    return { run: async () => ({ success: true, summary: "Copied-file edits only. No commands or tests were run." }),
+      close: controllerClose } as unknown as CustomCodingController;
+  });
+  const worker = new ScopedCodingWorker({ id: "sealed-file-only", goal: "Edit the copy", target: {} } as TaskSpec, options);
+  return { worker, workspace, seal, publish, start };
+}
+
+it("seals a workspace with no command port only after both controller and file-broker closure fulfill", async () => {
+  const controllerEntered = deferred<void>(), controllerRelease = deferred<void>(), filesEntered = deferred<void>(), filesRelease = deferred<void>();
+  const f = sealedFixture(async () => { controllerEntered.resolve(); await controllerRelease.promise; },
+    async () => { filesEntered.resolve(); await filesRelease.promise; });
+  try {
+    const running = f.worker.run(new AbortController().signal); await controllerEntered.promise;
+    expect(f.seal).not.toHaveBeenCalled(); expect(f.workspace.exportReview).not.toHaveBeenCalled();
+    controllerRelease.resolve(); await filesEntered.promise; expect(f.seal).not.toHaveBeenCalled();
+    filesRelease.resolve(); expect((await running).success).toBe(true); await f.worker.dispose();
+    expect(f.seal).toHaveBeenCalledTimes(1); expect(f.publish).toHaveBeenCalledWith(expect.anything(), "done", { ran: 0, passed: 0, failed: 0 });
+    expect(f.workspace.close).toHaveBeenCalledTimes(1); expect(await f.worker.disposed).toBe(true);
+  } finally { controllerRelease.resolve(); filesRelease.resolve(); f.start.mockRestore(); }
+});
+
+it.each(["controller", "files"])("never seals or publishes when %s closure is unknown", async failed => {
+  const close = async (kind: string) => { if (kind === failed) throw new CodingControllerCleanupError(); };
+  const f = sealedFixture(() => close("controller"), () => close("files"));
+  try {
+    expect((await f.worker.run(new AbortController().signal)).success).toBe(false);
+    expect(f.seal).not.toHaveBeenCalled(); expect(f.workspace.exportReview).not.toHaveBeenCalled(); expect(f.publish).not.toHaveBeenCalled();
+    expect(await f.worker.disposed).toBe(false); await expect(f.worker.dispose()).rejects.toThrow("verified as closed");
+  } finally { f.start.mockRestore(); }
+});
+
+it("never seals or publishes after controller startup reports unknown cleanup", async () => {
+  const f = fileOnlyFixture(), seal = vi.fn(async () => undefined); Object.assign(f.backend, { sealForReview: seal });
+  const start = vi.spyOn(CustomCodingController, "start").mockRejectedValueOnce(new CodingControllerCleanupError());
+  try {
+    expect((await f.worker.run(new AbortController().signal)).success).toBe(false);
+    expect(seal).not.toHaveBeenCalled(); expect(f.backend.exportReview).not.toHaveBeenCalled();
+    expect(await f.worker.disposed).toBe(false); await expect(f.worker.dispose()).rejects.toThrow("verified as closed");
+  } finally { start.mockRestore(); }
 });

@@ -331,6 +331,18 @@ describe.skipIf(process.platform !== "win32")("native Windows private review art
     expect(fs.readFileSync(path.join(source, "app.ts"), "utf8")).toBe(ORIGINAL);
   });
 
+  it("acknowledges a registry-removed exact token without deleting a later native object at its old name", async () => {
+    const input = await registration(); await store.claim(input.output, () => undefined); await store.cleanup(new Set());
+    expect(store.size).toBe(0); const directory = input.output.directory;
+    fs.mkdirSync(directory); fs.writeFileSync(path.join(directory, "replacement.txt"), "later host-owned contents\n");
+    try {
+      await store.discard(input.output); await store.discard({ ...input.output });
+      expect(fs.readFileSync(path.join(directory, "replacement.txt"), "utf8")).toBe("later host-owned contents\n");
+      await expect(store.claim(input.output, () => undefined)).rejects.toMatchObject({ code: "invalid" });
+      await expect(store.discard({ directory })).rejects.toMatchObject({ code: "invalid" });
+    } finally { fs.rmSync(directory, { recursive: true }); }
+  });
+
   it("matches current original source capabilities but refuses foreign and replaced native identities", async () => {
     const original = await store.sourceBoundary(source, () => undefined), fresh = await store.sourceBoundary(source, () => undefined);
     expect(original).not.toBeNull(); expect(fresh).not.toBeNull(); expect(await store.sameSource(original, fresh, () => undefined)).toBe(true);

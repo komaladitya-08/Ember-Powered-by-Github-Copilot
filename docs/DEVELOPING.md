@@ -116,6 +116,23 @@ row should be green on RHEL 8.4 with GNOME on Xorg. If `npm ci` reports that Ele
 Each test run works in a temporary folder of its own (`ember-run-…`), which it removes at the end with vitest's module
 cache (test/temp-folder.ts).
 
+Host-owned coding adapters may explicitly select `scopedCoding.mode: "files-only"` with a guarded `platform.files`
+broker. The Host captures that restricted authority with the request's project/folder grant before any wait, starts
+the file worker without a local command service, and tells the conductor that coding commands and tests are
+unavailable. Results remain private-copy reviews with zero executed checks; a mixed coding/app request still waits
+for successful completion and verified worker cleanup before its next part. An omitted mode preserves the existing
+command-backed path, including its local service, policy context, original permission words and presenter. Missing
+command support never selects file-only work automatically. This host adapter seam does not enable a Windows
+production resource backend; the native SDK prototype remains disabled by `codingAvailable()`.
+The Host also supplies the selected mode as trusted conductor metadata: a file-only `start_coding` tool describes
+private-copy edits/review and unavailable commands/tests, while omitted or command mode preserves the existing
+description. No model tool argument selects or upgrades that mode.
+
+`npm test -- test/unit/scoped-coding-host.test.ts --maxWorkers=1` checks both Host paths and their captured request
+authority. `npm run test:integration -- test/integration/scoped-coding-host-file-only.test.ts` exercises the real
+conductor and custom SDK file controller on disposable Linux fixtures without a local command service; it does not
+claim Windows storage, package or desktop coverage.
+
 After building, CI also runs the Ask, conversation, first-run (home-first-run-renderer: Copilot, own provider, failures, models), memory, sign-out and forget, microphone, speech-consent, status-race (home-status-race-renderer: a late or failed startup status, microphone and consent recovery after a retry), reminders/desk, natural-voice, integrations, panes and vault (vault-form-renderer: the Secure Form; home-vault-renderer: Apps & privacy's list; `EMBER_VAULT_SHOTS=<folder>` saves their pictures) renderer journeys with
 `EMBER_BROWSER_TEST=1 EMBER_CONVERSATION_TEST=1 EMBER_FIRST_RUN_TEST=1 EMBER_MEMORY_TEST=1 EMBER_MIC_RECIPIENT_TEST=1 EMBER_SPEECH_CONSENT_TEST=1 EMBER_SIGNOUT_FORGET_TEST=1 EMBER_STATUS_RACE_TEST=1 EMBER_UIUX_TEST=1 EMBER_VOICE_UI_TEST=1`
 and `EMBER_CHROMIUM_PATH` pointing to Chrome or Chromium (each journey skips without its switch, so leave none out).
