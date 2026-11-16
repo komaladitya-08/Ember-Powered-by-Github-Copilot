@@ -273,9 +273,40 @@ properties, text or captured streams. No raw line, symbol, operand, address, pat
 The diagnostic passed all 469 affected tests across sixteen suites, scoped lint, syntax, YAML/native-hold and diff
 checks, a fresh final typecheck and independent review. An earlier full batch passed 468 tests but the unchanged
 nine-subprocess reader test exceeded its five-second aggregate limit; the isolated 31 reader tests and a fresh
-469-test batch passed without code, test or deadline changes. The seventh compile-only outcome remains pending. Even a future syntax candidate
+469-test batch passed without code, test or deadline changes. Even a future syntax candidate
 requires separate reviewed emitted Windows ABI/LastError controls before the full native probe can be considered;
 this change adds no machine-code parser, instruction rewriting or native admission.
+
+The seventh automatic compile-only run
+[43921147489](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43921147489), at head
+`102ba82969648f90b29107b89a459c30db63cdc9`, passed: Linux 469 tests; Windows 446 passed and 23 expected skips.
+The independently verified compile merge was `4fa94ec6076d9fc6f4c072f28409f3f286effa61`. Its four-member artifact
+`14253873018` was 134765 bytes, SHA-256 `66ce8c8d46dfee86c7a93729c452c9b8ed2ae57d6ce9840bbff143d75632a018`;
+receipt/source/recipe/project/tool-version/PE/emission/licence checks passed. The PE was 246272 bytes, SHA-256
+`73c796d698af2404e9509bb55c6f376be40a7234bd023356c9d98f4fb85c1ef1`, and was not executed.
+
+Actual schema-2 metadata reported phase 4/reason 11 (`boundarySyntax`), function ID 0, count 0 and mask 0. Encoding
+and line bounds passed, but an unrecognised PROC/ENDP-token form outside an active body caused refusal before a
+completed fixed-wrapper mask was recorded. The listing length/hash exactly matched the sixth run above. All six
+function records stayed unknown placeholders; no API-call or LastError claim follows. The private line itself was
+not viewed, so the closed result does not identify its exact syntax or prove a single cause.
+
+Pinned [Microsoft MASM documentation](https://github.com/MicrosoftDocs/cpp-docs/blob/af4947c4bdf5993dcaee98e63d55a2d7a5744d7d/docs/assembler/masm/extern-masm.md)
+documents `EXTERN name:PROC` as an external procedure declaration and `EXTRN` as the same directive. This is distinct
+from a [label PROC ... label ENDP body](https://github.com/MicrosoftDocs/cpp-docs/blob/af4947c4bdf5993dcaee98e63d55a2d7a5744d7d/docs/assembler/masm/proc.md).
+The old broad outside-body token rejection therefore refuses a documented non-body declaration. The narrow correction
+recognises only uppercase EXTRN/EXTERN, one existing-form identifier, optional spaces/tabs around `:`, and exact PROC,
+with no language prefix, comma list or extra tokens. Existing comment stripping is unchanged. This is a conservative
+reader subset, not a statement that other MASM forms or keyword cases are invalid.
+
+The same anchored helper applies only outside active bodies in inspection and refusal replay. A declaration creates
+no body, call or recognised delegate record. Every fixed wrapper must still have its actual PROC/ENDP pair, and a call
+to an unknown declared helper remains refused by the original call contract. Unknown outside-body PROC forms stay
+refused. No encoding, bounds, schema, compiler flags, source patches or native guard change. This public grammar
+correction is not evidence that the unseen seventh-run line was a declaration or that it was the only refusal.
+The correction passed all 507 affected tests across seventeen suites, including 38 declaration regressions, scoped
+lint, syntax, YAML/native-hold and diff checks, a fresh final typecheck and independent peer review. The eighth
+compile-only outcome remains pending; candidate alone still cannot admit native execution.
 
 Portable source, recipe, decoder, actual observer C-shim and native-owner fault tests are implemented. The Linux shim
 uses test-only Win32 declarations around the production observer; it is not Windows ABI, policy or native evidence.

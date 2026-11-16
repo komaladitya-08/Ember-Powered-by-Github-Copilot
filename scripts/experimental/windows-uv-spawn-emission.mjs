@@ -14,6 +14,8 @@ const delegates = ["__imp_CreateNamedPipeA", "__imp_CreateFileA", "__imp_Connect
 const empty = functionId => ({ functionId, delegateId: 0, delegateCalls: 0, callCount: 0, postDelegateCalls: 0, unknownCalls: 0, callMask: 0 });
 const result = (status, listing, records = functions.map((_, index) => empty(index + 1))) => freeze({ schema: 1, issuer, review: "not-reviewed", status, listing, functions: records });
 const candidate = item => item.delegateId === item.functionId && item.delegateCalls === 1 && item.callCount === 1 && item.postDelegateCalls === 0 && item.unknownCalls === 0 && item.callMask === 1 << (item.functionId - 1);
+// MASM EXTRN is EXTERN: a single name:PROC declaration is not a label PROC ... label ENDP body.
+const externalProcedureDeclaration = line => /^(?:EXTRN|EXTERN)[ \t]+[A-Za-z_?$@.][A-Za-z0-9_?$@.]*[ \t]*:[ \t]*PROC$/.test(line);
 
 /** Inspect at most six fixed wrappers. No source line, symbol, path, operand, address or exception leaves this function. */
 function inspectOriginalEmission(bytes) {
@@ -37,7 +39,7 @@ function inspectOriginalEmission(bytes) {
         if (active !== end[1]) return result("refused", listing);
         bodies.set(active, body); active = null; body = [];
       } else if (active !== null) body.push(line);
-      else if (/\b(?:PROC|ENDP)\b/.test(line)) return result("refused", listing);
+      else if (/\b(?:PROC|ENDP)\b/.test(line) && !externalProcedureDeclaration(line)) return result("refused", listing);
     }
     if (active !== null || !functions.every(name => bodies.has(name))) return result("refused", listing);
     const records = [];
@@ -111,7 +113,7 @@ function diagnoseRefusal(bytes) {
         if (active !== end[1]) return refusal(10, fixedId(active ?? end[1]), 0, wrapperMask(bodies));
         bodies.set(active, body); active = null; body = [];
       } else if (active !== null) body.push(line);
-      else if (/\b(?:PROC|ENDP)\b/.test(line)) return refusal(11, 0, 0, wrapperMask(bodies));
+      else if (/\b(?:PROC|ENDP)\b/.test(line) && !externalProcedureDeclaration(line)) return refusal(11, 0, 0, wrapperMask(bodies));
     }
     if (active !== null) return refusal(12, fixedId(active), 0, wrapperMask(bodies));
     const missing = 63 ^ wrapperMask(bodies);
