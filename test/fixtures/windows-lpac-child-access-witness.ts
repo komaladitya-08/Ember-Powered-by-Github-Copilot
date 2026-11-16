@@ -112,12 +112,9 @@ export async function runWindowsLpacChildAccessWitness(): Promise<WindowsLpacChi
     const toolPin = native.pinFile(toolPath, CHILD_ACCESS_ARCHIVE_MAX); pins.push(toolPin);
     const actualTool = toolPin.read(); try { if (childAccessSha256(actualTool) !== CHILD_ACCESS_TOOL.executableSha256) throw fixedFailure(); } finally { actualTool.fill(0); }
     phase = 5;
-    const powershell = path.join(windows, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), signaturePath = path.join(root, "signature.bin");
-    const helperInfo = fs.lstatSync(powershell);
-    if (!helperInfo.isFile() || helperInfo.isSymbolicLink() || !Number.isInteger(helperInfo.nlink) || helperInfo.nlink < 1 || helperInfo.nlink > 0xffffffff) throw fixedFailure();
-    hostHelperLinks = helperInfo.nlink; // Closed preflight metadata only. The following native pin still requires exactly one link.
-    const powershellPin = native.pinFile(powershell, CHILD_ACCESS_ARCHIVE_MAX); pins.push(powershellPin);
-    const securityModule = path.join(windows, "System32", "WindowsPowerShell", "v1.0", "Modules", "Microsoft.PowerShell.Security", "Microsoft.PowerShell.Security.psd1");
+    const helper = native.pinWindowsPowerShell(), powershell = helper.program, powershellPin = helper.pin, securityModule = helper.securityModule;
+    hostHelperLinks = helper.linkCount; pins.push(powershellPin);
+    const signaturePath = path.join(root, "signature.bin");
     const signatureScript = `$ErrorActionPreference='Stop';Import-Module -Name ${literal(securityModule)} -ErrorAction Stop;` +
       `$s=Microsoft.PowerShell.Security\\Get-AuthenticodeSignature -LiteralPath ${literal(toolPath)};` +
       `if($s.Status -ne 'Valid' -or $null -eq $s.SignerCertificate -or $s.SignerCertificate.Subject -notmatch '(?:^|,\\s*)O=Microsoft Corporation(?:,|$)'){exit 1};` +

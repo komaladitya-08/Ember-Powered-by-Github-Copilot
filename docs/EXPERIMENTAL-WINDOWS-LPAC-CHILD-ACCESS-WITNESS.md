@@ -36,10 +36,21 @@ Procmon comes only from the existing official ZIP URL, archive SHA-256 and execu
 regular-file shape and the exact executable hash are checked. Only the fixed `Procmon64.exe` entry is written;
 archive paths are never extraction destinations. Valid Microsoft Authenticode is separately required through a
 fixed clean host signature helper. Immutable no-write/delete pins remain held on executable inputs.
-The same strict pin currently requires a single-link System32 PowerShell helper. A runner may expose that OS image
-through WinSxS hardlinks; that has not been measured here and is not silently accepted. First native preflight records
-only its bounded link count on refusal. A multi-link or otherwise unpinnable helper stops setup before any collector
-execution, pending an evidence-based separate review; private trace/asset single-link checks are not weakened.
+The second manual matrix measured two links for the installed System32 PowerShell helper on both Server images.
+The separate no-path `pinWindowsPowerShell()` selector now derives the system directory through
+[`GetSystemDirectoryW`](https://learn.microsoft.com/en-us/windows/win32/api/sysinfoapi/nf-sysinfoapi-getsystemdirectoryw)
+inside the existing x64-only factory. System32 is the [64-bit system directory](https://learn.microsoft.com/en-us/windows/win32/winprog64/file-system-redirector)
+for this process. The native result must be bounded, terminated, ordinary and canonical, with an exact System32
+basename; UNC/device/stream/dot/short aliases and other directories refuse before helper admission.
+
+Only the fresh native-derived helper handle record may have one or two links. Both its initial admission and every
+later held-handle identity check require the same link count; changing 1 to 2 is refused even though either can be
+a valid initial count. READ-only access, READ sharing only, ordinary/non-reparse checks and exact final path remain.
+The exception cannot be selected by a caller path, flag, filename or reused numeric handle. Generic `pinFile`,
+source, staged tool and PML/CSV pins still require exactly one link, even when passed the PowerShell pathname.
+Launch binds the opaque pin to the exact native-derived program. The fixed security-module path comes from that
+same PowerShell home, without environment/model selection. Module contents remain part of the existing trusted
+installed-OS-module assumption; this change does not newly hash or signature-verify that module's contents.
 
 ## Ownership and bounds
 
@@ -126,3 +137,16 @@ ESLint and a fresh exact-final full TypeScript check. Both documented zero repre
 nonzero, missing, coerced, failed and unknown outputs refuse before `ReadFile` and preserve the terminal ownership
 fence. No second driver run was dispatched
 while preparing this repair.
+
+The second manually dispatched [run 43851751832](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43851751832)
+at `8488a42a032b0ed52385ddc3a5e100e627f20001` passed the repaired staged-tool read and refused on both Server images
+at phase 5/native stage 2/operation 7, domain/code 0/0, with `hostHelperLinks: 2`. This is measured preflight metadata,
+before any PowerShell or Procmon launch, watchdog or capture. It motivates only the narrowly derived OS-helper role;
+it is neither an OS denial code nor evidence about the original LPAC child-creation denial. A third manual matrix
+remains pending the corrected candidate's frozen review and Root's explicit dispatch.
+
+The fixed-helper candidate passes **434 portable contracts**, including **147 native-owner contracts**, scoped
+ESLint and a fresh exact-final full TypeScript check. The Linux integration imports and skips its one manual case.
+Independent native review confirms the record-only role, stable identity/link checks, unchanged generic single-link
+rules and exact launch/module binding. These checks execute no Windows API, PowerShell, vendor tool or driver;
+the native behavior of the corrected selector remains pending the reviewed manual matrix.

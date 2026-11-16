@@ -1,26 +1,29 @@
 /** Portable FFI ownership contracts only. No native DLL, tool, driver, download or collector is executed. */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { bindWindowsLpacChildAccessNative, WINDOWS_LPAC_CHILD_ACCESS_NATIVE_FUNCTIONS,
   WindowsLpacChildAccessNativeCleanupError, windowsLpacChildAccessNativeReceipt,
   type WindowsLpacChildAccessNativeFence } from "../fixtures/windows-lpac-child-access-native";
 
 const FILE = "C:\\private\\tool\\Procmon64.exe", CWD = "C:\\private\\work";
+const SYSTEM = "C:\\Windows\\System32", POWERSHELL = SYSTEM + "\\WindowsPowerShell\\v1.0\\powershell.exe";
+const SECURITY = SYSTEM + "\\WindowsPowerShell\\v1.0\\Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1";
 const command = Buffer.from(`"${FILE}" /AcceptEula /Quiet\0`, "utf16le"), environment = Buffer.from("SystemRoot=C:\\Windows\0\0", "utf16le");
 type Call = { name: string; args: unknown[] };
 type Process = { id: number; image: string; alive: boolean; job?: bigint };
 function fixture(clock?: () => number) {
   const calls: Call[] = [], closed: bigint[] = [], buffers: Buffer[] = [], overrides = new Map<string, (...args: unknown[]) => unknown>();
   const fence: WindowsLpacChildAccessNativeFence = { retained: [] };
-  const files = new Map<bigint, { file: string; bytes: Buffer; position: number; version: number }>();
+  const files = new Map<bigint, { file: string; bytes: Buffer; position: number; version: number; links: number }>();
   const processes = new Map<bigint, Process>(), jobs = new Map<bigint, { limits: Buffer; members: bigint[]; empty: boolean }>();
   const tokens = new Map<bigint, bigint>(), snapshots = new Map<bigint, number>();
   const signalOnWait = new Set<bigint>(); let value = 10n, lastError = 5, ac = 0, elevation = 1, returnedBytes = 4, now = 100;
   let rows: { id: number; name: string }[] | undefined, finalJobActive = false;
+  let systemDirectory = SYSTEM, newLinks = 1;
   const allocate = () => ++value;
   const writeInfo = (file: bigint, output: Buffer) => {
     const entry = files.get(file)!; output.fill(0); output.writeUInt32LE(0x20); output.writeUInt32LE(1, 4);
     output.writeUInt32LE(entry.version, 20); output.writeUInt32LE(9, 28); output.writeUInt32LE(entry.bytes.length, 36);
-    output.writeUInt32LE(1, 40); output.writeUInt32LE(Number(file), 48);
+    output.writeUInt32LE(entry.links, 40); output.writeUInt32LE(Number(file), 48);
   };
   const fillEntry = (output: Buffer, entry: { id: number; name: string }) => {
     output.fill(0); output.writeUInt32LE(568); output.writeUInt32LE(entry.id, 8); Buffer.from(entry.name, "utf16le").copy(output, 44);
@@ -31,8 +34,9 @@ function fixture(clock?: () => number) {
     const override = overrides.get(name); if (override) return override(...args);
     if (name === "GetLastError") return lastError;
     if (name === "GetCurrentProcess") return 0xffffffffffffffffn;
+    if (name === "GetSystemDirectoryW") { buffers.push(args[0] as Buffer); Buffer.from(systemDirectory, "utf16le").copy(args[0] as Buffer); return systemDirectory.length; }
     if (name === "GetDriveTypeW") return 3;
-    if (name === "CreateFileW") { const handle = allocate(); files.set(handle, { file: args[0] as string, bytes: Buffer.from("fixed bytes"), position: 0, version: 1 }); return handle; }
+    if (name === "CreateFileW") { const handle = allocate(); files.set(handle, { file: args[0] as string, bytes: Buffer.from("fixed bytes"), position: 0, version: 1, links: newLinks }); return handle; }
     if (name === "GetFileType") return 1;
     if (name === "GetFileInformationByHandle") { buffers.push(args[1] as Buffer); writeInfo(args[0] as bigint, args[1] as Buffer); return 1; }
     if (name === "GetFinalPathNameByHandleW") {
@@ -97,6 +101,7 @@ function fixture(clock?: () => number) {
   return { native, calls, closed, buffers, fence, files, processes, jobs, tokens, load, pin, launch,
     set(name: string, operation: (...args: unknown[]) => unknown) { overrides.set(name, operation); }, clear(name: string) { overrides.delete(name); },
     rows(value: { id: number; name: string }[]) { rows = value; }, ac(value: number) { ac = value; }, elevation(value: number) { elevation = value; }, returned(value: number) { returnedBytes = value; },
+    systemDirectory(value: string) { systemDirectory = value; }, links(value: number) { newLinks = value; },
     time(value: number) { now = value; }, lastError(value: number) { lastError = value; }, finalActive() { finalJobActive = true; },
     root,
     finish(keepAlive?: bigint) { for (const job of jobs.values()) job.empty = true; for (const [handle, process] of processes) process.alive = handle === keepAlive; },
@@ -106,11 +111,12 @@ function fixture(clock?: () => number) {
     }, signalOnWait(handle: bigint) { signalOnWait.add(handle); },
   };
 }
+afterEach(() => { vi.unstubAllEnvs(); });
 
 describe("manual child access native owner", () => {
   it("binds only fixed system DLL functions and refuses unsupported ABI without executing a tool", () => {
     const f = fixture(); expect(f.load.mock.calls.map(call => call[0])).toEqual(["kernel32.dll", "advapi32.dll"]);
-    expect(Object.values(WINDOWS_LPAC_CHILD_ACCESS_NATIVE_FUNCTIONS).flat()).toHaveLength(29);
+    expect(Object.values(WINDOWS_LPAC_CHILD_ACCESS_NATIVE_FUNCTIONS).flat()).toHaveLength(30);
     expect(f.calls).toEqual([]); expect(() => bindWindowsLpacChildAccessNative({ sizeof: () => 4 }, f.load)).toThrow();
   });
   it("requires exact ordinary elevated current token facts and closes its query token without closing the pseudo handle", () => {
@@ -137,6 +143,93 @@ describe("manual child access native owner", () => {
     expect(f.calls.filter(call => call.name === "CreateFileW")).toHaveLength(1);
     const handle = [...f.files.keys()][0]; expect(f.calls.filter(call => call.name === "ReadFile").every(call => call.args[0] === handle)).toBe(true);
     pin.close(); pin.close(); expect(f.closed).toEqual([handle]);
+  });
+  it.each([1, 2] as const)("pins only the native-derived installed PowerShell with %s stable links", links => {
+    const f = fixture(); f.links(links); const helper = f.native.pinWindowsPowerShell();
+    expect(helper).toMatchObject({ program: POWERSHELL, securityModule: SECURITY, linkCount: links });
+    expect(Object.isFrozen(helper)).toBe(true); expect(Object.isFrozen(helper.pin)).toBe(true);
+    expect(f.calls.find(call => call.name === "GetSystemDirectoryW")?.args).toEqual([expect.any(Buffer), 32768]);
+    expect(f.calls.find(call => call.name === "CreateFileW")?.args).toEqual([POWERSHELL, 0x80000080, 1, null, 3, 0x00200000, null]);
+    expect(f.calls.findIndex(call => call.name === "GetSystemDirectoryW")).toBeLessThan(f.calls.findIndex(call => call.name === "CreateFileW"));
+    const bytes = helper.pin.read(); expect(bytes.toString()).toBe("fixed bytes"); bytes.fill(0); helper.pin.unchanged(); helper.pin.close();
+    expect((f.calls.find(call => call.name === "GetSystemDirectoryW")!.args[0] as Buffer).every(value => value === 0)).toBe(true);
+    expect(f.closed).toEqual([...f.files.keys()]);
+  });
+  it("selects the helper and security module from the native directory rather than environment paths", () => {
+    vi.stubEnv("SystemRoot", "C:\\private\\fake"); vi.stubEnv("WINDIR", "C:\\private\\other");
+    const f = fixture(); f.systemDirectory("D:\\InstalledOS\\System32"); f.links(2);
+    const helper = f.native.pinWindowsPowerShell();
+    expect(helper.program).toBe("D:\\InstalledOS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+    expect(helper.securityModule).toBe("D:\\InstalledOS\\System32\\WindowsPowerShell\\v1.0\\Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1");
+    helper.pin.close();
+  });
+  it.each(["C:\\private\\powershell.exe", { allowHardlinks: true }, null])("refuses any caller helper selector before asking the OS (%#)", selected => {
+    const f = fixture(); expect(() => Reflect.apply(f.native.pinWindowsPowerShell, f.native, [selected])).toThrow(); expect(f.calls).toEqual([]);
+  });
+  it.each([
+    "C:\\Windows\\SysWOW64", "C:\\Windows\\Sysnative", "C:\\Windows\\other", "\\\\server\\share\\System32", "\\\\?\\C:\\Windows\\System32",
+    "C:Windows\\System32", "C:/Windows/System32", "C:\\Windows\\..\\System32", "C:\\Windows\\bad:stream\\System32",
+    "C:\\WINDOW~1\\System32", "C:\\Windows.\\System32", "C:\\Windows\\System32\\", "C:\\private\nOS\\System32", "C:\\Windows\0\\System32",
+  ])("refuses an unsupported native system directory before opening a helper (%#)", directory => {
+    const f = fixture(); f.systemDirectory(directory); expect(() => f.native.pinWindowsPowerShell()).toThrow();
+    expect(f.calls.filter(call => call.name === "CreateFileW")).toEqual([]); expect(f.closed).toEqual([]);
+    expect(f.buffers.every(bytes => bytes.every(value => value === 0))).toBe(true);
+  });
+  it.each([0, 32768, 65536, -1, NaN, true, 0n, undefined])("rejects failed, truncated or malformed native directory lengths before file I/O (%#)", count => {
+    const f = fixture(); f.set("GetSystemDirectoryW", () => count);
+    expect(() => f.native.pinWindowsPowerShell()).toThrow(); expect(f.calls.filter(call => call.name === "CreateFileW")).toEqual([]); expect(f.closed).toEqual([]);
+  });
+  it("rejects unterminated native output and fences a thrown system-directory call without retry", () => {
+    const f = fixture(); f.set("GetSystemDirectoryW", (...args) => { const bytes = args[0] as Buffer; Buffer.from(SYSTEM + "X", "utf16le").copy(bytes); return SYSTEM.length; });
+    expect(() => f.native.pinWindowsPowerShell()).toThrow(); expect(f.calls.filter(call => call.name === "CreateFileW")).toEqual([]);
+    const g = fixture(); g.set("GetSystemDirectoryW", () => { throw new Error("private native directory"); });
+    expect(() => g.native.pinWindowsPowerShell()).toThrow(WindowsLpacChildAccessNativeCleanupError); const calls = g.calls.length;
+    expect(() => g.native.pinWindowsPowerShell()).toThrow(WindowsLpacChildAccessNativeCleanupError); expect(g.calls).toHaveLength(calls); expect(g.closed).toEqual([]);
+  });
+  it.each([0, 3, 99])("refuses an installed helper link count outside the measured role (%s)", links => {
+    const f = fixture(); f.links(links); expect(() => f.native.pinWindowsPowerShell()).toThrow();
+    expect(f.calls.filter(call => call.name === "ReadFile")).toEqual([]); expect(f.closed).toEqual([...f.files.keys()]);
+  });
+  it.each([[1, 2], [2, 1], [2, 3]])("fences a helper whose held link count changes from %s to %s", (before, after) => {
+    const f = fixture(); f.links(before); const helper = f.native.pinWindowsPowerShell(); [...f.files.values()][0].links = after;
+    expect(() => helper.pin.unchanged()).toThrow(WindowsLpacChildAccessNativeCleanupError); const calls = f.calls.length;
+    expect(() => helper.pin.read()).toThrow(WindowsLpacChildAccessNativeCleanupError); expect(() => helper.pin.close()).toThrow(WindowsLpacChildAccessNativeCleanupError);
+    expect(f.calls).toHaveLength(calls); expect(f.calls.filter(call => call.name === "ReadFile")).toEqual([]); expect(f.closed).toEqual([]);
+  });
+  it.each(["links", "identity"])("requires stable helper %s across initial pin admission before returning its role", mutation => {
+    const f = fixture(); f.links(2);
+    f.set("GetFinalPathNameByHandleW", (...args) => {
+      const entry = f.files.get(args[0] as bigint)!, text = `\\\\?\\${entry.file}`; Buffer.from(text, "utf16le").copy(args[1] as Buffer);
+      if (mutation === "links") entry.links = 1; else entry.version++;
+      return text.length;
+    });
+    expect(() => f.native.pinWindowsPowerShell()).toThrow(WindowsLpacChildAccessNativeCleanupError);
+    expect(f.calls.filter(call => call.name === "ReadFile")).toEqual([]); expect(f.closed).toEqual([]); expect(f.fence.retained).toHaveLength(1);
+  });
+  it("keeps the helper's complete held identity and resolved path strict despite the two-link role", () => {
+    const f = fixture(); f.links(2); const helper = f.native.pinWindowsPowerShell(); [...f.files.values()][0].version++;
+    expect(() => helper.pin.unchanged()).toThrow(WindowsLpacChildAccessNativeCleanupError); expect(f.closed).toEqual([]);
+    const g = fixture(); g.links(2); g.set("GetFinalPathNameByHandleW", (...args) => { const other = "\\\\?\\C:\\private\\powershell.exe"; Buffer.from(other, "utf16le").copy(args[1] as Buffer); return other.length; });
+    expect(() => g.native.pinWindowsPowerShell()).toThrow(); expect(g.calls.filter(call => call.name === "ReadFile")).toEqual([]); expect(g.closed).toHaveLength(1);
+  });
+  it.each([POWERSHELL, FILE, "C:\\private\\private.pml", "C:\\private\\private.csv", "C:\\private\\fixture.exe", "C:\\private\\source.c", "C:\\private\\powershell.exe"])("never transfers the helper role to generic pinFile(%#)", file => {
+    const f = fixture(); f.links(2); const helper = f.native.pinWindowsPowerShell();
+    expect(() => f.native.pinFile(file, 1024)).toThrow(); helper.pin.unchanged(); helper.pin.close();
+    expect(f.calls.filter(call => call.name === "ReadFile")).toEqual([]); expect(f.closed).toHaveLength(2);
+  });
+  it("does not transfer a helper role when its numeric handle value is recycled for a private file", () => {
+    const f = fixture(); f.links(2); const helper = f.native.pinWindowsPowerShell(), handle = [...f.files.keys()][0]; helper.pin.close();
+    f.files.get(handle)!.file = FILE; f.set("CreateFileW", () => handle);
+    expect(() => f.pin()).toThrow(); expect(f.closed).toEqual([handle, handle]); expect(f.calls.filter(call => call.name === "ReadFile")).toEqual([]);
+  });
+  it("binds helper launch to the exact opaque pin/program and refuses other paths or foreign pins", () => {
+    const f = fixture(); f.links(2); const helper = f.native.pinWindowsPowerShell();
+    const helperCommand = Buffer.from(`"${helper.program}" -NoProfile\0`, "utf16le");
+    const tool = f.native.launchTool({ program: helper.program, command: helperCommand, cwd: CWD, environment, pin: helper.pin }); tool.current();
+    const g = fixture();
+    expect(() => g.native.launchTool({ program: helper.program, command: helperCommand, cwd: CWD, environment, pin: helper.pin })).toThrow(); expect(g.calls).toEqual([]);
+    expect(() => f.native.launchTool({ program: FILE, command, cwd: CWD, environment, pin: helper.pin })).toThrow();
+    f.finish(); expect(tool.waitExitedBefore(200)).toBe(0); tool.closeStopped(); helper.pin.close();
   });
   it.each([0, 0n])("reads the exact pinned file after either documented literal int64 zero representation (%#)", position => {
     const f = fixture(), pin = f.pin();
@@ -398,7 +491,7 @@ describe("manual child access native owner", () => {
   });
   it.each([
     [{ stage: NaN, operation: Infinity, domain: 1, code: NaN }, { stage: 0, operation: 0, domain: 0, code: 0 }],
-    [{ stage: -1, operation: 30, domain: 2, code: 5 }, { stage: 0, operation: 0, domain: 0, code: 0 }],
+    [{ stage: -1, operation: 31, domain: 2, code: 5 }, { stage: 0, operation: 0, domain: 0, code: 0 }],
     [{ stage: 10, operation: 0x100000000, domain: 1, code: 0x100000000 }, { stage: 0, operation: 0, domain: 0, code: 0 }],
     [{ stage: 1, operation: 2, domain: 0, code: 1234 }, { stage: 1, operation: 2, domain: 0, code: 0 }],
   ])("closes nonfinite and out-of-range runtime receipt values to fixed unknowns (%#)", (input, expected) => {

@@ -16,7 +16,7 @@ class WindowsLpacChildAccessNativeError extends Error {
     let closed = { stage: 0, operation: 0, domain: 0, code: 0 };
     try {
       const stage = receipt.stage, operation = receipt.operation, domain = receipt.domain, code = receipt.code;
-      closed = { stage: valid(stage, 9) ? stage : 0, operation: valid(operation, 29) ? operation : 0,
+      closed = { stage: valid(stage, 9) ? stage : 0, operation: valid(operation, 30) ? operation : 0,
         domain: domain === 1 && valid(code, 0xffffffff) ? 1 : 0, code: domain === 1 && valid(code, 0xffffffff) ? code : 0 };
     } catch { /* Throwing accessors are unknown metadata; never expose their error or partial receipt. */ }
     receipts.set(this, Object.freeze(closed));
@@ -54,6 +54,8 @@ export interface WindowsLpacChildAccessTool {
 export interface WindowsLpacChildAccessNative {
   requireAdministrator(): void;
   pinFile(file: string, maximum: number): WindowsLpacChildAccessReadPin;
+  /** No caller-selected path. Only this native-derived installed OS helper may have one or two stable links. */
+  pinWindowsPowerShell(): Readonly<{ program: string; securityModule: string; linkCount: 1 | 2; pin: WindowsLpacChildAccessReadPin }>;
   launchTool(input: { program: string; command: Buffer; cwd: string; environment: Buffer; pin: WindowsLpacChildAccessReadPin }): WindowsLpacChildAccessTool;
   /** The existing LPAC fixture retains all ownership and performs its separate exact-package/capability witness. */
   verifyBorrowedRoot(input: { process: bigint; pid: number; job: bigint; program: string; pin: WindowsLpacChildAccessReadPin }): void;
@@ -84,6 +86,7 @@ export const WINDOWS_LPAC_CHILD_ACCESS_NATIVE_FUNCTIONS = {
     "int __stdcall TerminateProcess(void *process, uint32_t code)", "int __stdcall TerminateJobObject(void *job, uint32_t code)",
     "void * __stdcall CreateToolhelp32Snapshot(uint32_t flags, uint32_t pid)",
     "int __stdcall Process32FirstW(void *snapshot, void *entry)", "int __stdcall Process32NextW(void *snapshot, void *entry)",
+    "uint32_t __stdcall GetSystemDirectoryW(void *directory, uint32_t characters)",
   ],
   advapi32: [
     "int __stdcall OpenProcessToken(void *process, uint32_t access, _Out_ void **token)",
@@ -176,12 +179,15 @@ export function bindWindowsLpacChildAccessNative(koffi: Pick<typeof Koffi, "size
   };
   type PinState = { file: string; record: HandleRecord; before: Buffer; size: number; maximum: number };
   const pins = new WeakMap<WindowsLpacChildAccessReadPin, PinState>();
+  const windowsPowerShellRecords = new WeakSet<HandleRecord>();
   const info = (record: HandleRecord, maximum: number): Buffer => {
     if (record.closed) throw failure();
     if (call("GetFileType", record.value) !== 1) throw failure();
     const bytes = Buffer.alloc(52); requireTrue(call("GetFileInformationByHandle", record.value, bytes));
     const size = bytes.readUInt32LE(32) * 0x100000000 + bytes.readUInt32LE(36);
-    if ((bytes.readUInt32LE(0) & 0x410) !== 0 || bytes.readUInt32LE(40) !== 1 || !Number.isSafeInteger(size) || size > maximum) throw failure();
+    const links = bytes.readUInt32LE(40);
+    if ((bytes.readUInt32LE(0) & 0x410) !== 0 || (links !== 1 && !(windowsPowerShellRecords.has(record) && links === 2)) ||
+      !Number.isSafeInteger(size) || size > maximum) throw failure();
     return bytes;
   };
   const pinCurrent = (pin: PinState): void => {
@@ -278,17 +284,14 @@ export function bindWindowsLpacChildAccessNative(koffi: Pick<typeof Koffi, "size
       if (!dword(exit[0]) || exit[0] === 259) throw failure(); now(); tool.stopped = true; return exit[0];
     } catch (error) { return poison(error); }
   };
-  return {
-    requireAdministrator() {
-      usable(); stage = 4; const current = call("GetCurrentProcess"); if (current !== INVALID) poison(current); tokenCheck(current as Handle, true);
-    },
-    pinFile(file, maximum) {
+  const openPinnedRecord = (file: string, maximum: number): HandleRecord => {
       usable(); stage = 2;
       if (!localPath(file) || !Number.isSafeInteger(maximum) || maximum < 1 || maximum > 256 * 1024 * 1024) throw failure();
       if (call("GetDriveTypeW", path.parse(file).root) !== 3) throw failure();
-      let record: HandleRecord;
-      try { record = acquire("CreateFileW", [file, 0x80000080, 1, null, 3, 0x00200000, null], "invalid"); }
+      try { return acquire("CreateFileW", [file, 0x80000080, 1, null, 3, 0x00200000, null], "invalid"); }
       catch (error) { return poison(error); }
+  };
+  const finishPinnedRecord = (file: string, maximum: number, record: HandleRecord): WindowsLpacChildAccessReadPin => {
       let pin: PinState;
       try {
         const before = info(record, maximum), size = before.readUInt32LE(32) * 0x100000000 + before.readUInt32LE(36);
@@ -324,6 +327,33 @@ export function bindWindowsLpacChildAccessNative(koffi: Pick<typeof Koffi, "size
         close() { stage = 9; close(record); },
       };
       pins.set(object, pin); owners.push({ object, pin }); return Object.freeze(object);
+  };
+  return {
+    requireAdministrator() {
+      usable(); stage = 4; const current = call("GetCurrentProcess"); if (current !== INVALID) poison(current); tokenCheck(current as Handle, true);
+    },
+    pinFile(file, maximum) {
+      return finishPinnedRecord(file, maximum, openPinnedRecord(file, maximum));
+    },
+    pinWindowsPowerShell(...unexpected: unknown[]) {
+      usable(); stage = 2;
+      if (unexpected.length) throw failure();
+      const directory = Buffer.alloc(65536);
+      let system: string;
+      try {
+        const count = call("GetSystemDirectoryW", directory, 32768);
+        if (!dword(count)) return poison(); if (count === 0) return falseFailure();
+        if (count > 32767 || directory.readUInt16LE(count * 2) !== 0) throw failure();
+        system = directory.toString("utf16le", 0, count * 2);
+        if (!localPath(system) || path.basename(system).toLowerCase() !== "system32" || /(?:^|\\)[^\\]*~\d+(?:\\|$)/i.test(system)) throw failure();
+      } finally { directory.fill(0); }
+      const home = path.join(system, "WindowsPowerShell", "v1.0"), program = path.join(home, "powershell.exe");
+      const record = openPinnedRecord(program, 16 * 1024 * 1024);
+      windowsPowerShellRecords.add(record); // Record identity, never a caller path, raw-handle value or generic hardlink option.
+      const pin = finishPinnedRecord(program, 16 * 1024 * 1024, record), state = pins.get(pin)!;
+      pinCurrent(state); // Attest the same held identity/link count again before issuing this privileged OS-helper role.
+      return Object.freeze({ program, securityModule: path.join(home, "Modules", "Microsoft.PowerShell.Security", "Microsoft.PowerShell.Security.psd1"),
+        linkCount: state.before.readUInt32LE(40) as 1 | 2, pin });
     },
     launchTool(input) {
       usable(); stage = 5; const pin = pins.get(input.pin);
