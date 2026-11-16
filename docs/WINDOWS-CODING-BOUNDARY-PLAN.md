@@ -29,12 +29,13 @@ The command experiments remain separate:
 - The fixed C/libuv [probe #218](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/218) completed
   local I/O, timer, work-queue, thread and loop operations on both Server images. Its independent ordinary-host
   controls retain the parent's observed security context. It is not Node or an arbitrary-code command backend.
-- Official signed Node still fails capability-free LPAC startup at `WSAStartup / 10107`. The separate verified-source
-  [Node probe #225](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/225) compiled successfully
-  and completed its fixed file/async-read/timer workload on the ordinary host. Its LPAC process aborted with exit 134
-  before the first checkpoint. A separate native-only diagnostic reuses the exact authenticated build; useful Node
-  work in LPAC remains unproved. Omitting the initializer also leaves networking globals unset; fixed-workload
-  success cannot establish general offline API behavior, safe network errors or ordinary tests.
+- Official signed Node still fails capability-free LPAC startup at `WSAStartup / 10107`. Earlier source
+  [probe #225](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/225) also failed LPAC startup.
+  The subsequent offline/CNG/LOCAL source image and its unchanged authenticated
+  [reuse #237](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/237) completed fixed filesystem,
+  async-read and timer work on both the ordinary host and zero-capability LPAC. Four of the six native controls
+  passed; default child spawning and process-isolated tests still failed. These results establish that fixed
+  workload, not general offline API behaviour, safe network errors, ordinary tests or a command backend.
 - The [child probe #224](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/224) independently
   reproduces both explicit-capability and plain inherited creation denial. It now accounts for console helpers as
   contained writers while selecting exactly one intended image, and requires all held process handles and the job to
@@ -54,6 +55,44 @@ The command experiments remain separate:
 
 These are software investigations that can continue through hosted Windows. A laptop is needed later for the
 physical client/app/focus/input/audio/display story; it does not repair these compatibility failures.
+
+## First declared Node command subset
+
+A useful first Windows command milestone can support explicit single-process Node scripts and tests while keeping
+subprocesses, npm and network installation unavailable. Pinned Node 22.23.5 requires the exact
+`--experimental-test-isolation=none` flag for that test mode. It must appear in the requested invocation; never insert
+it into an approved `node --test` command or reinterpret an npm script.
+
+The separate [in-process diagnostic #242](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/242)
+preserves the original six assertions and source artifact. Its first native matrix passed the ordinary-host test
+on both Server images. LPAC exited 1 before producing a test report, with 144 private output bytes and complete
+known cleanup. Those bytes were not viewed; a bounded exact discovery-message diagnostic is pending. The
+[creator-owner prerequisite #241](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/241)
+reached first Stop/revocation/private readback on Server 2022, then a file-replacement failure; Server 2025 stopped
+at prelaunch metadata validation. Neither experiment establishes a usable product command capability.
+
+After native feasibility passes, the finite product bridge still needs these changes:
+
+- Keep `WindowsCodingCopy` as the sole canonical proposal, original baseline and source authority. Capture detached,
+  privacy-validated complete command input under its file lease. Import a complete stopped command snapshot through
+  a one-use generation-bound receipt, including deletions and empty directories, without replacing the baseline or
+  source grant. Materialise and verify a fresh private root, retire the old root, then commit the new generation.
+- Use a fresh command tree/profile per invocation and one outer queue for file tools, command preparation,
+  execution, import, review and close. Preserve the stable file-broker object. The current intersection of limits is
+  4 MiB per file, 10 MiB total, 4,000 entries and depth 32; excess must fail before launch and on import.
+- Extend the root-only lifecycle with a bounded host-only launch-directory context and natural exit observation
+  from the exact held process before handle closure. Stop completion cannot become exit 0. A private completion
+  receipt must bind the generation, exit/cancellation, stopped writer, revocation and output closure.
+- Expose an honest direct-Node capability such as `run_node` with an exact argument array and logical cwd. Keep
+  existing real shell identities and `run_command` unchanged. Share the existing consent, original-word authority,
+  refusals, approval modes, taint checks, audit, command window and redactor; bind approval to the exact invocation.
+- Verify failing test, file-tool repair and exact rerun; command-created/renamed/deleted entries; cumulative review
+  and continuation; source unchanged; export; Stop, account revocation and selective/global Forget. Both native
+  Server images, the real pinned SDK and a genuine sandboxed Electron product journey must pass before capability
+  selection changes. Unknown exit, stream, Stop, revocation, privacy or root-replacement state blocks further work.
+
+The broader shell/descendant contracts below remain relevant to that future capability. A declared Node-only
+milestone must prove child-creation denial and containment rather than claim support for arbitrary child execution.
 
 ## Prototype contracts
 
