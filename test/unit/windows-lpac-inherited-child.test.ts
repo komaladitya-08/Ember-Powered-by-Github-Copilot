@@ -85,9 +85,11 @@ type Fault = "query-false" | "query-abi" | "query-throw" | "assigned" | "overflo
   "image-extended" | "image-console" | "image-native" | "image-short" | "image-length-abi" | "duplicate-candidate" |
   "job-false" | "job-abi" | "job-no" | "job-output-abi" | "job-throw" | "close-false" | "close-abi" | "close-throw" |
   "wait-failed" | "wait-abi" | "wait-throw" | "active-after-stop";
-function setup(selectedFault?: Fault, initial: number[][] = [[ROOT_PID, CHILD_PID]], lastError: unknown = 5) {
+function setup(selectedFault?: Fault, initial: number[][] = [[ROOT_PID, CHILD_PID]], lastError: unknown = 5, clock: () => number = () => performance.now()) {
   let fault = selectedFault, lists = initial, queries = 0, current = true, stopped = false, rootExited = false;
   const dead = new Set<number>(), forceAlive = new Set<number>(), images = new Map<number, string>();
+  const releaseOnWait = new Set<number>();
+  let afterPositiveWait: (() => void) | undefined;
   const calls: Call[] = [], buffers: Buffer[] = [], events: string[] = [];
   const fence: InheritedChildFence = { retained: [] };
   const processHandle = (id: number) => id === CHILD_PID ? CHILD : id === AUX_PID ? AUX : BigInt(id + 10_000);
@@ -115,7 +117,12 @@ function setup(selectedFault?: Fault, initial: number[][] = [[ROOT_PID, CHILD_PI
     if (name === "WaitForSingleObject") {
       if (fault === "wait-throw") throw new Error("private wait text");
       if (fault === "wait-failed") return 0xffffffff; if (fault === "wait-abi") return true;
-      if (forceAlive.has(args[0] === ROOT ? ROOT_PID : processId(args[0]))) return 258;
+      const id = args[0] === ROOT ? ROOT_PID : processId(args[0]);
+      if ((args[1] as number) > 0) {
+        if (releaseOnWait.has(id)) forceAlive.delete(id);
+        afterPositiveWait?.();
+      }
+      if (forceAlive.has(id)) return 258;
       return stopped || (args[0] === ROOT ? rootExited : dead.has(processId(args[0]))) ? 0 : 258;
     }
     if (name === "GetProcessId") {
@@ -147,7 +154,7 @@ function setup(selectedFault?: Fault, initial: number[][] = [[ROOT_PID, CHILD_PI
   const load = vi.fn((_name: string) => ({ func: vi.fn((prototype: string) => {
     const name = /\b(\w+)\s*\(/.exec(prototype)![1]; return (...args: unknown[]) => invoke(name, args);
   }) }));
-  const observer = bindInheritedChildObserver({ sizeof: () => 8 }, load, fence);
+  const observer = bindInheritedChildObserver({ sizeof: () => 8 }, load, fence, clock);
   const verifyToken = vi.fn((_process: bigint) => { events.push("verifyToken"); });
   const grant = vi.fn((_pid: number) => { events.push("grant"); });
   const input: InheritedChildAdmission = { job: JOB, rootProcess: ROOT, rootPid: ROOT_PID, image: IMAGE,
@@ -156,6 +163,7 @@ function setup(selectedFault?: Fault, initial: number[][] = [[ROOT_PID, CHILD_PI
     revoke() { current = false; }, repair() { fault = undefined; }, fault(value: Fault) { fault = value; },
     lists(value: number[][]) { lists = value; queries = 0; }, dead(id: number) { dead.add(id); },
     keepAlive(id: number) { forceAlive.add(id); }, releaseAlive(id: number) { forceAlive.delete(id); },
+    signalDuringWait(id: number) { releaseOnWait.add(id); }, afterWait(action: () => void) { afterPositiveWait = action; },
     image(id: number, value: string) { images.set(id, value); },
     rootExit(value: number[] = [CHILD_PID, AUX_PID]) { rootExited = true; lists = [value]; queries = 0; },
     stop() { stopped = true; rootExited = true; },
@@ -289,6 +297,82 @@ describe("bounded inherited-child member owner", () => {
     const f = setup(undefined, [[ROOT_PID, CHILD_PID, AUX_PID]]); expect(f.observer.admit(f.input)).toBe(CHILD_PID);
     f.stop(); f.keepAlive(id); expect(() => f.observer.requireStopped()).toThrow(); expect(() => f.observer.closeStopped()).toThrow(); expect(closed(f)).toEqual([]);
     f.releaseAlive(id); f.finish(); expect(closed(f)).toEqual([CHILD, AUX]);
+  });
+  it("positively waits for asynchronous retained-member rundown after job zero and repeats every original Stop check", () => {
+    const f = setup(undefined, [[ROOT_PID, CHILD_PID, AUX_PID]], 5, () => 100);
+    expect(f.observer.admit(f.input)).toBe(CHILD_PID); f.stop(); f.keepAlive(AUX_PID); f.signalDuringWait(AUX_PID);
+    expect(() => f.observer.requireStopped()).toThrow();
+    const start = f.calls.length;
+    f.observer.waitStoppedBefore(1_100);
+    const calls = f.calls.slice(start), waits = calls.filter(call => call.name === "WaitForSingleObject");
+    expect(calls.slice(0, 2).map(call => [call.name, call.args[1]])).toEqual([["QueryInformationJobObject", 1], ["QueryInformationJobObject", 3]]);
+    expect(waits.slice(0, 3).map(call => call.args)).toEqual([[ROOT, 1_000], [CHILD, 1_000], [AUX, 1_000]]);
+    expect(waits.slice(3).map(call => call.args)).toEqual([[ROOT, 0], [CHILD, 0], [AUX, 0]]);
+    expect(calls.filter(call => call.name === "OpenProcess")).toEqual([]); expect(closed(f)).toEqual([]);
+    f.finish(); expect(closed(f)).toEqual([CHILD, AUX]);
+  });
+  it("uses one decreasing absolute deadline across the already retained handles", () => {
+    const times = [100, 110, 120, 400, 410, 900, 910, 920], f = setup(undefined, [[ROOT_PID, CHILD_PID, AUX_PID]], 5, () => times.shift() ?? 920);
+    expect(f.observer.admit(f.input)).toBe(CHILD_PID); f.stop(); const start = f.calls.length;
+    f.observer.waitStoppedBefore(1_000);
+    expect(f.calls.slice(start).filter(call => call.name === "WaitForSingleObject").slice(0, 3).map(call => call.args[1])).toEqual([890, 600, 100]);
+    f.finish();
+  });
+  it("accepts zero remaining time only when every exact retained process is already signalled", () => {
+    const f = setup(undefined, [[ROOT_PID, CHILD_PID, AUX_PID]], 5, () => 100);
+    expect(f.observer.admit(f.input)).toBe(CHILD_PID); f.stop(); const start = f.calls.length;
+    f.observer.waitStoppedBefore(100);
+    expect(f.calls.slice(start).filter(call => call.name === "WaitForSingleObject").every(call => call.args[1] === 0)).toBe(true); f.finish();
+  });
+  it.each(["wait-failed", "wait-abi", "wait-throw"] as const)("fences an uncertain native wait without querying another owner or permitting retry (%s)", fault => {
+    const f = setup(undefined, [[ROOT_PID, CHILD_PID, AUX_PID]], 5, () => 100);
+    expect(f.observer.admit(f.input)).toBe(CHILD_PID); f.stop(); f.fault(fault); const start = f.calls.length;
+    expect(() => f.observer.waitStoppedBefore(1_000)).toThrow(InheritedChildCleanupError);
+    const calls = f.calls.slice(start), wait = calls.findIndex(call => call.name === "WaitForSingleObject");
+    expect(calls.slice(wait + 1).map(call => call.name)).toEqual(fault === "wait-failed" ? ["GetLastError"] : []);
+    expect(f.fence.retained).toHaveLength(1); f.repair(); const count = f.calls.length;
+    expect(() => f.observer.waitStoppedBefore(1_000)).toThrow(InheritedChildCleanupError);
+    expect(() => f.observer.closeStopped()).toThrow(InheritedChildCleanupError); expect(f.calls).toHaveLength(count); expect(closed(f)).toEqual([]);
+  });
+  it("retains and fences a process still nonsignalled after its bounded wait", () => {
+    const f = setup(undefined, [[ROOT_PID, CHILD_PID, AUX_PID]], 5, () => 100);
+    expect(f.observer.admit(f.input)).toBe(CHILD_PID); f.stop(); f.keepAlive(CHILD_PID); const start = f.calls.length;
+    expect(() => f.observer.waitStoppedBefore(1_000)).toThrow(InheritedChildCleanupError);
+    const waits = f.calls.slice(start).filter(call => call.name === "WaitForSingleObject");
+    expect(waits.map(call => call.args)).toEqual([[ROOT, 900], [CHILD, 900]]); expect(f.fence.retained).toHaveLength(1); expect(closed(f)).toEqual([]);
+  });
+  it("requires initial and final job zero rather than treating signalled handles as the whole-job proof", () => {
+    const f = setup(undefined, [[ROOT_PID, CHILD_PID]], 5, () => 100);
+    expect(f.observer.admit(f.input)).toBe(CHILD_PID); f.stop(); f.fault("active-after-stop"); const start = f.calls.length;
+    expect(() => f.observer.waitStoppedBefore(1_000)).toThrow(InheritedChildCleanupError);
+    expect(f.calls.slice(start).filter(call => call.name === "WaitForSingleObject")).toEqual([]); expect(closed(f)).toEqual([]);
+    const g = setup(undefined, [[ROOT_PID, CHILD_PID]], 5, () => 100);
+    expect(g.observer.admit(g.input)).toBe(CHILD_PID); g.stop(); g.afterWait(() => g.fault("active-after-stop"));
+    expect(() => g.observer.waitStoppedBefore(1_000)).toThrow(InheritedChildCleanupError); expect(g.fence.retained).toHaveLength(1); expect(closed(g)).toEqual([]);
+  });
+  it.each([NaN, Infinity, -1, 99, 15_101])("refuses an invalid, expired or newly extended shared deadline without native queries (%s)", deadline => {
+    const f = setup(undefined, [[ROOT_PID, CHILD_PID]], 5, () => 100);
+    expect(f.observer.admit(f.input)).toBe(CHILD_PID); f.stop(); const start = f.calls.length;
+    expect(() => f.observer.waitStoppedBefore(deadline)).toThrow(InheritedChildCleanupError); expect(f.calls).toHaveLength(start); expect(closed(f)).toEqual([]);
+  });
+  it("fences a non-monotonic clock before waiting on any retained owner", () => {
+    const times = [100, 99], f = setup(undefined, [[ROOT_PID, CHILD_PID]], 5, () => times.shift() ?? 99);
+    expect(f.observer.admit(f.input)).toBe(CHILD_PID); f.stop(); const start = f.calls.length;
+    expect(() => f.observer.waitStoppedBefore(1_000)).toThrow(InheritedChildCleanupError);
+    expect(f.calls.slice(start).filter(call => call.name === "WaitForSingleObject")).toEqual([]); expect(closed(f)).toEqual([]);
+  });
+  it.each([NaN, 99, 1_001])("refuses an invalid or late last native wait completion before any final owner query (%s)", finalTime => {
+    const times = [100, 100, 100, 100, finalTime], f = setup(undefined, [[ROOT_PID, CHILD_PID]], 5, () => times.shift() ?? finalTime);
+    expect(f.observer.admit(f.input)).toBe(CHILD_PID); f.stop(); const start = f.calls.length;
+    expect(() => f.observer.waitStoppedBefore(1_000)).toThrow(InheritedChildCleanupError);
+    const calls = f.calls.slice(start), lastWait = calls.findLastIndex(call => call.name === "WaitForSingleObject");
+    expect(calls.slice(lastWait + 1)).toEqual([]); expect(f.fence.retained).toHaveLength(1); expect(closed(f)).toEqual([]);
+  });
+  it("refuses final proof completion beyond the original deadline even after every native predicate passed", () => {
+    const times = [100, 100, 100, 100, 100, 1_001], f = setup(undefined, [[ROOT_PID, CHILD_PID]], 5, () => times.shift() ?? 1_001);
+    expect(f.observer.admit(f.input)).toBe(CHILD_PID); f.stop();
+    expect(() => f.observer.waitStoppedBefore(1_000)).toThrow(InheritedChildCleanupError);
+    expect(f.fence.retained).toHaveLength(1); expect(closed(f)).toEqual([]);
   });
   it("bounds retained members across their whole lifetime, including exited auxiliaries", () => {
     const ids = [600, 601, 602, 603, 604, 605, 606], f = setup(undefined, [[ROOT_PID, ...ids]]);

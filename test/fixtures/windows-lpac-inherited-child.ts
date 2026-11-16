@@ -96,7 +96,7 @@ export interface InheritedChildAdmission {
 
 /** Portable native-binding seam; the actual Windows integration supplies only its owned root/job/profile. */
 export function bindInheritedChildObserver(koffi: Pick<typeof Koffi, "sizeof">, load: (name: string) => { func(prototype: string): unknown },
-  fence: InheritedChildFence = processFence) {
+  fence: InheritedChildFence = processFence, clock: () => number = () => performance.now()) {
   if (fence.failure) throw fence.failure;
   const fn: Record<string, NativeFunction> = {};
   try {
@@ -209,6 +209,35 @@ export function bindInheritedChildObserver(koffi: Pick<typeof Koffi, "sizeof">, 
   };
   return {
     members, requireStopped,
+    /** The caller shares its original Stop deadline; job emptiness alone never substitutes for process-object signalling. */
+    waitStoppedBefore(deadline: number): void {
+      usable();
+      const accounting = Buffer.alloc(48);
+      try {
+        let previous = clock();
+        if (!Number.isFinite(previous) || previous < 0 || !Number.isFinite(deadline) || deadline < previous || deadline - previous > 15_000) throw failure();
+        const withinDeadline = () => {
+          const current = clock();
+          if (!Number.isFinite(current) || current < previous || current > deadline) throw failure();
+          previous = current;
+          return current;
+        };
+        if (!binding) { if (owned.size) throw failure(); return; }
+        at(18); const ok = fn.QueryInformationJobObject(binding.job, 1, accounting, accounting.length, null);
+        if (!bool(ok)) throw failure(); if (ok === 0) throw nativeRefusal();
+        if (accounting.readUInt32LE(40) !== 0 || members(binding.job).length !== 0) throw failure();
+        for (const process of [binding.rootProcess, ...[...owned.values()].map(value => value.handle)]) {
+          const current = withinDeadline();
+          at(20);
+          const status = fn.WaitForSingleObject(process, Math.max(0, Math.floor(deadline - current)));
+          if (status !== 0) { if (status === 0xffffffff) nativeRefusal(); throw failure(); }
+          withinDeadline();
+        }
+        requireStopped(); // Repeat every original job/list/root/retained-handle predicate before any readout.
+        withinDeadline();
+      } catch (error) { capture(); terminal(error); }
+      finally { accounting.fill(0); }
+    },
     observation: () => { const value = refused ?? snapshot(); return { ...value, ...(value.image ? { image: { ...value.image } } : {}) }; },
     admit(input: InheritedChildAdmission): number | null {
       usable(); at(1); imageObservation = undefined;

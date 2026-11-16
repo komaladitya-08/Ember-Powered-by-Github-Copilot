@@ -200,10 +200,11 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
     finally {
       restoreEnvMarker(previous);
       let stopPhase: InheritedChildLifecyclePhase = 3;
+      const stopDeadline = performance.now() + 15_000;
       try {
         const lease = await fixture.stop(15_000);
         stopPhase = 4; lease.requireStopped();
-        stopPhase = 5; observer.requireStopped(); stopped = true;
+        stopPhase = 5; observer.waitStoppedBefore(stopDeadline); stopped = true;
       } catch (error) { uncertain(stopPhase, error); }
       if (stopped && !unsafe) try {
         imagePin?.unchanged();

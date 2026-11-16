@@ -206,3 +206,22 @@ domain and bounded code. Phases are 1 candidate token verification, 2 caught ter
 and 9 fixture close. Unknown error shapes remain domain/code 0; no native owner is queried for this receipt, and no C
 payload, root exit, PID, path, message or cause is published after uncertainty. Stop order and retained-owner barriers
 remain unchanged.
+
+At `0416752debb27517f13b4aaeb8607a595f4a84b3`, [run 43837255846](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43837255846)
+passed 176 portable contracts per image. Server 2022 observed all six natural denials with verified cleanup.
+Server 2025 passed the explicit control, then refused plain inheritance at phase 5/host operation 4/domain 0/code 0:
+fixture Stop and the stopped lease had passed, but the independent observer Stop check had not. Payload readout
+was suppressed and all owners retained; later cases were fenced. This identifies a host proof stage, not its exact
+failed predicate or a creation outcome for those cases.
+
+The observer's former `WaitForSingleObject(handle, 0)` checks could observe a retained process still in rundown after
+job counts reached zero. Microsoft documents [`TerminateJobObject`](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-terminatejobobject)
+as if each process were terminated individually, and [`TerminateProcess`](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-terminateprocess)
+as asynchronous with process-handle waiting required for completion. The follow-up fixes that missing wait without
+claiming it was the observed phase-5 predicate. After exact job zero, it accepts only `WAIT_OBJECT_0` on the same
+borrowed root and already retained member handles, then repeats every original independent Stop predicate. Each wait
+uses the remaining time before the original single 15-second Stop deadline, including fixture Stop time. Timeout,
+`WAIT_FAILED`, unknown ABI results or inconsistent clocks immediately retain/fence; no process is reopened or looked
+up by PID, and there is no subsequent owner query after uncertainty. All six creation inputs and assertions remain.
+Finite monotonic clock checks after every wait and after the final proof reject late completion; an already expired
+deadline refuses before native queries, while exact-zero remaining time permits only already-signalled handles.
