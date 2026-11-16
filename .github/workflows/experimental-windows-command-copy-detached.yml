@@ -1,0 +1,50 @@
+name: experimental-windows-command-copy-detached
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/experimental-windows-command-copy-detached.yml"
+      - "test/fixtures/windows-command-copy-detached-*"
+      - "test/unit/windows-command-copy-detached*.test.ts"
+      - "test/integration/windows-command-copy-detached-native.test.ts"
+      - "docs/EXPERIMENTAL-WINDOWS-ROOT-COPY-DETACHED.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experimental-windows-command-copy-detached-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  detached-copy:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'ember-improve/20261116-root-copy-detached'
+    name: Fixed detached-root NTFS copy (${{ matrix.image }})
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.image }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Unchanged root-only contracts and strict detached-run boundary
+        run: npm test -- test/unit/windows-command-stop.test.ts test/unit/windows-command-copy.test.ts test/unit/windows-command-copy-native.test.ts test/unit/windows-command-copy-build.test.ts test/unit/windows-command-copy-report.test.ts test/unit/windows-command-copy-proof-native.test.ts test/unit/windows-command-copy-proof.test.ts test/unit/windows-command-copy-detached.test.ts test/unit/windows-command-copy-detached-variant.test.ts test/unit/windows-command-copy-detached-proof.test.ts --maxWorkers=1
+      - name: Required same-C detached-root useful edits, revoke, Stop and emitted CJS evidence
+        timeout-minutes: 8
+        run: node scripts/run-integration.mjs test/integration/windows-command-copy-detached-native.test.ts
+        env:
+          EMBER_WINDOWS_COMMAND_COPY_DETACHED_TEST: "1"
+          EMBER_WINDOWS_COMMAND_COPY_DETACHED_IMAGE: ${{ matrix.image }}
+      # Each job runs only the variant in a fresh worker. No baseline failure, fence reset, raw output or private artifact.

@@ -14,7 +14,7 @@ import type { WindowsLpacApi } from "../../app/main/agent/experimental-windows-l
 import { observeWindowsCommandCopyFactory } from "../fixtures/windows-command-copy-proof";
 const OWNER = "S-1-5-21-1-2-3-1001", SYSTEM = "S-1-5-18", PACKAGE = "S-1-15-2-1234-5678";
 const VOLUME = "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\";
-type Security = { owner: string; package?: string; inherited: boolean; low: boolean; extra?: boolean; badMask?: boolean };
+type Security = { owner: string; aclOwner?: string; package?: string; inherited: boolean; low: boolean; extra?: boolean; badMask?: boolean };
 type ObjectRow = { id: bigint; name: string; kind: "file" | "directory"; bytes: Buffer; security: Security; links: number; attributes: number; created: bigint; written: bigint; changed: bigint; streams?: boolean; removed?: boolean; deletePending?: boolean; reportedSize?: number; serial?: number };
 type Handle = { object?: ObjectRow; access: number; share: number; index: number };
 function setup() {
@@ -83,9 +83,14 @@ function setup() {
       const acl = aclRows.get(args[0] as bigint)!, sec = acl.row.security, index = Number(args[1]), p = pointer(), b = Buffer.alloc(8);
       b[0] = acl.label ? 17 : 0; b[1] = (acl.row.kind === "directory" ? 3 : 0) | (sec.inherited ? 16 : 0); b.writeUInt16LE(28, 2);
       b.writeUInt32LE(acl.label ? 1 : index === 2 ? sec.badMask ? 0x1f01ff : 0x1301bf : 0x1f01ff, 4);
-      aceRows.set(p, b); sids.set(p + 8n, acl.label ? sec.low && control.label ? "S-1-16-4096" : "S-1-16-8192" : index === 0 ? sec.owner : index === 1 ? SYSTEM : sec.package!); (args[2] as unknown[])[0] = p; return 1;
+      aceRows.set(p, b); sids.set(p + 8n, acl.label ? sec.low && control.label ? "S-1-16-4096" : "S-1-16-8192" : index === 0 ? sec.aclOwner ?? sec.owner : index === 1 ? SYSTEM : sec.package!); (args[2] as unknown[])[0] = p; return 1;
     },
-    NtSetSecurityObject: (...args) => { sets++; if (control.failSet && sets === control.failSet) throw new Error("private partial ACL error"); file(args[0]).security = { ...descriptors.get(args[2] as bigint)! }; if (control.retireOnSet && sets === control.retireOnSet) control.current = false; return 0; },
+    NtSetSecurityObject: (...args) => {
+      sets++; if (control.failSet && sets === control.failSet) throw new Error("private partial ACL error");
+      const row = file(args[0]), descriptor = descriptors.get(args[2] as bigint)!;
+      row.security = { ...descriptor, aclOwner: descriptor.aclOwner ?? descriptor.owner, owner: Number(args[1]) & 1 ? descriptor.owner : row.security.owner };
+      if (control.retireOnSet && sets === control.retireOnSet) control.current = false; return 0;
+    },
     NtWriteFile: (...args) => { const row = file(args[0]), offset = Number((args[7] as Buffer).readBigInt64LE(0)), bytes = args[5] as Buffer, count = Number(args[6]); row.bytes = Buffer.concat([row.bytes.subarray(0, offset), bytes.subarray(0, count)]); row.written++; row.changed++; (args[4] as Buffer).writeBigUInt64LE(BigInt(count), 8); return 0; },
     FlushFileBuffers: () => 1,
     NtReadFile: (...args) => { control.dataReads++; const row = file(args[0]), offset = Number((args[7] as Buffer).readBigInt64LE(0)), count = Math.min(Number(args[6]), Math.max(0, row.bytes.length - offset)); row.bytes.copy(args[5] as Buffer, 0, offset, offset + count); (args[4] as Buffer).writeBigUInt64LE(BigInt(count), 8); return count ? 0 : 0xc0000011; },
@@ -142,6 +147,89 @@ it("composes the real coordinator/native grant callbacks with a real root-only S
   expect(events.indexOf("private-read")).toBeGreaterThan(events.lastIndexOf("close"));
   current = false; await copy.stop(); await copy.review(async snapshot => { expect(snapshot).toHaveLength(6); });
   await copy.close(); expect(s.handles.size).toBe(0); expect(failures).toEqual([]);
+});
+
+it.each(["created", "replaced"])("the actual coordinator/native/Stop composition refuses a %s file's synthetic creator owner despite its inherited host ACL", async mode => {
+  const s = setup(), events: string[] = [], failures: unknown[] = [], root = { process: 50001n, thread: 50002n, pid: 50003 };
+  let assigned = false, exited = false;
+  const api = { createJob: () => 50000n, assign() { assigned = true; }, resume() {}, terminateProcess() { exited = true; }, terminateJob() { exited = true; } } as unknown as WindowsLpacApi;
+  const stop: WindowsCommandRootOnlyStopNative = { configure() {}, assertLimits() {},
+    state: () => ({ total: assigned ? 1 : 0, active: assigned && !exited ? 1 : 0, pids: assigned && !exited ? [root.pid] : [] }),
+    processId: () => root.pid, threadProcessId: () => root.pid, member: () => assigned, wait: () => exited ? 0 : 258,
+    close() { events.push("closed-root-owner"); },
+  };
+  const copyFence = { retained: [] as unknown[] }, entries: CodingExportEntry[] = [{ path: "replace.txt", kind: "file", bytes: Buffer.from("EMBER_COMMAND_OLD\n"), executable: false }];
+  const copy = await WindowsRootOnlyCommandCopy.create({ ...s.input(entries), packageSid: PACKAGE, packageCurrent: () => true, reviewCurrent: () => true }, {
+    api, fence: copyFence, createTree: input => observeWindowsCommandCopyFactory(input, actual => s.binding.createFreshWindowsCommandTree(actual), error => { failures.push(error); }),
+    createStopOwner: binding => createWindowsCommandRootOnlyStopOwner(binding, api, stop, () => 100, { retained: [] }),
+  });
+  await copy.launchRootOnly(() => root, () => undefined);
+  const name = path.join(s.root().name, mode === "created" ? "created.txt" : "replace.txt");
+  if (mode === "replaced") { const old = s.objects.get(name)!; old.removed = true; old.links = 0; old.deletePending = true; }
+  const created = s.add(name, "file", Buffer.from(mode === "created" ? "EMBER_COMMAND_CREATED\n" : "EMBER_COMMAND_REPLACED\n"),
+    { owner: "S-1-5-21-9876-5432-1002", aclOwner: OWNER, package: PACKAGE, inherited: true, low: true });
+  const security = s.handlers.GetSecurityInfo; s.handlers.GetSecurityInfo = (...args) => { events.push("tree-owner-query"); return security(...args); };
+  exited = true; const sets = s.sets(); await rejected(copy.stop());
+  expect(events.filter(event => event === "closed-root-owner")).toHaveLength(3);
+  expect(events.indexOf("tree-owner-query")).toBeGreaterThan(events.lastIndexOf("closed-root-owner"));
+  expect(s.sets()).toBe(sets); expect(s.control.dataReads).toBe(0); expect(created.security.owner).toBe("S-1-5-21-9876-5432-1002");
+  expect(windowsCommandCopyNativeFailure(failures[0])).toEqual({ stage: 7, operation: 24, predicate: 7, domain: 0, code: 0,
+    ownerClass: 5, nodeKind: 1, nodeRoot: 0, nodeAcl: 3, nodeDetached: 0 });
+  expect(s.calls.slice(-3).map(call => call.name)).toEqual(["GetSecurityInfo", "ConvertSidToStringSidW", "LocalFree"]);
+  expect(s.fence.retained).toHaveLength(1); expect(copyFence.retained).toContain(copy);
+  const count = s.calls.length; let reviewed = false;
+  await rejected(copy.review(async () => { reviewed = true; })); await rejected(copy.close());
+  expect(reviewed).toBe(false); expect(s.calls).toHaveLength(count);
+});
+
+const creatorOwnerClasses = [
+  { label: "known package", sid: PACKAGE, ownerClass: 2 }, { label: "SYSTEM", sid: SYSTEM, ownerClass: 3 },
+  { label: "public builtin Administrators", sid: "S-1-5-32-544", ownerClass: 4 },
+  { label: "other creator", sid: "S-1-5-21-9876-5432-1002", ownerClass: 5 },
+] as const;
+for (const provenance of ["initial granted", "new file", "new directory", "detached initial"] as const) {
+  it.each(creatorOwnerClasses)(`records only closed owner/node facts for ${provenance} with $label, retaining the original refusal`, async value => {
+    const s = setup(), tree = await s.binding.createFreshWindowsCommandTree(s.input()); await tree.grant(PACKAGE);
+    const inherited = provenance === "new file" || provenance === "new directory";
+    let row: ObjectRow;
+    if (inherited) row = s.add(path.join(tree.directory, "fixed-created"), provenance === "new directory" ? "directory" : "file", provenance === "new directory" ? Buffer.alloc(0) : Buffer.from("fixed public bytes"),
+      { owner: value.sid, aclOwner: OWNER, package: PACKAGE, inherited: true, low: true });
+    else {
+      row = s.objects.get(path.join(tree.directory, "a.ts"))!; row.security = { ...row.security, owner: value.sid, aclOwner: OWNER };
+      if (provenance === "detached initial") { row.removed = true; row.links = 0; row.deletePending = true; }
+    }
+    const sets = s.sets(), error = await rejected(tree.revoke(PACKAGE)), observation = windowsCommandCopyNativeFailure(error), count = s.calls.length;
+    expect(observation).toEqual({ stage: 7, operation: 24, predicate: 7, domain: 0, code: 0, ownerClass: value.ownerClass,
+      nodeKind: provenance === "new directory" ? 2 : 1, nodeRoot: 0, nodeAcl: inherited ? 3 : 2, nodeDetached: provenance === "detached initial" ? 1 : 0 });
+    expect(s.calls.slice(-3).map(call => call.name)).toEqual(["GetSecurityInfo", "ConvertSidToStringSidW", "LocalFree"]);
+    expect(s.sets()).toBe(sets); expect(s.control.dataReads).toBe(0); expect(row.security.owner).toBe(value.sid);
+    expect(Object.isFrozen(observation)).toBe(true); expect(Object.values(observation!).every(value => Number.isInteger(value))).toBe(true);
+    for (const material of [value.sid, row.name, "fixed public bytes"]) expect(JSON.stringify(observation)).not.toContain(material);
+    expect(Object.keys(observation!).sort()).toEqual(["stage", "operation", "predicate", "domain", "code", "ownerClass", "nodeKind", "nodeRoot", "nodeAcl", "nodeDetached"].sort());
+    await rejected(tree.close()); expect(s.calls).toHaveLength(count); expect(s.fence.retained).toHaveLength(1);
+    expect(windowsCommandCopyNativeFailure(error)).toBe(observation);
+    for (const foreign of [{ ...observation }, { ...error as object }, JSON.parse(JSON.stringify(error)),
+      new Proxy({}, { get() { throw new Error("private owner getter"); } })]) expect(windowsCommandCopyNativeFailure(foreign)).toBeUndefined();
+  });
+}
+it.each(["root", "initial file"])("does not turn a changed private %s owner into grant or creation authority", async target => {
+  const s = setup(), tree = await s.binding.createFreshWindowsCommandTree(s.input());
+  const row = target === "root" ? s.root() : s.objects.get(path.join(tree.directory, "a.ts"))!;
+  row.security = { ...row.security, owner: PACKAGE, aclOwner: OWNER }; const sets = s.sets();
+  const error = await rejected(tree.assertPrivate());
+  // The package is not known to this native owner before grant, so its SID can only be classified as other.
+  expect(windowsCommandCopyNativeFailure(error)).toEqual({ stage: 5, operation: 24, predicate: 7, domain: 0, code: 0,
+    ownerClass: 5, nodeKind: target === "root" ? 2 : 1, nodeRoot: target === "root" ? 1 : 0, nodeAcl: 1, nodeDetached: 0 });
+  expect(s.sets()).toBe(sets); expect(s.control.dataReads).toBe(0);
+});
+it("keeps the first owner facts across peer quarantine without another decode, mutation or native query", async () => {
+  const s = setup(), first = await s.binding.createFreshWindowsCommandTree(s.input()), peer = await s.binding.createFreshWindowsCommandTree(s.input());
+  await first.grant(PACKAGE); const row = s.objects.get(path.join(first.directory, "a.ts"))!;
+  row.security = { ...row.security, owner: "S-1-5-32-544", aclOwner: OWNER };
+  const error = await rejected(first.revoke(PACKAGE)), observation = windowsCommandCopyNativeFailure(error), count = s.calls.length;
+  expect(observation?.ownerClass).toBe(4);
+  const peerError = await rejected(peer.assertPrivate()); expect(peerError).toBe(error); expect(s.calls).toHaveLength(count);
+  expect(windowsCommandCopyNativeFailure(peerError)).toBe(observation); expect(s.fence.retained).toHaveLength(2);
 });
 
 it("exposes only branded frozen first-failure numbers without reading foreign error properties", async () => {
