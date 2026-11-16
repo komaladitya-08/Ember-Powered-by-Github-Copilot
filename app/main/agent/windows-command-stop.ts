@@ -53,10 +53,38 @@ const liveOwners = new WeakMap<WindowsCommandRootOnlyStopFence, Set<{ state: { r
 declare const stoppedBrand: unique symbol;
 export interface WindowsCommandRootOnlyStoppedRef { readonly scope: "root-only"; readonly [stoppedBrand]: true }
 const receipts = new WeakMap<object, object>();
+const completionFacts = new WeakMap<object, Readonly<{ rootPresent: 0 | 1 }>>();
+declare const attestingBrand: unique symbol;
+export interface WindowsCommandRootOnlyAttestingRef { readonly scope: "root-only-attesting"; readonly [attestingBrand]: true }
+const attestations = new WeakMap<object, { binding: object; root: Readonly<WindowsSuspendedProcess>; current(): boolean; owns(value: WindowsHandle): boolean; live: boolean; claimed: boolean }>();
+const preparingOwners = new WeakMap<object, () => boolean>();
 const issuedBindings = new WeakSet<object>();
 /** Only the issuing owner, after all native closes, can authorize this exact grant generation's revocation. */
 export function requireWindowsCommandRootOnlyStopped(ref: unknown, binding: object): void {
   if (!binding || typeof binding !== "object" || !ref || typeof ref !== "object" || !receipts.has(ref) || receipts.get(ref) !== binding) throw refuse();
+}
+/** Only the genuine completed owner can distinguish an empty job from a launched root with missing creator evidence. */
+export function requireWindowsCommandRootOnlyCompletion(ref: unknown, binding: object): Readonly<{ rootPresent: 0 | 1 }> {
+  requireWindowsCommandRootOnlyStopped(ref, binding);
+  const facts = completionFacts.get(ref as object); if (!facts) throw refuse(); return facts;
+}
+/** A grant generation starts only with this authentic configured, empty, not-yet-launched Stop owner. */
+export function requireWindowsCommandRootOnlyPreparing(binding: object): void {
+  if (!binding || typeof binding !== "object" || preparingOwners.get(binding)?.() !== true) throw refuse();
+}
+export function requireWindowsCommandRootOnlyAttestingCurrent(ref: unknown, binding: object): void {
+  if (!ref || typeof ref !== "object") throw refuse();
+  const value = attestations.get(ref); if (!value || value.binding !== binding || !value.live || !value.current()) throw refuse();
+}
+/** A single synchronous consumer receives the same already-attested held root, never a PID-opened replacement. */
+export function takeWindowsCommandRootOnlyAttesting(ref: unknown, binding: object): Readonly<WindowsSuspendedProcess> {
+  requireWindowsCommandRootOnlyAttestingCurrent(ref, binding);
+  const value = attestations.get(ref as object)!; if (value.claimed) throw refuse(); value.claimed = true; return value.root;
+}
+/** A token result must not alias any retained root/thread/job handle in this Stop universe. No handle is exposed. */
+export function requireWindowsCommandRootOnlyTokenHandle(ref: unknown, binding: object, value: unknown): void {
+  requireWindowsCommandRootOnlyAttestingCurrent(ref, binding);
+  if (!handle(value) || attestations.get(ref as object)!.owns(value)) throw refuse();
 }
 export interface WindowsCommandRootOnlyJobState { total: number; active: number; pids: number[] }
 export interface WindowsCommandRootOnlyStopNative {
@@ -156,7 +184,8 @@ export function loadWindowsCommandRootOnlyStopNative(): WindowsCommandRootOnlySt
 export interface WindowsCommandRootOnlyStopOwner {
   readonly scope: "root-only";
   /** Trusted native CREATE_SUSPENDED issuer supplies an owned root, never arbitrary running project code. No job is passed. */
-  launch(create: () => WindowsSuspendedProcess, attest: (root: Readonly<WindowsSuspendedProcess>) => void, current: () => boolean): Promise<number>;
+  launch(create: () => WindowsSuspendedProcess, attest: (root: Readonly<WindowsSuspendedProcess>) => void, current: () => boolean,
+    capture?: (ref: WindowsCommandRootOnlyAttestingRef) => void): Promise<number>;
   stop(timeoutMs?: number): Promise<WindowsCommandRootOnlyStoppedRef>;
   /** External file/ACL uncertainty retires the entire shared boundary without disposal, queries or a receipt. */
   retainStop(): void;
@@ -216,14 +245,16 @@ export function createWindowsCommandRootOnlyStopOwner(binding: object, api: Stop
     usable();
     initialStage = 3; native.configure(job); native.assertLimits(job); initialStage = 4; const initial = state(); if (initial.total !== 0 || initial.active !== 0) throw refused(4, 5);
   } catch (error) { return terminal(error, false, initialStage, 1); }
+  preparingOwners.set(binding, () => !fence.failure && !retired && !closed && !launched && job !== undefined && history === 0);
   return Object.freeze({
     scope: "root-only" as const,
     retainStop() {
       try { terminal(undefined, true, 11, 7); }
       catch (error) { if (error !== fence.failure) throw new WindowsCommandRootOnlyCleanupError(); }
     },
-    async launch(create: () => WindowsSuspendedProcess, attest: (root: Readonly<WindowsSuspendedProcess>) => void, current: () => boolean) {
-      usable(); if (launched || retired || typeof create !== "function" || typeof attest !== "function" || typeof current !== "function") throw refused(5, 8);
+    async launch(create: () => WindowsSuspendedProcess, attest: (root: Readonly<WindowsSuspendedProcess>) => void, current: () => boolean,
+      capture?: (ref: WindowsCommandRootOnlyAttestingRef) => void) {
+      usable(); if (launched || retired || typeof create !== "function" || typeof attest !== "function" || typeof current !== "function" || capture !== undefined && typeof capture !== "function") throw refused(5, 8);
       launched = true; callbacks.push(create, attest, current);
       // Reserve admission before any callback; pre-create revocation still permits an inert closed-job receipt.
       try { const admitted = current(); usable(); if (admitted !== true || retired) throw refused(5, 8); }
@@ -252,6 +283,22 @@ export function createWindowsCommandRootOnlyStopOwner(binding: object, api: Stop
         launchStage = 8;
         const attested = attest(root); usable();
         if (attested !== undefined || retired) throw refused(8, 8);
+        if (capture !== undefined) {
+          callbacks.push(capture);
+          const selected = root, ref = Object.freeze({ scope: "root-only-attesting" as const }) as WindowsCommandRootOnlyAttestingRef;
+          const available = () => !fence.failure && !retired && !closed && root === selected && job !== undefined;
+          const value = { binding, root: selected, live: true, claimed: false,
+            owns: (candidate: WindowsHandle) => candidate === job || candidate === knownProcess || candidate === knownThread || peerOwns(candidate), current: () => {
+            if (!available()) return false;
+            let admitted: unknown; try { admitted = current(); } catch { return false; }
+            return available() && admitted === true;
+          } };
+          attestations.set(ref, value);
+          try {
+            const captured = capture(ref); usable();
+            if (captured !== undefined || retired) throw refused(8, 8);
+          } finally { value.live = false; }
+        }
         launchStage = 9;
         const admitted = current(); usable();
         if (admitted !== true || retired) throw refused(9, 8);
@@ -308,7 +355,7 @@ export function createWindowsCommandRootOnlyStopOwner(binding: object, api: Stop
             closeAttempted.add(owner); if (native.close(owner) !== undefined) throw refused(13, 10); within();
           }
           closed = true; active!.delete(record); const receipt = Object.freeze({ scope: "root-only" as const }) as WindowsCommandRootOnlyStoppedRef;
-          receipts.set(receipt, binding); return receipt;
+          receipts.set(receipt, binding); completionFacts.set(receipt, Object.freeze({ rootPresent: root ? 1 : 0 })); return receipt;
         } catch (error) { return terminal(error, false, stopStage, 1); }
       });
       return stopping;

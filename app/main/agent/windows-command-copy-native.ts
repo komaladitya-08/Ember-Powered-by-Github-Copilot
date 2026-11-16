@@ -10,8 +10,15 @@ import { ScopedCodingFileError } from "./coding-platform";
 import type { CodingExportEntry } from "./coding-result-export";
 import { decodeWindowsCodingDirectoryBatch, type WindowsCodingInfo, type WindowsCodingKind } from "./windows-coding-native";
 import { windowsCodingRelative, windowsCodingFold, windowsCodingWithin } from "./windows-coding-policy";
+import { requireWindowsCommandRootOnlyCompletion, requireWindowsCommandRootOnlyPreparing, requireWindowsCommandRootOnlyTokenHandle, requireWindowsCommandRootOnlyAttestingCurrent, takeWindowsCommandRootOnlyAttesting } from "./windows-command-stop";
+import { windowsCommandCreatorTokenSid } from "./windows-command-creator-token";
+import { windowsCommandCreatorProfile, bindWindowsCommandCreatorTree, requireWindowsCommandCreatorTree, releaseWindowsCommandCreatorTree,
+  type WindowsCommandCreatorProfileRef } from "./windows-command-creator-profile";
 
-export interface FreshWindowsCommandTreeInput { parent: string; protectedPaths: readonly string[]; entries: readonly CodingExportEntry[]; current(): boolean }
+export interface FreshWindowsCommandTreeInput { parent: string; protectedPaths: readonly string[]; entries: readonly CodingExportEntry[]; current(): boolean;
+  creatorProfile?: WindowsCommandCreatorProfileRef }
+declare const creatorGrantBrand: unique symbol;
+export interface WindowsCommandCreatorGrantRef { readonly scope: "root-only-creator-grant"; readonly [creatorGrantBrand]: true }
 export interface FreshWindowsCommandTree {
   readonly directory: string;
   assertPrivate(): Promise<void>;
@@ -21,12 +28,16 @@ export interface FreshWindowsCommandTree {
   /** Detached host-only bytes, never model/publication authority. */
   snapshot(check?: () => void): Promise<readonly CodingExportEntry[]>;
   close(): Promise<void>;
+  /** Experimental only: the live attestation and completed Stop receipt are independently branded by the exact Stop owner. */
+  prepareCreator?(binding: object): WindowsCommandCreatorGrantRef;
+  captureCreator?(ref: WindowsCommandCreatorGrantRef, witness: unknown): void;
+  revokeCreator?(ref: WindowsCommandCreatorGrantRef, stopped: unknown): Promise<void>;
 }
 export class WindowsCommandCopyCleanupError extends Error {
   readonly code = "windows-command-copy-cleanup-unverified";
   constructor() { super("Fresh Windows command-copy ownership is unverified; retain every native owner."); this.name = "WindowsCommandCopyCleanupError"; }
 }
-type FailureStage = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+type FailureStage = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 type FailureOperation = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26 | 27;
 type FailurePredicate = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 type FailureDomain = 0 | 1 | 2;
@@ -102,7 +113,7 @@ function capture(input: FreshWindowsCommandTreeInput) {
   });
   for (const entry of entries) { const parts = entry.path.split("/"); for (let i = 1; i < parts.length; i++) if (kinds.get(windowsCodingFold(parts.slice(0, i).join("/"))) !== "directory") throw boundary(); }
   entries.sort((a, b) => a.path.split("/").length - b.path.split("/").length || a.path.localeCompare(b.path, "en"));
-  return { parent, protectedPaths, entries, current: input.current.bind(input) };
+  return { parent, protectedPaths, entries, current: input.current.bind(input), creatorProfile: input.creatorProfile };
 }
 export const WINDOWS_COMMAND_COPY_FUNCTIONS = {
   ntdll: [
@@ -149,7 +160,11 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
     const ownerRecord = { handles, allocations, pending, nodes, selected, serials };
     const peers = liveOwners.get(fence) ?? new Set<object>(); liveOwners.set(fence, peers); peers.add(ownerRecord);
     let rollbackKnown: (() => Promise<void>) | undefined;
-    let terminal: WindowsCommandCopyCleanupError | undefined, closed = false, busy = false, retired = false, packageSid: string | undefined;
+    let terminal: WindowsCommandCopyCleanupError | undefined, closed = false, busy = false, retired = false, packageSid: string | undefined, profileBound = false, grantAdmission = false;
+    type CreatorGrant = { binding: object; known: Map<string, WindowsCodingInfo>; state: "prepared" | "capturing" | "captured" | "revoking" | "done";
+      creatorOwner?: string; witness?: unknown; root?: Readonly<{ process: bigint; thread: bigint; pid: number }> };
+    const creatorRefs = new WeakMap<object, CreatorGrant>(), creatorBindings = new WeakSet<object>();
+    let creator: CreatorGrant | undefined;
     let phase: "private" | "granting" | "granted" | "revoking" = "private", ticks = 0;
     let stage: FailureStage = 1;
     const poison = (predicate: FailurePredicate = 8, operation: FailureOperation = 0, status: { domain: FailureDomain; code: number } = { domain: 0, code: 0 }, ownerFacts?: OwnerFacts): never => {
@@ -159,7 +174,11 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       for (const owner of peers) if (!retainedOwners.has(owner)) { fence.retained.push(owner); retainedOwners.add(owner); }
       throw terminal;
     };
-    const usable = () => { if (terminal || fence.failure) poison(); if (closed) throw boundary(); };
+    const usable = () => {
+      if (terminal || fence.failure) poison(); if (closed) throw boundary();
+      if (profileBound) try { requireWindowsCommandCreatorTree(selected.creatorProfile!, ownerRecord); } catch { return poison(7); }
+      if (profileBound && grantAdmission && creator?.state === "prepared") try { requireWindowsCommandRootOnlyPreparing(creator.binding); } catch { return poison(8); }
+    };
     const active = () => {
       usable(); if (retired) throw new ScopedCodingFileError("cancelled");
       let current: unknown;
@@ -192,6 +211,7 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
     };
     try {
     active();
+    if (selected.creatorProfile !== undefined) windowsCommandCreatorProfile(selected.creatorProfile);
     const tokenOut: unknown[] = [null]; pending.add(tokenOut); let tokenResult: unknown;
     try { tokenResult = fn.OpenProcessToken(fn.GetCurrentProcess(), 8, tokenOut); } catch { if (valid(tokenOut[0])) handles.add(tokenOut[0]); return poison(1); }
     if (valid(tokenOut[0])) handles.add(tokenOut[0]);
@@ -248,7 +268,7 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       if (kind === "directory" && count === 0n) return;
       if (count < 38n || count > BigInt(bytes.length) || bytes.readUInt32LE(0) !== 0 || bytes.readUInt32LE(4) !== 14 || bytes.toString("utf16le", 24, 38) !== "::$DATA" || bytes.readBigInt64LE(8) !== BigInt(expectedSize)) return poison(6, OP.NtQueryInformationFile);
     };
-    const security = (node: Node, expected: "private" | "granted" | "inherited", detached = false) => {
+    const security = (node: Node, expected: "private" | "granted" | "inherited", detached = false, allowCreator = false) => {
       if (!detached) metadata(node);
       const descriptor: unknown[] = [null], own: unknown[] = [null], dacl: unknown[] = [null], sacl: unknown[] = [null];
       pending.add(descriptor); let status: unknown;
@@ -256,7 +276,9 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       if (valid(descriptor[0])) allocations.add(descriptor[0]); if (status !== 0) return poison(2, OP.GetSecurityInfo);
       const sd = pointer(descriptor[0]); pending.delete(descriptor);
       const observedOwner = textSid(pointer(own[0]));
-      if (observedOwner !== owner) return poison(7, OP.GetSecurityInfo, undefined, {
+      const creatorMatch = allowCreator && !detached && !!node.relative && expected === "inherited" && creator?.state === "revoking" &&
+        creator.creatorOwner !== undefined && !creator.known.has(node.identity.id) && observedOwner === creator.creatorOwner;
+      if (allowCreator ? !creatorMatch : observedOwner !== owner) return poison(7, OP.GetSecurityInfo, undefined, {
         // Diagnostic comparison only, after the original owner check refused; no second SID decode or native call.
         ownerClass: observedOwner === owner ? 1 : observedOwner === packageSid ? 2 : observedOwner === "S-1-5-18" ? 3 : observedOwner === "S-1-5-32-544" ? 4 : 5,
         nodeKind: node.kind === "file" ? 1 : 2, nodeRoot: node.relative === "" ? 1 : 0,
@@ -281,7 +303,7 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       try { lh = Buffer.from(native.decode(lp, "uint8_t", 8) as Uint8Array); } catch { return poison(3, OP.GetAce); }
       const labelFlags = (node.kind === "directory" ? 3 : 0) | (expected === "inherited" ? 16 : 0);
       if (lh.length !== 8 || lh[0] !== 17 || lh[1] !== labelFlags || lh.readUInt32LE(4) !== 1 || lh.readUInt16LE(2) < 12 || lh.readUInt16LE(2) > 76 || textSid(lp + 8n) !== "S-1-16-4096") return poison(7, OP.GetAce);
-      free(sd);
+      free(sd); return observedOwner;
     };
     const withDescriptor = <T>(directory: boolean, granted: boolean, operation: (sd: bigint) => T): T => {
       const inherit = directory ? "OICI" : "", sddl = `O:${owner}D:P(A;${inherit};FA;;;${owner})(A;${inherit};FA;;;SY)${granted ? `(A;${inherit};0x1301bf;;;${packageSid})` : ""}S:(ML;${inherit};NW;;;LW)`;
@@ -382,12 +404,12 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
     const verify = (node: Node) => security(node, node.acl);
     const begin = (admission: boolean, nextStage: FailureStage) => { const previous = stage; stage = nextStage; try { if (admission) active(); else usable(); if (busy) throw boundary(); busy = true; } catch (error) { stage = previous; throw error; } };
     const end = () => { busy = false; };
-    const setAcl = (node: Node, granted: boolean) => {
+    const setAcl = (node: Node, granted: boolean, transferOwner = false) => {
       // SetSecurityInfo propagates inheritance recursively; this held-handle native operation stays inside our bounded walk.
       // https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setsecurityinfo#remarks
       // The native API accepts the converted self-relative descriptor; its documented user-mode name is NtSetSecurityObject.
       // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-zwsetsecurityobject#remarks
-      withDescriptor(node.kind === "directory", granted, sd => nt("NtSetSecurityObject", [node.raw, (4 | LABEL | PROTECTED_DACL) >>> 0, sd])); node.acl = granted ? "granted" : "private"; security(node, node.acl); node.identity = info(node.raw);
+      withDescriptor(node.kind === "directory", granted, sd => nt("NtSetSecurityObject", [node.raw, (4 | LABEL | PROTECTED_DACL | (transferOwner ? 1 : 0)) >>> 0, sd])); node.acl = granted ? "granted" : "private"; security(node, node.acl); node.identity = info(node.raw);
     };
     const retireOldPins = async (keep: readonly Node[], admission: Admission) => { const current = new Set(keep.map(node => node.raw)); for (const node of [...nodes]) { if (!current.has(node.raw)) { if (!detached(node)) return poison(5); closeRaw(node.raw); nodes.delete(node); } await tick(admission); } };
     const tree: FreshWindowsCommandTree = {
@@ -395,26 +417,112 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       async assertPrivate() { begin(true, 5); try { if (phase !== "private") throw boundary(); for (const node of await walk(true)) { security(node, "private"); await tick(true); } } finally { end(); } },
       async grant(sid, check) {
         begin(true, 6); try {
+          grantAdmission = profileBound;
           if (phase !== "private" || !sidValid(sid, true) || check !== undefined && typeof check !== "function") throw boundary(); const admit = guard(check, true); admit();
+          if (selected.creatorProfile !== undefined && (!profileBound || requireWindowsCommandCreatorTree(selected.creatorProfile, ownerRecord) !== sid || !creator || creator.state !== "prepared")) return poison(8);
           const current = await walk(admit); for (const node of current) { security(node, "private"); await tick(admit); }
           await retireOldPins(current, admit);
+          if (creator) creator.known = new Map(current.map(node => [node.identity.id, { ...node.identity }]));
           packageSid = sid; phase = "granting"; for (const node of current) { admit(); setAcl(node, true); await tick(admit); }
           const metadataPins = new Set([...nodes].map(node => node.raw)); for (const p of pins) metadataPins.add(p.raw);
           if (allocations.size || pending.size || [...handles].some(raw => !metadataPins.has(raw))) return poison();
           phase = "granted"; checkRoot();
-        } finally { end(); }
+        } finally { grantAdmission = false; end(); }
       },
       async revoke(sid) {
         begin(false, 7); try {
+          if (selected.creatorProfile !== undefined) return poison(8);
           if (!sidValid(sid, true) || sid !== packageSid || phase === "private") throw boundary(); phase = "revoking";
           await releaseDeleted(false); const current = await walk(false); for (const node of current) { verify(node); await tick(false); }
           await retireOldPins(current, false);
           for (const node of current) { setAcl(node, false); await tick(false); } phase = "private"; packageSid = undefined; checkRoot();
         } finally { end(); }
       },
+      prepareCreator(binding) {
+        begin(true, 10); try {
+          if (!profileBound || phase !== "private" || creator || !binding || typeof binding !== "object" || creatorBindings.has(binding)) return poison(8);
+          requireWindowsCommandRootOnlyPreparing(binding);
+          requireWindowsCommandCreatorTree(selected.creatorProfile!, ownerRecord); creatorBindings.add(binding);
+          const ref = Object.freeze({ scope: "root-only-creator-grant" as const }) as WindowsCommandCreatorGrantRef;
+          creator = { binding, known: new Map([...nodes].map(node => [node.identity.id, { ...node.identity }])), state: "prepared" };
+          creatorRefs.set(ref, creator); return ref;
+        } finally { end(); }
+      },
+      captureCreator(ref, witness) {
+        begin(true, 10); try {
+          const value = creatorRefs.get(ref);
+          if (!value || value !== creator || value.state !== "prepared" || phase !== "granted" || !profileBound) return poison(8);
+          value.state = "capturing"; value.witness = witness;
+          const check = () => { active(); requireWindowsCommandCreatorTree(selected.creatorProfile!, ownerRecord); requireWindowsCommandRootOnlyAttestingCurrent(witness, value.binding); active(); };
+          check(); const held = takeWindowsCommandRootOnlyAttesting(witness, value.binding); value.root = held; check();
+          const output: unknown[] = [null]; pending.add(output); let result: unknown;
+          try { result = fn.OpenProcessToken(held.process, 8, output); }
+          catch { if (valid(output[0])) handles.add(output[0]); return poison(1, OP.OpenProcessToken); }
+          const raw = output[0];
+          if (valid(raw)) {
+            if (raw === held.process || raw === held.thread || [...peers].some(peer => (peer as typeof ownerRecord).handles.has(raw))) return poison(4, OP.OpenProcessToken);
+            handles.add(raw);
+            requireWindowsCommandRootOnlyTokenHandle(witness, value.binding, raw);
+          }
+          check();
+          if (result !== 1 && result !== true) return poison(2, OP.OpenProcessToken, returnedStatus("OpenProcessToken", result));
+          const token = pointer(raw); pending.delete(output);
+          const buffers: Buffer[] = [];
+          const querySid = (kind: 1 | 4 | 31) => {
+            check(); const bytes = Buffer.alloc(4096), returned = [-1]; buffers.push(bytes); pending.add(bytes); pending.add(returned);
+            bool("GetTokenInformation", [token, kind, bytes, bytes.length, returned]); check();
+            const base = address(bytes); check();
+            let sid: string; try { sid = windowsCommandCreatorTokenSid(bytes, returned[0], base, kind); } catch { return poison(3, OP.GetTokenInformation); }
+            check(); pending.delete(returned); return sid;
+          };
+          const user = querySid(1); if (user !== owner) return poison(7, OP.GetTokenInformation);
+          const packageIdentity = querySid(31); if (packageIdentity !== requireWindowsCommandCreatorTree(selected.creatorProfile!, ownerRecord)) return poison(7, OP.GetTokenInformation);
+          const actualOwner = querySid(4);
+          check(); closeRaw(token); check();
+          for (const bytes of buffers) { bytes.fill(0); pending.delete(bytes); }
+          value.creatorOwner = actualOwner; value.state = "captured";
+        } catch { if (terminal || fence.failure) throw terminal ?? fence.failure; return poison(8); }
+        finally { end(); }
+      },
+      async revokeCreator(ref, stopped) {
+        begin(false, 7); try {
+          const value = creatorRefs.get(ref);
+          if (!value || value !== creator || !profileBound || value.state !== "prepared" && value.state !== "captured") return poison(8);
+          const completion = requireWindowsCommandRootOnlyCompletion(stopped, value.binding);
+          if (completion.rootPresent ? value.state !== "captured" || !value.root || !value.creatorOwner : value.state !== "prepared" || value.root !== undefined) return poison(8);
+          requireWindowsCommandCreatorTree(selected.creatorProfile!, ownerRecord); value.state = "revoking";
+          const removed: Node[] = [];
+          for (const node of [...nodes]) if (node !== root && detached(node)) {
+            if (!completion.rootPresent || !value.known.has(node.identity.id)) return poison(5);
+            removed.push(node);
+          }
+          const current = await walk(false), transfers = new Set<bigint>();
+          for (const node of current) {
+            const known = value.known.get(node.identity.id);
+            if (known && (known.volume !== node.identity.volume || known.kind !== node.kind || known.created !== node.identity.created)) return poison(5);
+            if (!known && (!completion.rootPresent || !value.creatorOwner || !node.relative || node.acl !== "inherited")) return poison(7);
+            const observedOwner = security(node, node.acl, false, !known);
+            if (!known && observedOwner !== owner) transfers.add(node.raw);
+            await tick(false);
+          }
+          for (const node of removed) { if (!detached(node)) return poison(5); await tick(false); }
+          // No security mutation precedes the complete known-ID/creator-owner/inherited-ACL preflight above.
+          for (const node of current) { setAcl(node, false, transfers.has(node.raw)); await tick(false); }
+          const sealed = new Map(current.map(node => [node.identity.id, { ...node.identity }])), final = await walk(false);
+          if (final.length !== sealed.size) return poison(5);
+          for (const node of final) { const before = sealed.get(node.identity.id); if (!before || !same(before, node.identity, true)) return poison(5); security(node, "private"); await tick(false); }
+          const live = new Set(final.map(node => node.raw));
+          for (const node of [...nodes]) if (!live.has(node.raw)) {
+            if (!removed.includes(node) || !detached(node)) return poison(5);
+            closeRaw(node.raw); nodes.delete(node); await tick(false);
+          }
+          phase = "private"; packageSid = undefined; value.state = "done"; creator = undefined; checkRoot();
+        } catch { if (terminal || fence.failure) throw terminal ?? fence.failure; return poison(8); }
+        finally { end(); }
+      },
       async snapshot(check) {
         begin(false, 8); const result: CodingExportEntry[] = []; try {
-          if (phase !== "private" || check !== undefined && typeof check !== "function") throw boundary(); const admit = guard(check); admit(); const current = await walk(admit); await retireOldPins(current, admit);
+          if (phase !== "private" || creator || check !== undefined && typeof check !== "function") throw boundary(); const admit = guard(check); admit(); const current = await walk(admit); await retireOldPins(current, admit);
           for (const node of current) {
             admit(); security(node, "private"); if (!node.relative) continue;
             if (node.kind === "directory") result.push({ path: node.relative, kind: "directory" });
@@ -435,13 +543,15 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       async close() {
         if (closed) return;
         begin(false, 9); try {
-          if (phase !== "private") return poison(); await releaseDeleted(false); const current = await walk(false); for (const node of current) { security(node, "private"); await tick(false); }
+          if (phase !== "private" || creator) return poison(); await releaseDeleted(false); const current = await walk(false); for (const node of current) { security(node, "private"); await tick(false); }
           await retireOldPins(current, false);
           for (const node of current.slice().reverse()) {
             const before = metadata(node), raw = acquire(node.parent?.raw ?? parent.raw, node.name, node.kind, DELETE | 0x1200a0, 7); if (!same(before, info(raw), true)) return poison(5); security(node, "private");
             const disposition = Buffer.alloc(4), io = Buffer.alloc(16); disposition.writeUInt32LE(1); nt("NtSetInformationFile", [raw, io, disposition, disposition.length, 64]); closeRaw(raw); closeRaw(node.raw); nodes.delete(node); if (node === root) verifyRoot = () => {}; await tick(false);
           }
-          for (const node of [...nodes]) { closeRaw(node.raw); nodes.delete(node); await tick(false); } for (const p of pins.slice().reverse()) { if (!same(p.identity, info(p.raw))) return poison(5); closeRaw(p.raw); await tick(false); } closed = true; peers.delete(ownerRecord);
+          for (const node of [...nodes]) { closeRaw(node.raw); nodes.delete(node); await tick(false); } for (const p of pins.slice().reverse()) { if (!same(p.identity, info(p.raw))) return poison(5); closeRaw(p.raw); await tick(false); }
+          if (profileBound) { releaseWindowsCommandCreatorTree(selected.creatorProfile!, ownerRecord); profileBound = false; }
+          closed = true; peers.delete(ownerRecord);
         } finally { end(); }
       },
     };
@@ -463,6 +573,7 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       }
       closeRaw(made.creator); await tick(true);
     }
+    if (selected.creatorProfile !== undefined) { bindWindowsCommandCreatorTree(selected.creatorProfile, ownerRecord); profileBound = true; }
     return tree;
     } catch (error) {
       if (terminal) throw terminal;
