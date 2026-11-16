@@ -154,7 +154,7 @@ export async function runWindowsChildProcessPolicyProbe(input: { parent: string;
       hostBirthFlags === undefined || input.caseId !== 8 && (!hostReport || hostReport.status !== 1 || hostReport.controls !== 15)) throw new Error("The ordinary host supplied no complete fixed policy control.");
     if (input.caseId === 0 && (!hostReport || hostReport.plain.created !== 1 || hostReport.override.created !== 1)) throw new Error("The ordinary direct-create and attribute-route controls did not succeed.");
     owned(() => ownedIo.acceptHostControl()); phase = "lpac";
-    const launched = await prepared.launch(); if (!lpacProcess || launched !== lpacProcess.pid || lpacBirthFlags === undefined) throw new Error("The child-process policy root PID differs from its exact suspended handle.");
+    const launched = await prepared.launch(argumentsFor); if (!lpacProcess || launched !== lpacProcess.pid || lpacBirthFlags === undefined) throw new Error("The child-process policy root PID differs from its exact suspended handle.");
     const stopped = await readWindowsChildProcessPolicyAfterStopped({
       waitRootExited: () => prepared.waitRootExited(20_000), waitStopped: () => prepared.waitStopped(15_000),
       exitCode: () => prepared.exitCode(), read() { phase = "stopped-report"; return input.caseId === 8 ? null : readReport(1); },

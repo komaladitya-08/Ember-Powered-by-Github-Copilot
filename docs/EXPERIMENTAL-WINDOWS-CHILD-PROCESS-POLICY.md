@@ -38,7 +38,34 @@ The separate repository-source issuer and build receipt bind the three fixed com
 
 ## Evidence and limits
 
-Local portable contracts cover the decoder, clean environment, exact birth attribute, policy query fencing, two-process job limits and lifecycle. A Linux-only mock compiles the actual C ownership helpers and injects faults; it establishes helper logic, not Windows ABI or policy behavior. Actual Windows Server 2022/2025 runs remain pending frozen review; no native dispatch has occurred.
+Local portable contracts cover the decoder, clean environment, exact birth attribute, policy query fencing, two-process job limits and lifecycle. A Linux-only mock compiles the actual C ownership helpers and injects faults; it establishes helper logic, not Windows ABI or policy behavior.
+
+The [first policy run 43867362868](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43867362868),
+at source head `3d22d86cc9544925a5ef24cdaf106875ab3064d7` and actual merge compile commit
+`13831cb7fc47966af17e60d582ed2d0b9126dd27`, passed all ten Linux C logic tests. Each Windows Server 2022/2025 job
+passed 324 portable tests, skipped the ten Linux-only shim tests and successfully built its fixed C image.
+Each native suite passed case 0 and failed its other eight cases; this is not a successful policy matrix.
+
+Case 0 established the same finite facts on both images. The ordinary host successfully created and attested
+both the plain and child-override fixed leaf, resumed each once, observed exit 0 and closed its handles. Its root
+had observed child-policy flags 0. Zero-capability LPAC also had flags 0, but both plain and override child calls
+returned error 5 without a created child. Both roots exited 0 with private-job zero, complete controls mask 15,
+unchanged canary and no native output. LPAC canary and privileged parent-handle requests were denied with error 5.
+These LPAC direct-create observations have no established policy cause.
+
+The broker-created leaf case 8 failed first, during the LPAC launch phase. Source inspection found a harness
+argument mismatch: its prelaunch check required the already fixed `--leaf` argument, while the main proof called
+the canonical fixture's launch method with its default empty argument list. Thus this case did not establish
+leaf compatibility. Case 1 subsequently terminalized with cleanup unverified, and cases 2–7 were quarantined;
+no completed restricted-policy report was published. The logs do not expose case 1's initial native operation,
+so restriction enforcement, self-setter behavior and its failure cause remain unknown.
+
+The surgical follow-up forwards the existing fixed argument selection to that same canonical launch method.
+It changes no C program, API, mitigation, capability, cleanup or command-validation guard. A nine-case regression
+invokes the actual main proof through synthetic platform/file/native boundaries and intercepts the launch call:
+case 8 carries only `--leaf`, while cases 0–7 carry no arguments. Restoring the old call fails exactly case 8.
+All 343 affected portable contracts pass locally. These synthetic results are not Windows execution; the repaired
+native cases remain pending the reviewed follow-up run.
 
 Primary sources:
 
