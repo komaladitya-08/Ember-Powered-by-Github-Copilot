@@ -166,6 +166,12 @@ asset to unchanged discovery and asserts that exact selection; the composed repa
 passes locally. Required isolation failures fail this fixture instead of being skipped. Native and product deadlines
 are unchanged. The other failure involved a delayed navigation resize notification after a manual scroll.
 
+The navigation row now remembers the layout it already positioned. A delayed resize notification for that same
+layout does not move a row the person subsequently scrolled; genuine badge, font, link and row size changes still
+bring the selected pane into view. A regression holding actual native resize deliveries reproduces the exact
+955-pixel jump with the previous renderer and passes with the repair. All 54 Home pane cases pass locally, including
+the original narrow-row assertion and the badge-growth case; no assertion or timeout was weakened.
+
 Final check results are recorded with the follow-up commit/PR. The real runtime tests intentionally include successful
 reproductions of unsafe isolation behavior; a green result there means the probe behaved as expected, not that native
 coding is safe. Synthetic audio, mock providers and Chromium with a fake preload do not certify physical desktop I/O.
