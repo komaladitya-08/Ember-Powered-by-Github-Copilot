@@ -75,6 +75,21 @@ filtering history or disabled privileges. FALSE is accepted only with immediate 
 that thread-local diagnostic value; a nonzero error or invalid native BOOL still refuses. The one-byte query format
 is never accepted or interpreted. No token, policy, ACL or privilege is changed. Actual token and C facts remain pending.
 
+Run [43813233759](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43813233759)
+at `48fab2c6ea79731fe74cd73cdd92ccc01b01658c` produced the same stopped facts for both variants on both images:
+parent integrity RID 12288 (High), host RID 4096 (Low), equal users, neither token in AppContainer and neither
+containing restricting SIDs. The C current-directory query succeeded and matched work, but both ordinary attributes
+and the attributes-only handle open were denied. Each image passed 400 portable contracts with one privilege skip.
+No report or LPAC launch occurred. Microsoft's [MIC process-creation contract](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control)
+explains why the deliberately LOW-labelled fixture executable lowered the host control's integrity. These facts do
+not identify the precise directory access-denial cause.
+
+The independent host control now executes the original verified build asset, held read-only under the same exact
+receipt/hash and pinned ancestry. Exact PID/image checks follow that original path; the LPAC launch still uses only
+its separately checked LOW-labelled fixture copy. The host must complete every useful operation, stop its private
+job and match the parent's observed user, integrity and restricting-SID facts before LPAC admission. No LPAC label,
+ACL, capability, stdio handle or C operation changed. Native useful-work outcomes for this control correction remain pending.
+
 The official Node experiment identified `WSAStartup / 10107` on both pinned versions and both Windows Server images,
 with successful ordinary-host controls. See [the bounded native receipts](WINDOWS-NODE-LPAC-PROOF.md).
 The immediate question is whether a few useful local libuv operations can run in the same capability-free LPAC

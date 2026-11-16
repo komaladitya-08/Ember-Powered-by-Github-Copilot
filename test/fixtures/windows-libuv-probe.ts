@@ -177,7 +177,9 @@ export async function runWindowsLibuvFixedProbe(input: { parent: string; buildRo
     io = loadWindowsNodeIo(fixture.paths.state, profile, api);
     const prepared = fixture, ownedIo = io;
     phase = "host";
-    const host = await runWindowsNodeHostStartup({ program, command: windowsNodeProofCommand(program, []), cwd: prepared.paths.work, environment,
+    // The LPAC copy is deliberately LOW-labelled. The independent ordinary-host control uses the same verified
+    // bytes at their pinned original build path so that staging does not lower the control's token integrity.
+    const host = await runWindowsNodeHostStartup({ program: assetPath, command: windowsNodeProofCommand(assetPath, []), cwd: prepared.paths.work, environment,
       unchanged: checkPins }, api, {
       create(...args) { phase = "host-create"; const created = ownedIo.createHost(...args); phase = "host-created"; return created; },
       verify(created, expected) {
@@ -192,7 +194,10 @@ export async function runWindowsLibuvFixedProbe(input: { parent: string; buildRo
     const hostReport = readReport(0);
     hostReportFact = hostReport; hostReportState = hostReport ? "valid" : "absent";
     phase = "host-outcome";
-    if (host.exitCode !== 0 || !hostIdentity || !hostReport || hostReport.status !== 1) throw new Error("The fixed libuv host supplied no complete useful-work witness.");
+    if (host.exitCode !== 0 || !hostIdentity || !hostIdentity.sameUser ||
+        hostIdentity.parent.integrityRid !== hostIdentity.host.integrityRid ||
+        hostIdentity.parent.hasRestrictingSids !== hostIdentity.host.hasRestrictingSids ||
+        !hostReport || hostReport.status !== 1) throw new Error("The fixed libuv host supplied no complete ordinary-context useful-work witness.");
     phase = "host-stdio"; ownedIo.acceptHostControl();
     // The same suspended handle is checked for exact image/PID before the fixture can resume it.
     phase = "lpac";

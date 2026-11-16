@@ -45,6 +45,10 @@ describe.skipIf(process.platform !== "win32" || process.env.EMBER_LPAC_LIBUV_PRO
     it(`runs all fixed useful operations in the separate ${variant} ordinary-host control`, async () => {
       const result = await outcome(variant);
       expect(result.host.exitCode).toBe(0); expect(result.host.jobStopped).toBe(true);
+      expect(result.host.identity.sameUser).toBe(true);
+      expect(result.host.identity.parent.appContainer).toBe(0); expect(result.host.identity.host.appContainer).toBe(0);
+      expect(result.host.identity.host.integrityRid).toBe(result.host.identity.parent.integrityRid);
+      expect(result.host.identity.host.hasRestrictingSids).toBe(result.host.identity.parent.hasRestrictingSids);
       expect(result.host.report).toMatchObject({ token: 0, stage: 10, status: 1, features: 63, cleanup: 15 });
     }, 90_000);
   }
