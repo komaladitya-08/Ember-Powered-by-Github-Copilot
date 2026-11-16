@@ -41,9 +41,9 @@ it.skipIf(!available && !required)("edits copied Windows projects through real E
   expect(locateRuntime({ appPath: appRoot, runtimeId: runtime.id, exe: runtime.exe }).exists, "The pinned Windows controller runtime is required").toBe(true);
 
   // Vitest removes its run-temp regardless of native cleanup status. Quarantine the entire app/profile/temp beside it.
-  const runTemporary = fs.realpathSync(os.tmpdir());
+  const runTemporary = fs.realpathSync.native(os.tmpdir());
   const temporaryBase = path.basename(runTemporary).startsWith("ember-run-") ? path.dirname(runTemporary) : runTemporary;
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(temporaryBase, "ember-windows-coding-electron-")));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(temporaryBase, "ember-windows-coding-electron-")));
   const userData = path.join(root, "profile"), source = path.join(root, "source"), exported = path.join(root, "exported"), temporary = path.join(root, "temporary");
   for (const directory of [userData, source, exported, temporary, path.join(source, ".git"), path.join(source, "node_modules")]) fs.mkdirSync(directory);
   fs.writeFileSync(path.join(source, "app.ts"), original);
