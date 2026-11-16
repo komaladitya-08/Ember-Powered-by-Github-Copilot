@@ -2,10 +2,10 @@
 import fs from "node:fs";
 import { expect, it } from "vitest";
 // @ts-expect-error -- host-only JavaScript recipe and numeric observation boundary
-import { windowsNodePosixRenameAbiObservation, windowsNodePosixRenameAbiBatch, windowsNodePosixSourceCliArguments, windowsNodePosixRenameAbiInvocation, parseWindowsNodePosixSourceBuildReceipt } from "../../scripts/experimental/build-windows-node-posix-source.mjs";
+import { windowsNodePosixRenameAbiObservation, windowsNodePosixRenameAbiSourceContext, windowsNodePosixRenameAbiBatch, windowsNodePosixSourceCliArguments, windowsNodePosixRenameAbiInvocation, parseWindowsNodePosixSourceBuildReceipt } from "../../scripts/experimental/build-windows-node-posix-source.mjs";
 
 const phases = [1, 2, 3].map(value => `EMBER_NODE_POSIX_ABI_PHASE=${value}`);
-const empty = { schema: 1, target: 1, phase: 0, exitCode: null, compilerCodes: [], overflow: 0, unknownLines: 0 };
+const empty = { schema: 1, target: 1, phase: 0, exitCode: null, compilerCodes: [], overflow: 0, unknownLines: 0, sites: [], siteOverflow: 0 };
 it.each([0, 1, 2, 3])("observes exact ordered whole stdout phase lines through %i", phase => {
   const value = windowsNodePosixRenameAbiObservation(1, { status: 1, stdout: phases.slice(0, phase).join("\r\n"), stderr: "" });
   expect(value).toEqual({ ...empty, phase, exitCode: 1 });
@@ -77,4 +77,41 @@ it.each([null, 1, {}, "D:\\bad&command.cmd", "D:\\bad%PATH%.cmd", "D:\\bad!value
     paths[index] = value;
     expect(() => windowsNodePosixRenameAbiInvocation(paths[0], paths[1], {}, paths[2])).toThrow();
   }
+});
+
+const sourceInputs = { source: "D:\\fresh\\rename-abi.c", adapter: "D:\\fresh\\node-posix-adapter.inc", working: "D:\\source\\working", sdkInclude: "C:\\SDK\\Include\\10.0.26100.0", vcInclude: "C:\\VC\\include" };
+const observeSite = (text: string, context: unknown = windowsNodePosixRenameAbiSourceContext(sourceInputs)) => windowsNodePosixRenameAbiObservation(2, { status: 1, stderr: text }, context);
+it.each([[sourceInputs.source, 1], [sourceInputs.adapter, 2], ["D:\\source\\working\\deps\\uv\\include\\uv.h", 3], ["D:\\source\\working\\deps\\uv\\src\\uv-common.h", 5], ["C:\\SDK\\Include\\10.0.26100.0\\um\\WinBase.h", 8], ["C:\\SDK\\Include\\10.0.26100.0\\ucrt\\assert.h", 10]])("maps only exact known source %s to finite class %i", (file, sourceClass) => {
+  const observed = observeSite(`${String(file).toUpperCase()}(24,7): warning C5287: private operands`);
+  expect(observed.sites).toEqual([{ sourceClass, line: 24, column: 7, code: 5287 }]);
+  expect(Object.isFrozen(observed.sites)).toBe(true); expect(Object.isFrozen(observed.sites[0])).toBe(true);
+  expect(JSON.stringify(observed)).not.toMatch(/private|fresh|working|SDK|WinBase|operands|D:/);
+});
+it.each(["C:\\private\\rename-abi.c", "D:\\fresh-other\\rename-abi.c", "rename-abi.c", "D:\\private\\..\\fresh\\rename-abi.c", "D:\\fresh\\rename-abi.c:stream", "C:\\SDK\\Include\\other-version\\um\\WinBase.h"])("does not recover a known suffix from foreign source %s", file => {
+  expect(observeSite(`${file}(24,7): warning C5287: private`).sites).toEqual([{ sourceClass: 0, code: 5287 }]);
+});
+it.each(["0", "65536", "-1", "1.5", "9999999", "1,0", "1,65536", "1,-1"])("omits invalid or unbounded line/column %s", position => {
+  expect(observeSite(`${sourceInputs.source}(${position}): warning C5287: private`).sites).toEqual([{ sourceClass: 0, code: 5287 }]);
+});
+it("accepts bounded positive locations, deduplicates and caps sorted site facts", () => {
+  const text = Array.from({ length: 11 }, (_, index) => `${sourceInputs.source}(${11-index}): warning C5287: private`).join("\n");
+  const observed = observeSite(text + `\n${sourceInputs.source}(1): warning C5287: private`);
+  expect(observed.sites).toEqual(Array.from({ length: 8 }, (_, index) => ({ sourceClass: 1, line: index + 1, code: 5287 })));
+  expect(observed.siteOverflow).toBe(3);
+  expect(observeSite(`${sourceInputs.source}(65535,65535): error C2220: private`).sites).toEqual([{ sourceClass: 1, line: 65535, column: 65535, code: 2220 }]);
+});
+it("requires a privately minted context and snapshots its input values", () => {
+  const input = { ...sourceInputs }, context = windowsNodePosixRenameAbiSourceContext(input); input.source = "D:\\other\\rename-abi.c";
+  expect(Object.isFrozen(context)).toBe(true); expect(Object.keys(context)).toEqual([]);
+  expect(observeSite(`${sourceInputs.source}(9): warning C5287: private`, context).sites).toEqual([{ sourceClass: 1, line: 9, code: 5287 }]);
+  for (const value of [{}, { source: sourceInputs.source }, new Proxy({}, { get() { throw new Error("private getter"); } })]) expect(observeSite(`${sourceInputs.source}(9): warning C5287: private`, value).sites).toEqual([]);
+  const other = windowsNodePosixRenameAbiSourceContext({ ...sourceInputs, source: "D:\\other\\rename-abi.c", adapter: "D:\\other\\node-posix-adapter.inc" });
+  expect(observeSite(`${sourceInputs.source}(9): warning C5287: private`, other).sites).toEqual([{ sourceClass: 0, code: 5287 }]);
+});
+it("refuses source-context getters, arbitrary filenames and mismatched copied parents", () => {
+  for (const input of [{ ...sourceInputs, get source() { throw new Error("private getter"); } }, { ...sourceInputs, source: "D:\\fresh\\private.txt" }, { ...sourceInputs, adapter: "D:\\other\\node-posix-adapter.inc" }]) expect(() => windowsNodePosixRenameAbiSourceContext(input)).toThrow("exact source, recipe or issuer");
+});
+
+it.each(["d:/fresh/rename-abi.c", "d:\\fresh/rename-abi.c"])("normalises only full known source spelling %s", file => {
+  expect(observeSite(`${file}(9): warning C5287: private`).sites).toEqual([{ sourceClass: 1, line: 9, code: 5287 }]);
 });

@@ -81,8 +81,36 @@ export function validateWindowsNodePosixRenameAbiReceipt(value) {
 }
 /** Read only own data fields from child results; compiler text is never public output. */
 const own = (value, key) => { try { return value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, key)?.value : undefined; } catch { return undefined; } };
-export function windowsNodePosixRenameAbiObservation(target, result) {
-  let phase = 0, unknownLines = 0; const codes = new Set();
+const abiSourceContexts = new WeakMap();
+/** Private diagnostic context only; these path identities do not admit files, assets or execution. */
+export function windowsNodePosixRenameAbiSourceContext(value) {
+  try {
+    if (!strict(value, ["source", "adapter", "working", "sdkInclude", "vcInclude"])) fail();
+    const inputs = Object.fromEntries(["source", "adapter", "working", "sdkInclude", "vcInclude"].map(key => [key, ordinary(own(value, key))]));
+    if (path.win32.basename(inputs.source) !== "rename-abi.c" || path.win32.basename(inputs.adapter) !== "node-posix-adapter.inc" || path.win32.dirname(inputs.source) !== path.win32.dirname(inputs.adapter)) fail();
+    const records = [[1, inputs.source], [2, inputs.adapter]], uv = path.win32.join(inputs.working, "deps", "uv");
+    for (const [sourceClass, relative] of [[3, "include/uv.h"], [4, "include/uv/win.h"], [5, "src/uv-common.h"], [17, "include/uv/tree.h"], [18, "src/queue.h"], [19, "src/strscpy.h"]]) records.push([sourceClass, path.win32.join(uv, ...relative.split("/"))]);
+    for (const [sourceClass, relative] of [[6, "um/fileapi.h"], [7, "um/minwinbase.h"], [8, "um/WinBase.h"], [9, "um/winnt.h"], [10, "ucrt/assert.h"], [11, "shared/basetsd.h"], [12, "um/winsock2.h"], [13, "shared/ws2def.h"], [14, "um/mswsock.h"], [15, "um/ws2tcpip.h"], [16, "shared/ws2ipdef.h"], [20, "ucrt/corecrt.h"], [22, "shared/sdkddkver.h"], [23, "ucrt/stdio.h"], [24, "ucrt/math.h"]]) records.push([sourceClass, path.win32.join(inputs.sdkInclude, ...relative.split("/"))]);
+    for (const [sourceClass, name] of [[21, "vcruntime.h"], [25, "stdint.h"], [26, "stddef.h"]]) records.push([sourceClass, path.win32.join(inputs.vcInclude, name)]);
+    const context = Object.freeze({}); abiSourceContexts.set(context, new Map(records.map(([sourceClass, file]) => [ordinary(file).toLowerCase(), sourceClass]))); return context;
+  } catch { fail(); }
+}
+function abiCompilerSite(line, code, sources) {
+  if (!sources) return undefined;
+  const match = /^(.+?)\(([1-9][0-9]{0,5})(?:,([1-9][0-9]{0,5}))?\) *: *(?:fatal error|error|warning) C([1-9][0-9]{3}):/.exec(line);
+  if (!match || Number(match[4]) !== code) return { sourceClass: 0, code };
+  let sourceClass;
+  try {
+    const spelling = match[1].replaceAll("/", "\\");
+    if (spelling.split("\\").some(part => part === "." || part === "..")) return { sourceClass: 0, code };
+    sourceClass = sources.get(ordinary(path.win32.normalize(spelling)).toLowerCase());
+  } catch { return { sourceClass: 0, code }; }
+  const location = Number(match[2]), column = match[3] === undefined ? undefined : Number(match[3]);
+  if (!sourceClass || location > 65_535 || column !== undefined && column > 65_535) return { sourceClass: 0, code };
+  return { sourceClass, line: location, ...(column === undefined ? {} : { column }), code };
+}
+export function windowsNodePosixRenameAbiObservation(target, result, context) {
+  let phase = 0, unknownLines = 0; const codes = new Set(), sites = new Map(), sources = abiSourceContexts.get(context);
   for (const key of ["stdout", "stderr"]) {
     const value = own(result, key); let text;
     try {
@@ -96,17 +124,21 @@ export function windowsNodePosixRenameAbiObservation(target, result) {
       const marker = /^EMBER_NODE_POSIX_ABI_PHASE=([123])$/.exec(line);
       if (key === "stdout" && marker && Number(marker[1]) === phase + 1) { phase++; continue; }
       const diagnostic = /\b(?:fatal error|error|warning) C([1-9][0-9]{3}):/.exec(line);
-      if (diagnostic) codes.add(Number(diagnostic[1])); else unknownLines++;
+      if (diagnostic) {
+        const code = Number(diagnostic[1]); codes.add(code); const site = abiCompilerSite(line, code, sources);
+        if (site) sites.set(`${site.sourceClass}:${site.line ?? 0}:${site.column ?? 0}:${code}`, site);
+      } else unknownLines++;
     }
   }
-  const status = own(result, "status"), sorted = [...codes].sort((a, b) => a - b);
+  const status = own(result, "status"), sorted = [...codes].sort((a, b) => a - b), locations = [...sites.values()].sort((a, b) => a.sourceClass - b.sourceClass || (a.line ?? 0) - (b.line ?? 0) || (a.column ?? 0) - (b.column ?? 0) || a.code - b.code);
   return freeze({ schema: 1, target: target === 1 || target === 2 ? target : 0, phase,
     exitCode: Number.isInteger(status) && status >= 0 && status <= 0xffffffff ? status : null,
-    compilerCodes: sorted.slice(0, 8), overflow: Math.min(65_535, Math.max(0, sorted.length - 8)), unknownLines: Math.min(65_535, unknownLines) });
+    compilerCodes: sorted.slice(0, 8), overflow: Math.min(65_535, Math.max(0, sorted.length - 8)), unknownLines: Math.min(65_535, unknownLines),
+    sites: locations.slice(0, 8), siteOverflow: Math.min(65_535, Math.max(0, locations.length - 8)) });
 }
 let renameAbiObservation;
-function abiRefusal(target, failurePhase, result) {
-  if (!renameAbiObservation) renameAbiObservation = freeze({ ...windowsNodePosixRenameAbiObservation(target, result), failurePhase });
+function abiRefusal(target, failurePhase, result, context) {
+  if (!renameAbiObservation) renameAbiObservation = freeze({ ...windowsNodePosixRenameAbiObservation(target, result, context), failurePhase });
   fail();
 }
 /** Fixed compiler commands only; neither target changes a production compiler/header selector. */
@@ -135,13 +167,17 @@ function compileWindowsNodePosixRenameAbi(destination, working, tools, env) {
   if (!sourcePinEntry || hash(sourceBytes) !== sourcePinEntry.sha256) fail();
   const source = path.join(directory, "rename-abi.c"), adapter = path.join(directory, "node-posix-adapter.inc"), adapterBytes = Buffer.from(sourcePin.patches[3].replacement);
   fs.writeFileSync(source, sourceBytes, { flag: "wx" }); fs.writeFileSync(adapter, adapterBytes, { flag: "wx" });
+  let sourceContext;
+  try { sourceContext = windowsNodePosixRenameAbiSourceContext({ source, adapter, working,
+    sdkInclude: path.win32.join(env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Windows Kits", "10", "Include", buildPin.sdk),
+    vcInclude: path.win32.resolve(path.win32.dirname(tools.compiler), "..", "..", "..", "include") }); } catch { /* Diagnostic projection cannot change preflight acceptance. */ }
   const objects = [path.join(directory, "win8.obj"), path.join(directory, "win10-rs1.obj")], targets = [];
   for (let index = 0; index < 2; index++) {
     const batch = path.join(directory, `compile-abi-${index + 1}.cmd`);
     fs.writeFileSync(batch, windowsNodePosixRenameAbiBatch({ vcvars: tools.vcvars, compiler: tools.compiler, working, source, include: directory, object0: objects[0], object1: objects[1] }, index + 1), { flag: "wx" });
     const command = windowsNodePosixRenameAbiInvocation(env.ComSpec, batch, env, directory);
     try { execFileSync(command.program, command.args, command.options); }
-    catch (error) { abiRefusal(index + 1, 1, error); }
+    catch (error) { abiRefusal(index + 1, 1, error, sourceContext); }
     let bytes;
     try { bytes = inputBytes(objects[index], 1024 * 1024); } catch { abiRefusal(index + 1, 2); }
     if (bytes.length < 20 || bytes.readUInt16LE(0) !== 0x8664 || bytes.readUInt16LE(2) < 1 || bytes.readUInt16LE(2) > 96 || bytes.readUInt16LE(16) !== 0) abiRefusal(index + 1, 2);

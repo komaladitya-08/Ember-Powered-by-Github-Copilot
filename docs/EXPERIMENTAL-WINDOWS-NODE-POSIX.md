@@ -220,3 +220,48 @@ by the explicit test-name filter). Scoped lint, Root/independent review and norm
 full `npm run typecheck` passed (session `79520`).
 
 - [Microsoft C5287 table](https://learn.microsoft.com/en-us/cpp/error-messages/compiler-warnings/compiler-warnings-c5200-through-c5399)
+
+## Exact-site observation before further correction
+
+The sole enum-correction ABI-only run `43979412098` at
+`20af8be21412da73161db663212e26ac8d38ee7b` again refused target 2 at phase 2,
+child exit 1, C2220/C5287, overflow 0 and unknown lines 7. Linux contracts passed
+208; Windows passed 177 with 31 expected skips. The prior assertion location
+was only a candidate: its casts did not clear the observed warning. Target 1
+again passed compilation and fresh COFF checks by loop control flow; no complete
+ABI gate or Node build was accepted. No additional cast or warning workaround is
+being inferred from the repeated code.
+
+The next observation adds at most eight deeply frozen numeric site facts from
+the same already-captured, bounded private output. Source paths never leave the
+parser. A private context snapshots actual copied fixture/adapter paths and a
+literal public-header allowlist under the already-selected working, SDK and VC
+include roots. Only full normalised Windows path equality, case-insensitive, can
+name a known class; relative paths, traversal, ADS and foreign basename/suffix
+lookalikes remain unknown. Lines/columns must be positive and at most 65,535.
+Unknown class 0 omits location, avoiding private-line projection. Context and
+location failures cannot change preflight acceptance or the original refusal.
+There are no new file/native queries, header/flag/source/receipt relaxations or
+raw messages. `sites` is diagnostic only; `siteOverflow` counts omitted unique
+site facts within its fixed bound. A forged or absent context yields no sites.
+
+The closed source-class map is:
+
+| Class | Public source |
+| --- | --- |
+| 0 | Unknown; no filename or location emitted |
+| 1–2 | Copied rename-abi.c / node-posix-adapter.inc |
+| 3–5 | libuv include/uv.h / include/uv/win.h / src/uv-common.h |
+| 6–10 | SDK um/fileapi.h / minwinbase.h / WinBase.h / winnt.h; ucrt/assert.h |
+| 11–16 | SDK shared/basetsd.h; um/winsock2.h; shared/ws2def.h; um/mswsock.h; um/ws2tcpip.h; shared/ws2ipdef.h |
+| 17–19 | libuv include/uv/tree.h / src/queue.h / src/strscpy.h |
+| 20–21 | SDK ucrt/corecrt.h; VC include/vcruntime.h |
+| 22–24 | SDK shared/sdkddkver.h; ucrt/stdio.h / ucrt/math.h |
+| 25–26 | VC include/stdint.h / stddef.h |
+
+These IDs describe public input locations under trusted hosted toolchain
+provenance, not independent SDK binary authentication or execution authority.
+The next diagnostic-only ABI outcome remains pending. All 351 composed contracts
+(233 new producer and 118 unchanged producer cases), scoped lint, syntax and
+Root/independent review pass. Normal full `npm run typecheck` passed (session
+`15554`).
