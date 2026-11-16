@@ -1,4 +1,5 @@
 /** Per-invocation, privately branded build checkpoints. Foreign errors contribute no properties or text to diagnostics. */
+import { powerShellProcessDiagnostic } from "./windows-uv-spawn-powershell.mjs";
 export const uvSpawnBuildCheckpoints = Object.freeze({
   unknown: 0, input: 1, setup: 2, python: 3, source: 4, visualStudio: 5, tools: 6, versions: 7, sourceBefore: 8,
   configure: 9, compilerSelection: 10, generatedProject: 11, msbuild: 12, sourceAfter: 13, postValidation: 14,
@@ -14,7 +15,8 @@ const brand = error => error !== null && (typeof error === "object" || typeof er
 const freeze = value => { if (value && typeof value === "object") { for (const item of Object.values(value)) freeze(item); Object.freeze(value); } return value; };
 const emptyTools = () => Array.from({ length: 6 }, (_, index) => ({ toolId: index + 1, state: 0, components: [] }));
 const output = record => Object.freeze({ schema: 1, status: "failed", checkpoint: record?.checkpoint ?? uvSpawnBuildCheckpoints.unknown,
-  ...(record?.checkpoint === uvSpawnBuildCheckpoints.versions ? { versionDiagnostic: record.versionDiagnostic } : {}) });
+  ...(record?.checkpoint === uvSpawnBuildCheckpoints.versions ? { versionDiagnostic: record.versionDiagnostic,
+    ...(record.powerShellDiagnostic ? { powerShellDiagnostic: record.powerShellDiagnostic } : {}) } : {}) });
 
 function projectedVersion(toolId, value) {
   if (typeof value !== "string" || value.length > 64) return { toolId, state: 2, components: [] };
@@ -28,14 +30,14 @@ export function classifyUvSpawnBuildFailure(error) { return output(brand(error))
 /** The first failure belongs to this invocation; a different invocation's branded error is foreign input here. */
 export function createUvSpawnBuildDiagnostic() {
   const owner = Symbol("fixed-build-invocation");
-  let current = uvSpawnBuildCheckpoints.unknown, subcheckpoint = uvSpawnVersionSubcheckpoints.unknown, tools = emptyTools(), first;
+  let current = uvSpawnBuildCheckpoints.unknown, subcheckpoint = uvSpawnVersionSubcheckpoints.unknown, tools = emptyTools(), powerShellDiagnostic, first;
   return Object.freeze({
     checkpoint(code) {
       if (!Number.isInteger(code) || code < uvSpawnBuildCheckpoints.unknown || code > uvSpawnBuildCheckpoints.receipt) {
         throw new Error("The fixed build checkpoint was refused.");
       }
       current = code;
-      subcheckpoint = uvSpawnVersionSubcheckpoints.unknown; tools = emptyTools();
+      subcheckpoint = uvSpawnVersionSubcheckpoints.unknown; tools = emptyTools(); powerShellDiagnostic = undefined;
     },
     subcheckpoint(code) {
       if (current !== uvSpawnBuildCheckpoints.versions || !Number.isInteger(code) || code < uvSpawnVersionSubcheckpoints.unknown || code > uvSpawnVersionSubcheckpoints.cmakePin) {
@@ -49,6 +51,12 @@ export function createUvSpawnBuildDiagnostic() {
       }
       tools[toolId - 1] = projectedVersion(toolId, value);
     },
+    observePowerShell(token) {
+      if (current !== uvSpawnBuildCheckpoints.versions || subcheckpoint !== uvSpawnVersionSubcheckpoints.powershellCall) {
+        throw new Error("The fixed PowerShell observation was refused.");
+      }
+      powerShellDiagnostic = powerShellProcessDiagnostic(token);
+    },
     failure(error) {
       if (first !== undefined) return first;
       const existing = brand(error);
@@ -57,7 +65,8 @@ export function createUvSpawnBuildDiagnostic() {
         first = new Error("The fixed uv_spawn build failed its closed checkpoint contract.");
         const versionDiagnostic = current === uvSpawnBuildCheckpoints.versions ? freeze({ schema: 1, subcheckpoint,
           tools: tools.map(item => ({ ...item, components: [...item.components] })) }) : undefined;
-        brands.set(first, Object.freeze({ owner, checkpoint: current, ...(versionDiagnostic ? { versionDiagnostic } : {}) }));
+        brands.set(first, Object.freeze({ owner, checkpoint: current, ...(versionDiagnostic ? { versionDiagnostic,
+          ...(powerShellDiagnostic ? { powerShellDiagnostic } : {}) } : {}) }));
       }
       return first;
     },

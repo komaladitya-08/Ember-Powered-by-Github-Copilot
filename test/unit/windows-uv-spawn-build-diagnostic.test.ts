@@ -10,7 +10,7 @@ import { windowsUvSpawnRecipe } from "../../scripts/experimental/build-windows-u
 type Tool = { toolId: number; state: number; components: number[] };
 type Failure = { schema: number; status: string; checkpoint: number; versionDiagnostic?: { schema: number; subcheckpoint: number; tools: Tool[] } };
 type Diagnostic = { checkpoint: (code: unknown) => void; subcheckpoint: (code: unknown) => void; observeVersion: (toolId: unknown, value: unknown) => void;
-  failure: (error?: unknown) => Error; classify: (error: unknown) => Failure };
+  observePowerShell: (token: unknown) => void; failure: (error?: unknown) => Error; classify: (error: unknown) => Failure };
 const create = (): Diagnostic => createUvSpawnBuildDiagnostic();
 const emptyTools = () => Array.from({ length: 6 }, (_, index) => ({ toolId: index + 1, state: 0, components: [] }));
 const closed = (checkpoint: number) => ({ schema: 1, status: "failed", checkpoint,
@@ -151,7 +151,7 @@ it("records distinct Phase7 call, JSON, shape and banner checkpoints before the 
   const body = text.slice(text.indexOf("diagnostic.checkpoint(checkpoints.versions);"), text.indexOf("diagnostic.checkpoint(checkpoints.sourceBefore);"));
   const markers = [...body.matchAll(/diagnostic\.subcheckpoint\(versionSteps\.([A-Za-z]+)\);/g)];
   expect(markers.map(item => item[1])).toEqual(Object.keys(versionSteps).slice(1, 8));
-  const anchors = ["const metadataOutput = captured(", "const metadata = JSON.parse(metadataOutput)", "if (!strict(metadata,", "const cmakeOutput = captured(",
+  const anchors = ["const powerShellCapture = captureWindowsUvSpawnPowerShell(", "const metadata = JSON.parse(metadataOutput)", "if (!strict(metadata,", "const cmakeOutput = captured(",
     "const cmakeVersion = cmakeOutput.split(", "const visualStudioVersion = captured(", "const msbuildVersion = captured("];
   markers.forEach((marker, index) => expect(body.slice(marker.index, markers[index + 1]?.index).includes(anchors[index])).toBe(true));
   expect(body).toContain("diagnostic.observeVersion(5, python.version)"); expect(body).toContain("diagnostic.observeVersion(6, cmakeVersion)");

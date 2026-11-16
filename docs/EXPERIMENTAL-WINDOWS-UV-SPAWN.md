@@ -139,6 +139,26 @@ The phase-7 follow-up passed 317 affected tests across eleven suites, scoped lin
 batch had one five-second deadline failure in the unchanged archive-refusal test; all seven source tests passed
 alone, then the fresh 317-test batch passed without changing the test, source helper or deadline.
 
+The third automatic run
+[43901518918](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43901518918), at head
+`1eecaaf3e3c28c460ee007bc945d834e05d04773`, passed 317 Linux tests and 295 Windows tests with 22 expected skips.
+Windows stopped at checkpoint 7/subcheckpoint 1, the PowerShell version process. Only the earlier Python attestation
+was observed as `[3,12,10]`; the other five tool slots remained unobserved. PowerShell supplied no accepted output,
+so JSON parsing, CMake and compilation were not reached. This is not an observed pin mismatch. No artifact or native
+result was produced; the process exit/spawn/timeout cause was not yet distinguished.
+
+The PowerShell-only outcome diagnostic replaces that one capture with one equivalent `spawnSync` invocation. Its
+program, arguments, clean environment, cwd, 30-second timeout, 65,536-byte buffer, UTF-8 encoding, hidden-window and
+private-pipe options stay unchanged. Only own data descriptors of the captured result's status, signal and error,
+and that captured error's code, can contribute to a closed numeric projection. Getter/trap/malformed results remain
+unknown failures; status zero with an extra error, any signal and nonzero status remain failures. No exception
+message, stack, path, stderr or output array is inspected. Success-only stdout stays in a private capture and reaches
+the existing parser through the same trim; it is never an enumerable result or diagnostic field. Only phase 7 may
+snapshot the owned numeric process outcome at its first failure. No extra invocation, retry, preflight, fallback,
+version-pin change or native execution is added.
+This follow-up passed 349 affected tests across twelve suites, scoped lint, final typecheck, syntax and YAML checks;
+the 120 focused capture/diagnostic/build cases include real fixed Node process faults, not a PowerShell or Windows run.
+
 Portable source, recipe, decoder, actual observer C-shim and native-owner fault tests are implemented. The Linux shim
 uses test-only Win32 declarations around the production observer; it is not Windows ABI, policy or native evidence.
 The initial frozen affected batch passed 263 tests across ten suites with no skips. Scoped ESLint, final `tsc --noEmit`,

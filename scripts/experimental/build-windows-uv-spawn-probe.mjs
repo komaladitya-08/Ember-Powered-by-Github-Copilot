@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { prepareWindowsUvSpawnSource, validateWindowsUvSpawnSource, sourcePin } from "./windows-uv-spawn-source.mjs";
 import { inspectWindowsUvSpawnEmission, parseWindowsUvSpawnEmission, emissionLimits } from "./windows-uv-spawn-emission.mjs";
 import { createUvSpawnBuildDiagnostic, classifyUvSpawnBuildFailure, uvSpawnBuildCheckpoints as checkpoints, uvSpawnVersionSubcheckpoints as versionSteps } from "./windows-uv-spawn-build-diagnostic.mjs";
+import { captureWindowsUvSpawnPowerShell, acceptedPowerShellStdout } from "./windows-uv-spawn-powershell.mjs";
 export { sourcePin };
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const freeze = value => { if (value && typeof value === "object") { for (const item of Object.values(value)) freeze(item); Object.freeze(value); } return value; };
@@ -22,6 +23,7 @@ const equal = (actual, expected) => {
 const fixedFiles = ["scripts/experimental/build-windows-uv-spawn-probe.mjs", "scripts/experimental/windows-uv-spawn-build-pin.json",
   "scripts/experimental/windows-uv-spawn-source.mjs", "scripts/experimental/windows-uv-spawn-source-pin.json",
   "scripts/experimental/windows-uv-spawn-emission.mjs", "scripts/experimental/windows-uv-spawn-build-diagnostic.mjs",
+  "scripts/experimental/windows-uv-spawn-powershell.mjs",
   "scripts/experimental/extract-node-libuv-source.py", "scripts/experimental/windows-libuv-source-pin.json",
   "test/fixtures/windows-uv-spawn-build/CMakeLists.txt", "test/fixtures/windows-uv-spawn-probe.c",
   "test/fixtures/windows-uv-spawn-observe.h", "test/fixtures/windows-uv-spawn-observe.c"];
@@ -248,9 +250,11 @@ export async function buildWindowsUvSpawnProbe({ archivePath, destination, pytho
     diagnostic.checkpoint(checkpoints.versions);
     diagnostic.subcheckpoint(versionSteps.powershellCall);
     diagnostic.observeVersion(5, python.version);
-    const metadataOutput = captured(path.join(env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    const powerShellCapture = captureWindowsUvSpawnPowerShell(path.join(env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
       ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop';[pscustomobject]@{compilerVersion=[Diagnostics.FileVersionInfo]::GetVersionInfo($env:EMBER_BUILD_COMPILER).FileVersion;linkerVersion=[Diagnostics.FileVersionInfo]::GetVersionInfo($env:EMBER_BUILD_LINKER).FileVersion}|ConvertTo-Json -Compress"],
       { ...env, EMBER_BUILD_COMPILER: toolPaths.compiler, EMBER_BUILD_LINKER: toolPaths.linker }, destination);
+    diagnostic.observePowerShell(powerShellCapture);
+    const metadataOutput = acceptedPowerShellStdout(powerShellCapture);
     diagnostic.subcheckpoint(versionSteps.powershellJson);
     const metadata = JSON.parse(metadataOutput);
     diagnostic.subcheckpoint(versionSteps.powershellShape);

@@ -5,9 +5,9 @@ import { buildPin, sourcePin, windowsUvSpawnRecipe, parseWindowsUvSpawnBuildRece
 // @ts-expect-error -- optional private-checkpoint context for the same read-only fixed-pin version validator
 import { createUvSpawnBuildDiagnostic } from "../../scripts/experimental/windows-uv-spawn-build-diagnostic.mjs";
 
-const child = vi.hoisted(() => ({ sync: vi.fn(), async: vi.fn() }));
-vi.mock("node:child_process", () => ({ execFileSync: child.sync, execFile: child.async }));
-afterEach(() => { vi.restoreAllMocks(); child.sync.mockReset(); child.async.mockReset(); });
+const child = vi.hoisted(() => ({ sync: vi.fn(), async: vi.fn(), spawn: vi.fn() }));
+vi.mock("node:child_process", () => ({ execFileSync: child.sync, execFile: child.async, spawnSync: child.spawn }));
+afterEach(() => { vi.restoreAllMocks(); child.sync.mockReset(); child.async.mockReset(); child.spawn.mockReset(); });
 const commit = "a".repeat(40), sha256 = "b".repeat(64), fingerprint = () => ({ bytes: 2048, sha256 });
 function receipt() {
   return { schema: 1, issuer: sourcePin.issuer, sourceVersion: sourcePin.version, sourceArchiveSha256: sourcePin.sourceArchive.sha256, sourceCommit: sourcePin.provenance.commit,
