@@ -2470,6 +2470,10 @@ export class Worker {
     return true;
   }
 
+  private cleanupConfirmed = false;
+  /** A fulfilled best-effort ordinary disposal alone is not a stopped-tools witness. Read only after dispose. */
+  cleanupComplete(): boolean { return this.cleanupConfirmed; }
+
   async dispose(): Promise<void> {
     if (!this.spec.deferHandoff) {
       // A hung runtime isn't waited for by ordinary tasks.
@@ -2482,6 +2486,7 @@ export class Worker {
     if (disconnected !== true) throw new Error("Could not confirm that the desktop session disconnected.");
     const drained = await within(this.toolTurn.then(() => true, () => false), 3000);
     if (drained !== true) throw new Error("Could not confirm that the desktop tools stopped.");
+    this.cleanupConfirmed = true;
   }
 
   /** Read after dispose has drained pending tool calls, so a late refusal cannot authorize the next part. */

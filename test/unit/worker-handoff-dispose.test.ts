@@ -19,19 +19,35 @@ describe("retiring a desktop worker before mixed handoff", () => {
   it("waits for both the session and its queued tool calls", async () => {
     const disconnected = deferred(), tool = deferred();
     const w = make(true, () => disconnected.promise, tool.promise);
+    expect(w.cleanupComplete()).toBe(false);
     let finished = false;
     const closing = w.dispose().then(() => { finished = true; });
     await Promise.resolve(); expect(finished).toBe(false);
     disconnected.resolve(); await Promise.resolve(); await Promise.resolve();
-    expect(finished).toBe(false);
+    expect(finished).toBe(false); expect(w.cleanupComplete()).toBe(false);
     tool.resolve(); await closing;
-    expect(finished).toBe(true);
+    expect(finished).toBe(true); expect(w.cleanupComplete()).toBe(true);
   });
 
   it("fails on a rejected disconnect rather than authorizing handoff", async () => {
-    await expect(make(true, async () => { throw new Error("disconnect failed"); }).dispose()).rejects.toThrow("disconnected");
+    const strong = make(true, async () => { throw new Error("disconnect failed"); });
+    await expect(strong.dispose()).rejects.toThrow("disconnected"); expect(strong.cleanupComplete()).toBe(false);
     // Ordinary tasks preserve their existing best-effort cleanup behavior.
-    await expect(make(false, async () => { throw new Error("disconnect failed"); }).dispose()).resolves.toBeUndefined();
+    const ordinary = make(false, async () => { throw new Error("disconnect failed"); });
+    await expect(ordinary.dispose()).resolves.toBeUndefined(); expect(ordinary.cleanupComplete()).toBe(false);
+  });
+
+  it("does not certify ordinary cleanup even after disconnect succeeds while a tool remains queued", async () => {
+    const tool = deferred(), ordinary = make(false, async () => undefined, tool.promise);
+    await ordinary.dispose(); expect(ordinary.cleanupComplete()).toBe(false); tool.resolve();
+  });
+
+  it("preserves an ordinary hung disconnect's existing timeout without certifying cleanup", async () => {
+    vi.useFakeTimers();
+    try {
+      const ordinary = make(false, () => new Promise(() => undefined)), closing = ordinary.dispose();
+      await vi.advanceTimersByTimeAsync(3000); await expect(closing).resolves.toBeUndefined(); expect(ordinary.cleanupComplete()).toBe(false);
+    } finally { vi.useRealTimers(); }
   });
 
   it("fails when disconnect or the remaining tool queue times out", async () => {

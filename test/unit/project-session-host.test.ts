@@ -46,6 +46,8 @@ import { AgentHost, type HostOptions } from "../../app/main/agent/host";
 import { SettingsStore } from "../../app/main/settings";
 import type { TaskSpec, WorkerResult } from "../../app/main/agent/worker";
 import type { ActiveProvider } from "../../app/main/provider";
+import { CONSENT_VERSION } from "../../app/shared/consent";
+import type { TargetsForAgent } from "../../app/main/targets/types";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const token = "gho_" + "x".repeat(36);
@@ -74,14 +76,184 @@ async function setup(extra: Partial<HostOptions> = {}) {
         finish.set(spec.id, resolve);
         signal.addEventListener("abort", () => resolve({ success: false, summary: "Stopped." }));
       }),
-      steer: async () => true, dispose: async () => undefined, sessionId: null,
+      steer: async () => true, dispose: async () => undefined, cleanupComplete: () => true, handoffSafe: () => true, sessionId: null,
     };
   };
   const session = sim.sessions.findLast(s => s.sessionId.startsWith("ember-conductor-"));
   const tool = (name: string, args: unknown = {}) => session.config.tools.find((t: any) => t.name === name).handler(args, {});
   const create = (name: string) => host.projectSessionsAction({ action: "create", name }).selectedProjectId!;
-  return { host, specs, finish, session, tool, create };
+  return { host, specs, finish, session, tool, create, settings };
 }
+
+async function setupWait(extra: Partial<HostOptions> = {}) {
+  const value = await setup(extra);
+  value.settings.update({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() } });
+  return value;
+}
+
+function capturedTarget() {
+  let binding = { id: "ssh:build" as const, kind: "ssh" as const, label: "Build", login: "original", screenOs: "linux" as const, shellOs: "linux" as const, desktop: "text" as const };
+  const handsFor = vi.fn((id: string) => id === "ssh:build" ? { ok: true as const, hands: { binding, commands: null } } : { ok: false as const, why: "Unknown fixed target" });
+  const targets = { active: "ssh:build", caps: () => ({ commands: false, targets: true }), bind: () => ({ ok: true, binding }), handsFor,
+    describeTargets: () => "", describeScreen: () => null, offerConnect: () => "", activeLine: () => "" } as unknown as TargetsForAgent;
+  return { targets, handsFor, replace() { binding = { ...binding, login: "replacement" }; } };
+}
+
+it("joins two tasks from this request after positive disposal without consuming their reports or starting work", async () => {
+  const value = await setupWait(); value.create("Parallel comparison"); await value.host.ask("Check the two independent project pages and summarize both");
+  await value.tool("start_task", { goal: "Inspect first project page" }); await value.tool("start_task", { goal: "Inspect second project page" });
+  const ids = value.specs.map(spec => spec.id), waiting = value.tool("wait_for_tasks", { ids });
+  value.finish.get(ids[0])!({ success: true, summary: "First observed result" }); value.finish.get(ids[1])!({ success: true, summary: "Second observed result" });
+  const answer = await waiting;
+  expect(answer).toContain('<task_wait untrusted="true">'); expect(answer).toContain('"dependentSuccess":true');
+  expect(answer).toContain("First observed result"); expect(answer).toContain("Second observed result");
+  expect(value.specs).toHaveLength(2); expect(value.host.tasks!.takeReports().map(task => task.id)).toEqual(ids);
+  expect((value.host.tasks as any).waitListeners.size).toBe(0);
+});
+
+it("does not let list_tasks or a guessed ID authorize waiting on another request", async () => {
+  const value = await setupWait(); await value.host.ask("Inspect an earlier page"); await value.tool("start_task", { goal: "Earlier page" });
+  const id = value.specs[0].id; value.session.emit("session.idle"); await value.host.ask("Tell me a separate fact");
+  expect(await value.tool("list_tasks")).toContain(id);
+  expect(await value.tool("wait_for_tasks", { ids: [id] })).toMatch(/request changed|wait ended/);
+  expect(await value.tool("wait_for_tasks", { ids: ["guessed-private-id"] })).toMatch(/request changed|wait ended/);
+});
+
+it("cannot reopen an old turn's wait after newer intake while the old SDK turn is still visible", async () => {
+  const value = await setupWait(); await value.host.ask("Inspect the first page"); await value.tool("start_task", { goal: "Inspect first page" });
+  const captured = (value.host as any).turn, id = value.specs[0].id;
+  sim.holdTurns = true;
+  await value.host.ask("A newer independent request");
+  expect((value.host as any).turn).toBe(captured);
+  expect(await value.tool("wait_for_tasks", { ids: [id] })).toMatch(/request changed|wait ended/);
+  expect((value.host.tasks as any).waitListeners.size).toBe(0); expect(value.specs).toHaveLength(1);
+});
+
+it("keeps a quick finished task's original binding and never consults the current target picker", async () => {
+  const target = capturedTarget(), value = await setupWait({ targets: target.targets });
+  await value.host.ask("Inspect the page on Build"); await value.tool("start_task", { goal: "Inspect the page" });
+  const id = value.specs[0].id; value.finish.get(id)!({ success: true, summary: "Observed on original Build" });
+  await vi.waitFor(() => expect(value.host.tasks!.observeSettlement(value.host.tasks!.get(id)!).cleanup).toBe("complete"));
+  expect((value.host as any).taskBindings.has(id)).toBe(false);
+  Object.defineProperty(target.targets, "active", { get() { throw new Error("The picker is unrelated to captured work"); } });
+  expect(await value.tool("wait_for_tasks", { ids: [id] })).toContain('"dependentSuccess":true');
+  expect(target.handsFor.mock.calls.every(args => args[0] === "ssh:build")).toBe(true);
+});
+
+it.each(["replacement", "missing"])("refuses a desktop join with %s original target authority", async change => {
+  const target = capturedTarget(), value = await setupWait({ targets: target.targets });
+  await value.host.ask("Inspect the page on Build"); await value.tool("start_task", { goal: "Inspect the page" });
+  const id = value.specs[0].id;
+  if (change === "missing") (value.host as any).taskBindings.delete(id);
+  const waiting = value.tool("wait_for_tasks", { ids: [id], timeoutMs: 1000 });
+  if (change === "replacement") target.replace();
+  expect(await waiting).toMatch(/request changed|wait ended/); expect((value.host.tasks as any).waitListeners.size).toBe(0);
+});
+
+it("rechecks request authority after a captured-target callback changes it reentrantly", async () => {
+  const target = capturedTarget(), value = await setupWait({ targets: target.targets });
+  await value.host.ask("Inspect the page on Build"); await value.tool("start_task", { goal: "Inspect the page" });
+  const original = target.handsFor.getMockImplementation()!;
+  target.handsFor.mockImplementation(id => { (value.host as any).turn = null; return original(id); });
+  expect(await value.tool("wait_for_tasks", { ids: [value.specs[0].id] })).toMatch(/request changed|wait ended/);
+});
+
+it.each(["removed", "restored", "selected-other"])("rejects a retired original project/session receipt before waiting (%s)", async change => {
+  const value = await setupWait(), original = value.create("Original project");
+  await value.host.ask("Inspect this project's page"); await value.tool("start_task", { goal: "Inspect original page" });
+  const id = value.specs[0].id; value.finish.get(id)!({ success: true, summary: "Original project outcome" });
+  await vi.waitFor(() => expect(value.host.tasks!.observeSettlement(value.host.tasks!.get(id)!).cleanup).toBe("complete"));
+  if (change === "selected-other") {
+    const other = value.create("Other project"); await value.tool("select_project", { id: other });
+  } else {
+    const state = value.host.projectSessionsState(), project = state.projects.find(item => item.id === original)!;
+    if (change === "removed") project.sessions = [];
+    else for (const session of project.sessions) session.taskId = ""; // Same IDs, inert restored history.
+    (value.host as any).sessionProjects.restore(state);
+  }
+  expect(await value.tool("wait_for_tasks", { ids: [id] })).toMatch(/request changed|wait ended/);
+  expect((value.host.tasks as any).waitListeners.size).toBe(0); expect(value.specs).toHaveLength(1);
+});
+
+it("does not adopt a task delegated outside a project into a model-selected project before waiting", async () => {
+  const value = await setupWait(); await value.host.ask("Inspect an independent page"); await value.tool("start_task", { goal: "Inspect page" });
+  const project = value.create("Later project"); await value.tool("select_project", { id: project });
+  expect(await value.tool("wait_for_tasks", { ids: [value.specs[0].id] })).toMatch(/request changed|wait ended/);
+});
+
+it.each(["current", "selected-other"])("keeps an intentionally metadata-free guide bound to its original request project (%s)", async change => {
+  const value = await setupWait(); value.create("Guide project");
+  const readable = vi.spyOn(value.host as any, "cantGuide").mockResolvedValue(null);
+  try {
+    await value.host.ask("Show me how to inspect the page"); await value.tool("show_me", { goal: "Show the page controls" });
+    const id = value.specs[0].id; expect(value.specs[0].mode).toBe("guide");
+    expect(value.host.projectSessionsState().projects.flatMap(project => project.sessions)).toEqual([]);
+    value.finish.get(id)!({ success: true, summary: "Guide completed" });
+    await vi.waitFor(() => expect(value.host.tasks!.observeSettlement(value.host.tasks!.get(id)!).cleanup).toBe("complete"));
+    if (change === "selected-other") await value.tool("select_project", { id: value.create("Other guide project") });
+    const output = await value.tool("wait_for_tasks", { ids: [id] });
+    if (change === "current") expect(output).toContain('"dependentSuccess":true');
+    else expect(output).toMatch(/request changed|wait ended/);
+  } finally { readable.mockRestore(); }
+});
+
+it("refuses an existing task without its trusted original project receipt", async () => {
+  const value = await setupWait(); value.create("Project"); await value.host.ask("Inspect this page"); await value.tool("start_task", { goal: "Inspect page" });
+  const task = value.host.tasks!.get(value.specs[0].id)!; (value.host as any).taskWaitProjects.delete(task);
+  expect(await value.tool("wait_for_tasks", { ids: [task.id] })).toMatch(/request changed|wait ended/);
+});
+
+it("withholds a positive branded result when its exact task is dismissed in the tool's await gap", async () => {
+  const value = await setupWait(); value.create("Original project"); await value.host.ask("Inspect this page"); await value.tool("start_task", { goal: "Inspect page" });
+  const id = value.specs[0].id; value.finish.get(id)!({ success: true, summary: "Private result from a dismissed task" });
+  await vi.waitFor(() => expect(value.host.tasks!.observeSettlement(value.host.tasks!.get(id)!).cleanup).toBe("complete"));
+  const callbacks = (value.host as any).conductor.deps.tasks, wait = callbacks.wait;
+  callbacks.wait = async (...args: any[]) => {
+    const result = await wait(...args); expect(result.dependentSuccess).toBe(true);
+    value.host.tasks!.dismiss(id); return result;
+  };
+  expect(await value.tool("wait_for_tasks", { ids: [id] })).toBe("This request changed or its wait ended. No task action was taken.");
+});
+
+it.each(["stop", "new-request", "forget", "target"])("revokes a pending current-request wait on %s without output or new work", async change => {
+  const value = await setupWait(); value.create("Current request"); await value.host.ask("Inspect this project's page"); await value.tool("start_task", { goal: "Inspect current page" });
+  const id = value.specs[0].id, waiting = value.tool("wait_for_tasks", { ids: [id], timeoutMs: 1000 });
+  if (change === "stop") await value.host.abortAll();
+  if (change === "new-request") { value.session.emit("session.idle"); await value.host.ask("A new independent request"); }
+  if (change === "forget") value.host.forgetProjectSessions();
+  if (change === "target") { value.host.tasks!.get(id)!.targetId = "wsl:Other"; value.host.tasks!.refresh(); }
+  expect(await waiting).toMatch(/request changed|wait ended/); expect(value.specs).toHaveLength(1);
+  expect((value.host.tasks as any).waitListeners.size).toBe(0);
+});
+
+it("revokes the wait when the model provider changes before reconnect can occur", async () => {
+  let provider: ActiveProvider = { kind: "user", config: { type: "openai", baseUrl: "http://localhost:8001", apiKey: "fake-original" }, models: { conductor: "gpt-5-mini", worker: "gpt-5-mini" } };
+  const value = await setupWait({ provider: () => provider }); await value.host.ask("Inspect a page"); await value.tool("start_task", { goal: "Inspect provider-bound page" });
+  const waiting = value.tool("wait_for_tasks", { ids: [value.specs[0].id], timeoutMs: 1000 });
+  provider = { ...provider, config: { ...provider.config, apiKey: "fake-replaced" } };
+  expect(await waiting).toMatch(/request changed|wait ended/); expect((value.host.tasks as any).waitListeners.size).toBe(0);
+});
+
+it("does not equate a done card with cleanup or revive its wait after project closure", async () => {
+  const value = await setupWait(), project = value.create("Cleanup still pending");
+  let release!: () => void; const disposal = new Promise<void>(resolve => { release = resolve; }), original = (value.host.tasks as any).d.makeWorker;
+  (value.host.tasks as any).d.makeWorker = (...args: any[]) => ({ ...original(...args), dispose: () => disposal });
+  await value.host.ask("Inspect a page"); await value.tool("start_task", { goal: "Inspect cleanup-bound page" });
+  const id = value.specs[0].id; value.finish.get(id)!({ success: true, summary: "Must stay inside the old request" });
+  await vi.waitFor(() => expect(value.host.tasks!.get(id)!.status).toBe("done"));
+  const waiting = value.tool("wait_for_tasks", { ids: [id] }); let finished = false; void waiting.then(() => { finished = true; }); await Promise.resolve(); expect(finished).toBe(false);
+  value.host.projectSessionsAction({ action: "forget", id: project });
+  expect(await waiting).toMatch(/request changed|wait ended/); release();
+});
+
+it("revokes a captured folder scope without taking another task's result", async () => {
+  const value = await setupWait(), project = value.create("Folder binding"); await value.host.ask("Inspect this folder's page"); await value.tool("start_task", { goal: "Inspect folder-bound page" });
+  const id = value.specs[0].id; let current = true;
+  (value.host as any).codingTasks.add(id);
+  (value.host as any).codingScopes.set(id, { projectId: project, current: () => current, revoke: () => { current = false; } });
+  const waiting = value.tool("wait_for_tasks", { ids: [id], timeoutMs: 1000 }); value.host.codingWorkspaceChanged(project);
+  expect(await waiting).toMatch(/request changed|wait ended/); expect(value.specs).toHaveLength(1);
+});
 
 it("binds project membership at request intake while preserving the user's exact words", async () => {
   const { host, specs, session, tool, create } = await setup();

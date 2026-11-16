@@ -449,6 +449,24 @@ background, with a card just above Ember's handle (in its corner). The card is w
 - when the task ends, it shows what it found or made: a list, a few facts, a small table or a saved file, kept for a
   minute.
 
+For independent work delegated in the same request, the conductor can use `wait_for_tasks` to combine the results
+in its current reply. The read-only wait accepts one to eight current-request task IDs and at most 20 seconds.
+`TaskManager.observeSettlement` keeps card status, the post-disposal `cleanupComplete` witness and `handoffSafe`
+separate; `dependentSuccess` requires all three positive facts. Ordinary desktop disposal is best effort and does not
+certify cleanup even when its promise fulfills; its terminal summary remains available with cleanup unknown. The
+strong deferred desktop path certifies only its existing positive disconnect and tool-drain checks. Scoped coding uses
+its own settled cleanup witness. A false handoff witness does not negate positively confirmed cleanup. The Host
+captures exact task, project, target and request identities, retires waits on
+Stop/new intake/Forget/provider changes, and rechecks source and project authority before returning summaries.
+Project/session receipts come from original delegation; a checkpoint restored under the same project ID, an absent
+session or a project selected later in the same turn cannot adopt earlier work into the join. Metadata-free guides
+retain their original request's project without creating a session record or computer grant.
+Summaries are bounded untrusted observations; the wait consumes no reports, starts no worker and schedules no future
+turn. `task-wait*.test.ts`, `conductor-agent.test.ts` and `project-session-host.test.ts` cover settlement and lifecycle
+races. `node scripts/run-integration.mjs test/integration/conductor-wait-runtime.test.ts` exercises the real pinned SDK
+with a local scripted model and inert workers whose disposal is held until both cards finish. It verifies the same
+request receives both observations and a combined answer; it does not establish live-provider or desktop acceptance.
+
 The bubble beside your cursor stays for your conversation, for guides, and for a task while it uses your mouse; a
 task in the background doesn't speak there, but its questions still do. It works through the app's accessibility interface, so
 your mouse and keyboard stay yours. Before its first action in an app it asks **Allow / Always in this app / Not now**;

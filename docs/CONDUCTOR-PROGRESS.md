@@ -32,6 +32,13 @@ gate remains false. This is not a merge or release certification.
   and selected project/computer, waits for successful completion and confirmed cleanup, and gives the next worker
   only a quoted untrusted summary. Stop, steering or an authority change retires remaining steps. Selecting another
   project for new work does not reassign an accepted sequence. This does not enable native coding.
+- The conductor can join up to eight independent tasks it delegated or touched in the current request using
+  `wait_for_tasks`, then summarise their observed outcomes in the same turn. The read-only wait lasts at most 20
+  seconds, consumes no reports and starts no work. Card completion remains separate from positive post-disposal cleanup
+  and handoff witnesses. Ordinary desktop cleanup stays best effort: summaries can be joined, but cleanup remains
+  unknown and dependent success false. Stop, new intake, Forget or a captured authority change retires the wait. A real pinned-SDK
+  test exercises two inert workers with held disposal and one combined reply, without another user request; it does
+  not replace desktop or live-provider verification.
 - Ordered goals and observed step outcomes now belong to the project record, including outcomes whose session rows
   have left the bounded history. Explicit checkpoints retain these plans. Opening remints record identities and
   interrupts live steps. Review remaining steps prepares an editable new request; it neither executes nor restores
@@ -191,10 +198,11 @@ Home-to-Host coding session or physical client acceptance; see [development chec
 3. **Recovery limits.** Explicit encrypted checkpoints and fresh-request continuation are implemented. Changes after
    the last Save are not recovered after a crash. Optional automatic checkpointing and workspace identity
    reconciliation need their own owner/revision/consent design. Checkpoints do not restore worker conversations.
-4. **Richer coordination.** Independent tasks and bounded ordered desktop sequences are supported. The conductor
-   receives ordinary background reports with the next user message; an accepted sequence itself can continue without
-   another turn. General branching dependency graphs, dynamic replanning and persistent cross-session artefacts remain
-   future work. Native coding/desktop sequencing remains gated.
+4. **Richer coordination.** Independent tasks, bounded current-request joins and ordered desktop sequences are
+   supported. A join can return settled observations within the current turn; an accepted sequence can continue
+   without another turn. Unobserved ordinary background reports still arrive with the next user message. General
+   branching dependency graphs, automatic future wakeups, dynamic replanning and persistent cross-session artefacts
+   remain future work. Native coding/desktop sequencing remains gated.
 5. **Real-provider verification.** Offline mock-provider tests establish deterministic behavior, not successful live
    authentication, provider tool compatibility or useful task completion. Verify those on the chosen account/provider.
 

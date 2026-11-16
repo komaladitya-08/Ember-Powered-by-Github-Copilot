@@ -4896,3 +4896,17 @@ uses task/project IDs and the result's captured source identity, never a session
 Refresh, replacement, Forget and account/project retirement invalidate stale navigation; Close returns focus to the
 current session action. Portable mapping and actual Chromium journeys cover this navigation without starting work,
 writing source files or changing coding availability.
+
+### Current-request parallel task join (16 November 2026)
+
+The conductor now has an optional read-only `wait_for_tasks` tool for one to eight tasks delegated or touched by the
+current request, bounded to 20 seconds. It can combine independent results in the same turn without another user
+message. Host captures exact manager/request/task/project/target identities and checks current consent, source and
+provider authority around the wait; Stop, Forget and newer intake retire it. It consumes no reports and schedules no
+work or future turn. Ordinary finished-card timing remains unchanged: fulfilled disposal additionally needs an explicit
+positive cleanup witness before cleanup is known; ordinary best-effort desktop disposal supplies no such witness.
+Its terminal summary remains available with cleanup unknown and dependent success false. Dependent success requires
+terminal success plus explicit post-disposal positive cleanup and handoff witnesses.
+Timeout, missing tasks and unknown cleanup do not grant success. Portable lifecycle tests and a real pinned-SDK flow
+with two inert workers and held disposal cover this bounded join. Live-provider, native execution and physical Windows
+acceptance remain separate; this addition does not enable a coding backend or authorise a merge.

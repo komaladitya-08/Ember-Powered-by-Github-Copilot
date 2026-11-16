@@ -21,6 +21,7 @@ import { friendlyError, type ServiceKind } from "./presenter";
 import type { PlanStep, TaskHand, ViewDoc } from "../../shared/view";
 import { STATUS_WORDS, summarizeActivity, type StepGroup, type TaskActivity, type TaskEntry } from "../../shared/activity";
 import { ActivityLog, type ActivityEvent } from "./activity";
+import type { TaskWaitObservation } from "./task-wait";
 
 export type TaskStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 /** Why a stopped task stopped (Task.endedBy). */
@@ -69,7 +70,7 @@ export interface TaskUpdate { plan?: PlanStep[]; hand?: TaskHand; view?: ViewDoc
  * What the TaskManager uses of a worker (§2.6): a stand-in that refuses a task (its target can't be used) needs
  * nothing more.
  */
-export type WorkerLike = Pick<Worker, "run" | "steer" | "dispose" | "sessionId"> & { handoffSafe?: () => boolean };
+export type WorkerLike = Pick<Worker, "run" | "steer" | "dispose" | "sessionId"> & { cleanupComplete?: () => boolean; handoffSafe?: () => boolean };
 
 export interface TaskManagerDeps {
   log: Logger;
@@ -274,6 +275,8 @@ export function taskOutcome(t: Pick<Task, "title" | "status" | "result" | "ended
 }
 
 export class TaskManager {
+  private settlements = new WeakMap<Task, { cleanup: "pending" | "complete" | "unknown"; handoffSafe: boolean }>();
+  private waitListeners = new Set<() => void>();
   private tasks = new Map<string, Task>();
   private queue: { task: Task; spec: TaskSpec }[] = [];
   private running = new Map<string, { worker: WorkerLike; abort: AbortController }>();
@@ -319,6 +322,7 @@ export class TaskManager {
     if (left <= 0 || elapsed > Math.max(c.left, c.whole ?? 0)) { this.dropView(c.task); return; }
     const id = c.task.id;
     this.tasks.set(id, c.task);
+    this.settlements.set(c.task, { cleanup: "unknown", handoffSafe: false });
     if (c.spec) this.specs.set(id, c.spec);
     if (c.log) this.logs.set(id, { log: c.log, task: c.task });
     this.expiry.set(id, { remaining: left, since: Date.now(), timer: null, ...(c.whole !== undefined ? { whole: c.whole } : {}), ...(c.away ? { away: true } : {}) });
@@ -428,6 +432,7 @@ export class TaskManager {
     const task: Task = { id, goal, title: titleOf(goal), status: "queued", detail: opts.mode === "guide" ? "Starts when another guide ends" : "Starts when another task ends", result: null, started: Date.now(), finished: null,
       ...(opts.targetId ? { targetId: opts.targetId } : {}), ...(opts.where ? { where: opts.where } : {}) };
     this.tasks.set(id, task);
+    this.settlements.set(task, { cleanup: "pending", handoffSafe: false });
     const target = { ...(opts.target ?? this.d.currentWindow() ?? {}) };
     // Legacy callers supply the user's request as the goal. Materialise that fallback once: later goals contain
     // model-authored steering and must never become authority on a retry. Commands never used that fallback.
@@ -449,6 +454,35 @@ export class TaskManager {
 
   get(id: string): Task | undefined {
     return this.tasks.get(id);
+  }
+
+  /** Exact task identity, separate from the card's earlier finish and non-consuming reports. */
+  observeSettlement(task: Task): TaskWaitObservation {
+    if (this.closed || this.tasks.get(task.id) !== task) return { id: task.id, status: "missing", cleanup: "unknown", handoffSafe: false, summary: "" };
+    const observed = this.settlements.get(task);
+    return { id: task.id, status: task.status, cleanup: observed?.cleanup ?? "unknown", handoffSafe: observed?.handoffSafe === true,
+      summary: observed?.cleanup !== "pending" ? task.result?.summary ?? "" : "" };
+  }
+
+  /** Registration precedes a waiter's snapshot. Listener faults never change a task or its cleanup. */
+  subscribeSettlement(listener: () => void): () => void {
+    this.waitListeners.add(listener);
+    return () => { this.waitListeners.delete(listener); };
+  }
+
+  private notifySettlement(): void {
+    for (const listener of [...this.waitListeners]) try { listener(); } catch { /* Read-only observation cannot change scheduling. */ }
+  }
+
+  private settled(task: Task, cleanup: "complete" | "unknown", handoffSafe = false): void {
+    this.settlements.set(task, { cleanup, handoffSafe: cleanup === "complete" && handoffSafe });
+    this.notifySettlement();
+  }
+
+  private cleanupComplete(worker: WorkerLike, disposed: boolean): boolean {
+    if (!disposed) return false;
+    try { return worker.cleanupComplete?.() === true; }
+    catch (err) { this.d.log.error("task.cleanup_check_failed", { err }); return false; }
   }
 
   /** What a task did and is doing (null before it ran, or once it is no longer kept). */
@@ -588,6 +622,7 @@ export class TaskManager {
     const q = this.queue.findIndex(x => x.task.id === id);
     if (q >= 0) {
       const [{ task }] = this.queue.splice(q, 1);
+      this.settled(task, "complete"); // No worker was admitted for this queued task.
       if (this.cutOff) this.finish(task, "failed", { success: false, summary: this.cutOff });
       else this.finish(task, "cancelled", { success: false, summary: "Stopped before it started." }, "stop");
       return;
@@ -684,6 +719,7 @@ export class TaskManager {
    */
   close(keep = false): void {
     this.closed = true;
+    this.notifySettlement();
     for (const id of new Set([...this.expiry.keys(), ...this.readers.keys()])) this.forgetCardTime(id);
     if (keep) return;
     for (const t of this.tasks.values()) this.dropView(t);
@@ -776,6 +812,7 @@ export class TaskManager {
       // Its worker couldn't be made: the task fails now (closable, said plainly) rather than waiting for ever with a
       // Stop that does nothing, and what queued behind it gets its turn.
       this.d.log.error("task.error", { id: task.id, err });
+      this.settled(task, "unknown");
       this.finish(task, "failed", { success: false, summary: task.mode === "do" ? "I couldn't start this task. Try again; if it keeps happening, restart Ember." : "I couldn't start this. Ask again; if it keeps happening, restart Ember." });
       this.pump();
       return;
@@ -817,10 +854,11 @@ export class TaskManager {
       }
       this.running.delete(task.id);
       let safe = false;
-      if (spec.deferHandoff && disposed && result.success && !abort.signal.aborted) {
+      if (disposed && result.success && !abort.signal.aborted) {
         try { safe = worker.handoffSafe?.() === true; }
         catch (err) { this.d.log.error("task.handoff_check_failed", { id: task.id, err }); }
       }
+      this.settled(task, this.cleanupComplete(worker, disposed) ? "complete" : "unknown", safe);
       try {
         if (!disposed) this.finish(task, "failed", { success: false, summary: spec.deferHandoff ? "I couldn't confirm the first part stopped, so the next part didn't start." : "I couldn't confirm that the coding task stopped." });
         else if (abort.signal.aborted && this.cutOff) this.finish(task, "failed", { success: false, summary: this.cutOff });
@@ -844,11 +882,16 @@ export class TaskManager {
         abort.signal.aborted ? "stop" : result.expired ? "expired" : result.declined ? "declined" : result.tookOver ? "took-over" : "stop");
     } finally {
       // Whatever a listener did, the worker lets go and the queue moves on (review #79).
+      let disposed = false, safe = false;
       try {
         const sessionId = worker.sessionId;
         await worker.dispose();
+        disposed = true;
+        if (result.success && !abort.signal.aborted) try { safe = worker.handoffSafe?.() === true; }
+        catch (err) { this.d.log.error("task.handoff_check_failed", { id: task.id, err }); }
         if (sessionId) this.deleteLater(sessionId);
       } finally {
+        this.settled(task, this.cleanupComplete(worker, disposed) ? "complete" : "unknown", safe);
         this.pump();
       }
     }
@@ -929,6 +972,7 @@ export class TaskManager {
   }
 
   private publish(): void {
+    this.notifySettlement();
     if (this.closed) return;
     this.keepLogs();
     const cards: TaskCard[] = [...this.tasks.values()].map(t => {
