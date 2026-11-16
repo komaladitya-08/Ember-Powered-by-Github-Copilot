@@ -20,6 +20,8 @@ concurrency:
 
 jobs:
   source-node:
+    # Native-only follow-ups reuse the separately attested artifact; a skip is not a new build proof.
+    if: github.event_name == 'workflow_dispatch' || github.head_ref != 'ember-improve/20261116-source-node-native-reuse'
     name: Source Node feasibility (windows-2022)
     runs-on: windows-2022
     timeout-minutes: 60

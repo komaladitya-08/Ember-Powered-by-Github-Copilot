@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "issuer": "ember-experimental-source-node-native-reuse",
+  "repository": "komaladitya-08/Ember-Powered-by-Github-Copilot",
+  "repositoryId": 1419326021,
+  "runId": 43823648292,
+  "attempt": 1,
+  "workflowId": 419841405,
+  "workflowPath": ".github/workflows/experimental-windows-node-source.yml",
+  "headBranch": "ember-improve/20261116-source-node-feasibility",
+  "headCommit": "b570de1f700bab85e21b0aa8ebb429b21ad1096e",
+  "compileCommit": "2a1d186c44239ef35686e9eefa1e535d71f25344",
+  "artifactId": 14207138723,
+  "artifactName": "source-node-22.23.5-windows-2022-2a1d186c44239ef35686e9eefa1e535d71f25344",
+  "zipBytes": 38423911,
+  "zipSha256": "34fd4ffd22e81b7927b99663f10c06d9a3086782b5462a394d654bb2f998c5be",
+  "maximumExpandedBytes": 167772160,
+  "members": {
+    "source-node.exe": 134217728,
+    "bootstrap.exe": 16777216,
+    "build-receipt.json": 32768,
+    "LICENSE": 1048576
+  },
+  "memberHashPolicy": "Derived only after the exact authenticated outer ZIP verifies; no prior individual hashes are claimed."
+}
