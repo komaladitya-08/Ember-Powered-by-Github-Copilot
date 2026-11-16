@@ -13,7 +13,7 @@ const SOURCE_PINS: readonly Readonly<{ path: string; bytes: number; sha256: stri
   Object.freeze({"path":"scripts/experimental/build-windows-command-copy-proof.mjs","bytes":20168,"sha256":"83685e8c4759581a7cb477924f9393155ce70b6b46676c3a4465c21de544f36c"}),
   Object.freeze({"path":"app/main/agent/windows-command-copy.ts","bytes":12632,"sha256":"33dac7049b83aa8f28fffdd24b26b4baef153fc1b15447b3e7dfaf46d3e2548f"}),
   Object.freeze({"path":"app/main/agent/windows-command-stop.ts","bytes":23106,"sha256":"87a0ed54fa4d38c1ec33846d6fe61f349ddfa04b2e8dbf5124edb458d2be3d21"}),
-  Object.freeze({"path":"app/main/agent/windows-command-copy-native.ts","bytes":45937,"sha256":"a62d48f3134f38bdf7f2153849b6f5c246609a2a439a9c58e1895e1fb6b7a481"}),
+  Object.freeze({"path":"app/main/agent/windows-command-copy-native.ts","bytes":46924,"sha256":"9232f063867ad98185ac1fb056b6eca8c9740638cc83fe13ceff0e96773662f1"}),
   Object.freeze({"path":"test/fixtures/windows-command-copy-proof-native.ts","bytes":7446,"sha256":"e8fd9c25b0d3b61a9790ed516edd44369a0686ea34f2dea0094b9922db3928c3"}),
   Object.freeze({"path":"package.json","bytes":2847,"sha256":"f25c9180100351970dc3d61308fcfe406c4340e2d9554db62b5d0742b357e725"}),
   Object.freeze({"path":"package-lock.json","bytes":153446,"sha256":"691d75e222d044c6fe87fa5bc84dec081a2a4b95fa8e0564ae0d1cd64f8516d3"}),

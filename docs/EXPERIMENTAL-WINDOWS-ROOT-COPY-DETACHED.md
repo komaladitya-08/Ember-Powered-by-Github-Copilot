@@ -1,7 +1,9 @@
 # Fixed detached-root copy comparison
 
 This separate experiment starts from `8b57398c1671505271d1158df249b13f5524b317`. The original root-only copy
-experiment, C program, build producer, compiled issuer, twelve emitted CJS exports and application code are unchanged.
+branch, C program, build producer, compiled issuer and twelve emitted CJS exports are unchanged. A follow-up changes
+only error classification in the native tree binding; all native calls, rights, owner/ACL checks and acceptance
+behavior remain unchanged.
 No command backend, shell, project executable, Node runtime or descendant support is enabled.
 
 The original [seventh matrix](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43886741681)
@@ -37,7 +39,8 @@ Run issuer `ember-root-only-copy-detached-run-v1` is separate from the unchanged
 `ember-root-only-host-observed-build-v1`. Before compilation/native admission and at the original proof's rechecks,
 the fixed verifier binds eighteen public source inputs: baseline C/builder/fixed inputs and API/proof/report,
 the original workflow, and the new loader/proof/integration/workflow. It records the source baseline, actual current
-compile commit and Windows image separately. The verifier is trusted reviewed checkout code, without self-referential
+compile commit and Windows image separately. The reviewed native error-classification delta has its own updated
+input hash; it is not claimed byte-identical to the original native binding. The verifier is trusted reviewed checkout code, without self-referential
 hashes; these public hashes are not publisher authentication. Held reads retain independent named-path and descriptor
 clock guards. An uncertain descriptor close suppresses the receipt, retains that descriptor and permanently refuses
 later verification in the worker. No hostile concurrent writer exclusion is claimed.
@@ -49,11 +52,57 @@ Its workflow runs only for an explicit dispatch or the exact dedicated PR head. 
 variant. It never executes a failed baseline followed by a fence reset, module reload or variant retry. The original
 baseline remains independently available in its unchanged workflow.
 
-Native outcomes remain pending. This is fixed root-only Windows Server evidence work; it supplies no general Windows
-coding compatibility or production admission authority.
+This is fixed root-only Windows Server evidence work; it supplies no general Windows coding compatibility or
+production admission authority. The first native result is recorded below; the next owner-classification result is pending.
 
-The frozen candidate passes 841 focused contracts across ten files, including 98 new loader, run-identity and
+The initial `d7d9f5ce` candidate passed 841 focused contracts across ten files, including 98 new loader, run-identity and
 actual-proof routing cases, plus scoped lint and workflow YAML/guard checks. On Linux, explicitly requiring the
 native integration exits 1 at its Windows-x64 guard (one failed suite, one skipped case), before compilation or
-native calls. Final TypeScript, Root's actual-file review and an independent final review passed. No native result
-is claimed.
+native calls. Final TypeScript, Root's actual-file review and an independent final review passed at that initial
+freeze, before the first native result below.
+
+The first detached matrix,
+[run 43890332358](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43890332358),
+passed 840 portable cases plus the expected unsupported-host guard skip on each image. Both source/run identities
+passed at actual compile merge `63e96ca80666ea0c3becfe9474a4e1ebd29a0a4d`, public source manifest
+`c45ed8da23630a5a4d6669e23b85d04eaf57e854576b8a406d9ee80bcc43110e`. Both native cases failed at phase `3`,
+subphase `4`, ownership `0`, boundary `0`, fileCode `0`, `exit={phase:1,code:1}`. The diagnostic quiescence path
+reached native revocation, which refused at stage `7`, operation `24`, predicate `7`, domain `0`, code `0`.
+That site is the existing comparison of a node's decoded owner SID to host TokenUser. No owner identity, kind,
+provenance or path was exposed; no failed report was read. The C operation, successful useful edits, complete
+revocation and cleanup remain unaccepted. This separately compiled comparison does not establish unique flag causality.
+
+Before adding further native observation, portable tests reproduced that exact refusal through the real coordinator,
+native tree binding with synthetic FFI results and real Stop owner. Newly created and same-name replacement files
+had an inherited host/SYSTEM/package ACL but a synthetic creator owner different from host TokenUser. The real Stop
+closed its root/thread/job owners before revocation rejected the owner; no ACL mutation, data read or private review
+followed. The fake FFI now models owner separately from the host-user ACL entry and correctly preserves owner when
+`NtSetSecurityObject` omits `OWNER_SECURITY_INFORMATION`. These are portable model results, not the unknown native owner.
+
+The follow-up records only these optional flat numbers after the unchanged owner equality check has refused, using
+the same already-decoded SID and existing node facts:
+
+| Field | Closed values |
+| --- | --- |
+| `ownerClass` | 1 host user, 2 known own package, 3 SYSTEM, 4 public builtin Administrators, 5 other |
+| `nodeKind` | 1 file, 2 directory |
+| `nodeRoot` | 0 non-root, 1 root |
+| `nodeAcl` | 1 private, 2 granted, 3 inherited provenance |
+| `nodeDetached` | 0 ordinary check, 1 existing detached-object check |
+
+Class 1 cannot be emitted by the owner-mismatch branch. Before grant supplies the native owner its package identity,
+an unrecognised package SID remains class 5. The class is diagnostic and never an ownership allowlist. No SID,
+path, name, file ID, pointer, handle, count, second SID decode or new native query is emitted. The first branded
+failure remains immutable across peers and later operations; caller-shaped or serialized metadata has no authority.
+
+Any repair remains design-only. It would need the actual trusted creator TokenOwner from the same held suspended
+root, generation/profile/tree-bound opaque evidence and the authentic positive Stop barrier. Only after all bounded
+objects pass exact preflight could ownership transfer to host TokenUser together with the private protected DACL,
+followed by owner/ACL/label/identity readback. Current revoke omits OWNER in its native information mask, so `O:` in
+the descriptor alone cannot perform that transfer. No OWNER bit, owner acceptance, permission or cleanup rule is
+changed here. New/replaced-file WRITE_DAC/WRITE_OWNER negatives and owner implicit rights remain future evidence gates;
+matching a guessed owner category is insufficient. The next native classification and any repair remain pending.
+
+The owner-classification candidate passes 862 focused contracts across ten files, including 140 native-binding
+cases, final TypeScript, scoped lint and diff checks. Root's actual-file review and the independent four-file review
+closed. No current Windows owner-classification outcome is claimed.

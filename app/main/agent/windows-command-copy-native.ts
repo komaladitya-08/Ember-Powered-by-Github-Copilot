@@ -30,7 +30,16 @@ type FailureStage = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 type FailureOperation = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26 | 27;
 type FailurePredicate = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 type FailureDomain = 0 | 1 | 2;
-export interface WindowsCommandCopyNativeFailure {
+interface OwnerFacts {
+  /** 1 host user (not emitted on mismatch), 2 known package, 3 SYSTEM, 4 public builtin Administrators, 5 other. */
+  readonly ownerClass: 1 | 2 | 3 | 4 | 5;
+  readonly nodeKind: 1 | 2;
+  readonly nodeRoot: 0 | 1;
+  /** Existing node ACL provenance: private, granted, inherited (1..3). */
+  readonly nodeAcl: 1 | 2 | 3;
+  readonly nodeDetached: 0 | 1;
+}
+export interface WindowsCommandCopyNativeFailure extends Partial<OwnerFacts> {
   readonly stage: FailureStage; readonly operation: FailureOperation; readonly predicate: FailurePredicate; readonly domain: FailureDomain; readonly code: number;
 }
 const nativeFailures = new WeakMap<object, WindowsCommandCopyNativeFailure>();
@@ -143,10 +152,10 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
     let terminal: WindowsCommandCopyCleanupError | undefined, closed = false, busy = false, retired = false, packageSid: string | undefined;
     let phase: "private" | "granting" | "granted" | "revoking" = "private", ticks = 0;
     let stage: FailureStage = 1;
-    const poison = (predicate: FailurePredicate = 8, operation: FailureOperation = 0, status: { domain: FailureDomain; code: number } = { domain: 0, code: 0 }): never => {
+    const poison = (predicate: FailurePredicate = 8, operation: FailureOperation = 0, status: { domain: FailureDomain; code: number } = { domain: 0, code: 0 }, ownerFacts?: OwnerFacts): never => {
       const first = !terminal && !fence.failure;
       terminal ??= fence.failure ?? new WindowsCommandCopyCleanupError(); fence.failure ??= terminal;
-      if (first) nativeFailures.set(terminal, Object.freeze({ stage, operation, predicate, domain: status.domain, code: status.code }));
+      if (first) nativeFailures.set(terminal, Object.freeze({ stage, operation, predicate, domain: status.domain, code: status.code, ...ownerFacts }));
       for (const owner of peers) if (!retainedOwners.has(owner)) { fence.retained.push(owner); retainedOwners.add(owner); }
       throw terminal;
     };
@@ -246,7 +255,13 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       try { status = fn.GetSecurityInfo(node.raw, 1, 1 | 4 | LABEL, own, null, dacl, sacl, descriptor); } catch { if (valid(descriptor[0])) allocations.add(descriptor[0]); return poison(1, OP.GetSecurityInfo); }
       if (valid(descriptor[0])) allocations.add(descriptor[0]); if (status !== 0) return poison(2, OP.GetSecurityInfo);
       const sd = pointer(descriptor[0]); pending.delete(descriptor);
-      if (textSid(pointer(own[0])) !== owner) return poison(7, OP.GetSecurityInfo);
+      const observedOwner = textSid(pointer(own[0]));
+      if (observedOwner !== owner) return poison(7, OP.GetSecurityInfo, undefined, {
+        // Diagnostic comparison only, after the original owner check refused; no second SID decode or native call.
+        ownerClass: observedOwner === owner ? 1 : observedOwner === packageSid ? 2 : observedOwner === "S-1-5-18" ? 3 : observedOwner === "S-1-5-32-544" ? 4 : 5,
+        nodeKind: node.kind === "file" ? 1 : 2, nodeRoot: node.relative === "" ? 1 : 0,
+        nodeAcl: node.acl === "private" ? 1 : node.acl === "granted" ? 2 : 3, nodeDetached: detached ? 1 : 0,
+      });
       const controls = [0], revision = [0]; bool("GetSecurityDescriptorControl", [sd, controls, revision]);
       if (!(controls[0] & 4) || !(controls[0] & 16) || (expected !== "inherited" && !(controls[0] & 0x1000))) return poison(7, OP.GetSecurityDescriptorControl);
       const acl = pointer(dacl[0]), details = Buffer.alloc(12); bool("GetAclInformation", [acl, details, details.length, 2]);
