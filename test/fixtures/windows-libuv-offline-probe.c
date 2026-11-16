@@ -83,7 +83,7 @@ static DWORD fixedChecksum(void)
 }
 
 /* No untrusted pathname or argument is accepted. These are exact host-owned scratch environment values. */
-static int localDirectory(const WCHAR *name, WCHAR *output)
+static int localDirectory(const WCHAR *name, WCHAR *output, DWORD *nativeError)
 {
   DWORD count = GetEnvironmentVariableW(name, output, PROBE_PATH_CHARS);
   DWORD index, start = 3, attributes, driveType;
@@ -108,7 +108,7 @@ static int localDirectory(const WCHAR *name, WCHAR *output)
   driveType = GetDriveTypeW(drive);
   if (driveType != DRIVE_FIXED) return (int)(16 + (driveType <= 6 ? driveType : 15));
   attributes = GetFileAttributesW(output);
-  if (attributes == INVALID_FILE_ATTRIBUTES) return 32;
+  if (attributes == INVALID_FILE_ATTRIBUTES) { *nativeError = GetLastError(); return 32; }
   if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) return 33;
   if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) return 34;
   return 0;
@@ -350,7 +350,7 @@ static void removeWorkFile(void)
 int main(int argc, char **argv)
 {
   HANDLE token = NULL;
-  DWORD appContainer = 0, bytes = 0;
+  DWORD appContainer = 0, bytes = 0, bootstrapError = 0;
   BY_HANDLE_FILE_INFORMATION information;
   int rc, exitCode;
   (void)argv;
@@ -358,8 +358,12 @@ int main(int argc, char **argv)
   record[R_LOOP_INIT] = PROBE_UNOBSERVED; record[R_LOOP_RUN] = PROBE_UNOBSERVED; record[R_LOOP_CLOSE] = PROBE_UNOBSERVED;
   /* Bootstrap failures have fixed numeric exits; paths, arguments and native text are never printed. */
   if (argc != 1) return 10;
-  rc = localDirectory(L"EMBER_LPAC_WORK", workPath); if (rc != 0) return 100 + rc;
-  rc = localDirectory(L"EMBER_LPAC_STATE", statePath); if (rc != 0) return 200 + rc;
+  rc = localDirectory(L"EMBER_LPAC_WORK", workPath, &bootstrapError);
+  if (rc == 32) return (int)(bootstrapError <= 0xffffu ? 0xe1010000u | bootstrapError : 0xe1ffffffu);
+  if (rc != 0) return 100 + rc;
+  rc = localDirectory(L"EMBER_LPAC_STATE", statePath, &bootstrapError);
+  if (rc == 32) return (int)(bootstrapError <= 0xffffu ? 0xe1020000u | bootstrapError : 0xe2ffffffu);
+  if (rc != 0) return 200 + rc;
   if (_wcsicmp(workPath, statePath) == 0) return 300;
   if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return 11;
   rc = GetTokenInformation(token, TOKEN_IS_APP_CONTAINER, &appContainer, sizeof(appContainer), &bytes) != 0 &&

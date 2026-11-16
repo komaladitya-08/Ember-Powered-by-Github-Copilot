@@ -24,7 +24,16 @@ Both ordinary-host variants exited 10 with no report, which identifies the C pro
 guard, not a libuv/LPAC outcome. That guard now has fixed distinct exits: 10 for argument count; 100/200 plus a
 closed directory-validation reason for work/state; 300 for equal folders. Reasons identify missing/oversized values,
 root/component/character rules, fixed-drive type or directory attributes without returning paths or argument text.
-The original validation predicates are unchanged. Native identification of the failed predicate remains pending.
+The original validation predicates are unchanged.
+
+Run [43807658696](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43807658696)
+at `f7a7bc363112980c89cb9ad79b684fc293f36cc9` built both programs on both images; each job passed 318 portable
+contracts with one platform privilege skip. Both ordinary-host variants then exited 132 with no report: work
+directory `GetFileAttributesW` returned `INVALID_FILE_ATTRIBUTES`, after the syntax and fixed-drive checks passed.
+No LPAC process launched. Its immediate Win32 error is now encoded as `0xe1010000 | error` for work or
+`0xe1020000 | error` for state when the error fits 16 bits; larger errors produce the fixed `0xe1ffffff` or
+`0xe2ffffff` refusal. These stopped numeric bootstrap diagnostics expose no path or native message and do not
+change any acceptance check. The native error and its cause remain pending.
 
 The official Node experiment identified `WSAStartup / 10107` on both pinned versions and both Windows Server images,
 with successful ordinary-host controls. See [the bounded native receipts](WINDOWS-NODE-LPAC-PROOF.md).
