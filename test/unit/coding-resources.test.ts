@@ -8,6 +8,7 @@ import type { IsolatedCommandWorkspaceInput, IsolatedCommandWorkspace, IsolatedC
 import { createCodingReviewExport, type CodingExportTree } from "../../app/main/agent/coding-result-export";
 import { CodingResultRegistry } from "../../app/main/agent/coding-result-registry";
 import { CodingArtifactCleanupError } from "../../app/main/agent/coding-artifact-store";
+import { CodingSeedCleanupError } from "../../app/main/agent/coding-seed-snapshot";
 import { LinuxCodingArtifactStore } from "../../app/main/agent/linux-coding-artifact-store";
 import { ProjectCodingWorkspaces } from "../../app/main/agent/project-coding-workspaces";
 import { projectCommandFolder } from "../../app/main/agent/project";
@@ -273,6 +274,119 @@ resourceIt.each(["review", "export"] as const)("latches terminal %s cleanup unce
   expect(value.availability().available).toBe(false);
   await results.reset(); expect(value.availability().available).toBe(false);
   await workspace.close(); await expect(value.close()).rejects.toThrow("retained");
+});
+
+async function firstResult(value: ProjectCodingResources) {
+  const task = spec(value), workspace = await value.createWorkspace(task, new AbortController().signal, () => true);
+  const output = await workspace.exportReview(value.reviewBase);
+  const result = await value.publish(task, output, "done", { ran: 1, passed: 1, failed: 0 });
+  await workspace.close();
+  return result;
+}
+
+resourceIt("carries a complete prior result into a fresh task and releases its predecessor after verified copy admission", async () => {
+  const value = await open(); await ready(value); await bind(value);
+  const result = await firstResult(value), continuation = value.captureContinuation(result.id, P)!;
+  expect(continuation).not.toBeNull();
+  const task = spec(value); task.codingWorkspace = { ...task.codingWorkspace!, continuation };
+  let prior: Buffer | undefined, baseline: Buffer | undefined, borrowed: Buffer | undefined;
+  sim.create.mockImplementationOnce(async (input: IsolatedCommandWorkspaceInput) => {
+    const old = input.continuation!.baseline.entries.find(entry => entry.kind === "file");
+    const proposed = input.continuation!.proposed.entries.find(entry => entry.kind === "file");
+    if (old?.kind !== "file" || proposed?.kind !== "file") throw new Error("Missing complete seed bytes");
+    baseline = Buffer.from(old.bytes); prior = Buffer.from(proposed.bytes); borrowed = proposed.bytes;
+    expect(input.continuation?.current()).toBe(true);
+    return makeBackend(input) as unknown as IsolatedCommandWorkspace;
+  });
+  const workspace = await value.createWorkspace(task, new AbortController().signal, () => true);
+  expect(baseline).toEqual(Buffer.from("original\n")); expect(prior).toEqual(Buffer.from("changed\n"));
+  expect(borrowed?.every(byte => byte === 0)).toBe(true);
+  await (await value.results()).forgetResult(result.id);
+  expect(value.continuationCurrent(continuation, P)).toBe(false);
+  expect(backends[1].input.admit?.()).toBe(true); expect(backends[1].input.continuation?.current()).toBe(true);
+  expect(await fs.readFile(path.join(source, "app.ts"), "utf8")).toBe("original\n");
+  await workspace.close();
+});
+
+resourceIt("refuses a forgotten predecessor before opening another coding backend", async () => {
+  const value = await open(); await ready(value); await bind(value);
+  const result = await firstResult(value), continuation = value.captureContinuation(result.id, P)!;
+  await (await value.results()).forgetResult(result.id); sim.create.mockClear();
+  const task = spec(value); task.codingWorkspace = { ...task.codingWorkspace!, continuation };
+  await expect(value.createWorkspace(task, new AbortController().signal, () => true)).rejects.toThrow("changed");
+  expect(sim.create).not.toHaveBeenCalled(); expect(value.availability().available).toBe(true);
+});
+
+resourceIt("drains a copy created during predecessor Forget without admitting it as an independent task", async () => {
+  const value = await open(); await ready(value); await bind(value);
+  const result = await firstResult(value), continuation = value.captureContinuation(result.id, P)!;
+  const task = spec(value); task.codingWorkspace = { ...task.codingWorkspace!, continuation };
+  const entered = deferred<void>(), release = deferred<void>();
+  sim.create.mockImplementationOnce(async (input: IsolatedCommandWorkspaceInput) => {
+    const backend = makeBackend(input); entered.resolve(); await release.promise; return backend as unknown as IsolatedCommandWorkspace;
+  });
+  const creating = value.createWorkspace(task, new AbortController().signal, () => true);
+  const refused = expect(creating).rejects.toThrow("current project grant");
+  await entered.promise; await (await value.results()).forgetResult(result.id); release.resolve(); await refused;
+  expect(backends[1].stop).toHaveBeenCalledTimes(1); expect(backends[1].close).toHaveBeenCalledTimes(1);
+  expect(value.availability().available).toBe(true);
+});
+
+resourceIt("refuses previous edits after the chosen folder is replaced and granted again at the same path", async () => {
+  const value = await open(); await ready(value); await bind(value);
+  const result = await firstResult(value), continuation = value.captureContinuation(result.id, P)!;
+  await fs.rename(source, path.join(temp, "moved-source")); await fs.mkdir(source, { mode: 0o700 });
+  await fs.writeFile(path.join(source, "app.ts"), "replacement\n"); await bind(value); sim.create.mockClear();
+  const task = spec(value); task.codingWorkspace = { ...task.codingWorkspace!, continuation };
+  await expect(value.createWorkspace(task, new AbortController().signal, () => true)).rejects.toThrow();
+  expect(sim.create).not.toHaveBeenCalled(); expect(await fs.readFile(path.join(source, "app.ts"), "utf8")).toBe("replacement\n");
+});
+
+resourceIt("does not transfer a prior result into another project even when both choose the same source folder", async () => {
+  const value = await open(); await ready(value); await bind(value);
+  const result = await firstResult(value), continuation = value.captureContinuation(result.id, P)!;
+  await bind(value, Q); sim.create.mockClear();
+  const task = spec(value, Q); task.codingWorkspace = { ...task.codingWorkspace!, continuation };
+  expect(value.captureContinuation(result.id, Q)).toBeNull();
+  await expect(value.createWorkspace(task, new AbortController().signal, () => true)).rejects.toThrow("changed");
+  expect(sim.create).not.toHaveBeenCalled();
+});
+
+resourceIt("global Forget waits for a continuation read and erases its buffers without starting another backend", async () => {
+  const value = await open(); await ready(value); await bind(value);
+  const result = await firstResult(value), continuation = value.captureContinuation(result.id, P)!;
+  const task = spec(value); task.codingWorkspace = { ...task.codingWorkspace!, continuation };
+  const entered = deferred<void>(), release = deferred<void>(), read = LinuxCodingArtifactStore.prototype.read;
+  let borrowed: Buffer | undefined;
+  vi.spyOn(LinuxCodingArtifactStore.prototype, "read").mockImplementationOnce(async function (this: LinuxCodingArtifactStore, ...args) {
+    borrowed = await read.apply(this, args); entered.resolve(); await release.promise; return borrowed;
+  });
+  sim.create.mockClear();
+  const creating = value.createWorkspace(task, new AbortController().signal, () => true);
+  const refused = expect(creating).rejects.toThrow("current project grant");
+  await entered.promise;
+  let forgotten = false; const forgetting = value.invalidate().then(() => { forgotten = true; });
+  await Promise.resolve(); expect(forgotten).toBe(false);
+  release.resolve(); await refused; await forgetting;
+  expect(sim.create).not.toHaveBeenCalled(); expect(borrowed?.every(byte => byte === 0)).toBe(true);
+  expect((await value.results()).state(P)).toEqual([]); expect(await fs.readdir(value.reviewBase)).toEqual([]);
+  expect(value.workspace(P)).toBeNull(); expect(await fs.readFile(path.join(source, "app.ts"), "utf8")).toBe("original\n");
+});
+
+resourceIt("keeps coding unavailable after unverified seed cleanup even when no workspace capability was returned", async () => {
+  const value = await open(); await ready(value); await bind(value);
+  const result = await firstResult(value), continuation = value.captureContinuation(result.id, P)!;
+  const task = spec(value); task.codingWorkspace = { ...task.codingWorkspace!, continuation };
+  let borrowed: Buffer | undefined;
+  sim.create.mockImplementationOnce(async (input: IsolatedCommandWorkspaceInput) => {
+    const file = input.continuation?.proposed.entries.find(entry => entry.kind === "file");
+    if (file?.kind === "file") borrowed = file.bytes;
+    throw new CodingSeedCleanupError();
+  });
+  await expect(value.createWorkspace(task, new AbortController().signal, () => true)).rejects.toBeInstanceOf(CodingSeedCleanupError);
+  expect(borrowed?.every(byte => byte === 0)).toBe(true); expect(value.availability().available).toBe(false);
+  await (await value.results()).reset(); expect(value.availability().available).toBe(false);
+  await expect(value.close()).rejects.toThrow("retained");
 });
 
 resourceIt("cleans a stopped old-owner output after owner ABA without publishing it to the restored account", async () => {

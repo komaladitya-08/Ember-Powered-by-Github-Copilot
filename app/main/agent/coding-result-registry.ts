@@ -1,7 +1,8 @@
 /** Host-only shared owner/project registry. Physical filesystem authority belongs to its artifact store. */
 import { createHash, randomUUID } from "node:crypto";
 import type { CodingResultReview, CodingResultSummary } from "../../shared/project-coding";
-import type { CodingReviewExport } from "./coding-result-export";
+import { decodeCodingReviewExport, type CodingReviewExport, type CodingExportBinding, type CodingExportInput } from "./coding-result-export";
+import { clearCodingContinuation, type CodingContinuationRef } from "./coding-continuation";
 import { LinuxCodingArtifactStore } from "./linux-coding-artifact-store";
 import { CodingArtifactCleanupError, CodingResultRegistryError, CODING_ARTIFACT_MESSAGES as MESSAGES,
   CODING_ARTIFACT_MAX_BYTES as MAX_BYTES, CODING_ARTIFACT_MAX_TRACKED as MAX_TRACKED,
@@ -29,6 +30,7 @@ export interface CodingResultRegistryOptions {
 }
 interface RecordEntry {
   owner: string; epoch: number; projectRevision: number; source: CodingArtifactSourceRef | null;
+  binding: CodingExportBinding;
   summary: CodingResultSummary; review: CodingResultReview; artifact: CodingArtifactReceipt;
 }
 interface Context { owner: string; projectId: string; epoch: number; projectRevision: number; current: () => boolean; record?: { id: string; entry: RecordEntry } }
@@ -101,6 +103,7 @@ export class CodingResultRegistry {
   #options: CodingResultRegistryOptions;
   #epoch = 0;
   #records = new Map<string, RecordEntry>();
+  #continuations = new WeakMap<CodingContinuationRef, { record: RecordEntry; context: Context }>();
   #projectRevisions = new Map<string, number>();
   #pendingProjects = new Map<string, number>();
   #missingProjects = new Set<string>();
@@ -174,6 +177,7 @@ export class CodingResultRegistry {
           }
           this.#assert(context);
           this.#records.set(id, { owner: context.owner, epoch: context.epoch, projectRevision: context.projectRevision, source,
+            binding: Object.freeze({ ...captured.output.review.binding }),
             summary: rendered.summary, review: rendered.review, artifact });
           return structuredClone(rendered.summary);
         } catch (error) {
@@ -221,6 +225,35 @@ export class CodingResultRegistry {
         await this.#store.verify(found.record.artifact, () => this.#assert(found.context));
         this.#assert(found.context); return structuredClone(found.record.review);
       } catch (error) { if (error instanceof CodingArtifactCleanupError) throw error; return null; }
+    });
+  }
+  /** Explicit host intake only. A model cannot supply this token or select a different result later. */
+  captureContinuation(id: string, projectId: string): CodingContinuationRef | null {
+    const found = this.#record(id);
+    if (!found || found.record.summary.projectId !== projectId || !found.record.source || !this.#valid(found.context)) return null;
+    const ref = Object.freeze({}) as CodingContinuationRef;
+    this.#continuations.set(ref, found); return ref;
+  }
+  continuationCurrent(ref: CodingContinuationRef, projectId: string): boolean {
+    const found = this.#continuations.get(ref);
+    return !!found && found.record.summary.projectId === projectId && this.#valid(found.context);
+  }
+  /** Copies complete verified bytes for a new task. Preview data and arbitrary directories cannot seed execution. */
+  loadContinuation(ref: CodingContinuationRef, projectId: string, source: CodingArtifactSourceRef | null, current: () => boolean): Promise<CodingExportInput> {
+    const found = this.#continuations.get(ref);
+    if (!found || found.record.summary.projectId !== projectId || !source || typeof current !== "function") return Promise.reject(new CodingResultRegistryError("stale"));
+    const context = { ...found.context, current };
+    return this.#queue(async () => {
+      const check = () => this.#assert(context);
+      let bytes: Buffer | undefined, decoded: CodingExportInput | undefined;
+      try {
+        check();
+        if (!await this.#store.sameSource(found.record.source, source, check)) throw new CodingResultRegistryError("destination");
+        check(); bytes = await this.#store.read(found.record.artifact, "review.json", MAX_BYTES, check); check();
+        decoded = decodeCodingReviewExport(bytes, found.record.binding); check();
+        return decoded;
+      } catch (error) { clearCodingContinuation(decoded); throw safe(error); }
+      finally { bytes?.fill(0); }
     });
   }
   export(id: string, destination: string, current: () => boolean): Promise<{ ok: boolean; message: string; directory?: string }> {
