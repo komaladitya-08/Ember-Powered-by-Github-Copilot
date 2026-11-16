@@ -116,13 +116,11 @@ it("admits process facts only from this module's opaque tokens and freezes the f
   const outside = createUvSpawnBuildDiagnostic(); outside.checkpoint(9); expect(outside.classify(outside.failure(token))).toEqual({ schema: 1, status: "failed", checkpoint: 9 });
 });
 
-it("binds the new capture authority and preserves the original PowerShell program, arguments and JSON stage", () => {
+it("keeps the old classifier recipe-bound while replacing the production PowerShell metadata dependency", () => {
   const text = fs.readFileSync(new URL("../../scripts/experimental/build-windows-uv-spawn-probe.mjs", import.meta.url), "utf8");
-  const body = text.slice(text.indexOf("diagnostic.subcheckpoint(versionSteps.powershellCall)"), text.indexOf("diagnostic.subcheckpoint(versionSteps.powershellJson)"));
-  expect(text).toContain('"scripts/experimental/windows-uv-spawn-powershell.mjs"'); expect((body.match(/captureWindowsUvSpawnPowerShell\(/g) ?? []).length).toBe(1);
-  expect(body).toContain('path.join(env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")');
-  expect(body).toContain('["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",');
-  expect(body).toContain('{ ...env, EMBER_BUILD_COMPILER: toolPaths.compiler, EMBER_BUILD_LINKER: toolPaths.linker }, destination)');
-  expect(body).toContain("diagnostic.observePowerShell(powerShellCapture)"); expect(body).toContain("const metadataOutput = acceptedPowerShellStdout(powerShellCapture)");
-  expect(body).not.toMatch(/fallback|retry|preflight|FileVersionRaw|stderr|stdout\s*:/i);
+  const body = text.slice(text.indexOf("diagnostic.subcheckpoint(versionSteps.powershellCall)"), text.indexOf("diagnostic.subcheckpoint(versionSteps.cmakeCall)"));
+  for (const file of ["windows-uv-spawn-powershell.mjs", "windows-uv-spawn-file-version.mjs", "windows-uv-spawn-file-version.py"]) expect(text).toContain(`"scripts/experimental/${file}"`);
+  expect((body.match(/readAttestedWindowsUvSpawnToolFileVersions\(/g) ?? []).length).toBe(1);
+  expect(body).toContain("diagnostic.observeFileVersionFailure(error)");
+  expect(text).not.toMatch(/captureWindowsUvSpawnPowerShell\(|acceptedPowerShellStdout\(|powershell\.exe|ConvertTo-Json|EMBER_BUILD_COMPILER/);
 });

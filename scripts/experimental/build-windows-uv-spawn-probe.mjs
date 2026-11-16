@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { prepareWindowsUvSpawnSource, validateWindowsUvSpawnSource, sourcePin } from "./windows-uv-spawn-source.mjs";
 import { inspectWindowsUvSpawnEmission, parseWindowsUvSpawnEmission, emissionLimits } from "./windows-uv-spawn-emission.mjs";
 import { createUvSpawnBuildDiagnostic, classifyUvSpawnBuildFailure, uvSpawnBuildCheckpoints as checkpoints, uvSpawnVersionSubcheckpoints as versionSteps } from "./windows-uv-spawn-build-diagnostic.mjs";
-import { captureWindowsUvSpawnPowerShell, acceptedPowerShellStdout } from "./windows-uv-spawn-powershell.mjs";
+import { readWindowsUvSpawnFileVersions } from "./windows-uv-spawn-file-version.mjs";
 export { sourcePin };
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const freeze = value => { if (value && typeof value === "object") { for (const item of Object.values(value)) freeze(item); Object.freeze(value); } return value; };
@@ -24,6 +24,7 @@ const fixedFiles = ["scripts/experimental/build-windows-uv-spawn-probe.mjs", "sc
   "scripts/experimental/windows-uv-spawn-source.mjs", "scripts/experimental/windows-uv-spawn-source-pin.json",
   "scripts/experimental/windows-uv-spawn-emission.mjs", "scripts/experimental/windows-uv-spawn-build-diagnostic.mjs",
   "scripts/experimental/windows-uv-spawn-powershell.mjs",
+  "scripts/experimental/windows-uv-spawn-file-version.mjs", "scripts/experimental/windows-uv-spawn-file-version.py",
   "scripts/experimental/extract-node-libuv-source.py", "scripts/experimental/windows-libuv-source-pin.json",
   "test/fixtures/windows-uv-spawn-build/CMakeLists.txt", "test/fixtures/windows-uv-spawn-probe.c",
   "test/fixtures/windows-uv-spawn-observe.h", "test/fixtures/windows-uv-spawn-observe.c"];
@@ -153,6 +154,13 @@ export function attestWindowsUvSpawnPython(value, env, cwd) {
   return { pythonPath, version: observedVersion, fingerprint };
 }
 
+/** Metadata is admitted only after the same attested interpreter and both selected tool images are rehashed. */
+export function readAttestedWindowsUvSpawnToolFileVersions(python, toolPaths, tools, env, cwd) {
+  const metadata = readWindowsUvSpawnFileVersions(python.pythonPath, toolPaths.compiler, toolPaths.linker, env, cwd);
+  if (!equal(python.fingerprint, snapshot(python.pythonPath)) || !equal(tools.compiler, snapshot(toolPaths.compiler)) || !equal(tools.linker, snapshot(toolPaths.linker))) fail();
+  return metadata;
+}
+
 /** Build tools receive only Windows installation paths and a fresh profile, with no ambient flags or credentials. */
 export function windowsUvSpawnBuildEnvironment(base, directories, pythonDirectory) {
   if (!strict(directories, ["temporary", "profile", "local", "roaming"])) fail();
@@ -250,15 +258,9 @@ export async function buildWindowsUvSpawnProbe({ archivePath, destination, pytho
     diagnostic.checkpoint(checkpoints.versions);
     diagnostic.subcheckpoint(versionSteps.powershellCall);
     diagnostic.observeVersion(5, python.version);
-    const powerShellCapture = captureWindowsUvSpawnPowerShell(path.join(env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop';[pscustomobject]@{compilerVersion=[Diagnostics.FileVersionInfo]::GetVersionInfo($env:EMBER_BUILD_COMPILER).FileVersion;linkerVersion=[Diagnostics.FileVersionInfo]::GetVersionInfo($env:EMBER_BUILD_LINKER).FileVersion}|ConvertTo-Json -Compress"],
-      { ...env, EMBER_BUILD_COMPILER: toolPaths.compiler, EMBER_BUILD_LINKER: toolPaths.linker }, destination);
-    diagnostic.observePowerShell(powerShellCapture);
-    const metadataOutput = acceptedPowerShellStdout(powerShellCapture);
-    diagnostic.subcheckpoint(versionSteps.powershellJson);
-    const metadata = JSON.parse(metadataOutput);
-    diagnostic.subcheckpoint(versionSteps.powershellShape);
-    if (!strict(metadata, ["compilerVersion", "linkerVersion"])) fail();
+    let metadata;
+    try { metadata = readAttestedWindowsUvSpawnToolFileVersions(python, toolPaths, tools, env, destination); }
+    catch (error) { diagnostic.observeFileVersionFailure(error); throw error; }
     diagnostic.observeVersion(2, metadata.compilerVersion); diagnostic.observeVersion(3, metadata.linkerVersion);
     diagnostic.subcheckpoint(versionSteps.cmakeCall);
     const cmakeOutput = captured(toolPaths.cmake, ["--version"], env, destination);

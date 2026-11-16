@@ -159,6 +159,53 @@ version-pin change or native execution is added.
 This follow-up passed 349 affected tests across twelve suites, scoped lint, final typecheck, syntax and YAML checks;
 the 120 focused capture/diagnostic/build cases include real fixed Node process faults, not a PowerShell or Windows run.
 
+The fourth automatic compile-only run
+[43905556718](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43905556718), at head
+`3bb03f5919bc6191b908f83a9c36880b4a7ebb23`, passed all 349 Linux tests and 327 Windows tests with 22 expected skips.
+Windows again stopped at checkpoint 7/subcheckpoint 1. The closed process record reports status null, SIGTERM,
+an own error, and ETIMEDOUT from the one 30-second PowerShell metadata invocation. Only Python `[3,12,10]` was
+observed; there is no observed tool-version mismatch. JSON parsing, configuration, compilation, PE/emission
+verification and native execution were not reached; upload was skipped and no artifact was produced.
+
+The next local candidate explicitly replaces that metadata-only PowerShell dependency with one `python -I -B`
+invocation using the already attested hosted interpreter and the same fingerprint-bound `cl.exe` and `link.exe`.
+It retains the 30-second/65,536-byte capture bounds, clean environment, fixed pins, original version validator,
+compile commands and native hold. Python and both selected tool files are rehashed before its metadata is admitted.
+There is no PowerShell fallback, retry or timeout increase. A new reader and its caller are bound into the compile
+recipe; the old PowerShell module supplies only its existing closed process classifier and is never invoked as a process.
+
+The reader loads only the canonical absolute `System32\\version.dll` and calls `GetFileVersionInfoSizeW`,
+`GetFileVersionInfoW` with handle 0, and `VerQueryValueW`. A resource buffer is limited to 1 MiB, Translation to
+256 pairs, and each version string to 28 UTF-16 code units including its terminator. The root must be exactly
+52 bytes with signature `0xFEEF04BD`. Pointer ranges, alignment, byte-versus-character lengths and termination are
+checked before bounded copies. No raw native error, path, traceback or captured stream is published. An exact
+exit-1 numeric refusal from this fixed reader can supply only stages 0–15 to a private first-failure phase-7 record;
+other process failures supply only closed process facts.
+
+Selection follows the pinned [Framework reference source](https://github.com/microsoft/referencesource/blob/ec9fa9ae770d522a5b5f0607898044b7478574a3/System/services/monitoring/system/diagnosticts/FileVersionInfo.cs#L459):
+the first Translation pair, or `040904E4` when absent, then `040904B0`, `040904E4`, `04090000`, skipping the initial
+key. Signed-WORD selector arithmetic and the source's doubled runtime StringFileInfo separators are preserved.
+The winning FileVersion string is returned unchanged. Every available nonempty string among all declared pairs
+and Framework-reachable fallbacks must equal it literally and numerically agree with the fixed version WORDs;
+a three-component string requires a zero fourth WORD. No component is appended and no vendor suffix is stripped.
+This deliberately strict subset does not enumerate undeclared, unreachable StringTables or establish the exact
+serviced `System.dll` implementation. The same W API family preserves the documented neutral/MUI merge behavior;
+raw PE fixed-version reconstruction would not preserve Framework's string selection.
+
+Before either real tool read, two fixed resource-only PE fixtures must pass the same real Windows API route and
+exact selection checks. Their entry RVA is zero; they contain no imports or code and only a READ/non-EXEC resource
+section. The script treats them as data files and never passes them to a DLL loader or executes them. One covers a four-component fallback literal;
+the other covers a three-component literal and missing Translation default. The subsequent real compiler/linker
+reads exercise those same file APIs before compiler admission. This ordinary-host reader gate and the fifth
+compile-only attempt remain pending publication and actual Windows verification; no native admission is added.
+The frozen local replacement passed all 427 affected tests across fourteen suites, including 31 parser/API-fixture
+cases and 47 process/metadata-admission cases, plus scoped lint, Python 3.6 syntax parsing, JavaScript syntax, YAML
+and diff checks. An earlier reader batch had one aggregate eight-subprocess UTF-16 fault test exceed its unchanged
+five-second test limit; the same faults were split into independent cases with the same per-process bounds, then
+all 31 reader cases and the complete 427-test batch passed. An initial typecheck found only a test's chained Vitest
+condition typing; the equivalent combined condition passed all 31 reader cases and a fresh final typecheck.
+Actual Windows fixture/API outcomes remain pending. The local mock tests do not establish Windows API or MUI behavior.
+
 Portable source, recipe, decoder, actual observer C-shim and native-owner fault tests are implemented. The Linux shim
 uses test-only Win32 declarations around the production observer; it is not Windows ABI, policy or native evidence.
 The initial frozen affected batch passed 263 tests across ten suites with no skips. Scoped ESLint, final `tsc --noEmit`,

@@ -146,12 +146,12 @@ it("never reads foreign output or selector getters, including revoked proxies an
   expect(JSON.stringify(output)).not.toMatch(/private|message|stack|stderr|stdout|signal|path|native/i);
 });
 
-it("records distinct Phase7 call, JSON, shape and banner checkpoints before the unchanged fallible blocks", () => {
+it("records the replacement reader and distinct remaining Phase7 calls before their fallible blocks", () => {
   const text = fs.readFileSync(new URL("../../scripts/experimental/build-windows-uv-spawn-probe.mjs", import.meta.url), "utf8");
   const body = text.slice(text.indexOf("diagnostic.checkpoint(checkpoints.versions);"), text.indexOf("diagnostic.checkpoint(checkpoints.sourceBefore);"));
   const markers = [...body.matchAll(/diagnostic\.subcheckpoint\(versionSteps\.([A-Za-z]+)\);/g)];
-  expect(markers.map(item => item[1])).toEqual(Object.keys(versionSteps).slice(1, 8));
-  const anchors = ["const powerShellCapture = captureWindowsUvSpawnPowerShell(", "const metadata = JSON.parse(metadataOutput)", "if (!strict(metadata,", "const cmakeOutput = captured(",
+  expect(markers.map(item => item[1])).toEqual(["powershellCall", "cmakeCall", "cmakeBanner", "visualStudioCall", "msbuildCall"]);
+  const anchors = ["metadata = readAttestedWindowsUvSpawnToolFileVersions(", "const cmakeOutput = captured(",
     "const cmakeVersion = cmakeOutput.split(", "const visualStudioVersion = captured(", "const msbuildVersion = captured("];
   markers.forEach((marker, index) => expect(body.slice(marker.index, markers[index + 1]?.index).includes(anchors[index])).toBe(true));
   expect(body).toContain("diagnostic.observeVersion(5, python.version)"); expect(body).toContain("diagnostic.observeVersion(6, cmakeVersion)");
@@ -164,7 +164,7 @@ it("binds every pre-failure block and its diagnostic module to the existing comp
   const markers = [...body.matchAll(/diagnostic\.checkpoint\(checkpoints\.([A-Za-z]+)\);/g)];
   expect(markers.map(item => item[1])).toEqual(Object.keys(checkpoints).slice(1));
   const anchors = ["if (process.platform", "fs.mkdirSync(destination", "attestWindowsUvSpawnPython(", "await prepareWindowsUvSpawnSource(", "const vswhere = ordinary(",
-    "const toolDirectory = path.join(", "const metadata = JSON.parse(", "await validateWindowsUvSpawnSource(", 'captured(toolPaths.cmake, ["-S"', "const compilerMetadata = inputBytes(",
+    "const toolDirectory = path.join(", "metadata = readAttestedWindowsUvSpawnToolFileVersions(", "await validateWindowsUvSpawnSource(", 'captured(toolPaths.cmake, ["-S"', "const compilerMetadata = inputBytes(",
     "const generatedProjects = [", 'captured(toolPaths.cmake, ["--build"', "await validateWindowsUvSpawnSource(", "if (!equal(recipe, windowsUvSpawnRecipe())", "const listing = inputBytes(",
     "const emissionBytes = Buffer.from(", "const object = inputBytes(", "const bytes = inputBytes(", "const staged = path.join(", "const receipt = { schema: 1"];
   markers.forEach((marker, index) => expect(body.slice(marker.index, markers[index + 1]?.index).includes(anchors[index])).toBe(true));
