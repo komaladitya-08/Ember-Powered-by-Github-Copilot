@@ -301,15 +301,29 @@ at `68860d55` composes the real canonical copy, native assets, stopped output an
 local gates passed 1,248 cases across 27 files and full types; hosted regression checks passed all six existing
 Windows controller, ZIP and files-only Electron jobs. Those jobs do not exercise the new Node command path.
 Host/resource integration is still local: actual default-resource tests found a protected-ancestor allocation
-conflict, which must be resolved without weakening source or private-storage protection.
+conflict. A narrow owned-parent capability preserves the full protected set and passes seven resource model cases;
+negative tests and final review remain in progress. A separate workspace-first bundled import exposed an initialisation
+cycle that resource-first tests hid; its fix and entry-point regressions are also pending. Atomic request intake now
+keeps commands-off requests file-only and prevents later enablement or failed Node startup from upgrading them.
 
 The additive four-patch Node producer [#260](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/260)
 at `4d052231` preserves the three reviewed startup patches and adds the fixed POSIX file-rename operation supported
 by the full LPAC proof. Its local source/build/rename gates and full types passed; registration passed 160 cases.
-One exact-head [manual build 43968426268](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43968426268)
-was dispatched. Mandatory Win8/Win10RS1 SDK compilation, the Node build, artifact authentication and actual runtime
-validation are pending. The seven-case native asset proof is also awaiting final review and execution. Neither
-candidate enables Windows commands in the published product; software work remains before laptop acceptance.
+The sole exact-head [manual build 43968426268](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43968426268)
+failed at the mandatory ABI preflight before vcbuild and produced no artifact. Diagnostic head `67c1f0be` passed
+306 local cases, full types and 188 registration cases. Its [ABI-only run 43971356498](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43971356498)
+observed target 1, phase 0, exit 1 and no compiler codes: no batch-entry marker or compiler cause was established.
+A narrow command-launch quoting correction is being reviewed; a successful dual-target preflight, Node build,
+artifact authentication and runtime validation remain unfinished.
+
+The seven-case native asset proof [#261](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/261)
+passed full types, source review, real four-to-three-file staging and all 231 hosted portable cases. Its sole
+[native pair 43971415844](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43971415844)
+failed the first natural case at the C access-prelude phase on both images; no native case passed and later cases
+were correctly blocked after retention. Diagnostic-only head `34372b2c` adds bounded substages, authenticated C
+exits and exact-graph error classes without changing C, production, expectations or cleanup. Its full types and
+51 affected cases passed; the follow-up native outcome remains pending. No candidate here enables Windows commands
+in the published product. Software work remains before laptop acceptance.
 
 The separate worker startup correction [#258](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/258)
 at `bec2e6ad` preserves genuine native/artifact/seed cleanup uncertainty when a factory rejects before returning a

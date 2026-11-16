@@ -50,10 +50,14 @@ unchanged redaction budget assertion and the full build/native/smoke/app-bundle 
 cleanup correction is published at `46fed893` with 1,142 affected cases, full types and independent review passed.
 The unregistered Node workspace `68860d55` passed 1,248 local cases and full types; its six existing hosted
 controller/ZIP/files-only Electron jobs passed. Actual explicit/default-Medium parent enforcement, native canonical
-transfer and the complete Node product journey remain unverified. Host/resource integration is local and has an
-unresolved protected-ancestor allocation conflict. Four-patch Node producer `4d052231` passed registration and has
-one pending [manual build 43968426268](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43968426268);
-its mandatory SDK preflight, build, artifact authentication and runtime validation are not yet complete.
+transfer and the complete Node product journey remain unverified. Local resource integration now passes seven
+model cases with full protected paths; final negative/source review and a workspace-first import-cycle fix remain.
+Four-patch Node producer `4d052231` failed its mandatory ABI preflight in
+[43968426268](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43968426268), before vcbuild.
+Diagnostic `67c1f0be` observed no batch-entry marker or compiler codes in ABI-only run `43971356498`; a narrow
+launcher correction is under review. Asset proof `c1be1787` passed 231 hosted portable cases but failed its first
+C access-prelude case on both images in `43971415844`; later cases remained blocked. Diagnostic-only `34372b2c`
+passed types and affected tests; its native follow-up is pending. No new Node artifact or product proof exists yet.
 Worker startup fix `bec2e6ad` passed all six existing Windows controller/ZIP/files-only Electron jobs. None of these results enables Windows commands
 in the product or closes live-account and physical-laptop acceptance.
 
