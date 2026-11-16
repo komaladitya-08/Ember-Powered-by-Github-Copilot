@@ -62,7 +62,13 @@ interface AceFacts {
 }
 type NodeFacts = Pick<OwnerFacts, "nodeKind" | "nodeRoot" | "nodeAcl" | "nodeDetached">;
 interface AutoInheritanceFacts { readonly autoControl: number }
-export interface WindowsCommandCopyNativeFailure extends Partial<OwnerFacts>, Partial<AceFacts>, Partial<AutoInheritanceFacts> {
+type MetadataConstraint = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15;
+interface MetadataFacts extends Partial<NodeFacts> {
+  readonly metaConstraint: MetadataConstraint;
+  /** First evidenced changed field only; zero for a non-comparison guard, omitted when diagnostic projection is unknown. */
+  readonly metaChanged?: number;
+}
+export interface WindowsCommandCopyNativeFailure extends Partial<OwnerFacts>, Partial<AceFacts>, Partial<AutoInheritanceFacts>, Partial<MetadataFacts> {
   readonly stage: FailureStage; readonly operation: FailureOperation; readonly predicate: FailurePredicate; readonly domain: FailureDomain; readonly code: number;
 }
 const nativeFailures = new WeakMap<object, WindowsCommandCopyNativeFailure>();
@@ -185,7 +191,7 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
     let creator: CreatorGrant | undefined;
     let phase: "private" | "granting" | "granted" | "revoking" = "private", ticks = 0;
     let stage: FailureStage = 1;
-    const poison = (predicate: FailurePredicate = 8, operation: FailureOperation = 0, status: { domain: FailureDomain; code: number } = { domain: 0, code: 0 }, facts?: OwnerFacts | ((AceFacts | AutoInheritanceFacts) & NodeFacts)): never => {
+    const poison = (predicate: FailurePredicate = 8, operation: FailureOperation = 0, status: { domain: FailureDomain; code: number } = { domain: 0, code: 0 }, facts?: OwnerFacts | ((AceFacts | AutoInheritanceFacts) & NodeFacts) | MetadataFacts): never => {
       const first = !terminal && !fence.failure;
       terminal ??= fence.failure ?? new WindowsCommandCopyCleanupError(); fence.failure ??= terminal;
       if (first) nativeFailures.set(terminal, Object.freeze({ stage, operation, predicate, domain: status.domain, code: status.code, ...facts }));
@@ -277,7 +283,30 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       return { id, volume: volume.toLowerCase(), finalPath, kind: attributes & 16 ? "directory" : "file", attributes, links, size, created: basic.readBigUInt64LE(0).toString(), written: basic.readBigUInt64LE(16).toString(), changed: basic.readBigUInt64LE(24).toString() };
     };
     const same = (a: WindowsCodingInfo, b: WindowsCodingInfo, data = false) => a.id === b.id && a.volume === b.volume && a.kind === b.kind && a.created === b.created && windowsCodingFold(a.finalPath) === windowsCodingFold(b.finalPath) && (!data || a.size === b.size && a.written === b.written && a.changed === b.changed && a.attributes === b.attributes);
-    const metadata = (node: Node) => { const now = info(node.raw); if (!same(node.identity, now)) return poison(5); return now; };
+    const metadataRefusal = (metaConstraint: MetadataConstraint, node?: Node, before?: WindowsCodingInfo, after?: WindowsCodingInfo, fields = 0, knownMask?: number | null): never => {
+      if (stage !== 6 || selected.creatorProfile === undefined) return poison(5);
+      let metaChanged: number | undefined, context: Partial<NodeFacts> = {};
+      // Only an actual refusing guard calls this helper. Projection cannot replace the original refusal or issue a query.
+      try {
+        if (knownMask === null) { /* The rejecting guard is known, but its diagnostic-only field projection failed. */ }
+        else if (knownMask !== undefined) metaChanged = knownMask;
+        else if (!before || !after) metaChanged = 0;
+        else if (fields & 1 && before.id !== after.id) metaChanged = 1;
+        else if (fields & 2 && before.volume !== after.volume) metaChanged = 2;
+        else if (fields & 4 && before.kind !== after.kind) metaChanged = 4;
+        else if (fields & 8 && before.created !== after.created) metaChanged = 8;
+        else if (fields & 16 && windowsCodingFold(before.finalPath) !== windowsCodingFold(after.finalPath)) metaChanged = 16;
+        else if (fields & 32 && before.size !== after.size) metaChanged = 32;
+        else if (fields & 64 && before.written !== after.written) metaChanged = 64;
+        else if (fields & 128 && before.changed !== after.changed) metaChanged = 128;
+        else if (fields & 256 && before.attributes !== after.attributes) metaChanged = 256;
+        else metaChanged = 0;
+      } catch { /* Unknown diagnostic projection grants no evidence; the original metadata refusal remains. */ }
+      try { if (node) context = { nodeKind: node.kind === "file" ? 1 : 2, nodeRoot: node.relative === "" ? 1 : 0,
+        nodeAcl: node.acl === "private" ? 1 : node.acl === "granted" ? 2 : 3, nodeDetached: 0 }; } catch { /* No foreign diagnostic property is required. */ }
+      return poison(5, 0, undefined, { metaConstraint, ...(metaChanged !== undefined ? { metaChanged } : {}), ...context });
+    };
+    const metadata = (node: Node) => { const now = info(node.raw); if (!same(node.identity, now)) return metadataRefusal(1, node, node.identity, now, 31); return now; };
     // NTFS stream enumeration has no data-read requirement; reject every named stream.
     // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_stream_information
     const streams = (raw: bigint, kind: WindowsCodingKind, expectedSize: number) => {
@@ -403,9 +432,13 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
     };
     active(); const createdRoot = make(undefined, rootName, "directory", ""); const root = createdRoot.node; closeRaw(createdRoot.creator); closeRaw(creatorParent);
     const rootIdentity = { ...root.identity }, directory = path.join(selected.parent, rootName);
-    const checkRoot = () => { usable(); if (!same(rootIdentity, info(root.raw)) || !same(parent.identity, info(parent.raw))) return poison(5); };
+    const checkRoot = () => {
+      usable(); let rootNow: WindowsCodingInfo | undefined, parentNow: WindowsCodingInfo | undefined;
+      if (!same(rootIdentity, rootNow = info(root.raw)) || !same(parent.identity, parentNow = info(parent.raw)))
+        return parentNow === undefined ? metadataRefusal(2, root, rootIdentity, rootNow, 31) : metadataRefusal(3, undefined, parent.identity, parentNow, 31);
+    };
     verifyRoot = checkRoot;
-    const checkPins = async (admission: Admission) => { for (const p of pins) { if (!same(p.identity, info(p.raw))) return poison(5); await tick(admission); } checkRoot(); };
+    const checkPins = async (admission: Admission) => { for (const p of pins) { let now: WindowsCodingInfo | undefined; if (!same(p.identity, now = info(p.raw))) return metadataRefusal(4, undefined, p.identity, now, 31); await tick(admission); } checkRoot(); };
     const byPath = new Map<string, Node>([["", root]]);
     /** Only the same still-held fresh object can be treated as removed. A failed name query is never deletion proof.
      * https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_standard_info
@@ -443,7 +476,8 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       checkAdmission(admission); await checkPins(admission); checkRoot(); const known = new Map([...nodes].map(node => [node.identity.id, node])); const found: Node[] = [root], queue = [root], seen = new Set<string>([root.identity.id]), foldedPaths = new Set<string>(); let total = 0;
       for (let index = 0; index < queue.length; index++) {
         const parentNode = queue[index], before = metadata(parentNode);
-        const listing = acquire(parentNode.parent?.raw ?? parent.raw, parentNode.name, "directory", LIST, 7); if (!same(before, info(listing))) return poison(5);
+        const listing = acquire(parentNode.parent?.raw ?? parent.raw, parentNode.name, "directory", LIST, 7); let opened: WindowsCodingInfo | undefined;
+        if (!same(before, opened = info(listing))) return metadataRefusal(5, parentNode, before, opened, 31);
         let restart = 1, pages = 0;
         for (;;) {
           if (++pages > MAX_ENTRIES + 3) return poison();
@@ -456,14 +490,20 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
             if (found.length > MAX_ENTRIES) return poison(); const relative = parentNode.relative ? `${parentNode.relative}/${child.name}` : child.name;
             if (relative.split("/").length > MAX_DEPTH || foldedPaths.has(windowsCodingFold(relative)) || seen.has(child.id)) return poison(5, OP.NtQueryDirectoryFile); foldedPaths.add(windowsCodingFold(relative)); seen.add(child.id);
             const kind = child.attributes & 16 ? "directory" : "file", raw = acquire(parentNode.raw, child.name, kind, META | (kind === "directory" ? TRAVERSE : 0), 7), identity = info(raw);
-            if (identity.size > MAX_FILE && kind === "file" || identity.id !== child.id || identity.kind !== kind || identity.attributes !== child.attributes || identity.size !== child.size || identity.volume !== root.identity.volume || !windowsCodingWithin(identity.finalPath, root.identity.finalPath)) return poison(5);
+            if (identity.size > MAX_FILE && kind === "file" || identity.id !== child.id || identity.kind !== kind || identity.attributes !== child.attributes || identity.size !== child.size || identity.volume !== root.identity.volume || !windowsCodingWithin(identity.finalPath, root.identity.finalPath)) {
+              if (identity.size > MAX_FILE && kind === "file") return metadataRefusal(15);
+              let mask: number | undefined;
+              try { mask = identity.id !== child.id ? 1 : identity.kind !== kind ? 4 : identity.attributes !== child.attributes ? 256 : identity.size !== child.size ? 32 : identity.volume !== root.identity.volume ? 2 : 16; } catch { /* Unknown comparison evidence remains absent. */ }
+              return metadataRefusal(13, undefined, undefined, undefined, 0, mask ?? null);
+            }
             const previous = known.get(identity.id), node: Node = { raw, kind, relative, parent: parentNode, name: child.name, identity, acl: previous?.acl ?? "inherited", executable: previous?.executable ?? false };
             if (previous) { closeRaw(previous.raw); nodes.delete(previous); }
             nodes.add(node); streams(raw, kind, identity.size); if (kind === "file" && (total += identity.size) > MAX_BYTES) return poison(); found.push(node); if (kind === "directory") queue.push(node);
           }
           await tick(admission); checkRoot();
         }
-        if (!same(before, metadata(parentNode), true)) return poison(5); closeRaw(listing);
+        let after: WindowsCodingInfo | undefined;
+        if (!same(before, after = metadata(parentNode), true)) return metadataRefusal(6, parentNode, before, after, 511); closeRaw(listing);
       }
       return found;
     };
@@ -480,7 +520,7 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       });
       node.acl = granted ? "granted" : "private"; security(node, node.acl, false, false, automatic); node.identity = info(node.raw);
     };
-    const retireOldPins = async (keep: readonly Node[], admission: Admission) => { const current = new Set(keep.map(node => node.raw)); for (const node of [...nodes]) { if (!current.has(node.raw)) { if (!detached(node)) return poison(5); closeRaw(node.raw); nodes.delete(node); } await tick(admission); } };
+    const retireOldPins = async (keep: readonly Node[], admission: Admission) => { const current = new Set(keep.map(node => node.raw)); for (const node of [...nodes]) { if (!current.has(node.raw)) { if (!detached(node)) return metadataRefusal(14, node); closeRaw(node.raw); nodes.delete(node); } await tick(admission); } };
     const tree: FreshWindowsCommandTree = {
       directory,
       async assertPrivate() { begin(true, 5); try { if (phase !== "private") throw boundary(); for (const node of await walk(true)) { security(node, "private"); await tick(true); } } finally { end(); } },
@@ -495,10 +535,17 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
           packageSid = sid; phase = "granting"; for (const node of current) { admit(); setAcl(node, true); await tick(admit); }
           if (creator) {
             const sealed = new Map(current.map(node => [node.identity.id, { ...node.identity }])), final = await walk(admit);
-            if (final.length !== sealed.size) return poison(5);
+            if (final.length !== sealed.size) return metadataRefusal(10, root);
             for (const node of final) {
               const before = sealed.get(node.identity.id), original = creator.known.get(node.identity.id);
-              if (!before || !original || !same(before, node.identity, true) || !same(original, node.identity) || original.size !== node.identity.size || original.written !== node.identity.written || original.attributes !== node.identity.attributes) return poison(5);
+              let sealedSame: boolean | undefined, originalSame: boolean | undefined;
+              if (!before || !original || !(sealedSame = same(before, node.identity, true)) || !(originalSame = same(original, node.identity)) || original.size !== node.identity.size || original.written !== node.identity.written || original.attributes !== node.identity.attributes) {
+                if (!before) return metadataRefusal(11, node);
+                if (!original) return metadataRefusal(12, node);
+                if (sealedSame === false) return metadataRefusal(7, node, before, node.identity, 511);
+                if (originalSame === false) return metadataRefusal(8, node, original, node.identity, 31);
+                return metadataRefusal(9, node, original, node.identity, 32 | 64 | 256);
+              }
               security(node, "granted", false, false, true); await tick(admit);
             }
           }

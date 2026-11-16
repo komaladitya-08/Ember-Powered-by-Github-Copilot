@@ -153,7 +153,7 @@ describe("existing exact-zero natural exit gate", () => {
     expect(() => requireWindowsCommandCopyNaturalExit(() => { calls++; return value; }, code => { seen.push(code); })).not.toThrow();
     expect(calls).toBe(1); expect(seen).toHaveLength(1); expect(Object.is(seen[0], value)).toBe(true);
   });
-  it.each([1, 101, 0xc0000142, 0xffffffff])("captures returned DWORD%s while retaining the original refusal", value => {
+  it.each([1, 101, 211, 212, 0xc0000142, 0xffffffff])("captures returned DWORD%s while retaining the original refusal", value => {
     let calls = 0; const seen: number[] = [];
     expect(() => requireWindowsCommandCopyNaturalExit(() => { calls++; return value; }, code => { seen.push(code); })).toThrow("fixed root-only observation");
     expect(calls).toBe(1); expect(seen).toEqual([value]);
@@ -175,8 +175,8 @@ describe("existing exact-zero natural exit gate", () => {
 });
 
 describe("failed useful report has only post-Stop diagnostic authority", () => {
-  function failed(mode = 1, status = 2) {
-    const bytes = Buffer.alloc(128), words = [WINDOWS_COMMAND_CREATOR_OWNER_REPORT_MAGIC, 2, mode, status, 5, 0xf00, 5, 5, 5, 5, 0, 0, 0, 5, 0, 0,
+  function failed(mode = 1, status = 2, operation = 5, features = 0xf00) {
+    const bytes = Buffer.alloc(128), words = [WINDOWS_COMMAND_CREATOR_OWNER_REPORT_MAGIC, 2, mode, status, operation, features, 5, 5, 5, 5, 0, 0, 0, 5, 0, 0,
       3, 15, 0, 15, 5, 5, 5, 5, 15, 3, 0, 0, 0, 0, 0, 0];
     words.forEach((word, index) => bytes.writeUInt32LE(word, index * 4)); return bytes;
   }
@@ -194,7 +194,7 @@ describe("failed useful report has only post-Stop diagnostic authority", () => {
     expect(events).toEqual(["stop", "revoked", "unchanged", "acquire", "read", "close", "observed"]);
     expect(seen).toEqual([{ mode: 1, status: 2, operation: 5, features: 0xf00, code: 5 }]); expect(Object.isFrozen(seen[0])).toBe(true);
   });
-  it.each([undefined, { phase: 1 as const }, { phase: 2 as const, code: 1 }, ...[0, 101, 0xc0000142, 0xffffffff].map(code => ({ phase: 1 as const, code }))])(
+  it.each([undefined, { phase: 1 as const }, ...[1, 211, 212].map(code => ({ phase: 2 as const, code })), ...[0, 101, 210, 213, 0xc0000142, 0xffffffff].map(code => ({ phase: 1 as const, code }))])(
     "does not start Stop or a native report operation for an unmatched exit %#", async exit => {
       const original = new Error("Fixed unmatched refusal"), calls: string[] = [];
       await expect(observeWindowsCommandCopyFailedUsefulExit(original, exit, async () => { calls.push("stop"); }, () => { calls.push("unchanged"); },
@@ -220,6 +220,49 @@ describe("failed useful report has only post-Stop diagnostic authority", () => {
     await expect(observeWindowsCommandCopyFailedUsefulExit(original, { phase: 1, code: 1 }, async () => { calls.push("stop"); }, () => { calls.push("unchanged"); },
       () => { calls.push("acquire"); return { read() { calls.push("read"); return bytes; }, close() { calls.push("close"); } }; }, () => { calls.push("observed"); })).rejects.toBe(original);
     expect(calls).toEqual(["stop", "unchanged", "acquire", "read", "close"]); expect(bytes.every(byte => byte === 0)).toBe(true);
+  });
+  it.each([211, 212])("classifies only the fixed replacement exit%s after full Stop/revoke and a matching strict report", async code => {
+    const original = new Error("Fixed replacement refusal"), calls: string[] = [], seen: unknown[] = [], bytes = failed(1, 2, 9, 0xf0f);
+    let release!: () => void; const stopped = new Promise<void>(resolve => { release = resolve; });
+    const running = observeWindowsCommandCopyFailedUsefulExit(original, { phase: 1, code }, async () => { calls.push("stop"); await stopped; calls.push("revoked"); },
+      () => { calls.push("unchanged"); }, () => { calls.push("acquire"); return { read() { calls.push("read"); return bytes; },
+        close() { calls.push("close"); expect(bytes.every(byte => byte === 0)).toBe(true); } }; }, value => { calls.push("observed"); seen.push(value); });
+    const result = running.catch(error => error); await Promise.resolve(); expect(calls).toEqual(["stop"]); release();
+    expect(await result).toBe(original); expect(calls).toEqual(["stop", "revoked", "unchanged", "acquire", "read", "close", "observed"]);
+    expect(seen).toEqual([{ mode: 1, status: 2, operation: 9, features: 0xf0f, code: 5, replacementStage: code === 211 ? 1 : 2 }]);
+    expect(Object.isFrozen(seen[0])).toBe(true);
+  });
+  it("reads the captured replacement code once and preserves a trapping foreign observation without inspecting its error", async () => {
+    const original = new Error("Fixed replacement refusal"), seen: unknown[] = []; let reads = 0;
+    const exit = { phase: 1 as const, get code() { reads++; if (reads > 1) throw new Error("Private duplicate status read"); return 211; } };
+    await expect(observeWindowsCommandCopyFailedUsefulExit(original, exit, async () => undefined, () => undefined,
+      () => ({ read: () => failed(1, 2, 9, 0xf0f), close() {} }), value => { seen.push(value); })).rejects.toBe(original);
+    expect(reads).toBe(1); expect(seen).toHaveLength(1);
+    const calls: string[] = []; let foreignErrorReads = 0;
+    const foreign = new Proxy({}, { get() { throw new Proxy({}, { get() { foreignErrorReads++; throw new Error("Private foreign error getter"); } }); } });
+    await expect(observeWindowsCommandCopyFailedUsefulExit(original, foreign as never, async () => { calls.push("stop"); }, () => { calls.push("unchanged"); },
+      () => { calls.push("acquire"); return { read: () => failed(), close() { calls.push("close"); } }; }, () => { calls.push("observed"); })).rejects.toBe(original);
+    expect(calls).toEqual([]); expect(foreignErrorReads).toBe(0);
+  });
+  it.each(["other operation", "wrong progress", "ACL grant", "ACL incomplete", "complete", "wrong mode", "short"])("does not classify a replacement phase from %s", async fault => {
+    const original = new Error("Fixed replacement refusal"), calls: string[] = []; let bytes = failed(1, 2, 9, 0xf0f);
+    if (fault === "other operation") bytes = failed();
+    else if (fault === "wrong progress") bytes.writeUInt32LE(0xf07, 20);
+    else if (fault === "ACL grant") bytes.writeUInt32LE(1, 18 * 4);
+    else if (fault === "ACL incomplete") bytes.writeUInt32LE(7, 17 * 4);
+    else if (fault === "complete") { bytes.writeUInt32LE(1, 12); bytes.writeUInt32LE(19, 16); bytes.writeUInt32LE(0xfff, 20); bytes.writeUInt32LE(0, 52); }
+    else if (fault === "wrong mode") bytes.writeUInt32LE(3, 8);
+    else bytes = bytes.subarray(0, 127);
+    await expect(observeWindowsCommandCopyFailedUsefulExit(original, { phase: 1, code: 212 }, async () => { calls.push("stop"); }, () => { calls.push("unchanged"); },
+      () => { calls.push("acquire"); return { read() { calls.push("read"); return bytes; }, close() { calls.push("close"); } }; }, () => { calls.push("observed"); })).rejects.toBe(original);
+    expect(calls).toEqual(["stop", "unchanged", "acquire", "read", "close"]); expect(bytes.every(byte => byte === 0)).toBe(true);
+  });
+  it.each(["stop", "unchanged", "acquire", "read", "close", "observed"])("preserves the replacement refusal and stops at %s diagnostic uncertainty", async fault => {
+    const original = new Error("Fixed replacement refusal"), calls: string[] = [], bytes = failed(1, 2, 9, 0xf0f);
+    const at = (stage: string) => { calls.push(stage); if (stage === fault) throw new Error("Private replacement diagnostic uncertainty"); };
+    await expect(observeWindowsCommandCopyFailedUsefulExit(original, { phase: 1, code: 211 }, async () => { at("stop"); }, () => { at("unchanged"); },
+      () => { at("acquire"); return { read() { at("read"); return bytes; }, close() { at("close"); } }; }, () => { at("observed"); })).rejects.toBe(original);
+    expect(calls).toEqual(["stop", "unchanged", "acquire", "read", "close", "observed"].slice(0, ["stop", "unchanged", "acquire", "read", "close", "observed"].indexOf(fault) + 1));
   });
 });
 

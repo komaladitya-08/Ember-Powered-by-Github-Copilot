@@ -99,8 +99,67 @@ New operation IDs 28–31 identify descriptor length, DACL view, SACL view and
 `SetSecurityInfo`. Domain 3 reports only an actual bounded DWORD status returned
 by the setter; it performs no GetLastError query. A failed automatic-control
 readback may report the already returned valid control WORD and existing node
-context. No such fact permits Resume, bytes, revocation or cleanup. The native
-outcome of this correction remains pending.
+context. No such fact permits Resume, bytes, revocation or cleanup. The third
+matrix below records the actual result of this correction.
+
+The third matrix, run `43918577005` at head
+`f597a127153acf1936f19c4543a89a2978892703`, passed 1,532 contracts with one
+expected skip per image, then failed both native tests at different boundaries.
+Server 2022 reached a strict failed useful report: mode 1, status 2, operation 9,
+features `0x0f0f`, native error 5, after exit 1. Receiving that report requires
+the genuine first Stop/revoke, private owner readback and positive report-pin
+close. The unchanged schema-2 parser also requires the complete four in-run
+WRITE_DAC/WRITE_OWNER denials and removal of their dedicated objects. These
+limited gates passed; the full eight useful operations and final integration
+cleanup did not. Operation 9 includes both creation/write/flush/close of the
+replacement temporary file and `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`, so the
+failing API remains unknown. Server 2025 instead refused before root launch at
+Native stage 6, operation 0, metadata predicate 5, with no failed report.
+
+## Closed replacement and metadata observations
+
+The next local follow-up preserves the 128-byte schema-2 report, every positive
+operation assertion, permissions, native ordering and unknown-close loop. The
+new creator C program adds fixed failure exits 211 (operation-9
+preparation clause) or 212 (MoveFileEx FALSE after its original immediate error
+capture). Both are failures under the unchanged exact-zero gate. The main
+fixture may label them as replacement stage 1 or 2 only after genuine
+Stop/revoke, unchanged producer/image pins, and a strict FAILED useful report
+with operation 9, features `0x0f0f` and the complete ACL-denial frame. It wipes
+the report and positively closes its pin before publishing a diagnostic, then
+always rethrows the original natural-exit refusal. Preparation stage 1 still
+does not identify which create/write/flush operation failed.
+
+Held target metadata handles make Windows replacement semantics relevant, but
+do not establish the actual cause. FILE_SHARE_DELETE permits subsequent
+delete-access opens; it does not itself promise replacement of an open target.
+Microsoft documents explicit POSIX replacement semantics separately. Neither
+identity pins nor the original MoveFileEx success requirement are removed:
+
+- [CreateFile sharing](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)
+- [MoveFileEx requirements](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)
+- [FILE_RENAME_INFORMATION flags](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information)
+
+For metadata refusal, the generic comparator remains pure. Only an actual
+unchanged refusing guard can add a closed witness for creator stage 6, operation
+0, predicate 5:
+
+| ID | Refusing comparison or guard |
+| --- | --- |
+| 1–4 | Node identity, root identity, parent identity, held ancestor/protected pin |
+| 5–6 | Opened listing identity, directory stability during enumeration |
+| 7–9 | Final sealed metadata, pregrant original identity, pregrant payload |
+| 10–12 | Final count, missing sealed ID, missing original ID |
+| 13–15 | Directory entry versus opened information, old pin still live, entry size limit |
+
+The changed-field mask identifies only the first evidenced difference in the
+original short-circuit order: object ID 1, volume 2, kind 4, creation time 8, folded
+path 16, size 32, write time 64, change time 128, attributes 256. Direct
+count/missing/live/bound guards use zero. Failed diagnostic projection leaves
+the field unknown, without replacing the original refusal. Existing node
+context is included only when that node already exists. No identifiers,
+counts, paths, timestamps, values, extra queries, fallback acceptance or later
+error replacement are added.
 
 ## Authority and normalisation
 
@@ -203,7 +262,7 @@ the experiment must remain a draft until the actual controls and cleanup pass.
 
 ## Portable verification
 
-The final 18-file affected contract batch passed 1,533 tests with no skips,
+The final 19-file affected contract batch passed 1,596 tests with no skips,
 including the emitted 19-export CJS graph, bounded token ABI, actual
 coordinator/Native/Stop composition, strict report decoder and source verifier.
 The historical DETACHED verifier's positive unit cases use three bounded,
@@ -224,6 +283,9 @@ full TypeScript check including the historical-test follow-up also passed.
 The ACE diagnostic adds 34 passing boundary cases; its exact-final full
 TypeScript check also passed.
 The automatic-grant correction adds 61 passing API, ownership, refusal and
-rewalk cases; its exact-final full TypeScript check also passed. Both native matrices
-failed as recorded above. The automatic-grant correction has not yet run on
-Windows.
+rewalk cases; its exact-final full TypeScript check also passed. All three
+native matrices failed as recorded above. The combined replacement/metadata
+follow-up adds 27 metadata cases, 22 main observation cases and 14 Linux-only
+actual-C-body logic cases. The latter use fixed mocks and provide no Windows
+ABI proof; Windows intentionally skips those 14 logic cases. The follow-up's
+exact-final full TypeScript check passed, and it has not yet run on Windows.

@@ -46,6 +46,8 @@ export function requireWindowsCommandCopyNaturalExit(query: () => unknown, obser
 }
 export interface WindowsCommandCopyFailedUsefulObservation {
   readonly mode: 1; readonly status: 2; readonly operation: number; readonly features: number; readonly code: number;
+  /** 1 preparation clause, 2 MoveFileEx FALSE; only the new fixed exit/report pair can identify this phase. */
+  readonly replacementStage?: 1 | 2;
 }
 /** Failed-report bytes carry no authority: positive real Stop/revoke and unchanged pins must precede acquisition.
  * Every path still throws the initial natural-exit refusal; the caller retains the complete graph on uncertainty. */
@@ -53,13 +55,16 @@ export async function observeWindowsCommandCopyFailedUsefulExit(error: unknown, 
   stop: () => Promise<void>, unchanged: () => void, acquire: () => Pick<WindowsCommandCopyProofPin, "read" | "close">,
   observed: (report: WindowsCommandCopyFailedUsefulObservation) => void): Promise<never> {
   try {
-    if (exit?.phase === 1 && exit.code === 1) {
+    const code = exit?.phase === 1 ? exit.code : undefined, replacement = code === 211 || code === 212;
+    if (code === 1 || replacement) {
       await stop(); unchanged();
       const pin = acquire(), bytes = pin.read();
       let report: WindowsCommandCopyFailedUsefulObservation;
       try {
         const parsed = parseWindowsCommandCopyReport(bytes, "useful"); ensure(parsed.status === 2);
-        report = Object.freeze({ mode: 1, status: 2, operation: parsed.operation, features: parsed.features, code: parsed.failedOperationError });
+        if (replacement) ensure(parsed.operation === 9 && parsed.features === 0xf0f);
+        report = Object.freeze({ mode: 1, status: 2, operation: parsed.operation, features: parsed.features, code: parsed.failedOperationError,
+          ...(replacement ? { replacementStage: code === 211 ? 1 as const : 2 as const } : {}) });
       } finally { bytes.fill(0); pin.close(); }
       observed(report);
     }

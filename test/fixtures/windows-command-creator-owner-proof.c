@@ -29,7 +29,7 @@ enum { BOOT, PROBE_SOURCE_READ, PROBE_SOURCE_WRITE, PROBE_CANARY_READ, PROBE_CAN
        READ_SEED, EDIT_SEED, CREATE_FILE, RENAME_FILE, REPLACE_FILE, REMOVE_FILE, REMOVE_CHILD, REMOVE_DIRECTORY,
        HEARTBEAT, REPORT, READY, PROBE_WORK_READ, PROBE_WORK_WRITE, PROBE_WORK_CREATE, DONE };
 enum { ACL_CREATE_FILE = 20, ACL_CREATE_DIRECTORY, ACL_FILE_DAC, ACL_FILE_OWNER, ACL_DIRECTORY_DAC, ACL_DIRECTORY_OWNER };
-static DWORD record[32], heartbeat[16], errorCode;
+static DWORD record[32], heartbeat[16], errorCode, replacementFailureExit = 1;
 static HANDLE heartbeatFile = INVALID_HANDLE_VALUE;
 static WCHAR first[CHARS], second[CHARS], readyStaging[CHARS];
 static const char seed[] = "EMBER_COMMAND_SEED\n";
@@ -136,8 +136,8 @@ static int useful(const WCHAR *root) {
   record[OPERATION] = CREATE_FILE; if (!join(root, L"created.txt", first) || !writeFixed(first, created, (DWORD)(sizeof(created) - 1), CREATE_NEW)) return 0; record[FEATURES] |= 4;
   record[OPERATION] = RENAME_FILE; if (!join(root, L"move.txt", first) || !join(root, L"renamed.txt", second)) return 0;
   if (!MoveFileExW(first, second, 0)) { errorCode = GetLastError(); return 0; } record[FEATURES] |= 8;
-  record[OPERATION] = REPLACE_FILE; if (!join(root, L"replacement.tmp", first) || !join(root, L"replace.txt", second) || !writeFixed(first, replaced, (DWORD)(sizeof(replaced) - 1), CREATE_NEW)) return 0;
-  if (!MoveFileExW(first, second, MOVEFILE_REPLACE_EXISTING)) { errorCode = GetLastError(); return 0; } record[FEATURES] |= 16;
+  record[OPERATION] = REPLACE_FILE; if (!join(root, L"replacement.tmp", first) || !join(root, L"replace.txt", second) || !writeFixed(first, replaced, (DWORD)(sizeof(replaced) - 1), CREATE_NEW)) { replacementFailureExit = 211; return 0; }
+  if (!MoveFileExW(first, second, MOVEFILE_REPLACE_EXISTING)) { errorCode = GetLastError(); replacementFailureExit = 212; return 0; } record[FEATURES] |= 16;
   record[OPERATION] = REMOVE_FILE; if (!join(root, L"remove.txt", first) || !removePosix(first, 0)) return 0; record[FEATURES] |= 32;
   record[OPERATION] = REMOVE_CHILD; if (!join(root, L"staged-folder\\child.txt", first) || !removePosix(first, 0)) return 0; record[FEATURES] |= 64;
   record[OPERATION] = REMOVE_DIRECTORY; if (!join(root, L"staged-folder", first) || !removePosix(first, 1)) return 0; record[FEATURES] |= 128;
@@ -204,7 +204,7 @@ static int ready(const WCHAR *file) {
 }
 static int failed(const WCHAR *report) {
   closeKnown(&heartbeatFile); record[STATUS] = FAILED; record[OPERATION_ERROR] = errorCode;
-  publish(report); return 1;
+  publish(report); return (int)replacementFailureExit;
 }
 static int aclFailed(const WCHAR *report, DWORD exitCode) {
   record[STATUS] = FAILED; record[OPERATION_ERROR] = errorCode;
