@@ -3,9 +3,20 @@ param([uint32]$ExpectedProcessId, [string]$ExpectedImage, [string]$StartUtc, [st
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $WarningPreference = 'SilentlyContinue'
+$eventTimer = [Diagnostics.Stopwatch]::StartNew()
+function Emit-Stage([string]$Stage) {
+  if (@('script-start', 'encoding-ready', 'inputs-ready', 'module-ready', 'provider-ready', 'schema-ready', 'query-ready', 'selection-ready', 'result-ready') -cnotcontains $Stage) { throw 'event-schema' }
+  # Fixed ASCII JSON avoids module autoload/serialization before the first observable stage.
+  [Console]::WriteLine('{"type":"stage","stage":"' + $Stage + '","elapsedMs":' + $eventTimer.ElapsedMilliseconds.ToString([Globalization.CultureInfo]::InvariantCulture) + '}')
+  [Console]::Out.Flush()
+}
+Emit-Stage 'script-start'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+Emit-Stage 'encoding-ready'
 function Emit-Unavailable([string]$Reason) {
-  [Console]::WriteLine((@{ version = 1; status = 'unavailable'; reason = $Reason } | ConvertTo-Json -Compress))
+  if (@('bounds', 'event-api', 'event-schema', 'record-limit') -cnotcontains $Reason) { $Reason = 'event-api' }
+  [Console]::WriteLine('{"version":1,"status":"unavailable","reason":"' + $Reason + '"}')
+  [Console]::Out.Flush()
 }
 function Read-SafeXml([string]$Text) {
   if (!$Text -or $Text.Length -gt 32768) { throw 'event-schema' }
@@ -28,11 +39,14 @@ try {
   $end = [DateTime]::ParseExact($EndUtc, 'yyyy-MM-ddTHH:mm:ss.fffZ', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal).ToUniversalTime()
   if ($ExpectedProcessId -eq 0 -or !$ExpectedImage -or $ExpectedImage.Length -gt 4096 -or $ExpectedImage -notmatch '^[A-Za-z]:\\' -or
       [IO.Path]::GetFileName($ExpectedImage) -ine 'node.exe' -or $end -lt $start -or ($end - $start).TotalSeconds -gt 60) { Emit-Unavailable 'bounds'; exit 0 }
+  Emit-Stage 'inputs-ready'
   $module = Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Diagnostics\Microsoft.PowerShell.Diagnostics.psd1'
   Import-Module -Name $module -ErrorAction Stop
+  Emit-Stage 'module-ready'
   # Verify named fields against the runner's own provider manifest. Do not guess property positions or accept a
   # different schema. Event1000's Execution.ProcessID identifies the reporting context, not the faulted application.
   $provider = Microsoft.PowerShell.Diagnostics\Get-WinEvent -ListProvider 'Application Error' -ErrorAction Stop
+  Emit-Stage 'provider-ready'
   $required = @('ProcessId', 'AppPath', 'AppName', 'ExceptionCode', 'FaultingOffset', 'ModuleName')
   $templates = @($provider.Events | Where-Object { $_.Id -eq 1000 })
   if ($templates.Count -eq 0 -or $templates.Count -gt 8) { Emit-Unavailable 'event-schema'; exit 0 }
@@ -43,6 +57,7 @@ try {
     if ($names.Count -le 32 -and @($required | Where-Object { $names -cnotcontains $_ }).Count -eq 0) { $knownSchema = $true }
   }
   if (!$knownSchema) { Emit-Unavailable 'event-schema'; exit 0 }
+  Emit-Stage 'schema-ready'
   try {
     $events = @(Microsoft.PowerShell.Diagnostics\Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'Application Error'; Id = 1000; StartTime = $start; EndTime = $end } -MaxEvents 33 -ErrorAction Stop)
   } catch {
@@ -50,6 +65,7 @@ try {
     $events = @()
   }
   if ($events.Count -gt 32) { Emit-Unavailable 'record-limit'; exit 0 }
+  Emit-Stage 'query-ready'
   $selected = New-Object System.Collections.Generic.List[object]
   foreach ($event in $events) {
     $xml = Read-SafeXml ($event.ToXml())
@@ -74,7 +90,9 @@ try {
       time = [string]$system.TimeCreated.SystemTime; pid = $data.ProcessId; image = $data.AppPath; app = $data.AppName;
       code = $data.ExceptionCode; module = $data.ModuleName; offset = $data.FaultingOffset })
   }
+  Emit-Stage 'selection-ready'
   $output = @{ version = 1; status = 'records'; records = @($selected.ToArray()) } | ConvertTo-Json -Depth 4 -Compress
   if ([Text.Encoding]::UTF8.GetByteCount($output) -gt 65536) { Emit-Unavailable 'bounds'; exit 0 }
+  Emit-Stage 'result-ready'
   [Console]::WriteLine($output)
 } catch { Emit-Unavailable 'event-api'; exit 0 }
