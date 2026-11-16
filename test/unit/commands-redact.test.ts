@@ -664,6 +664,30 @@ describe("the Azure Key Vault passes on output with no value in it (stop-yield-x
   }, 60_000);
 });
 
+describe("the MySQL password pass's necessary option check", () => {
+  it("preserves every pass's bytes across clients, paths, quotes and malformed options", () => {
+    const clients = ["mysql", "mysqldump", "Mysql", "MYSQL", "mYsQl.ExE", "mariadb", "mariadb-dump", "mariabackup"];
+    const folders = ["", "/usr/bin/", "bin\\", "${MYSQL_HOME}/bin/", "\\\\db01\\tools\\"];
+    const options = [" -pWint3r!Sh0p", " -p'Wint3r!Sh0p'", ' -p"Wint3r!Sh0p"', " -p", " -P3306", " --port=3306", " -\\pWint3r!Sh0p", " \u2011pWint3r!Sh0p", "\n-pWint3r!Sh0p", ""];
+    const texts = clients.flatMap(client => folders.flatMap(folder => options.map(option => `${folder}${client}${option}`)));
+    texts.push("gcc -I/usr/include/mysql -pthread", "notmysql -pWint3r!Sh0p", "mysql --port=3306\nprintf -- '-p'",
+      "mysql -p'Wint3r\\!Sh0p'", "mysql -pWint3r\u2603Sh0p", "mysql -p$PASSWORD", "mysql -p\\x41", "mysql\t-pWint3r!Sh0p");
+    // Compare each pass, so a later pattern cannot hide a difference in the password search. Interleave text
+    // without the required option to check both guard branches on successive uses of the shared global regex.
+    for (const text of texts) {
+      for (let i = 0; i < REDACT_PASSES.length; i++) {
+        expect(REDACT_PASSES[i](text), `pass ${i}: ${JSON.stringify(text)}`).toBe(UNGUARDED_PASSES[i](text));
+        expect(REDACT_PASSES[i]("mysql --port=3306")).toBe(UNGUARDED_PASSES[i]("mysql --port=3306"));
+      }
+    }
+  });
+
+  it("still hides a password after a long run of ids without an option", () => {
+    const ids = '"https://kv.vault.azure.net/secrets/name-1/abc"\n'.repeat(20_000);
+    expect(redactSecrets(`${ids}/usr/bin/mysql -p'Wint3r!Sh0p'`)).toBe(`${ids}/usr/bin/mysql -p'${SECRET_HIDDEN}'`);
+  });
+});
+
 describe("the key-value pass in slices (integ-x-3)", () => {
   const atOnce = (t: string): string => t.replace(KEY_VALUE, (m, keep: string, _s: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN));
   const longestStep = (text: string): { ms: number; out: string } => {

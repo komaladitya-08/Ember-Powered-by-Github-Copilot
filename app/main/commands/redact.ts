@@ -217,6 +217,8 @@ const MYSQL_CLIENT = String.raw`${COMMAND_START}(?:${CLIENT_NAME}(?:\.[eE][xX][e
 const HTPASSWD_OPTIONS = String.raw`(?=(?:[ \t]+-[A-Za-z]+(?:[ \t]+\d+)?)*?[ \t]+-[A-Za-z]*b)(?:[ \t]+-[A-Za-z]+(?:[ \t]+\d+)?)+`;
 /** A word that is no shell operator (`>`, `<`, `|`). */
 const HTPASSWD_WORD = String.raw`(?![<>|])\S+`;
+/** MySQL's password option requires a literal `-p`; skip its command/folder lookbehinds when that option is absent. */
+const MYSQL_PASSWORD = new RegExp(String.raw`(${MYSQL_CLIENT}${ARGS}[ \t]+-p)(["']?)(${OPTION_VALUE})\2`, "g");
 /**
  * Programs whose short option carries a password (safety-privacy-c5-2): each pattern's first group is kept, its second is
  * the value's quote and its third the value, which is hidden. `mysql -pWint3r!Sh0p` and `mysql -p'…'` (attached; a
@@ -225,7 +227,7 @@ const HTPASSWD_WORD = String.raw`(?![<>|])\S+`;
  * output: no file), `openssl … -k …` and `-pass pass:…`, `net use \\srv\share … /user:admin …`, and `echo '…' | sudo -S`.
  */
 const OPTION_PASSWORDS: readonly RegExp[] = [
-  new RegExp(String.raw`(${MYSQL_CLIENT}${ARGS}[ \t]+-p)(["']?)(${OPTION_VALUE})\2`, "g"),
+  MYSQL_PASSWORD,
   new RegExp(String.raw`(\b(?:curl|wget)${ARGS}[ \t]+(?:-u|--user)(?:[ \t]+|=)["']?[^\s"':|;&]*:)(["']?)(${OPTION_VALUE})\2`, "g"),
   new RegExp(String.raw`(\b(?:docker|podman|nerdctl|buildah|helm)${ARGS}[ \t]+login${ARGS}[ \t]+(?:-p|--password)[ \t]+)(["']?)(${OPTION_VALUE})\2`, "g"),
   new RegExp(String.raw`(\b(?:mongo|mongosh|mongodump|mongorestore|mongoexport|mongoimport)${ARGS}[ \t]+-p[ \t]*)(["']?)(${OPTION_VALUE})\2`, "g"),
@@ -397,7 +399,7 @@ export function redactSecrets(text: string): string {
 const passes = (guarded: boolean): readonly ((text: string) => string)[] => [
   ...TOKEN_PATTERNS.map(re => (re === PRIVATE_KEY ? hidePrivateKeys : (t: string) => t.replace(re, SECRET_HIDDEN))),
   ...VALUE_PATTERNS.map(re => (t: string) => (guarded && !(VALUE_NEEDS.get(re) ?? []).every(n => t.includes(n)) ? t : t.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN))),
-  ...OPTION_PASSWORDS.map(re => (t: string) => t.replace(re, (_m, keep: string, quote: string, _value: string, after?: string) => `${keep}${quote}${SECRET_HIDDEN}${quote}${typeof after === "string" ? after : ""}`)),
+  ...OPTION_PASSWORDS.map(re => (t: string) => (guarded && re === MYSQL_PASSWORD && !t.includes("-p") ? t : t.replace(re, (_m, keep: string, quote: string, _value: string, after?: string) => `${keep}${quote}${SECRET_HIDDEN}${quote}${typeof after === "string" ? after : ""}`))),
   ...LIST_PASSWORDS.map(re => (t: string) => t.replace(re, (...m) => {
     const g = m[m.length - 1] as { keep: string; value: string; q?: string; option?: string };
     const [match, at, whole] = [String(m[0]), m[m.length - 3] as number, m[m.length - 2] as string];
@@ -408,9 +410,9 @@ const passes = (guarded: boolean): readonly ((text: string) => string)[] => [
   t => t.replace(URL_CREDENTIALS, `://${SECRET_HIDDEN}@`),
   hideKeyValues,
 ];
-/** redactSecrets's passes (above), each value pattern checked first for the text it can't match without (VALUE_NEEDS). */
+/** redactSecrets's passes (above), with necessary-text checks before the Azure and MySQL password searches. */
 export const REDACT_PASSES: readonly ((text: string) => string)[] = passes(true);
-/** The same passes without VALUE_NEEDS's check: what REDACT_PASSES must equal byte for byte (commands-redact.test.ts). */
+/** The same passes without necessary-text checks: what REDACT_PASSES must equal byte for byte (commands-redact.test.ts). */
 export const UNGUARDED_PASSES: readonly ((text: string) => string)[] = passes(false);
 
 /**
