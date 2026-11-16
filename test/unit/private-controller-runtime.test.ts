@@ -7,8 +7,10 @@ import { PrivateControllerRuntime, privateControllerClientOptions } from "../../
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
-const input = () => {
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), "ember-controller-runtime-")); roots.push(userData);
+const input = ({ retain = false }: { retain?: boolean } = {}) => {
+  // Failed stop deliberately retains native pins; keep that synthetic state outside unconditional run-temp teardown.
+  const userData = fs.mkdtempSync(path.join(retain ? path.dirname(os.tmpdir()) : os.tmpdir(), "ember-controller-runtime-"));
+  if (!retain) roots.push(userData);
   return { userData, runtimePath: "/fixed/copilot-runtime", env: { PATH: "/system/bin", HOME: "/ambient/home", NODE_OPTIONS: "--require=evil", LD_PRELOAD: "evil.so", GH_TOKEN: "ambient-secret", COPILOT_CONFIG_DIR: "/project", HTTPS_PROXY: "http://approved-proxy" }, gitHubToken: "synthetic-host-token" };
 };
 
@@ -47,7 +49,7 @@ it("refuses unknown controller state rather than deleting a possible previous ru
 });
 
 it("holds failed cleanup unavailable and retains the private state", async () => {
-  const i = input();
+  const i = input({ retain: true });
   const client = { start: async () => undefined, stop: async () => [new Error("synthetic stop failure")] } as unknown as CopilotClient;
   const runtime = await PrivateControllerRuntime.start(i, undefined, () => client);
   const first = runtime.close(); await expect(first).rejects.toThrow("could not be stopped");
