@@ -1,0 +1,96 @@
+{
+  "schema": 1,
+  "issuer": "ember-experimental-source-node-feasibility",
+  "version": "22.23.5",
+  "sourceArchive": {
+    "url": "https://nodejs.org/dist/v22.23.5/node-v22.23.5.tar.xz",
+    "bytes": 50529596,
+    "sha256": "6cce7c58bf058700c643944903d60a325e8c9ceede1f5c2c088b435f2ada091a",
+    "extractPrefix": "node-v22.23.5/"
+  },
+  "provenance": {
+    "manifestUrl": "https://nodejs.org/dist/v22.23.5/SHASUMS256.txt",
+    "signatureUrl": "https://nodejs.org/dist/v22.23.5/SHASUMS256.txt.sig",
+    "manifestSha256": "658770bd465343e4bf441d22e89e7d944244b37041695f3f2a85b53d1a84b53f",
+    "signatureSha256": "4d73b8d2bfb07f874a8fc426abbb317cf83e8dee8d9e14ad9837aa700b0700c7",
+    "signingFingerprint": "5BE8A3F6C8A5C01D106C0AD820B1A390B168D356",
+    "keyRepositoryCommit": "481637f813e912c4aa3622d7964ab426c97b8e8d",
+    "keyPath": "keys/5BE8A3F6C8A5C01D106C0AD820B1A390B168D356.asc",
+    "tag": "v22.23.5",
+    "tagObject": "7f419acfafbd284978a13f7d65487ed3f98f523f",
+    "commit": "60553651579ec33ca1aef9e1eedab2c3855f1f7e",
+    "verifiedAtUtc": "2026-11-16T03:58:11.843450+00:00",
+    "manifestSignatureVerified": true,
+    "tagSignatureVerified": true
+  },
+  "limits": {
+    "archiveEntries": 32768,
+    "files": 30000,
+    "directories": 4096,
+    "selectedBytes": 629145600,
+    "fileBytes": 16777216,
+    "pathChars": 136,
+    "catalogBytes": 8388608
+  },
+  "inventory": {
+    "entries": 32612,
+    "files": 29212,
+    "directories": 3399,
+    "stockBytes": 554315497,
+    "offlineBytes": 554315680,
+    "stockManifestSha256": "018a89c7504cb7bda4ccf6493f219d2da9344bb2c3f191d5ab7b6216c9049b7f",
+    "offlineManifestSha256": "8c185aeadfb6177c38573a52b22a6f66061b42a06271b05bacbcc58471a1f081",
+    "directoryManifestSha256": "d1df9ce1a91031b0660733f2c69663a9c3409762a94236ec7e960b571f3741f5",
+    "directoriesExcludeArchiveRoot": true
+  },
+  "unicodePaths": [
+    "test/fixtures/copy/utf/\u65b0\u5efa\u6587\u4ef6\u5939",
+    "test/fixtures/copy/utf/\u65b0\u5efa\u6587\u4ef6\u5939/experimental.json",
+    "test/fixtures/copy/utf/\u65b0\u5efa\u6587\u4ef6\u5939/index.js"
+  ],
+  "patch": {
+    "file": "deps/uv/src/win/core.c",
+    "beforeBytes": 18494,
+    "beforeSha256": "3026f2888b3360e65a2e2662508eef6ba9b1af17735391ca6f79dc06887b8b23",
+    "afterBytes": 18677,
+    "afterSha256": "143dffcfb49431866d97017d71d108aeffac7c35ca1de1f82b9106f554aa6c52",
+    "needle": "  /* Initialize winsock */\n  uv__winsock_init();",
+    "replacement": "  /* Fixed-probe offline build omits network initialization; the stock control is unchanged. */\n#if !defined(EMBER_UV_FIXED_PROBE_OFFLINE) || EMBER_UV_FIXED_PROBE_OFFLINE != 1\n  /* Initialize winsock */\n  uv__winsock_init();\n#endif",
+    "macro": "EMBER_UV_FIXED_PROBE_OFFLINE",
+    "value": 1
+  },
+  "nasmTool": {
+    "version": "2.16.03",
+    "url": "https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/win64/nasm-2.16.03-win64.zip",
+    "bytes": 513543,
+    "sha256": "3ee4782247bcb874378d02f7eab4e294a84d3d15f3f6ee2de2f47a46aa7226e6",
+    "provenance": {
+      "kind": "official-https-and-independent-historical-sha256",
+      "independentRepository": "ScoopInstaller/Main",
+      "independentCommit": "362b99166f2c5e327aa3439dadbc79f639f96bf3",
+      "independentPath": "bucket/nasm.json",
+      "upstreamGitId": "b9b8718a0878523d5c45f0ab583261a3ab835ae6"
+    },
+    "files": [
+      {
+        "path": "LICENSE",
+        "bytes": 1550,
+        "sha256": "7c22a2d3d099a1167c281e437f48340dfad88634630c97afee927e5705626f7a",
+        "stage": true
+      },
+      {
+        "path": "nasm.exe",
+        "bytes": 1650688,
+        "sha256": "a93276636266516421cc9b422f47476c21f7a2949f1ae251556b2f1d33a3be04",
+        "stage": true
+      },
+      {
+        "path": "ndisasm.exe",
+        "bytes": 1124864,
+        "sha256": "cd57be890f2d3d87189e67eb1c2537de6b85dfc843461d7c0fdd437dc0f1270d",
+        "stage": false
+      }
+    ],
+    "extractPrefix": "nasm-2.16.03/"
+  }
+}
