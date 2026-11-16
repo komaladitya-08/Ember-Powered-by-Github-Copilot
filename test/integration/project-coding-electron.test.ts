@@ -20,6 +20,9 @@ import { closeTestElectron } from "./close-electron";
 import { startMockLlm } from "../mock-llm/server.mjs";
 
 const request = "In this project's chosen folder, run node --test test.cjs, fix its assertion in the private copy, rerun that exact check, and prepare a review. Leave the original unchanged.";
+const continuationRequest = "In a new private session from this reviewed result, first run node --test test.cjs to verify the previous fix, rename the sum test to continued sum, rerun that exact check, and prepare a cumulative review. Leave the original unchanged.";
+const firstGoal = "Repair the copied assertion and verify node --test test.cjs";
+const continuationGoal = "Verify the reviewed assertion, rename its test to continued sum and verify it again";
 const original = "const {test}=require('node:test');const assert=require('node:assert/strict');test('sum',()=>assert.equal(1 + 1, 3));\n";
 
 it.skipIf(process.env.EMBER_ELECTRON_CODING_TEST !== "1" || process.platform !== "linux")(
@@ -51,20 +54,29 @@ it.skipIf(process.env.EMBER_ELECTRON_CODING_TEST !== "1" || process.platform !==
       consent: { version: CONSENT_VERSION, at },
       commands: { local: { on: true, askEvery: true, consent: { version: FEATURE_CONSENT_VERSION.commands, at } } },
     }));
-    let dispatched = false, codingStep = 0;
+    const dispatched = new Set<string>(), controllerSteps = new Map<string, number>(); let codingActions = 0;
     const model = await startMockLlm({ delayMs: 0, respond: (messages: { role: string; content: unknown }[], tools: string[]) => {
       if (tools.includes("start_coding")) {
-        if (!dispatched && messages.some(message => message.role === "user" && JSON.stringify(message.content).includes(request))) {
-          dispatched = true;
-          return { tool: { name: "start_coding", args: { goal: "Repair the copied assertion and verify node --test test.cjs" } } };
+        const next = [request, continuationRequest].find(words => !dispatched.has(words) && messages.some(message => message.role === "user" && JSON.stringify(message.content).includes(words)));
+        if (next) {
+          dispatched.add(next);
+          return { tool: { name: "start_coding", args: { goal: next === request ? firstGoal : continuationGoal } } };
         }
         return { text: "The coding session has its own project card and Stop." };
       }
       if (tools.includes("finish_coding")) {
-        codingStep++;
-        if (codingStep === 1 || codingStep === 3) return { tool: { name: "run_command", args: { target: "This computer", command: "node --test test.cjs", why: "Verify the copied assertion" } } };
-        if (codingStep === 2) return { tool: { name: "coding_replace", args: { path: "test.cjs", oldText: "1 + 1, 3", newText: "1 + 1, 2" } } };
-        if (codingStep === 4) return { tool: { name: "finish_coding", args: { success: true, summary: "Fixed the copied assertion and reran the exact check successfully. Review the patch before applying it." } } };
+        const continued = messages.some(message => message.role === "user" && JSON.stringify(message.content).includes(continuationGoal));
+        const goal = continued ? continuationGoal : firstGoal, previous = controllerSteps.get(goal) ?? 0;
+        // Each fresh controller may request a final text response after finish; that tail must consume no next-session tool.
+        if (previous >= 4) return { text: "The private coding session finished and its review is ready." };
+        controllerSteps.set(goal, previous + 1); codingActions++;
+        const step = previous + 1 + (continued ? 4 : 0);
+        if (step === 1 || step === 3) return { tool: { name: "run_command", args: { target: "This computer", command: "node --test test.cjs", why: "Verify the copied assertion" } } };
+        if (step === 2) return { tool: { name: "coding_replace", args: { path: "test.cjs", oldText: "1 + 1, 3", newText: "1 + 1, 2" } } };
+        if (step === 4) return { tool: { name: "finish_coding", args: { success: true, summary: "Fixed the copied assertion and reran the exact check successfully. Review the patch before applying it." } } };
+        if (step === 5 || step === 7) return { tool: { name: "run_command", args: { target: "This computer", command: "node --test test.cjs", why: "Verify the reviewed assertion in the new private session" } } };
+        if (step === 6) return { tool: { name: "coding_replace", args: { path: "test.cjs", oldText: "test('sum'", newText: "test('continued sum'" } } };
+        if (step === 8) return { tool: { name: "finish_coding", args: { success: true, summary: "Verified the prior fix in a fresh session, renamed its test and reran the exact check successfully. Review the cumulative patch." } } };
       }
       return { text: "Ready for review." };
     } });
@@ -157,6 +169,51 @@ it.skipIf(process.env.EMBER_ELECTRON_CODING_TEST !== "1" || process.platform !==
       expect(fs.readFileSync(path.join(destination, "changes.patch"), "utf8")).toContain("1 + 1, 2");
       const review = JSON.parse(fs.readFileSync(path.join(destination, "review.json"), "utf8"));
       expect(review.proposed).toContainEqual(expect.objectContaining({ path: "README.txt", base64: Buffer.from("Unchanged project fixture.\n").toString("base64") }));
+
+      // Continue explicitly through the genuine Home form and preload. Its first check must already pass because
+      // the new controller starts from the reviewed private fix, while the source still contains the failing 3.
+      await home.locator("#project-coding-continue").click();
+      expect(await home.locator("#project-coding-continue-form").isVisible()).toBe(true);
+      expect(model.requests.length).toBe(requestsBeforeReview);
+      await home.locator("#project-coding-continue-request").fill(continuationRequest);
+      await expect.poll(() => home!.locator("#project-coding-continue-send").isEnabled()).toBe(true);
+      await home.locator("#project-coding-continue-send").click();
+      for (let approval = 0; approval < 2; approval++) {
+        await expect.poll(() => app!.windows().some(page => page.url().includes("/renderer/command/index.html")), { timeout: 45_000 }).toBe(true);
+        const command = app.windows().find(page => page.url().includes("/renderer/command/index.html"))!;
+        await expect.poll(() => command.evaluate(() => (window as Window & { emberCommands: CommandsApi }).emberCommands.pull().then(snapshot => snapshot?.state.card?.n ?? 0)), { timeout: 45_000 }).toBeGreaterThan(lastApproval);
+        lastApproval = await command.evaluate(() => (window as Window & { emberCommands: CommandsApi }).emberCommands.pull().then(snapshot => snapshot!.state.card!.n));
+        await expect.poll(() => command.locator("#ask-cmd").textContent().catch(() => ""), { timeout: 45_000 }).toBe("node --test test.cjs");
+        const allow = command.getByRole("button", { name: "Allow", exact: true });
+        await expect.poll(() => allow.isEnabled(), { timeout: 15_000 }).toBe(true);
+        await allow.click();
+      }
+      await expect.poll(() => home!.evaluate(id => window.ember.projectSessionsState().then(state => state.projects.find(project => project.id === id)?.sessions[1]?.status), projectId), { timeout: 45_000 }).toBe("done");
+      await expect.poll(() => home!.getByRole("button", { name: /^Review result:/ }).count(), { timeout: 15_000 }).toBe(2);
+      const continuedResults = await home.evaluate(id => window.ember.codingResultsState(id), projectId);
+      expect(continuedResults).toHaveLength(2);
+      const continued = continuedResults.find(result => result.id !== results[0].id)!;
+      expect(continued).toMatchObject({ projectId, status: "done", files: 1, conflicts: 0, patchComplete: true, checks: { ran: 2, passed: 2, failed: 0 } });
+      expect(continued.taskId).not.toBe(results[0].taskId); expect(continued.message).not.toContain("retained");
+      expect(codingActions).toBe(8); expect([...controllerSteps.values()]).toEqual([4, 4]); expect([...dispatched]).toEqual([request, continuationRequest]);
+      expect(fs.readFileSync(path.join(source, "test.cjs"), "utf8")).toBe(original);
+      await expect.poll(() => home!.evaluate(() => window.ember.conversationTurn()), { timeout: 15_000 }).toBe("idle");
+      await home.locator(`[data-result-control="${continued.id}"]`).click();
+      await expect.poll(() => home!.locator("#project-coding-patch").textContent()).toContain("test('continued sum'");
+      const continuedReview = await home.evaluate(id => window.ember.codingResultReview(id), continued.id);
+      expect(continuedReview.textPatch).toContain(`-${original.trim()}`);
+      expect(continuedReview.textPatch).toContain(`+${original.replace("test('sum'", "test('continued sum'").replace("1 + 1, 3", "1 + 1, 2").trim()}`);
+      const continuedHistory = await home.evaluate(() => window.ember.projectSessionsState());
+      expect(continuedHistory.projects.find(project => project.id === projectId)?.sessions.map(session => session.status)).toEqual(["done", "done"]);
+      await home.locator(`[data-forget-result="${continued.id}"]`).click();
+      await expect.poll(() => home!.locator("#project-coding-status").textContent(), { timeout: 15_000 }).toContain("Private coding review forgotten");
+      expect(await home.evaluate(id => window.ember.codingResultsState(id), projectId)).toEqual(results);
+      await expect(home.evaluate(id => window.ember.codingResultReview(id), continued.id)).rejects.toThrow("no longer available");
+      expect((await home.evaluate(id => window.ember.codingResultReview(id), results[0].id)).id).toBe(results[0].id);
+      expect(await home.evaluate(() => window.ember.projectSessionsState())).toEqual(continuedHistory);
+      await home.locator(`[data-result-control="${results[0].id}"]`).click();
+      await expect.poll(() => home!.locator("#project-coding-patch").textContent()).toContain("1 + 1, 2");
+      expect(await home.locator("#project-coding-patch").textContent()).not.toContain("continued sum");
       const history = await home.evaluate(() => window.ember.projectSessionsState());
       await home.getByRole("button", { name: /^Forget private result:/ }).click();
       await expect.poll(() => home!.locator("#project-coding-status").textContent(), { timeout: 15_000 }).toContain("Private coding review forgotten");

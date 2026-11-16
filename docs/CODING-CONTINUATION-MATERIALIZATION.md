@@ -1,4 +1,15 @@
-# Fresh workspaces from prior proposed files
+# Continue from a coding result
+
+Open a coding review in Home, choose Continue from this result, and type a new request. Sending it goes through the
+ordinary conductor and approval flow. Selecting the result alone runs nothing. The host captures an opaque result
+reference and the selected project/folder before the request can wait; the model never chooses a result id or path.
+The new request supplies its own permission words. Earlier tasks, files, retry wording and answers grant no authority.
+
+The result registry reads the complete pinned review only while its account, project, epoch and original source identity
+remain current. Preview text cannot seed execution. Replaced sources, forgotten results and stale queued requests are
+refused. A successfully admitted new copy has its own lifetime: forgetting the predecessor then preserves that active
+copy. Global Forget still revokes pending reads, waits for creation and execution cleanup, and removes private reviews.
+Checkpoints retain inert project history, never continuation tokens, private files or resumed worker conversations.
 
 `IsolatedCommandWorkspace.create` accepts an optional host-only `continuation` containing the original baseline,
 prior proposed tree, declared source scope and a live admission callback. Both old trees must have the same original
@@ -21,8 +32,13 @@ Cleanup follows verified stopped writers. It uses the held private root and base
 or external mounts, and unlinks symbolic links without following them. Unverified removal or close produces
 `CodingSeedCleanupError`; the resource owner must retain that failure as a barrier to further coding.
 
-Real Linux namespace tests cover two sessions: implementation produces a proposal, a new session receives it, a Node
-check fails, repair and rerun succeed, and the final review preserves the original baseline. They also prove fresh
-dependency capture, source preservation, credential refusal and cleanup after predecessor revocation. Host result
-selection, artifact provenance, account/project authority and continuation UI are separate integration requirements.
-This primitive does not restore an SDK conversation, apply source changes or enable a Windows backend.
+Real Linux namespace tests cover two sessions, cumulative review, fresh dependencies, source preservation, credential
+refusal and cleanup after predecessor revocation. The combined TypeScript, full ESLint and application build pass.
+Focused combined checks pass 125 cases with two platform skips; Host/IPC tests pass 65 cases, and the renderer passes
+19 cases. Additional resource tests verify global Forget during a seed read and terminal seed-cleanup barriers.
+
+The genuine Electron journey passes in 18.02 seconds with the normal sandbox: the first session repairs a failing
+Node check; the actual continuation form starts a second controller whose first check already passes, then renames
+the test and passes again. Four native approval cards, cumulative baseline/proposed review, selective Forget of both
+results, history/export retention, main global erasure and normal exit are verified. Only the model and native picker
+selections are fixtures. This supplies no live-provider, Windows runtime or physical laptop acceptance claim.

@@ -17,5 +17,6 @@ immutability, current account/project authority, the original source receipt, pr
 proof. A dependency receipt does not contain or authorize a dependency tree. The API neither rebinds a result to a new
 session nor creates a workspace, restores permissions, writes source files or enables execution.
 
-This is a foundation for continuing work from a previous proposed tree. Production intake, fresh inode materialization,
-new-session bindings, dependency revalidation, lifecycle erasure and a user-visible continuation path are still required.
+The [continuation flow](CODING-CONTINUATION-MATERIALIZATION.md) now supplies production Linux intake, fresh inode
+materialization, new-session bindings, dependency revalidation, lifecycle erasure and an explicit Home request form.
+Those host capabilities remain separate from this pure decoder; decoding arbitrary bytes never authorizes execution.
