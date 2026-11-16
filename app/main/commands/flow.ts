@@ -30,11 +30,11 @@ import { pendingCommand } from "./pending";
 import { carriedText } from "./carried";
 import { notReviewable, outlivesStop, reviewedDecision, type CommandReviewer } from "./review";
 import {
-  AUTOPILOT_LINE, AUTOPILOT_REFUSES, AUTOPILOT_RULE, OUTLIVES_LINE, WITHHELD_LINE, askedOfFinding, autopilotCommand, autopilotRefuses, handedSecrets,
+  AUTOPILOT_LINE, AUTOPILOT_REFUSES, AUTOPILOT_RULE, OUTLIVES_LINE, WITHHELD_LINE, askedOfFinding, autopilotCommand, autopilotRefuses, handedSecrets, handedLiteralSecrets,
   outlivesKillSwitch, printsSecrets, readsSecrets,
 } from "./autopilot";
 import { AUTOPILOT_WORDS } from "../policy/policy";
-import { classifyCommand, type ClassificationExtra } from "./classify";
+import { classifyCommand, classifyNodeArgv, classifyNativeReadPath, classifyLiteralNativeArgv, type ClassificationExtra } from "./classify";
 import { LINES, UNKNOWN_ANNOUNCED, decideCommand } from "./decide";
 import { covers, type AutonomyScopes } from "../policy/autonomy";
 import { heldByWords, mentioned, namedKind, namesUnknown, ruledOut } from "./intent";
@@ -48,9 +48,10 @@ import {
   ALWAYS_ASK,
   type Classification, type ClassifyContext, type CommandCapability, type CommandCard, type CommandDecision, type CommandMode, type CommandRunner,
   type CommandService, type DecideInput, type Finding, type GitFacts, type PathFact, type RunCommandArgs, type RunExit, type RunnerFacts, type RunningCommand,
-  type RunSpec, SHELL_FAMILY, type ShellId, standingFindings, unnamedTarget,
+  SHELL_FAMILY, type ShellId, standingFindings, unnamedTarget,
 } from "./types";
 import { judgedText } from "./unroll";
+import { copyNodeArgv, nodeInvocationDisplay, nodeInvocationSha256, type RunNodeArgs, type NodeRunSpec } from "./node-invocation";
 
 /** What run_command needs from its worker. */
 export interface CommandFlowContext {
@@ -939,6 +940,11 @@ const shellWord = (a: string) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace
  * question (`sudo ls env` asks): never used to let anything through. A part that can't be judged counts as unclear.
  */
 export function behindWrappers(cls: Pick<Classification, "commands" | "findings">, judge: (text: string) => readonly Pick<Finding, "cls" | "rule">[]): Pick<Finding, "cls" | "rule">[] {
+  return behindLiteralWrappers(cls, args => judge(args.map(shellWord).join(" ")));
+}
+
+/** The same tightening for already literal native payload facts; no command text is constructed or parsed. */
+export function behindLiteralWrappers(cls: Pick<Classification, "commands" | "findings">, judge: (argv: readonly string[]) => readonly Pick<Finding, "cls" | "rule">[]): Pick<Finding, "cls" | "rule">[] {
   const out: Pick<Finding, "cls" | "rule">[] = [];
   cls.commands.forEach((c, k) => {
     if (c.family !== "posix" || c.wrappers.length === 0 || c.args.some(a => a === null)) return;
@@ -948,7 +954,7 @@ export function behindWrappers(cls: Pick<Classification, "commands" | "findings"
     for (let i = 0; i < Math.min(args.length, 16); i++) {
       if (!BARE_PROGRAM.test(args[i])) continue;
       try {
-        for (const f of judge(args.slice(i).map(shellWord).join(" "))) {
+        for (const f of judge(args.slice(i))) {
           const why = askedOfFinding(f);
           if (why === "secret" || why === "outlives-stop") out.push({ cls: f.cls, rule: f.rule });
         }
@@ -1110,8 +1116,32 @@ export function keepsNamed(words: string): boolean {
   });
 }
 
+interface FlowArgs extends RunCommandArgs { nodeArgv?: readonly string[] }
+interface DirectNodeRunner extends CommandRunner { readonly nodeAvailable: boolean; startNode(spec: NodeRunSpec): RunningCommand }
+function directNodeRunner(runner: CommandRunner): DirectNodeRunner | null {
+  const node = runner as Partial<DirectNodeRunner>;
+  return node.nodeAvailable === true && typeof node.startNode === "function" ? runner as DirectNodeRunner : null;
+}
+
+/** The isolated coding host supplies this capability; neither command text nor the model selects an executable. */
+export async function runNodeTool(a: RunNodeArgs, ctx: CommandFlowContext): Promise<ToolResultObject> {
+  let argv: string[];
+  try { argv = copyNodeArgv(a.argv); } catch { return fail("The Node arguments are invalid or too large."); }
+  const binding = ctx.service.binding;
+  if (binding.id !== "local" || binding.kind !== "local" || !directNodeRunner(ctx.service.runner)) return denied("Direct Node execution is unavailable in this coding workspace. Don't try another way.");
+  // Capture all caller fields before the common flow can wait for facts, consent, a slot or approval.
+  const input: FlowArgs = { target: binding.label, command: nodeInvocationDisplay(argv), nodeArgv: argv, why: a.why,
+    ...(a.cwd !== undefined ? { cwd: a.cwd } : {}), ...(a.timeoutSeconds !== undefined ? { timeoutSeconds: a.timeoutSeconds } : {}) };
+  return guardedFlow(input, ctx);
+}
+
 /** Runs one run_command call to the end; returns the tool result (done, denied or fail). */
 export async function runCommandTool(a: RunCommandArgs, ctx: CommandFlowContext): Promise<ToolResultObject> {
+  const { target, command, shell, cwd, timeoutSeconds, why } = a;
+  return guardedFlow({ target, command, shell, cwd, timeoutSeconds, why }, ctx);
+}
+
+async function guardedFlow(a: FlowArgs, ctx: CommandFlowContext): Promise<ToolResultObject> {
   if (ctx.isOver()) return STOPPED();
   const binding = ctx.service.binding;
   const place = placeName(binding);
@@ -1134,7 +1164,7 @@ export async function runCommandTool(a: RunCommandArgs, ctx: CommandFlowContext)
   }
 }
 
-async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () => void, pending: ReturnType<typeof pendingCommand>): Promise<ToolResultObject> {
+async function flow(a: FlowArgs, ctx: CommandFlowContext, endPending: () => void, pending: ReturnType<typeof pendingCommand>): Promise<ToolResultObject> {
   const svc = ctx.service;
   const binding = svc.binding;
   const place = placeName(binding);
@@ -1188,8 +1218,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   if (!facts) return fail(`${place} didn't say what it can run commands with in time. Try again in a moment, or finish the task saying so.`);
   // cmd is never a run_command shell (L3: it runs only inside PowerShell's `cmd /c`); a shell Ember doesn't know isn't one.
   const shells: ShellId[] = facts.shells.filter(s => RUN_SHELLS.has(s));
-  const shell = a.shell ?? shells[0];
-  if (!shell || !shells.includes(shell)) return fail(`${shell ?? "That shell"} isn't available on ${place}. Shells here: ${shells.join(", ") || "none"}.`);
+  const shell = a.nodeArgv ? undefined : a.shell ?? shells[0];
+  if (!a.nodeArgv && (!shell || !shells.includes(shell))) return fail(`${shell ?? "That shell"} isn't available on ${place}. Shells here: ${shells.join(", ") || "none"}.`);
   const home = facts.home;
   const base = ctx.state.cwd ?? home;
   const cwd = a.cwd === undefined ? base : j.resolveTargetPath(a.cwd, { os: facts.os, home, cwd: base });
@@ -1206,7 +1236,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     os: facts.os, home, cwd, ember, downloaded: ctx.state.downloaded,
     ...(facts.wsl ? { wsl: { mountRoot: facts.wsl.mountRoot, windows: facts.wsl.windows } } : {}),
   };
-  let cls = j.classifyCommand(a.command, shell, cctx);
+  const classify = (context: ClassifyContext) => a.nodeArgv ? classifyNodeArgv(a.nodeArgv, context) : j.classifyCommand(a.command, shell!, context);
+  let cls = classify(cctx);
   if (cls.cdOnly !== undefined && !cls.refuse) {
     if (ctx.projectFolderCurrent) return fail("Use Choose command folder to change the starting folder.");
     const to = j.resolveTargetPath(cls.cdOnly, { os: facts.os, home, cwd });
@@ -1225,9 +1256,9 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   const paths = new Map<string, PathFact>(probe.map((p, i) => [p, found[i]]));
   const real = new Map<string, string>();
   probe.forEach((p, i) => { const r = found[i].real; if (r !== null && r !== p) real.set(p, r); });
-  if (real.size) cls = j.classifyCommand(a.command, shell, { ...cctx, real });
+  if (real.size) cls = classify({ ...cctx, real });
   // An sh or bash `if` asks only for what its commands do, as in a script; a loop asks as on main (commands-remote-2, c7-1).
-  cls = withoutReadFlow(cls, shell);
+  if (shell) cls = withoutReadFlow(cls, shell);
 
   // Step 6: the branch facts a push's announcement needs.
   const git: GitFacts | null = cls.needsGit ? await within(svc.runner.gitFacts(cwd), PROBE_MS, null) : null;
@@ -1253,8 +1284,10 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   where = whereWords(binding) ?? (others.length || places.length ? here : undefined);
   const tainted = ctx.task.tainted();
   // A line judged as its written-out form (unroll.ts) carries what that form holds too.
-  const judged = SHELL_FAMILY[shell] === "posix" ? judgedText(a.command) : a.command;
-  const carried = carriedText(judged === a.command ? a.command : `${a.command}\n${judged}`, ctx.task.readFrom(), words, binding.shellOs);
+  const judged = shell && SHELL_FAMILY[shell] === "posix" ? judgedText(a.command) : a.command;
+  // Provenance reads the literal argument contents; JSON display escaping is never their text or shell source.
+  const carriedInput = a.nodeArgv ? a.nodeArgv.join("\n") : judged === a.command ? a.command : `${a.command}\n${judged}`;
+  const carried = carriedText(carriedInput, ctx.task.readFrom(), words, binding.shellOs);
   const mode = svc.mode();
   const userAskEvery = !!ctx.projectFolderCurrent || svc.userAskEvery();
   const decided = j.decideCommand({ cls, paths, git, binding, facts, mode, userAskEvery, userWords: words, agreed: ctx.task.agreed(), tainted, carried });
@@ -1302,7 +1335,9 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // ~/.config/ember/settings.json …`).
   if (d.verdict === "ask" || d.verdict === "announce") {
     let tampers: Classification["refuse"] | null = null;
-    const handed = handedSecrets(cls, a.command, shell, text => { const c = j.classifyCommand(text, shell, cctx); tampers ??= c.refuse ?? null; return c.findings; });
+    const handed = shell
+      ? handedSecrets(cls, a.command, shell, text => { const c = j.classifyCommand(text, shell, cctx); tampers ??= c.refuse ?? null; return c.findings; })
+      : handedLiteralSecrets(cls, value => { const c = classifyNativeReadPath(value, cctx); tampers ??= c.refuse ?? null; return c.findings; });
     const refuse = tampers as Classification["refuse"] | null;
     if (refuse) d = { ...d, verdict: "refuse", reason: refuse.says, rules: [...new Set([...d.rules, refuse.rule])], requested: undefined };
     else if (handed.length && d.verdict === "ask") {
@@ -1316,9 +1351,11 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // one whose card nobody answered and they haven't spoken since: never asked about again, reviewed or announced,
   // whatever the mode would do with it now (CLAUDE.md "After a deny or “Not now”…"; commands-remote-r9-8). Ember's own
   // refusal (tampering, the organisation's "off") is said as itself.
-  const sha256 = commandSha256(target, shell, cwd, a.command);
+  const sha256 = a.nodeArgv ? nodeInvocationSha256(target, cwd, a.nodeArgv) : commandSha256(target, shell!, cwd, a.command);
   const stand = standingFindings(cls.findings, paths);
-  const about: CommandAsked = { sha256, cwd, command: a.command, acts: commandActs(stand, facts.os), named: commandNamed(stand, cls.commands), os: facts.os, home };
+  const nativeNode = cls.commands.length === 1 ? cls.commands[0] : null;
+  const nodeArgs = a.nodeArgv ?? (nativeNode && /^(node|nodejs)$/.test(nativeNode.program) && nativeNode.wrappers.length === 0 && nativeNode.redirects.length === 0 && nativeNode.args.every(arg => typeof arg === "string") ? nativeNode.args as string[] : undefined);
+  const about: CommandAsked = { ...(nodeArgs ? { nodeArgv: [...nodeArgs] } : {}), sha256, cwd, command: a.command, acts: commandActs(stand, facts.os), named: commandNamed(stand, cls.commands), os: facts.os, home };
   const stood = d.verdict === "refuse" ? null : ctx.refusals?.command(about) ?? null;
   if (stood) {
     endPending();
@@ -1361,7 +1398,10 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   // rule out, and one whose target Ember can't name, are refused (autopilot.ts; the owner's decision of 2026-11-14).
   // What a wrapper may hide where the classifier read its options wrongly: judged apart, for Autopilot and for
   // Assisted's check alike, so a secret behind it is still withheld and what outlives Stop is still said.
-  const hidden = d.verdict === "ask" && (ctx.autopilot?.() || ctx.review) ? behindWrappers(cls, text => j.classifyCommand(text, shell, cctx).findings) : [];
+  const hidden = d.verdict === "ask" && (ctx.autopilot?.() || ctx.review)
+    ? shell ? behindWrappers(cls, text => j.classifyCommand(text, shell, cctx).findings)
+      : behindLiteralWrappers(cls, argv => classifyLiteralNativeArgv(argv[0], argv.slice(1), cctx).findings)
+    : [];
   if (ctx.autopilot?.() && d.verdict === "ask" && !like) {
     // (Their own words against it count wherever they were heard: where Ember can't tell the user from its speakers too.)
     const standing = standingFindings(cls.findings, paths);
@@ -1408,7 +1448,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       const t0 = performance.now();
       try { ctx.presenter.progress(CHECKING_COMMAND); } catch (err) { ctx.log.warn("commands.checking_not_said", { err }); }
       const asked = Promise.resolve().then(() => ctx.review!({
-        userWords: checkWords, command: a.command, shell, cwd, where: binding.label || place, os: facts.os, why: a.why, findings: d.says,
+        userWords: checkWords, command: a.command, ...(a.nodeArgv ? { runtime: "node" as const } : { shell }), cwd, where: binding.label || place, os: facts.os, why: a.why, findings: d.says,
       }, ctx.signal)).catch(() => null);
       let stop!: () => void;
       const stopped = new Promise<null>(resolve => { stop = () => resolve(null); ctx.signal.addEventListener("abort", stop, { once: true }); });
@@ -1435,7 +1475,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   endPending();
   const refused = d.verdict === "refuse";
   audit({
-    phase: "decided", shell, cwd, ...(refused ? {} : { command: j.redactSecrets(a.command).slice(0, AUDIT_COMMAND_CHARS) }), commandChars: a.command.length,
+    phase: "decided", shell, ...(a.nodeArgv ? { runtime: "node", argumentCount: a.nodeArgv.length } : {}), cwd, ...(refused ? {} : { command: j.redactSecrets(a.command).slice(0, AUDIT_COMMAND_CHARS) }), commandChars: a.command.length,
     verdict: d.verdict, classes: d.classes, rules: d.rules, ...(d.requested ? { requested: d.requested.intent === UNKNOWN_ANNOUNCED ? "unknown" : "user", intent: d.requested.intent } : {}), reason: d.reason,
     ...(d.requested?.intent === AUTOPILOT_RULE ? { mode: "autopilot" } : {}),
     ...(d.review ? { review: d.review } : {}),
@@ -1450,7 +1490,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   let runId = newRunId();
   const why = `Why: ${shownQuote(a.why, 200)}`;
   const card = (cardMode: CommandCard["mode"], says: string[]): CommandCard => ({
-    runId, target, targetLabel: binding.label, ...(binding.login ? { login: binding.login } : {}), shell, cwd, command: a.command, sha256, taskId: task,
+    runId, target, targetLabel: binding.label, ...(binding.login ? { login: binding.login } : {}), ...(a.nodeArgv ? { kind: "node" as const, argv: [...a.nodeArgv] } : { shell }), cwd, command: a.command, sha256, taskId: task,
     taskTitle: ctx.task.title, mode: cardMode, says, unasked: cardMode === "ask" && d.unasked, armMs: d.armMs,
     ...(cardMode !== "run" && d.classes.length ? { classes: d.classes } : {}),
     ...(cardMode === "announce" ? announceFlags(d, says) : {}),
@@ -1542,6 +1582,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       let live: CommandCapability;
       try { live = svc.capability(); } catch { return denied("Couldn't check whether commands are still allowed. Finish the task saying so."); }
       if (live.state !== "on") return denied(`${live.why ?? `Commands are off on ${place}.`} Don't try another way; tell the user in finish_task.`);
+      if (a.nodeArgv && !directNodeRunner(svc.runner)) return denied("Direct Node execution is no longer available in this coding workspace.");
       if (svc.binding.id !== target || svc.runner.target !== target) return denied("The command's computer changed. Finish the task saying so.");
       if (approvedAt === null && d.requested?.intent === "ai-review" && !(ctx.reviewActive?.() ?? true)) {
         return denied("Command permissions changed while this command was waiting. It did not run. Ask the user for a new request.");
@@ -1558,7 +1599,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       }
       if (ctx.projectFolderCurrent && !ctx.projectFolderCurrent()) return denied("The chosen command folder changed. Choose it again.");
       const run = await runOnce(ctx, j, {
-        runId, shell, cwd, command: a.command, timeoutS, card: card("run", d.verdict === "run" ? [] : [...d.says, why]),
+        runId, shell, ...(a.nodeArgv ? { nodeArgv: a.nodeArgv } : {}), cwd, command: a.command, timeoutS, card: card("run", d.verdict === "run" ? [] : [...d.says, why]),
         stamp: { taskId: task, sha256, verdict: d.verdict === "announce" ? "announce" : d.verdict === "ask" ? "ask" : "run", classes: d.classes, rules, approvedAt, announcedAt },
       }, pending.started);
       if (run === "stopped") { noteDownloads(ctx, cls); return STOPPED(); }
@@ -1646,7 +1687,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       // The retry sent back too: that is the remote's refusal, and its tab says so (review #274).
       if (exit.ended === "refused-remote" && exit.needsConfirm) reaskEnded(svc, runId, "refused");
       if (exit.ended === "refused-remote") return resultOf(exit, "", { label: binding.label, timeoutS, redact: j.redactSecrets });
-      return await finishRun(ctx, j, run, { cls, label: binding.label, shell, timeoutS, runId, withheld });
+      return await finishRun(ctx, j, run, { cls, label: binding.label, shell, ...(a.nodeArgv ? { runtime: "node" as const } : {}), timeoutS, runId, withheld });
     }
   } finally {
     release();
@@ -1679,14 +1720,14 @@ interface RunOutcome { exit: RunExit; out: OutputKeeper; tracker: SecretTracker;
  * watch and stop it, D4.2). A run that ends after its task stopped still has its end audited.
  */
 async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
-  runId: string; shell: ShellId; cwd: string; command: string; timeoutS: number; card: CommandCard;
+  runId: string; shell?: ShellId; nodeArgv?: readonly string[]; cwd: string; command: string; timeoutS: number; card: CommandCard;
   stamp: { taskId: string; sha256: string; verdict: "run" | "announce" | "ask"; classes: CommandDecision["classes"]; rules: string[]; approvedAt: number | null; announcedAt?: number | null };
 }, started: () => void): Promise<RunOutcome | "stopped" | "unseen"> {
   if (ctx.isOver()) return "stopped";
   const svc = ctx.service;
   const { cols, rows } = windowSize(svc.window) ?? ctx.size();
-  const spec: RunSpec = {
-    runId: o.runId, taskId: o.stamp.taskId, shell: o.shell, command: o.command, cwd: o.cwd, timeoutMs: o.timeoutS * 1000, cols, rows,
+  const common = {
+    runId: o.runId, taskId: o.stamp.taskId, cwd: o.cwd, timeoutMs: o.timeoutS * 1000, cols, rows,
     stamp: {
       taskId: o.stamp.taskId, sha256: o.stamp.sha256, verdict: o.stamp.verdict, classes: o.stamp.classes, rules: o.stamp.rules,
       approval: o.stamp.approvedAt === null ? null : { ageMs: Math.max(0, Math.round(performance.now() - o.stamp.approvedAt)) },
@@ -1694,7 +1735,9 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
     },
   };
   started();
-  const running = svc.runner.start(spec);
+  const running = o.nodeArgv
+    ? directNodeRunner(svc.runner)!.startNode({ ...common, kind: "node", argv: o.nodeArgv })
+    : svc.runner.start({ ...common, shell: o.shell!, command: o.command });
   const tracker = j.trackSecretPrompts({ interactive: running.interactive });
   const out = new OutputKeeper(tracker);
   const unsubscribe = running.onOutput(chunk => out.push(chunk));
@@ -1947,7 +1990,7 @@ const nextTurn = (): Promise<void> => new Promise(resolve => setImmediate(resolv
  */
 export const WITHHELD_OUTPUT = "(Its output may hold passwords or keys, so Ember kept it from you: the user can see it in the command window. Don't run it again or another way to see it.)";
 
-async function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutcome, o: { cls: Classification; label: string; shell: ShellId; timeoutS: number; runId: string; withheld?: boolean }): Promise<ToolResultObject> {
+async function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutcome, o: { cls: Classification; label: string; shell?: ShellId; runtime?: "node"; timeoutS: number; runId: string; withheld?: boolean }): Promise<ToolResultObject> {
   const { exit, out, tracker, running } = run;
   const typed = running.typedLines();
   running.forgetTyped();
@@ -1979,7 +2022,7 @@ async function finishRun(ctx: CommandFlowContext, j: CommandJudge, run: RunOutco
   const own = j.cleanOutput === cleanOutput;
   const clean = own ? await cleanOutputAsync(raw, { typed, secretSpans: kept.spans }, () => ctx.isOver()) : j.cleanOutput ? j.cleanOutput(raw, { typed, secretSpans: kept.spans }) : null;
   if (ctx.isOver()) return stopped();
-  const shape: ShapeOptions = { target, label: o.label, shell: o.shell, exit, typed, secretSpans: kept.spans };
+  const shape: ShapeOptions = { target, label: o.label, shell: o.shell, ...(o.runtime ? { runtime: o.runtime } : {}), exit, typed, secretSpans: kept.spans };
   // CL's own shaping is that same cleaned text bounded and wrapped: made from it, so the kept output (up to 4 MiB) is
   // cleaned once on Ember's main thread, not twice (integ-y-2). A judge a test passes shapes as it does.
   const shaped = clean !== null && j.shapeOutput === shapeOutput && own ? shapeCleaned(clean, shape) : j.shapeOutput(raw, shape);

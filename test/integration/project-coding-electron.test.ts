@@ -71,7 +71,7 @@ it.skipIf(process.env.EMBER_ELECTRON_CODING_TEST !== "1" || process.platform !==
         if (previous >= 4) return { text: "The private coding session finished and its review is ready." };
         controllerSteps.set(goal, previous + 1); codingActions++;
         const step = previous + 1 + (continued ? 4 : 0);
-        if (step === 1 || step === 3) return { tool: { name: "run_command", args: { target: "This computer", command: "node --test test.cjs", why: "Verify the copied assertion" } } };
+        if (step === 1 || step === 3) return { tool: { name: "run_node", args: { argv: ["--test", "test.cjs"], why: "Verify the copied assertion" } } };
         if (step === 2) return { tool: { name: "coding_replace", args: { path: "test.cjs", oldText: "1 + 1, 3", newText: "1 + 1, 2" } } };
         if (step === 4) return { tool: { name: "finish_coding", args: { success: true, summary: "Fixed the copied assertion and reran the exact check successfully. Review the patch before applying it." } } };
         if (step === 5 || step === 7) return { tool: { name: "run_command", args: { target: "This computer", command: "node --test test.cjs", why: "Verify the reviewed assertion in the new private session" } } };
@@ -143,7 +143,8 @@ it.skipIf(process.env.EMBER_ELECTRON_CODING_TEST !== "1" || process.platform !==
         const command = app.windows().find(page => page.url().includes("/renderer/command/index.html"))!;
         await expect.poll(() => command.evaluate(() => (window as Window & { emberCommands: CommandsApi }).emberCommands.pull().then(snapshot => snapshot?.state.card?.n ?? 0)), { timeout: 45_000 }).toBeGreaterThan(lastApproval);
         lastApproval = await command.evaluate(() => (window as Window & { emberCommands: CommandsApi }).emberCommands.pull().then(snapshot => snapshot!.state.card!.n));
-        await expect.poll(() => command.locator("#ask-cmd").textContent().catch(() => ""), { timeout: 45_000 }).toBe("node --test test.cjs");
+        await expect.poll(() => command.locator("#ask-cmd").textContent().catch(() => ""), { timeout: 45_000 }).toBe('Node arguments: ["--test","test.cjs"]');
+        expect(await command.evaluate(() => (window as Window & { emberCommands: CommandsApi }).emberCommands.pull().then(snapshot => ({ kind: snapshot!.state.card!.kind, shell: snapshot!.state.card!.shell, argv: snapshot!.state.card!.argv })))).toEqual({ kind: "node", shell: undefined, argv: ["--test", "test.cjs"] });
         const allow = command.getByRole("button", { name: "Allow", exact: true });
         await expect.poll(() => allow.isEnabled(), { timeout: 15_000 }).toBe(true);
         await allow.click();

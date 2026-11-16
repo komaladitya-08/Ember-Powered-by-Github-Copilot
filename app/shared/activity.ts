@@ -188,6 +188,7 @@ export const STEP_GROUP: Readonly<Record<string, StepGroup>> = {
   open_app: "open", open_on_desk: "open",
   press_keys: "keys", scroll: "scroll",
   run_command: "command",
+  run_node: "command",
   point_at: "point", wait_for_click: "wait",
 };
 

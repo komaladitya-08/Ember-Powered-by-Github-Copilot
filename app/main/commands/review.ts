@@ -28,7 +28,8 @@ export interface ReviewInput {
   /** The user's own words for the task (never the conductor's goal). */
   userWords: string;
   command: string;
-  shell: string;
+  shell?: string;
+  runtime?: "node";
   cwd: string;
   /** Where it runs, as the card says it ("this computer", "Ubuntu (WSL)", "build-01"). */
   where: string;
@@ -129,7 +130,7 @@ export function notReviewable(d: CommandDecision, o: { words: string; mode: stri
   return null;
 }
 
-export const REVIEW_SYSTEM = `You check one shell command that Ember, a desktop assistant, is about to run on a computer for a task the user asked for, against what the user asked.
+export const REVIEW_SYSTEM = `You check one command that Ember, a desktop assistant, is about to run on a computer for a task the user asked for, against what the user asked.
 Ember's own rules would stop and ask the user before this command; <checks> says what they found. Decide whether the user's own request already asks for what this command does, so that it can run without asking (the user sees it first and can stop it), or not.
 
 Answer "run" only if the request, read as an ordinary person would mean it, clearly asks for what this command does: the same action, on the same files, folders, branches, packages, settings or computer, and nothing more.
@@ -155,7 +156,7 @@ const inTag = (s: string) => s.replace(/</g, "‹").replace(/>/g, "›");
 export function reviewPrompt(i: ReviewInput): string {
   return [
     `<request>${inTag(i.userWords.trim().slice(0, REVIEW_LIMITS.words))}</request>`,
-    `<where>${inTag(i.where)} (${inTag(i.os)}; shell ${inTag(i.shell)}; folder ${inTag(i.cwd)})</where>`,
+    `<where>${inTag(i.where)} (${inTag(i.os)}; ${i.runtime === "node" ? "direct Node arguments" : `shell ${inTag(i.shell ?? "")}`}; folder ${inTag(i.cwd)})</where>`,
     `<command>${inTag(i.command.slice(0, REVIEW_LIMITS.command))}</command>`,
     `<assistant_reason>${inTag(i.why.slice(0, REVIEW_LIMITS.why))}</assistant_reason>`,
     `<checks>${inTag(i.findings.join(" ").slice(0, REVIEW_LIMITS.findings))}</checks>`,

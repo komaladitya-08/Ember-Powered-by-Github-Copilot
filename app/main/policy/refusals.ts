@@ -303,6 +303,8 @@ export interface CommandNamed {
 
 /** A command as its card was about it. */
 export interface CommandAsked {
+  /** In-memory refusal equivalence only, never an approval or an execution rewrite. */
+  nodeArgv?: readonly string[];
   /** commandSha256(): the bytes, shell, folder and computer an approval binds to. */
   sha256: string;
   cwd: string;
@@ -442,6 +444,7 @@ const MOVES_ITS_SOURCE = /(^|\.)(mv|move|Move-Item|robocopy)$/i;
  */
 export function sameCommand(before: CommandAsked, now: CommandAsked): boolean {
   if (before.sha256 === now.sha256) return true;
+  if (before.cwd === now.cwd && before.nodeArgv && now.nodeArgv && JSON.stringify(before.nodeArgv) === JSON.stringify(now.nodeArgv)) return true;
   if (before.cwd === now.cwd && before.command.trim() === now.command.trim()) return true;
   if (before.acts.some(a => now.acts.some(b => sameAct(a, b)))) return true;
   return (now.named ?? []).some(n => before.acts.some(a =>

@@ -581,6 +581,7 @@ export const TOOL_STEPS: Record<string, string> = {
   update_view: "Showing what I found",
   finish_task: "Wrapping up",
   run_command: "Running a command",
+  run_node: "Running Node",
   list_computers: "Checking which computers I can use",
   offer_connect: "Offering to connect",
   remember: "Remembering that",
@@ -747,7 +748,7 @@ export const RECONNECTED = "I'm connected again. Ask me again.";
 export const TOOL_GESTURES: Record<string, Gesture> = {
   describe_screen: "chin", perceive_window: "chin", list_windows: "chin",
   click: "tap", toggle: "tap", choose_option: "tap", set_value: "tap", change_setting: "tap", open_app: "tap", scroll: "tap",
-  type_text: "type", fill_cells: "type", fill_from_vault: "type", press_keys: "type", run_command: "type",
+  type_text: "type", fill_cells: "type", fill_from_vault: "type", press_keys: "type", run_command: "type", run_node: "type",
   point_at: "point", wait_for_click: "point",
   set_appearance: "wave", start_task: "thumbsUp", show_me: "point",
 };

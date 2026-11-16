@@ -11,6 +11,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { copyNodeArgv, nodeInvocationDisplay, nodeInvocationSha256 } from "./node-invocation";
 import { COMMANDS_IPC } from "../../shared/commands";
 import { SHORTCUTS, type OS } from "../../shared/shortcuts";
 import { parseTargetId } from "../../shared/targets";
@@ -202,7 +203,8 @@ const isN = (v: unknown): v is number => typeof v === "number" && Number.isSafeI
 const str = (v: unknown, max: number, min = 0) => typeof v === "string" && v.length >= min && v.length <= max;
 
 /** What an approval binds to (§3.9.1, R-cmd-1): sha256Hex(`${target}\0${shell}\0${cwd}\0${command}`). */
-export function cardSha256(c: Pick<CommandCard, "target" | "shell" | "cwd" | "command">): string {
+export function cardSha256(c: Pick<CommandCard, "target" | "shell" | "cwd" | "command" | "kind" | "argv">): string {
+  if (c.kind === "node") return nodeInvocationSha256(c.target, c.cwd, copyNodeArgv(c.argv));
   return createHash("sha256").update(`${c.target}\0${c.shell}\0${c.cwd}\0${c.command}`, "utf8").digest("hex");
 }
 
@@ -213,8 +215,14 @@ export function cardSha256(c: Pick<CommandCard, "target" | "shell" | "cwd" | "co
  */
 export function validCard(c: unknown): c is CommandCard {
   if (!isObj(c)) return false;
+  let invocationValid: boolean;
+  try {
+    invocationValid = c.kind === "node"
+      ? c.target === "local" && c.shell === undefined && c.command === nodeInvocationDisplay(copyNodeArgv(c.argv))
+      : c.kind === undefined && c.argv === undefined && ["bash", "zsh", "sh", "powershell", "cmd"].includes(c.shell as string);
+  } catch { return false; }
   return isRunId(c.runId) && str(c.target, 200) && parseTargetId(c.target as string) !== null && str(c.targetLabel, 200, 1) && (c.login === undefined || str(c.login, 255))
-    && ["bash", "zsh", "sh", "powershell", "cmd"].includes(c.shell as string) && str(c.cwd, 4096) && str(c.command, 64 * 1024)
+    && invocationValid && str(c.cwd, 4096) && str(c.command, 64 * 1024)
     && (c.command as string).length > 0 && isSha(c.sha256) && str(c.taskId, 200) && str(c.taskTitle, 1000)
     && ["ask", "announce", "run"].includes(c.mode as string) && Array.isArray(c.says) && c.says.length <= 64
     && c.says.every(l => str(l, 4000)) && typeof c.unasked === "boolean" && typeof c.armMs === "number" && Number.isFinite(c.armMs) && c.armMs >= 0

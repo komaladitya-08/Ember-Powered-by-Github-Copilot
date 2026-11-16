@@ -12,6 +12,7 @@ import { StringDecoder } from "node:string_decoder";
 import { setImmediate as yieldToLoop } from "node:timers/promises";
 import { HOST_ARCH, HOST_PLATFORM } from "../platform/os";
 import type { ShellId } from "../commands/types";
+import { copyNodeArgv } from "../commands/node-invocation";
 import { createCodingSnapshot, type CodingSnapshot } from "./coding-snapshot";
 import { createCodingReviewExport, type CodingExportBinding, type CodingExportEntry, type CodingExportTree, type CodingReviewExport } from "./coding-result-export";
 import { ExperimentalNamespaceReceipt } from "./experimental-stop-receipt";
@@ -51,6 +52,8 @@ const DEFAULT_LIMITS: IsolatedCommandLimits = { commandBytes: 48_000, outputByte
 const LIMIT_CAPS: IsolatedCommandLimits = { ...DEFAULT_LIMITS, outputBytes: 4 * 1024 * 1024 };
 const BWRAP = "/usr/bin/bwrap";
 const BARRIER = 'IFS= read -r gate; test "$gate" = ember-command-ready || exit 125; exec /usr/bin/bash --noprofile --norc -c "$1"';
+const NODE_BARRIER = 'IFS= read -r gate; test "$gate" = ember-command-ready || exit 125; exec /usr/bin/node "$@"';
+type Invocation = { kind: "shell"; command: string } | { kind: "node"; argv: readonly string[] };
 const within = (file: string, root: string) => { const rel = path.relative(root, file); return rel === "" || (rel !== ".." && !rel.startsWith("../") && !path.isAbsolute(rel)); };
 const DIRECTORY = constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 type RootIdentity = Pick<BigIntStats, "dev" | "ino">;
@@ -267,10 +270,18 @@ export class IsolatedCommandWorkspace {
     if (shell !== "bash") return Promise.reject(new Error("The isolated workspace supports only its advertised bash shell."));
     if (typeof command !== "string" || !command.trim() || command.includes("\0") || Buffer.byteLength(command) > this.limits.commandBytes) return Promise.reject(new Error("The isolated command is empty, invalid or too long."));
     if (typeof cwd !== "string" || (cwd !== "/work" && !cwd.startsWith("/work/")) || cwd.length > 4096 || cwd.split("/").some(p => p === "." || p === "..") || /[\\\p{Cc}\p{Cf}]/u.test(cwd)) return Promise.reject(new Error("Choose a directory inside the isolated workspace."));
-    return this.queue(() => this.execute(command, cwd, onOutput, signal));
+    return this.queue(() => this.execute({ kind: "shell", command }, cwd, onOutput, signal));
   }
 
-  private async execute(command: string, cwd: string, onOutput: (bytes: Uint8Array, stream: "stdout" | "stderr") => void, signal: AbortSignal): Promise<IsolatedCommandResult> {
+  runNode(argv: readonly string[], cwd: string, onOutput: (bytes: Uint8Array, stream: "stdout" | "stderr") => void, signal: AbortSignal): Promise<IsolatedCommandResult> {
+    if (!this.nodeAvailable) return Promise.reject(new Error("The isolated workspace has no host-selected Node binary."));
+    let input: string[];
+    try { input = copyNodeArgv(argv); } catch { return Promise.reject(new Error("The isolated Node arguments are invalid or too long.")); }
+    if (typeof cwd !== "string" || (cwd !== "/work" && !cwd.startsWith("/work/")) || cwd.length > 4096 || cwd.split("/").some(p => p === "." || p === "..") || /[\\\p{Cc}\p{Cf}]/u.test(cwd)) return Promise.reject(new Error("Choose a directory inside the isolated workspace."));
+    return this.queue(() => this.execute({ kind: "node", argv: input }, cwd, onOutput, signal));
+  }
+
+  private async execute(invocation: Invocation, cwd: string, onOutput: (bytes: Uint8Array, stream: "stdout" | "stderr") => void, signal: AbortSignal): Promise<IsolatedCommandResult> {
     if (signal.aborted) return { exitCode: null, signal: "SIGKILL", stopped: true, timedOut: false, outputLimited: false, output: "", observed: true };
     // Commands may encode anything they can read. Revalidate the complete stopped tree and refuse known credentials
     // before every launch, including files produced by a preceding command. No omission silently changes the project.
@@ -303,7 +314,8 @@ export class IsolatedCommandWorkspace {
         "--setenv", "HOME", "/tmp", "--setenv", "PATH", "/usr/bin:/bin", "--setenv", "TMPDIR", "/tmp", "--setenv", "LC_ALL", "C",
         "--ro-bind", this.rootfs, "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--bind", this.snapshot.directory, "/work",
         ...this.excludedRoots.flatMap(name => ["--ro-bind", name === "node_modules" && this.dependencies ? this.dependencies.directory : path.join(this.rootfs, "excluded", name), `/work/${name}`]), "--chdir", cwd,
-        "--", "/usr/bin/bash", "--noprofile", "--norc", "-c", BARRIER, "ember-command", command],
+        "--", "/usr/bin/bash", "--noprofile", "--norc", "-c",
+        ...(invocation.kind === "shell" ? [BARRIER, "ember-command", invocation.command] : [NODE_BARRIER, "ember-node", ...invocation.argv])],
       { shell: false, env: { HOME: "/tmp", PATH: "/usr/bin:/bin", LC_ALL: "C" }, stdio: ["pipe", "pipe", "pipe", filter, receiptFd] });
     } finally { closeSync(filter); if (receiptFd >= 0) closeSync(receiptFd); }
     let closed = false, stopped = false, timedOut = false, outputLimited = false, output = "", size = 0, deliveryFailed = false;

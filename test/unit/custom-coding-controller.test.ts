@@ -72,7 +72,7 @@ const finish = (session: any) => call(session, "finish_coding", { success: true,
 
 function fileOnly() {
   const f = fixture();
-  const { commands: _commands, runCommand: _runCommand, ...common } = f.options;
+  const { commands: _commands, runCommand: _runCommand, runNode: _runNode, ...common } = f.options;
   const options: FileOnlyCodingControllerOptions = { ...common, mode: "files-only" };
   return { ...f, options };
 }
@@ -432,4 +432,68 @@ it("does not allow an additional tool after explicit finish", async () => {
   sim.drive = async session => { await finish(session); await call(session, "coding_write", { path: "b.ts", text: "bad" }); };
   expect((await c.run("Report copied code")).success).toBe(false);
   expect(f.files.writeText).not.toHaveBeenCalled();
+});
+
+
+it("offers direct Node only with a captured host capability and sends literal argv to its guarded callback", async () => {
+  const runNode = vi.fn<NonNullable<CustomCodingControllerOptions["runNode"]>>(async () => ({ result: "checked", success: true }));
+  const f = fixture({ commands: { target: "This computer", shells: ["bash"], node: true }, runNode });
+  const c = await start(f.options), args = { argv: ["tool.js", "", "a b", "$(echo literal)"], cwd: "/work", why: "Verify the copy" };
+  sim.drive = async session => { await call(session, "run_node", args); await finish(session); };
+  expect((await c.run("Verify the copied code")).success).toBe(true);
+  expect(runNode).toHaveBeenCalledWith(args, expect.objectContaining({ signal: expect.any(AbortSignal), waiting: expect.any(Function) }));
+  expect(f.runCommand).not.toHaveBeenCalled();
+});
+
+it.each([{ argv: ["--version"], shell: "bash" }, { argv: ["--version"], env: {} }, { argv: ["--version"], executable: "/tmp/node" },
+  { argv: ["x\0y"] }, { argv: ["\ud800"] }, { argv: ["x".repeat(8000)] }])("rejects invalid direct-Node arguments before the callback %#", async raw => {
+  const runNode = vi.fn<NonNullable<CustomCodingControllerOptions["runNode"]>>(async () => ({ result: "", success: true }));
+  const f = fixture({ commands: { target: "This computer", shells: ["bash"], node: true }, runNode }), c = await start(f.options);
+  sim.drive = async session => { expect((await call(session, "run_node", { why: "Check the copy", ...raw })).resultType).toBe("failure"); await finish(session); };
+  expect((await c.run("Check the code")).success).toBe(false); expect(runNode).not.toHaveBeenCalled();
+});
+
+it("does not let shell success clear a failing direct-Node check", async () => {
+  const nodeKey = "d".repeat(64), shellKey = "e".repeat(64);
+  const runNode = vi.fn<NonNullable<CustomCodingControllerOptions["runNode"]>>()
+    .mockResolvedValueOnce({ result: "Exit 1", success: false, check: { key: nodeKey, passed: false } })
+    .mockResolvedValueOnce({ result: "Exit 0", success: true, check: { key: nodeKey, passed: true } });
+  const f = fixture({ commands: { target: "This computer", shells: ["bash"], node: true }, runNode });
+  f.runCommand.mockResolvedValue({ result: "Exit 0", success: true, check: { key: shellKey, passed: true } });
+  const c = await start(f.options);
+  sim.drive = async session => {
+    await call(session, "run_node", { argv: ["test.js"], why: "Check the copy" });
+    await call(session, "run_command", command);
+    expect((await finish(session)).textResultForLlm).toContain("Finish not recorded");
+    await call(session, "coding_replace", { path: "test.js", oldText: "bad", newText: "good" });
+    await call(session, "run_node", { argv: ["test.js"], why: "Check the copy" }); await finish(session);
+  };
+  expect((await c.run("Fix the failed check")).success).toBe(true); expect(runNode).toHaveBeenCalledTimes(2);
+});
+
+it("rejects injected direct-Node capability in file-only mode before starting a runtime", async () => {
+  const f = fileOnly();
+  await expect(CustomCodingController.start(Object.assign(f.options, { runNode: async () => ({ result: "", success: true }) }))).rejects.toThrow("capability is invalid");
+  expect(sim.inputs).toHaveLength(0);
+});
+
+
+it("starts a Node-only controller with no shell tool or shell instructions", async () => {
+  const runNode = vi.fn<NonNullable<CustomCodingControllerOptions["runNode"]>>(async () => ({ result: "checked", success: true }));
+  const f = fixture(), { runCommand: _runCommand, ...base } = f.options;
+  const c = await start({ ...base, commands: { target: "This computer", shells: [], node: true }, runNode });
+  expect(sim.sessions[0].config.tools.map((tool: any) => tool.name)).toContain("run_node");
+  expect(sim.sessions[0].config.tools.map((tool: any) => tool.name)).not.toContain("run_command");
+  expect(JSON.stringify(sim.sessions[0].config.systemMessage)).not.toContain("run_command");
+  sim.drive = async session => { await call(session, "run_node", { argv: ["--version"], why: "Verify the copy" }); await finish(session); };
+  expect((await c.run("Verify the copied code")).success).toBe(true); expect(runNode).toHaveBeenCalledTimes(1); expect(f.runCommand).not.toHaveBeenCalled();
+});
+
+it("rejects neither-lane and forged Node-only startup before creating the runtime", async () => {
+  const f = fixture(), { runCommand: _runCommand, ...base } = f.options;
+  for (const capability of [{ commands: { target: "This computer", shells: [] } }, { commands: { target: "This computer", shells: [], node: true } },
+    { commands: { target: "This computer", shells: [], node: true }, runCommand: f.runCommand, runNode: async () => ({ result: "", success: true }) }]) {
+    await expect(CustomCodingController.start({ ...base, ...capability } as CodingControllerOptions)).rejects.toThrow("capability is invalid");
+  }
+  expect(sim.inputs).toHaveLength(0);
 });

@@ -1,6 +1,7 @@
 /** CommandRunner bridge: the existing command flow owns policy; this bridge owns an isolated run's observations. */
 import { createHash } from "node:crypto";
 import type { CommandRunner, GitFacts, PathFact, RunnerFacts, RunningCommand, RunExit, RunSpec, ShellId } from "../commands/types";
+import { copyNodeArgv, nodeInvocationSha256, type NodeRunSpec } from "../commands/node-invocation";
 
 export interface ObservedCodingCommand {
   observed: true;
@@ -13,8 +14,11 @@ export interface ObservedCodingCommand {
 
 export interface IsolatedCodingCommandPort {
   readonly executionRoot: string;
+  readonly nodeAvailable?: boolean;
   /** The backend must execute this exact policy-selected grammar or refuse before admitting work. */
   run(command: string, cwd: string, output: (bytes: Uint8Array, stream: "stdout" | "stderr") => void, signal: AbortSignal, shell: ShellId): Promise<ObservedCodingCommand>;
+  /** Executes only the backend's host-selected Node binary, with these exact argument boundaries. */
+  runNode?(argv: readonly string[], cwd: string, output: (bytes: Uint8Array, stream: "stdout" | "stderr") => void, signal: AbortSignal): Promise<ObservedCodingCommand>;
   /** Revokes queued work and resolves only after the backend's real stopped-writer check. */
   stop(): Promise<void>;
 }
@@ -37,6 +41,7 @@ const MAX_RUNS = 200;
 export class IsolatedCodingCommandRunner implements CommandRunner {
   readonly target = "local" as const;
   #workspace: IsolatedCodingCommandPort;
+  #runNode: IsolatedCodingCommandPort["runNode"];
   #facts: RunnerFacts;
   #inspect: IsolatedCodingCommandRunnerOptions["inspect"];
   #gitFacts: IsolatedCodingCommandRunnerOptions["gitFacts"];
@@ -51,6 +56,8 @@ export class IsolatedCodingCommandRunner implements CommandRunner {
 
   constructor(options: IsolatedCodingCommandRunnerOptions) {
     this.#workspace = options.workspace;
+    this.#runNode = options.workspace.nodeAvailable === true && typeof options.workspace.runNode === "function"
+      ? options.workspace.runNode.bind(options.workspace) : undefined;
     this.#facts = structuredClone(options.facts);
     this.#inspect = options.inspect.bind(options);
     this.#gitFacts = options.gitFacts?.bind(options);
@@ -64,6 +71,7 @@ export class IsolatedCodingCommandRunner implements CommandRunner {
 
   get running(): number { return this.#active.size; }
   get sequence(): number { return this.#started; }
+  get nodeAvailable(): boolean { return this.#runNode !== undefined; }
   /** Host-only observed metadata, with no command text, output, paths or credentials. */
   exitsAfter(sequence: number): readonly ObservedExit[] { return structuredClone(this.#exits.filter(exit => exit.sequence > sequence)); }
 
@@ -97,10 +105,25 @@ export class IsolatedCodingCommandRunner implements CommandRunner {
         error: "The isolated command request is invalid." }), onOutput: () => () => undefined,
         input() {}, typedLines: () => [], forgetTyped() {}, stop() {} };
     }
-    return this.#start(input);
+    return this.#start(input, () => this.#valid(input), (output, signal) => this.#workspace.run(input.command, input.cwd, output, signal, input.shell));
   }
 
-  #start(spec: RunSpec): RunningCommand {
+  startNode(spec: NodeRunSpec): RunningCommand {
+    let input: NodeRunSpec;
+    try {
+      input = structuredClone(spec);
+      if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Invalid Node invocation");
+      input.argv = copyNodeArgv(input.argv);
+    } catch {
+      return { runId: "", interactive: false, done: Promise.resolve({ code: null, signal: null, ended: "failed-to-start", ms: 0,
+        error: "The isolated Node request is invalid." }), onOutput: () => () => undefined,
+        input() {}, typedLines: () => [], forgetTyped() {}, stop() {} };
+    }
+    return this.#start(input, () => this.#validNode(input), (output, signal) => this.#runNode!(input.argv, input.cwd, output, signal));
+  }
+
+  #start(spec: RunSpec | NodeRunSpec, valid: () => boolean,
+    execute: (output: (bytes: Uint8Array, stream: "stdout" | "stderr") => void, signal: AbortSignal) => Promise<ObservedCodingCommand>): RunningCommand {
     const sequence = ++this.#started;
     const began = performance.now();
     const local = new AbortController();
@@ -120,19 +143,19 @@ export class IsolatedCodingCommandRunner implements CommandRunner {
       try {
         if (this.#signal.aborted || local.signal.aborted || this.#retired) return finish({ code: null, signal: null, ended: this.#ended(why) });
         this.#requireCurrent();
-        if (sequence > MAX_RUNS || !this.#valid(spec)) return finish({ code: null, signal: null, ended: "failed-to-start", error: "The isolated command request is invalid or its budget is exhausted." });
+        if (sequence > MAX_RUNS || !valid()) return finish({ code: null, signal: null, ended: "failed-to-start", error: "The isolated command request is invalid or its budget is exhausted." });
         if (local.signal.aborted) return finish({ code: null, signal: null, ended: this.#ended(why) });
         this.#active.add(active);
         timer = setTimeout(() => stop("timeout"), spec.timeoutMs);
         timer.unref?.();
-        const result = await this.#workspace.run(spec.command, spec.cwd, bytes => {
+        const result = await execute(bytes => {
           if (local.signal.aborted) return;
           const chunk = Uint8Array.from(bytes);
           if (buffered + chunk.byteLength > MAX_OUTPUT) { cut = true; stop("output"); return; }
           buffered += chunk.byteLength;
           chunks.push(chunk);
           for (const listener of listeners) listener(Uint8Array.from(chunk));
-        }, local.signal, spec.shell);
+        }, local.signal);
         if (result.observed !== true) throw new Error("Unverified command shutdown");
         if (result.timedOut) why ??= "timeout";
         if (result.outputLimited) { cut = true; why ??= "output"; }
@@ -179,6 +202,15 @@ export class IsolatedCodingCommandRunner implements CommandRunner {
       return typeof spec.command === "string" && Buffer.byteLength(spec.command) <= 64 * 1024 && !spec.command.includes("\0") &&
         /^[0-9a-f]{16}$/.test(spec.runId) && !!spec.taskId && this.#facts.shells.includes(spec.shell) &&
         typeof spec.cwd === "string" && !/[\0\r\n]/.test(spec.cwd) && spec.stamp.taskId === spec.taskId && spec.stamp.sha256 === hash &&
+        Number.isSafeInteger(spec.timeoutMs) && spec.timeoutMs >= 1 && spec.timeoutMs <= 20 * 60_000;
+    } catch { return false; }
+  }
+
+  #validNode(spec: NodeRunSpec): boolean {
+    try {
+      return this.nodeAvailable && spec.kind === "node" && !("shell" in spec) && !("command" in spec) &&
+        /^[0-9a-f]{16}$/.test(spec.runId) && !!spec.taskId && typeof spec.cwd === "string" && !/[\0\r\n]/.test(spec.cwd) &&
+        spec.stamp.taskId === spec.taskId && spec.stamp.sha256 === nodeInvocationSha256(this.target, spec.cwd, spec.argv) &&
         Number.isSafeInteger(spec.timeoutMs) && spec.timeoutMs >= 1 && spec.timeoutMs <= 20 * 60_000;
     } catch { return false; }
   }

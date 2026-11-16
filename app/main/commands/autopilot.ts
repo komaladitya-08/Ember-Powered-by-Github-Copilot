@@ -133,18 +133,36 @@ export function handedSecrets(cls: Pick<Classification, "commands" | "findings">
   for (const { name, value } of sets.slice(0, HANDED_MAX)) {
     if (secret(prints(name)) || (value !== "" && (OPAQUE(family).test(value) || /%[A-Za-z_]/.test(value) || secret(reads(value))))) handed = true;
   }
+  // Always visit the argument paths, even after a secret: the callback also propagates protected-path refusals.
+  if (handedArgumentPaths(cls, downloads, value => secret(reads(value)), () => !plain())) handed = true;
+  return handed ? found() : [];
+}
+
+/** The common argument-only scan. Callback input is one literal path, never command or shell source. */
+function handedArgumentPaths(cls: Pick<Classification, "commands">, downloads: readonly Finding[], secret: (path: string) => boolean, opaque: () => boolean): boolean {
+  let handed = false;
   for (const at of new Set(downloads.map(f => f.at))) {
     const args = cls.commands[at]?.args ?? [];
     const words = args.filter((a): a is string => a !== null);
-    if (words.length > HANDED_MAX || (words.length < args.length && !plain())) handed = true;
+    if (words.length > HANDED_MAX || (words.length < args.length && opaque())) handed = true;
     for (const w of words.slice(0, HANDED_MAX)) {
-      // The word itself, and what an option carries: `--key=PATH`, `--key:PATH`, `-kPATH`.
       const after = (sep: string) => (w.includes(sep) ? w.slice(w.indexOf(sep) + 1) : "");
       const values = !w.startsWith("-") ? [w] : [after("="), after(":"), /^-[A-Za-z]./.test(w) ? w.slice(2) : ""];
-      for (const v of values) if (v !== "" && !v.startsWith("-") && secret(reads(v))) handed = true;
+      for (const value of values) if (value !== "" && !value.startsWith("-") && secret(value)) handed = true;
     }
   }
-  return handed ? found() : [];
+  return handed;
+}
+
+/** Direct native argv has no shell expansion or assignments. The caller supplies native read-path policy. */
+export function handedLiteralSecrets(cls: Pick<Classification, "commands" | "findings">, judgePath: (path: string) => readonly Pick<Finding, "cls" | "rule">[]): Finding[] {
+  const downloads = cls.findings.filter(f => DOWNLOADS_ONLY.has(f.rule.replace(/^in-script:/, "")));
+  if (!downloads.length) return [];
+  const secret = (path: string): boolean => {
+    try { return judgePath(path).some(f => f.cls === "secret" || readsSecrets(f.rule)); } catch { return true; }
+  };
+  const handed = handedArgumentPaths(cls, downloads, secret, () => true), first = downloads[0];
+  return handed ? [{ cls: "secret", rule: HANDED_RULE, says: HANDED_SAYS, program: first.program, objects: [], widening: [], at: first.at }] : [];
 }
 
 /** What autopilotAsks reads beside the decision. */

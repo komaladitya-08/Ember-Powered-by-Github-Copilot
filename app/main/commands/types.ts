@@ -128,7 +128,9 @@ export interface ParsedCommand {
 
 /** What the classifier says about a command (pure: classifyCommand in commands/classify.ts). */
 export interface Classification {
-  shell: ShellId;
+  /** Absent for literal direct Node arguments: no shell parses them. */
+  shell?: ShellId;
+  syntax?: "argv";
   family: ShellFamily;
   /** Empty: an ordinary command. */
   findings: Finding[];
@@ -415,7 +417,10 @@ export interface CommandCard {
   target: TargetId;
   targetLabel: string;
   login?: string;
-  shell: ShellId;
+  /** Direct Node cards carry arguments and no shell. Legacy shell cards retain their exact text. */
+  kind?: "node";
+  argv?: readonly string[];
+  shell?: ShellId;
   cwd: string;
   /** The exact command (the renderer makes control, bidi, zero-width and mixed-script characters visible: app/shared/visible-text.ts). */
   command: string;
