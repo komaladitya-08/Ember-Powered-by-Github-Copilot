@@ -29,6 +29,14 @@ At probe commit `4242fae1ac9e3cfa9908a1a069a5e0a60d8620d4`, [run 43794602957](ht
 
 Setup failures now carry a branded, frozen receipt from a closed stage list. A genuine native FALSE result may add only its allowlisted operation and immediately captured unsigned Win32 error; a nonzero `NtQueryObject` status uses that returned unsigned NTSTATUS. Predicate failures carry only their stage and never sample stale `GetLastError`. The integration emits one such receipt per mode run before propagating the failure. Cleanup uncertainty still takes priority and retains the existing fences; there is no access-right or deadline change.
 
+At `55429f71`, [Node 22 / Server 2022](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43795576062/job/133063526206)
+passed all 196 contracts and reported `writer-rights / NtQueryObject / 0xc0000004` (`STATUS_INFO_LENGTH_MISMATCH`).
+The helper supplied a 64-byte buffer for the fixed `ObjectBasicInformation` class. Microsoft's documented
+[`PUBLIC_OBJECT_BASIC_INFORMATION`](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntqueryobject)
+contains four 32-bit fields and ten reserved 32-bit fields: 56 bytes. The helper now supplies and requires that exact
+size. Contract bindings reproduce the size mismatch and refuse short or oversized successful receipts. Rights masks,
+token, ACLs and deadlines are unchanged; native confirmation of the repair and two-handle startup remains pending.
+
 No result or copied content is read by the host until the real root handle has exited and both private job counters are zero. Unverified shutdown retains its scratch and pins. No ACL, AppContainer, network, PowerShell, CLR or registry compatibility fallback is permitted. PowerShell runs only as a trusted host-side signature or event observer, outside the LPAC job; Node is the executable under test inside that job.
 
 The dedicated workflow is `experimental-windows-node-lpac.yml`; it explicitly sets `EMBER_LPAC_NODE_PROOF=1` and the exact asset/version inputs, so its configured Windows jobs must execute or fail. Unconfigured general integration runs skip this separate diagnostic.

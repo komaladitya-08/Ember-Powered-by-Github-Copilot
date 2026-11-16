@@ -70,13 +70,15 @@ function setup(initialFault = "") {
         if (fault === "rights status" && args[1] === 0) return -1073741790;
         const buffer = args[2] as Buffer;
         if (args[1] === 0) {
+          // The native ABI requires the exact PUBLIC_OBJECT_BASIC_INFORMATION size.
+          if (buffer.length !== 56 || args[3] !== 56) return -1073741820; // STATUS_INFO_LENGTH_MISMATCH
           let access = args[0] === exclusiveHandle ? 0x81 : args[0] === 10n ? 2 : args[0] === 11n ? 0x81 : 0x120089;
           if (fault === "exclusive writable" && args[0] === exclusiveHandle) access |= 2;
           if (fault === "readable writer" && args[0] === 10n) access |= 1;
           if (fault === "writable pin" && args[0] === 11n) access |= 2;
           if (fault === "deletable writer" && args[0] === 10n) access |= 0x10000;
           if (fault === "executable writer" && args[0] === 10n) access |= 0x20;
-          buffer.writeUInt32LE(access, 4); (args[4] as number[])[0] = 56; return 0;
+          buffer.writeUInt32LE(access, 4); (args[4] as number[])[0] = fault === "short basic information" ? 8 : fault === "oversized basic information" ? 64 : 56; return 0;
         }
         const name = Buffer.from(fault === "wrong NUL name" ? "\\Device\\Other" : "\\Device\\Null", "utf16le");
         buffer.writeUInt16LE(name.length, 0); buffer.writeUInt16LE(name.length, 2);
@@ -166,6 +168,14 @@ it("uses the actual unsigned NTSTATUS rather than Win32 LastError for a failed o
   let error: unknown; try { s.bind(); } catch (caught) { error = caught; }
   expect(windowsNodeIoSetupReceipt(error)).toEqual({ stage: "writer-rights", operation: "NtQueryObject", code: 0xc0000022 });
   expect(s.calls.some(call => call.name === "GetLastError")).toBe(false);
+});
+
+it.each(["short basic information", "oversized basic information"])("rejects a successful rights query with a mismatched ABI receipt: %s", fault => {
+  const s = setup(fault);
+  let error: unknown; try { s.bind(); } catch (caught) { error = caught; }
+  expect(windowsNodeIoSetupReceipt(error)).toEqual({ stage: "writer-rights" });
+  expect(s.calls.some(call => call.name === "GetLastError")).toBe(false);
+  expect(closedHandles(s.calls)).toEqual([10n, 12n, 11n]);
 });
 
 it.each([NaN, -1, 0x100000000, "private native error", undefined])("discards a malformed native error value: %s", value => {

@@ -127,10 +127,12 @@ export function bindWindowsNodeIo(koffi: Pick<typeof Koffi, "sizeof" | "address"
     if (observed[0] !== (inherit ? HANDLE_INHERIT : 0)) throw failure();
   };
   const granted = (value: WindowsHandle, required: number, allowed: number) => {
-    const basic = Buffer.alloc(64), returned = [0];
+    // PUBLIC_OBJECT_BASIC_INFORMATION: four ULONG fields plus Reserved[10], exactly 56 bytes.
+    // NtQueryObject rejects an oversized ObjectBasicInformation buffer with STATUS_INFO_LENGTH_MISMATCH.
+    const basic = Buffer.alloc(56), returned = [0];
     const status = fn.NtQueryObject(value, 0, basic, basic.length, returned);
     if (status !== 0) throw typeof status === "number" ? ntFailure(status) : failure();
-    if (returned[0] < 8 || returned[0] > basic.length) throw failure();
+    if (returned[0] !== basic.length) throw failure();
     const access = basic.readUInt32LE(4);
     if ((access & required) !== required || (access & ~allowed) !== 0) throw failure();
   };
