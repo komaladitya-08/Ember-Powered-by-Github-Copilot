@@ -215,17 +215,21 @@ if mode == 'growing':
     module.os.fdopen = lambda *args: GrowingReader(original_fdopen(*args))
 try:
     result = module.extract(archive, destination)
-    print(json.dumps(dict(status='accepted', files=result['files'])))
+    print(json.dumps(dict(status='accepted', files=result['files'], pythonVersion=list(sys.version_info[:3]))))
 except Exception as error:
-    print(json.dumps(dict(status='refused', boundedGrowth=len(reads) == 1 and reads[0] <= module.PIN['zipBytes'] + 1 and not os.path.exists(destination), diagnostic=module.refusal(error))))
+    print(json.dumps(dict(status='refused', boundedGrowth=len(reads) == 1 and reads[0] <= module.PIN['zipBytes'] + 1 and not os.path.exists(destination), diagnostic=module.refusal(error), pythonVersion=list(sys.version_info[:3]))))
 `;
 describe("same-fd authenticated four-member ZIP boundary", () => {
   const run = (mode: string) => {
     const result = spawnSync(python, ["-I", "-B", "-c", fixture, path.resolve("scripts/experimental/extract-node-source-artifact.py"), temporary(), mode], { encoding: "utf8", windowsHide: true, timeout: 15_000, maxBuffer: 4096 });
-    expect(result.status, result.stderr).toBe(0); return JSON.parse(result.stdout);
+    expect(result.status, "The synthetic ZIP interpreter did not complete.").toBe(0); return JSON.parse(result.stdout);
   };
   it("extracts exactly four public regular files only after the synthetic fixed ZIP authenticates", () => {
-    const result = run("plain"); expect(result.status).toBe("accepted"); expect(result.files.map((value: { name: string }) => value.name)).toEqual(["LICENSE", "bootstrap.exe", "build-receipt.json", "source-node.exe"]);
+    const result = run("plain"), diagnostic = parseSourceArtifactExtractionRefusal(Buffer.from(JSON.stringify(result.diagnostic ?? null)));
+    const version = Array.isArray(result.pythonVersion) && result.pythonVersion.length === 3 && result.pythonVersion.every((value: unknown) => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 255) ? result.pythonVersion : undefined;
+    const message = (diagnostic ? JSON.stringify(diagnostic) : "No closed extraction diagnostic.") + (version ? ` interpreter=${JSON.stringify(version)}` : "");
+    expect(result.status, message).toBe("accepted");
+    expect(result.files.map((value: { name: string }) => value.name)).toEqual(["LICENSE", "bootstrap.exe", "build-receipt.json", "source-node.exe"]);
   });
   it.each(["traversal", "case", "directory", "control", "duplicate", "symlink", "special", "privileged", "oversize", "crc", "encryption", "outerhash", "existing", "alias"])("refuses %s without weakening the production pin or CLI", mode => expect(run(mode).status).toBe("refused"));
   it("stops a growing archive after at most pinned bytes plus one, before any output directory", () => expect(run("growing")).toMatchObject({ status: "refused", boundedGrowth: true }));
