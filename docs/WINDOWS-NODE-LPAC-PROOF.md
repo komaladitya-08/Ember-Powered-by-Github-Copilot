@@ -2,6 +2,11 @@
 
 This experiment starts a pinned official Windows Node executable directly in the existing zero-capability LPAC fixture. It does not enable coding, supply a general shell, establish child-process support, or certify Windows 10/11 clients. Windows Server 2022 and 2025 CI are the configured native test environments.
 
+The current native blocker is observed at Winsock initialization: both official Node versions on both servers report
+`WSAStartup / 10107` before useful fixed-eval execution, while their ordinary-host controls succeed. The bounded
+receipt and remaining options are recorded below. This is software/runtime work that can continue in Windows CI;
+access to a physical Windows laptop is not its prerequisite.
+
 The separate Node 22.23.5 and 24.21.0 ZIP and EXE pins come from their official `nodejs.org` SHA256 manifests. On 15 November 2026, `gpg --verify` verified both detached signatures with exact fingerprint `5BE8A3F6C8A5C01D106C0AD820B1A390B168D356`, using the Node release-key repository at commit `481637f813e912c4aa3622d7964ab426c97b8e8d`. Linux pins are not reused. CI checks the archive hash, extracts only its exact `node.exe` entry, then checks that executable's independent size/hash. Before launch, the freshly staged EXE also needs a valid timestamped Windows Authenticode result, the OpenJS Foundation organization and the pinned signing-certificate SHA256. Reading PE certificate metadata on Linux does not establish Windows signature validity.
 
 The existing fixture's 16 MiB executable limit is unchanged. A host-compiled, checked-in C bootstrap is prepared normally but never executed. One strict test-only redirect accepts only its expected empty argument list, working directory and complete clean environment, then creates the exact staged Node image suspended. Native process-image/PID checks use the same process handle that is assigned to the private job and verified as capability-free LPAC before resume. Asset files remain handle-pinned against modification/deletion. All new assets use fresh package-specific protected ACLs; no host, profile ancestor, source tree or capability is granted more access.
@@ -88,6 +93,37 @@ single-line grammar and emit a release-pinned syscall enum plus a positive signe
 discarded. The allowlist comes from the pinned libuv `core.c`, `winsock.c`, `util.c`, `thread.c` and `winapi.c` literals, including
 the releases' distinct `GetModuleHandleA`/`GetModuleHandleW` spelling. This preserves `no-location`; it does not infer
 a public callsite or identify the observed error before a native receipt matches. Native signature results remain pending.
+
+At `6b0656be`, [run 43799837134](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43799837134)
+passed all 255 contracts per job. All four two-handle host controls exited zero; every LPAC receipt matched
+`libuv-win32 / WSAStartup / 10107`, followed by the existing `0x80000003` exit and positive stopped-job observation.
+No dynamic system-message text was printed. Microsoft's [Winsock error list](https://learn.microsoft.com/en-us/windows/win32/winsock/windows-sockets-error-codes-2)
+names 10107 `WSASYSCALLFAILURE`, a generic system/provider failure. Registry/catalog or wait failures are examples,
+not a diagnosis of the denied object in these runs.
+
+The pinned [libuv initialization](https://github.com/nodejs/node/blob/v22.23.5/deps/uv/src/win/core.c#L202)
+unconditionally enters [Winsock initialization](https://github.com/nodejs/node/blob/v22.23.5/deps/uv/src/win/winsock.c#L94)
+before its file, signal, console and utility setup. Both versions call `uv_fatal_error` on nonzero `WSAStartup`, and
+that handler calls `DebugBreak`. This identifies the failing startup API and explains the observed breakpoint path;
+it does not establish a useful Node command, identify all later blockers or prove an intrinsic failure on every
+zero-capability LPAC host. Microsoft's [LPAC guidance](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer)
+describes separate registry and network capabilities. Adding them, falling back to ordinary AppContainer, broadening
+host ACLs or suppressing the reported native failure would change this experiment's boundary.
+
+There is no offline/no-network switch in the pinned Node `configure.py` or libuv build options. An explicit
+source-built offline variant is a candidate, not an implemented repair. Upstream libuv already skips Winsock
+initialization in Safe Mode without network support; that supports investigating unused initialization separately,
+not spoofing Safe Mode or ignoring an attempted `WSAStartup`. A proposed offline build must remove that initialization
+at compile time and fail closed at every network/DNS/interface entry point before uninitialized state is used. It
+must retain LPAC, zero capabilities, AAP opt-out, private jobs, existing canaries and stopped-writer checks. Native
+eval, copied-file operations, in-process checks, timers/workers, every disabled network family and full cleanup need
+independent evidence; later runtime/child-process failures may remain.
+
+Such a build also needs exact signed-source and patch provenance, a pinned compiler/build recipe and independent
+output hashes. It would be a separately identified Ember experimental asset, not an OpenJS-signed official binary;
+the current official-binary signature verifier must remain unchanged. No source build or production adapter is
+claimed by this diagnosis. A short isolated libuv file/timer/thread probe can test the offline initialization idea
+before committing to a full Node build; its success would still not certify Node or general toolchain compatibility.
 
 No result or copied content is read by the host until the real root handle has exited and both private job counters are zero. Unverified shutdown retains its scratch and pins. No ACL, AppContainer, network, PowerShell, CLR or registry compatibility fallback is permitted. PowerShell runs only as a trusted host-side signature or event observer, outside the LPAC job; Node is the executable under test inside that job.
 
