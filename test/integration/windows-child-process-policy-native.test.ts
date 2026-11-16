@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadExperimentalWindowsLpacApi } from "../../app/main/agent/experimental-windows-lpac-api";
 import { runWindowsChildProcessPolicyProbe, WindowsChildProcessPolicyCleanupError, type WindowsChildPolicyCase } from "../fixtures/windows-child-process-policy-proof";
 import { windowsChildPolicyScratchLocation } from "../fixtures/windows-child-process-policy-ownership";
+import { windowsChildPolicyFailure } from "../fixtures/windows-child-process-policy-diagnostic";
 const required = process.env.EMBER_CHILD_POLICY_PROBE === "1";
 const available = required && process.platform === "win32" && process.arch === "x64";
 describe.skipIf(!available && !required)("fixed creation-time child-policy witness", () => {
@@ -32,7 +33,8 @@ describe.skipIf(!available && !required)("fixed creation-time child-policy witne
     if (!result) {
       result = runWindowsChildProcessPolicyProbe({ parent: fs.mkdtempSync(path.join(parent, `case-${caseId}-`)), buildRoot, commit, image, caseId }, loadExperimentalWindowsLpacApi())
         .then(value => { console.info("Stopped fixed child-policy observations", JSON.stringify({ caseId, ...value })); return value; })
-        .catch(error => { if (error instanceof WindowsChildProcessPolicyCleanupError) retained = true; throw error; });
+        .catch(error => { const failure = windowsChildPolicyFailure(error); if (failure) console.info("Fixed first child-policy failure", JSON.stringify({ caseId, failure }));
+          if (error instanceof WindowsChildProcessPolicyCleanupError) retained = true; throw error; });
       outcomes.set(caseId, result);
     }
     return result;

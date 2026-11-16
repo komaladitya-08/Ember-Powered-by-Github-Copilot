@@ -64,8 +64,30 @@ The surgical follow-up forwards the existing fixed argument selection to that sa
 It changes no C program, API, mitigation, capability, cleanup or command-validation guard. A nine-case regression
 invokes the actual main proof through synthetic platform/file/native boundaries and intercepts the launch call:
 case 8 carries only `--leaf`, while cases 0–7 carry no arguments. Restoring the old call fails exactly case 8.
-All 343 affected portable contracts pass locally. These synthetic results are not Windows execution; the repaired
-native cases remain pending the reviewed follow-up run.
+All 343 affected portable contracts passed locally. These synthetic results are not Windows execution; the
+repaired native run is recorded below.
+
+The [second matrix 43869055346](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43869055346),
+at repaired head `d4fc1781ed25dc10d94fdbddf303b20d9c785672` and actual merge compile commit
+`3862e1e0aeb1320adfa51227907ca43b30fb4d53`, passed ten Linux C logic cases. Each Windows image passed 333 portable
+tests, skipped ten Linux-only cases and successfully built the fixed C image. Each native suite passed two of nine
+cases. Case 0 repeated its ordinary-host useful child controls and LPAC plain/override error-5 observations with
+birth flags 0. The repaired broker leaf case 8 passed: ordinary host and LPAC each exited 0, reached private-job
+zero, had flags 0 and no report, preserved the canary and emitted no output. This establishes only that fixed
+broker-created leaf's compatibility; it does not supply a positive direct LPAC child-creation control.
+
+Case 1 still terminalized after about 33 ms on both images, with no stopped policy report or exposed initial
+operation. Cases 2–7 were quarantined. Neither the timing nor terminal error establishes a Windows policy cause,
+restriction enforcement or setter behavior.
+
+The next code-only diagnostic uses a private WeakMap to preserve the first failure through existing owned,
+host and terminal cleanup error shaping. Its frozen schema exposes only documented closed numeric phase,
+operation and predicate enums, domain 0/1 and an optional 0/1 BOOL already returned by an existing call. It never
+samples an extra native query or `GetLastError`, reads raw error properties, changes C or admits a failed case.
+Later cleanup facts cannot replace the first receipt or restore disposal authority. All 375 affected portable
+contracts, scoped lint and diff checks pass; tests include actual call boundaries, first-failure retention,
+forged/proxy privacy and no-extra-call checks. Independent source review is complete. The diagnostic native run
+remains pending its coordinated review gate; no third matrix has run.
 
 Primary sources:
 

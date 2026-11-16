@@ -14,6 +14,7 @@ import { loadWindowsChildPolicyHostIdentity, type WindowsChildPolicyHostIdentity
 import { disposeWindowsChildPolicyProbe } from "./windows-child-process-policy-disposal";
 import { WindowsChildProcessPolicyOwnership, readWindowsChildProcessPolicyAfterStopped, readWindowsChildProcessPolicySuccessfulExit } from "./windows-child-process-policy-ownership";
 import { parseWindowsChildProcessPolicyReport, WINDOWS_CHILD_PROCESS_POLICY_REPORT_BYTES } from "./windows-child-process-policy-report";
+import { brandWindowsChildPolicyFailure, preserveWindowsChildPolicyFailure } from "./windows-child-process-policy-diagnostic";
 // @ts-expect-error -- fixed trusted-host JavaScript build recipe
 import { buildPin, parseWindowsChildProcessPolicyBuildReceipt } from "../../scripts/experimental/build-windows-child-process-policy.mjs";
 
@@ -71,7 +72,9 @@ export async function runWindowsChildProcessPolicyProbe(input: { parent: string;
   let unsafe = false, fixture: ExperimentalWindowsLpacFixture | undefined, profile: WindowsLpacProfile | undefined, lpacProcess: WindowsSuspendedProcess | undefined;
   let io: ReturnType<typeof loadWindowsChildProcessPolicyIo> | undefined, environment: Buffer | undefined, program = "", phase = "receipt";
   let hostIdentity: WindowsChildPolicyHostIdentity | undefined;
-  const owned = <T>(operation: () => T): T => { if (unsafe) throw new WindowsChildProcessPolicyCleanupError(); try { return ownership.guard(operation); } catch { unsafe = true; throw new WindowsChildProcessPolicyCleanupError(); } };
+  const phaseNumber = () => phase === "prepare" ? 1 : phase === "host" ? 2 : phase === "lpac" ? 3 : phase === "host-report" || phase === "stopped-report" ? 5 : 4;
+  const owned = <T>(operation: () => T): T => { if (unsafe) throw new WindowsChildProcessPolicyCleanupError(); try { return ownership.guard(operation); } catch (error) { unsafe = true;
+    throw preserveWindowsChildPolicyFailure(error, new WindowsChildProcessPolicyCleanupError()); } };
   const controlled: WindowsLpacApi = { ...api,
     createProfile(name) { issued.profileNames.push(name); return owned(() => { profile = api.createProfile(name); return profile; }); },
     ownerSid: () => owned(() => api.ownerSid()), profileLocalAppDataBase: selected => owned(() => api.profileLocalAppDataBase(selected)),
@@ -124,7 +127,7 @@ export async function runWindowsChildProcessPolicyProbe(input: { parent: string;
       verifyToken(selected, process) {
         if (!profile || !lpacProcess || selected.sidText !== profile.sidText || process !== lpacProcess.process) throw new Error("No exact child-process policy process is owned.");
         controlled.verifyToken(selected, process); lpacBirthFlags = owned(() => io!.processPolicy(process));
-        if (birth === 1 && lpacBirthFlags !== 1) throw new Error("The suspended LPAC root lacks its exact creation-time child restriction.");
+        if (birth === 1 && lpacBirthFlags !== 1) throw brandWindowsChildPolicyFailure(new Error("The suspended LPAC root lacks its exact creation-time child restriction."), { phase: 3, operation: 15, predicate: 9 });
         owned(() => native.image(process, lpacProcess!.pid, program)); checkPins();
       },
     }); bytes.fill(0);
@@ -143,7 +146,7 @@ export async function runWindowsChildProcessPolicyProbe(input: { parent: string;
       create(...args) { const created = owned(() => ownedIo.createHost(...args)); issued.processes.push(created); return created; },
       verify(created, expected) {
         owned(() => native.image(created.process, created.pid, expected)); hostBirthFlags = owned(() => ownedIo.processPolicy(created.process));
-        if (birth === 1 && hostBirthFlags !== 1) throw new Error("The suspended host root lacks its exact creation-time child restriction.");
+        if (birth === 1 && hostBirthFlags !== 1) throw brandWindowsChildPolicyFailure(new Error("The suspended host root lacks its exact creation-time child restriction."), { phase: 2, operation: 15, predicate: 9 });
         hostIdentity = owned(() => loadWindowsChildPolicyHostIdentity().inspect(created.process));
         if (hostIdentity.parent.appContainer !== 0 || hostIdentity.host.appContainer !== 0) throw new Error("The suspended child-process policy host control requires ordinary parent and child tokens.");
       },
@@ -166,8 +169,9 @@ export async function runWindowsChildProcessPolicyProbe(input: { parent: string;
     checkPins(); result = { issuer: buildPin.issuer, compileCommit: input.commit, host: { ...host, identity: hostIdentity, report: hostReport, birthFlags: hostBirthFlags! },
       lpac: { exitCode, jobStopped: true, report: lpacReport, birthFlags: lpacBirthFlags! }, canaryUnchanged: true, noOutput: true };
   } catch (error) {
+    brandWindowsChildPolicyFailure(error, { phase: phaseNumber(), operation: 0, predicate: 10 });
     if (uncertain(error) || ownership.unsafe || phase === "prepare" && !fixture) unsafe = true;
-    failure = uncertain(error) ? error : new Error(`The fixed child-process policy prerequisite failed during ${phase}.`);
+    failure = uncertain(error) ? error : preserveWindowsChildPolicyFailure(error, new Error(`The fixed child-process policy prerequisite failed during ${phase}.`));
   } finally {
     unsafe = await disposeWindowsChildPolicyProbe({ unsafe, lpacCreated: lpacProcess !== undefined,
       async stopLpac() { if (fixture) { const lease = await fixture.stop(15_000); lease.requireStopped(); } },
@@ -176,7 +180,7 @@ export async function runWindowsChildProcessPolicyProbe(input: { parent: string;
     });
     if (unsafe) retained.push({ fixture, profile, lpacProcess, io, environment, issued, ownership, native, pins, directories, parent: input.parent });
   }
-  if (unsafe) throw new WindowsChildProcessPolicyCleanupError();
+  if (unsafe) throw preserveWindowsChildPolicyFailure(failure, brandWindowsChildPolicyFailure(new WindowsChildProcessPolicyCleanupError(), { phase: 6, operation: 0, predicate: 11 }));
   if (failure) throw failure;
   if (!result) throw new Error("The fixed child-process policy prerequisite has no stopped receipt.");
   return result;

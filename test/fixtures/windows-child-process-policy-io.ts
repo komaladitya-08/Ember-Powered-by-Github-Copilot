@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import path from "node:path/win32";
 import type * as Koffi from "koffi";
 import { ExperimentalWindowsCreateUncertain, LPAC_ATTRIBUTES, LPAC_CREATE_FLAGS, type WindowsHandle, type WindowsLpacApi, type WindowsLpacProfile, type WindowsSuspendedProcess } from "../../app/main/agent/experimental-windows-lpac-api";
+import { brandWindowsChildPolicyFailure, preserveWindowsChildPolicyFailure } from "./windows-child-process-policy-diagnostic";
 
 export const WINDOWS_CHILD_PROCESS_POLICY_IO_OUTPUT = "child-process-policy-output.bin";
 export const WINDOWS_CHILD_PROCESS_POLICY_IO_SETUP_STAGES = Object.freeze([
@@ -86,11 +87,16 @@ export function bindWindowsChildProcessPolicyIo(koffi: Pick<typeof Koffi, "sizeo
     for (const prototype of prototypes) fn[/\b(\w+)\s*\(/.exec(prototype)![1]] = dll.func(prototype) as NativeFunction;
   }
   let setupStage: SetupStage | undefined = "security-descriptor";
+  let diagnosticPhase = 1, firstFailure: unknown;
+  const markFailure = <T>(error: T, operation: number, predicate: number, capturedBool?: unknown): T => {
+    brandWindowsChildPolicyFailure(error, { phase: diagnosticPhase, operation, predicate }, capturedBool);
+    firstFailure ??= error; return preserveWindowsChildPolicyFailure(firstFailure, error);
+  };
   const failure = (operation?: SetupOperation, code?: unknown) => {
-    if (setupStage === undefined) return new Error("The bounded child-policy stdio diagnostic failed its native contract.");
+    if (setupStage === undefined) return preserveWindowsChildPolicyFailure(firstFailure, new Error("The bounded child-policy stdio diagnostic failed its native contract."));
     const receipt: WindowsChildProcessPolicyIoSetupReceipt = typeof code === "number" && Number.isInteger(code) && code >= 0 && code <= 0xffffffff && operation
       ? { stage: setupStage, operation, code } : { stage: setupStage };
-    return new WindowsChildProcessPolicyIoSetupError(receipt);
+    return preserveWindowsChildPolicyFailure(firstFailure, new WindowsChildProcessPolicyIoSetupError(receipt));
   };
   // Call only immediately after a native FALSE/invalid-handle result. Predicate failures must never sample stale error state.
   const win32Failure = (operation: SetupOperation, result: unknown) => {
@@ -112,6 +118,7 @@ export function bindWindowsChildProcessPolicyIo(koffi: Pick<typeof Koffi, "sizeo
   const retainedHandles = new Set<WindowsHandle>();
   let retained = false;
   const retain = (error: WindowsChildProcessPolicyIoCleanupError | ExperimentalWindowsCreateUncertain) => {
+    preserveWindowsChildPolicyFailure(firstFailure, error);
     terminal ??= error; fence.failure ??= terminal;
     if (!retained) { fence.retained.push({ retainedBuffers, retainedHandles, boundProfile, stateDir }); retained = true; }
     return terminal;
@@ -299,14 +306,15 @@ export function bindWindowsChildProcessPolicyIo(koffi: Pick<typeof Koffi, "sizeo
     } catch { throw poison(); }
   };
   const queryPolicy = (process: WindowsHandle): number => {
-    usable(); const buffer = Buffer.alloc(4);
+    usable(); const buffer = Buffer.alloc(4); let captured: unknown;
     try {
-      const ok = fn.GetProcessMitigationPolicy(process, 13, buffer, 4);
-      if (ok !== 1 && ok !== true) throw failure();
-      const value = buffer.readUInt32LE(0); if (value > 7) throw failure(); return value;
-    } catch { throw poison(); } finally { buffer.fill(0); }
+      const ok = fn.GetProcessMitigationPolicy(process, 13, buffer, 4); captured = ok;
+      if (ok !== 1 && ok !== true) throw markFailure(failure(), 5, 1, ok);
+      const value = buffer.readUInt32LE(0); if (value > 7) throw markFailure(failure(), 5, 8, ok); return value;
+    } catch (error) { markFailure(error, 5, 10, captured); throw poison(); } finally { buffer.fill(0); }
   };
   const create = (lpac: boolean, program: string, command: Buffer, cwd: string, env: Buffer): WindowsSuspendedProcess => {
+    diagnosticPhase = lpac ? 3 : 2;
     usable();
     if (writer === undefined || stdin === undefined || pin === undefined || writer === stdin || writer === pin || stdin === pin ||
       (lpac ? !hostAccepted || lpacCreated : hostCreated || lpacCreated)) throw failure();
@@ -315,15 +323,17 @@ export function bindWindowsChildProcessPolicyIo(koffi: Pick<typeof Koffi, "sizeo
     if (Number(fn.GetFileType(stdin)) !== 2) throw failure();
     if (birthPolicy === 2 && (queryPolicy(0xffffffffffffffffn) & 1) !== 0) throw failure();
     const count = (lpac ? 3 : 1) + (birthPolicy === 0 ? 0 : 1), bytes = [0n];
-    const sizing = fn.InitializeProcThreadAttributeList(null, count, 0, bytes);
-    if (sizing || Number(fn.GetLastError()) !== 122) throw failure();
+    let sizing: unknown;
+    try { sizing = fn.InitializeProcThreadAttributeList(null, count, 0, bytes); }
+    catch (error) { throw markFailure(error, 1, 10); }
+    if (sizing || Number(fn.GetLastError()) !== 122) throw markFailure(failure(), 1, 2, sizing);
     const length = Number(bytes[0]);
-    if (!Number.isSafeInteger(length) || length < 1 || length > 65536) throw failure();
+    if (!Number.isSafeInteger(length) || length < 1 || length > 65536) throw markFailure(failure(), 1, 3, sizing);
     const attributes = Buffer.alloc(length);
     let initialized: unknown;
     try { initialized = fn.InitializeProcThreadAttributeList(attributes, count, 0, bytes); }
-    catch { retainedBuffers.push(attributes); throw poison(); }
-    if (!initialized) throw failure();
+    catch { retainedBuffers.push(attributes); throw markFailure(poison(), 2, 10); }
+    if (!initialized) throw markFailure(failure(), 2, 1, initialized);
     const capabilities = Buffer.alloc(24); capabilities.writeBigUInt64LE(boundProfile.sid);
     const policy = Buffer.alloc(4); policy.writeUInt32LE(1);
     const childPolicy = Buffer.alloc(4); childPolicy.writeUInt32LE(birthPolicy);
@@ -336,7 +346,13 @@ export function bindWindowsChildProcessPolicyIo(koffi: Pick<typeof Koffi, "sizeo
     try {
       const entries: [number, Buffer][] = lpac ? [[LPAC_ATTRIBUTES.securityCapabilities, capabilities], [LPAC_ATTRIBUTES.allApplicationPackagesPolicy, policy], [HANDLE_LIST, handles]] : [[HANDLE_LIST, handles]];
       if (birthPolicy !== 0) entries.push([0x2000e, childPolicy]);
-      for (const [key, value] of entries) if (!fn.UpdateProcThreadAttribute(attributes, 0, key, value, value.length, null, null)) throw failure();
+      for (const [key, value] of entries) {
+        const predicate = key === HANDLE_LIST ? 4 : key === LPAC_ATTRIBUTES.securityCapabilities ? 5 : key === LPAC_ATTRIBUTES.allApplicationPackagesPolicy ? 6 : 7;
+        let ok: unknown;
+        try { ok = fn.UpdateProcThreadAttribute(attributes, 0, key, value, value.length, null, null); }
+        catch (error) { markFailure(error, 3, predicate); throw error; }
+        if (!ok) throw markFailure(failure(), 3, predicate, ok);
+      }
       // Reset and verify immediately around the call, before inspecting PROCESS_INFORMATION or deleting attrs.
       let launchFailed = false, launchError: unknown;
       try {
@@ -345,7 +361,8 @@ export function bindWindowsChildProcessPolicyIo(koffi: Pick<typeof Koffi, "sizeo
         attempted = true;
         const ok = fn.CreateProcessW(program, command, null, null, 1, LPAC_CREATE_FLAGS, env, cwd, startup, information);
         returned = true; created = !!ok;
-      } catch (error) { launchFailed = true; launchError = error; }
+        if (!created) markFailure(failure(), 4, 1, ok);
+      } catch (error) { markFailure(error, attempted && !returned ? 4 : 0, 10); launchFailed = true; launchError = error; }
       let resetFailed = false;
       for (const value of [stdin, writer]) try { if (!fn.SetHandleInformation(value, HANDLE_INHERIT, 0)) throw failure(); flags(value, false); } catch { resetFailed = true; }
       if (resetFailed) throw poison();
@@ -380,6 +397,7 @@ export function bindWindowsChildProcessPolicyIo(koffi: Pick<typeof Koffi, "sizeo
       if (uncertain) {
         for (const value of [writer, stdin, pin, process, thread]) if (value !== undefined && valid(value)) retainedHandles.add(value);
         const uncertainty = new ExperimentalWindowsCreateUncertain("A child-policy stdio process creation could not be observed terminated; preserve all diagnostic assets.");
+        preserveWindowsChildPolicyFailure(firstFailure, uncertainty);
         terminal = uncertainty; fence.failure = uncertainty;
         throw retain(uncertainty);
       }

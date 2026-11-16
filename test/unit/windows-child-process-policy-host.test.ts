@@ -3,6 +3,7 @@ import { runWindowsChildPolicyHost } from "../fixtures/windows-child-process-pol
 import { WindowsNodeHostCleanupError } from "../fixtures/windows-node-lpac-startup";
 import { readWindowsChildProcessPolicyAfterStopped } from "../fixtures/windows-child-process-policy-ownership";
 import { disposeWindowsChildPolicyProbe } from "../fixtures/windows-child-process-policy-disposal";
+import { brandWindowsChildPolicyFailure, windowsChildPolicyFailure } from "../fixtures/windows-child-process-policy-diagnostic";
 afterEach(() => vi.useRealTimers());
 const setup = (natural: boolean) => {
   const calls: string[] = [], fence = { unsafe: false, retained: [] as unknown[] }; let stopped = natural;
@@ -35,4 +36,18 @@ it("keeps the entire LPAC disposal/removal path revoked after missing natural co
     async closeFixture() { calls.push("close-profile-and-io"); }, releasePins() { calls.push("release-pins"); } });
   if (!retained) remove = true;
   expect(read).toBe(false); expect(retained).toBe(true); expect(remove).toBe(false); expect(calls).toEqual(["non-disposing-stop"]);
+});
+it("preserves an already branded verify failure through host Stop failures and final cleanup shaping", async () => {
+  const value = setup(true), initial = brandWindowsChildPolicyFailure(new Error("private attribute failure"), { phase: 2, operation: 3, predicate: 7 }, 0);
+  value.native.verify = () => { throw initial; }; value.api.terminateProcess = () => { value.calls.push("stop-root"); throw new Error("private cleanup"); };
+  value.api.terminateJob = () => { value.calls.push("stop-job"); throw new Error("private job cleanup"); };
+  let error: unknown; try { await runWindowsChildPolicyHost(value.input, value.api, value.native, value.fence); } catch (caught) { error = caught; }
+  expect(error).toBeInstanceOf(WindowsNodeHostCleanupError); expect(windowsChildPolicyFailure(error)).toBe(windowsChildPolicyFailure(initial));
+  expect(value.calls).toEqual(["stop-root", "stop-job"]); expect(value.fence.unsafe).toBe(true); expect(value.fence.retained).toHaveLength(1);
+});
+it("labels the existing invalid host-job contract without adding native calls or allowing disposal", async () => {
+  const value = setup(true); value.api.createJob = () => 0n;
+  let error: unknown; try { await runWindowsChildPolicyHost(value.input, value.api, value.native, value.fence); } catch (caught) { error = caught; }
+  expect(windowsChildPolicyFailure(error)).toEqual({ schema: 1, phase: 2, operation: 6, predicate: 10, domain: 0 });
+  expect(value.calls).toEqual([]); expect(value.fence.unsafe).toBe(true); expect(value.fence.retained).toHaveLength(1);
 });

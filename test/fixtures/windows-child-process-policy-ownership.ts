@@ -1,22 +1,24 @@
 /** Terminal guard for legacy native acquisition seams in this independent prerequisite. */
 import path from "node:path";
 import { WindowsNodeHostCleanupError } from "./windows-node-lpac-startup";
+import { preserveWindowsChildPolicyFailure } from "./windows-child-process-policy-diagnostic";
 export class WindowsChildProcessPolicyOwnershipError extends WindowsNodeHostCleanupError {
   constructor() { super(); this.name = "WindowsChildProcessPolicyOwnershipError"; this.message = "Child-process policy prerequisite ownership is unverified; retain every owner."; }
 }
 export class WindowsChildProcessPolicyOwnership {
   #unsafe = false;
   readonly #retained: unknown[] = [];
+  #firstFailure: unknown;
   get retained(): readonly unknown[] { return this.#retained.slice(); }
   get unsafe(): boolean { return this.#unsafe; }
   guard<T>(operation: () => T): T {
     if (this.#unsafe) throw new WindowsChildProcessPolicyOwnershipError();
     try {
       const value = operation();
-      if (this.#unsafe) { this.#retained.push(value); throw new WindowsChildProcessPolicyOwnershipError(); }
+      if (this.#unsafe) { this.#retained.push(value); throw preserveWindowsChildPolicyFailure(this.#firstFailure, new WindowsChildProcessPolicyOwnershipError()); }
       return value;
     }
-    catch { this.#unsafe = true; throw new WindowsChildProcessPolicyOwnershipError(); }
+    catch (error) { this.#unsafe = true; this.#firstFailure ??= error; throw preserveWindowsChildPolicyFailure(this.#firstFailure, new WindowsChildProcessPolicyOwnershipError()); }
   }
 }
 
@@ -38,7 +40,7 @@ export async function readWindowsChildProcessPolicyAfterStopped<T>(input: {
     const lease = await input.waitStopped(); lease.requireStopped();
     const exitCode = input.exitCode();
     return { exitCode, report: readWindowsChildProcessPolicySuccessfulExit(exitCode, () => input.read()) };
-  } catch { throw new WindowsChildProcessPolicyOwnershipError(); }
+  } catch (error) { throw preserveWindowsChildPolicyFailure(error, new WindowsChildProcessPolicyOwnershipError()); }
 }
 
 /** Hosted native scratch must survive the integration runner's unconditional managed-temp cleanup. */

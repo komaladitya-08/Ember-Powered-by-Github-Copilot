@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { ExperimentalWindowsCreateUncertain, LPAC_ATTRIBUTES } from "../../app/main/agent/experimental-windows-lpac-api";
 import { bindWindowsChildProcessPolicyIo, WindowsChildProcessPolicyIoCleanupError, windowsChildProcessPolicyIoSetupReceipt, WINDOWS_CHILD_PROCESS_POLICY_IO_OUTPUT, WINDOWS_CHILD_PROCESS_POLICY_IO_SETUP_STAGES, WINDOWS_CHILD_PROCESS_POLICY_IO_SETUP_OPERATIONS } from "../fixtures/windows-child-process-policy-io";
+import { windowsChildPolicyFailure } from "../fixtures/windows-child-process-policy-diagnostic";
 
 const profile = { name: "Ember.Experimental.fresh", sid: 55n, sidText: "S-1-15-2-1234" };
 const program = "C:\\fixture\\tools\\node.exe", state = "C:\\fixture\\state", cwd = "C:\\fixture\\work";
@@ -103,12 +104,14 @@ function setup(initialFault = "", birthPolicy: 0 | 1 | 2 = 0) {
       if (name === "InitializeProcThreadAttributeList") {
         (args[3] as bigint[])[0] = 256n;
         if (args[0] && fault === "initialize throw") throw new Error("native private diagnostic");
+        if (fault === "sizing true" && !args[0]) return 1;
+        if (fault === "initialize false" && args[0]) return 0;
         return args[0] ? 1 : 0;
       }
-      if (name === "UpdateProcThreadAttribute") return fault === "LPAC attr" && args[2] === LPAC_ATTRIBUTES.allApplicationPackagesPolicy ? 0 : 1;
+      if (name === "UpdateProcThreadAttribute") return fault === "child attr false" && args[2] === 0x2000e || fault === "LPAC attr" && args[2] === LPAC_ATTRIBUTES.allApplicationPackagesPolicy ? 0 : 1;
       if (name === "CreateProcessW") {
         expect(flags.get(10n)).toBe(1); expect(flags.get(12n)).toBe(1); expect(flags.get(11n)).toBe(0);
-        if (fault === "create false") return 0;
+        if (fault === "create false" || fault === "create false delete attrs") return 0;
         const pi = args[9] as Buffer;
         pi.writeBigUInt64LE(fault === "invalid process" ? 0n : fault === "aliased process" ? 10n : 20n, 0);
         pi.writeBigUInt64LE(fault === "invalid thread" ? 0n : fault === "same PI handles" ? 20n : 30n, 8);
@@ -116,7 +119,7 @@ function setup(initialFault = "", birthPolicy: 0 | 1 | 2 = 0) {
         if (fault === "create throw") throw new Error("native private diagnostic");
         return 1;
       }
-      if (name === "DeleteProcThreadAttributeList" && (fault === "delete attrs" || fault === "unobserved" || fault === "close root")) throw new Error("native private diagnostic");
+      if (name === "DeleteProcThreadAttributeList" && (fault === "delete attrs" || fault === "create false delete attrs" || fault === "unobserved" || fault === "close root")) throw new Error("native private diagnostic");
       if (name === "WaitForSingleObject") return fault === "unobserved" ? 258 : 0;
       if (name === "CloseHandle") {
         if (control.cleanupLastError !== undefined) control.lastError = control.cleanupLastError;
@@ -496,4 +499,34 @@ it("does not request birth OVERRIDE from a creator already reporting child restr
   const s = setup("creator restricted", 2), owner = s.bind();
   expect(() => owner.createHost(program, command, cwd, env)).toThrow();
   expect(s.calls.some(call => call.name === "CreateProcessW")).toBe(false); owner.close();
+});
+
+it.each([
+  ["sizing true", 1, 2, 1, 0], ["initialize false", 2, 1, 0, 1], ["child attr false", 3, 7, 0, 1], ["create false", 4, 1, 0, 1],
+] as const)("reports only closed first-call metadata without extra native error sampling: %s", (fault, operation, predicate, returnedBool, errorSamples) => {
+  const s = setup("", 1), owner = s.bind(), before = s.calls.length; s.control.fault = fault;
+  let error: unknown; try { owner.createHost(program, command, cwd, env); } catch (caught) { error = caught; }
+  expect(windowsChildPolicyFailure(error)).toEqual({ schema: 1, phase: 2, operation, predicate, domain: 1, returnedBool });
+  const names = s.calls.slice(before).map(call => call.name); expect(names.filter(name => name === "GetLastError")).toHaveLength(errorSamples);
+  const after = s.calls.length; windowsChildPolicyFailure(error); expect(s.calls).toHaveLength(after);
+  expect(names.filter(name => name === "InitializeProcThreadAttributeList")).toHaveLength(fault === "sizing true" ? 1 : 2);
+  expect(names.filter(name => name === "CreateProcessW")).toHaveLength(fault === "create false" ? 1 : 0);
+  owner.close();
+});
+it.each([["policy false", 1, 0], ["policy unknown bits", 8, 1]] as const)("preserves existing policy-query refusal and its captured BOOL without any added calls: %s", (fault, predicate, returnedBool) => {
+  const s = setup(), owner = s.bind(), before = s.calls.length; s.control.fault = fault;
+  let error: unknown; try { owner.processPolicy(91n); } catch (caught) { error = caught; }
+  expect(error).toBeInstanceOf(WindowsChildProcessPolicyIoCleanupError);
+  expect(windowsChildPolicyFailure(error)).toEqual({ schema: 1, phase: 1, operation: 5, predicate, domain: 1, returnedBool });
+  expect(s.calls.slice(before).map(call => call.name)).toEqual(["GetProcessMitigationPolicy"]);
+  expect(() => owner.close()).toThrow(WindowsChildProcessPolicyIoCleanupError); expect(s.calls.slice(before).map(call => call.name)).toEqual(["GetProcessMitigationPolicy"]);
+});
+it("keeps failed CreateProcess facts ahead of later attribute-cleanup uncertainty and retains every private owner", () => {
+  const s = setup("", 1), owner = s.bind(); s.control.fault = "create false delete attrs";
+  let first: unknown; try { owner.createHost(program, command, cwd, env); } catch (error) { first = error; }
+  expect(first).toBeInstanceOf(WindowsChildProcessPolicyIoCleanupError);
+  expect(windowsChildPolicyFailure(first)).toEqual({ schema: 1, phase: 2, operation: 4, predicate: 1, domain: 1, returnedBool: 0 });
+  const before = s.calls.length;
+  try { owner.close(); } catch (error) { expect(error).toBe(first); expect(windowsChildPolicyFailure(error)).toBe(windowsChildPolicyFailure(first)); }
+  expect(s.calls).toHaveLength(before); expect(s.fence.retained.length).toBeGreaterThan(0); expect(closedHandles(s.calls)).toEqual([]);
 });
