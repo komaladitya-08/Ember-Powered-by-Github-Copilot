@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import { afterEach, expect, it, vi } from "vitest";
 // @ts-expect-error -- portable trusted-host recipe and receipt parser, outside the application TypeScript build
-import { buildPin, sourcePin, windowsUvSpawnRecipe, parseWindowsUvSpawnBuildReceipt, windowsUvSpawnImageFingerprint, windowsUvSpawnBuildEnvironment, windowsUvSpawnProjectWitness, trustedWindowsUvSpawnPythonPath, attestWindowsUvSpawnPython } from "../../scripts/experimental/build-windows-uv-spawn-probe.mjs";
+import { buildPin, sourcePin, windowsUvSpawnRecipe, parseWindowsUvSpawnBuildReceipt, windowsUvSpawnImageFingerprint, windowsUvSpawnBuildEnvironment, windowsUvSpawnProjectWitness, trustedWindowsUvSpawnPythonPath, attestWindowsUvSpawnPython, validateWindowsUvSpawnToolVersions } from "../../scripts/experimental/build-windows-uv-spawn-probe.mjs";
+// @ts-expect-error -- optional private-checkpoint context for the same read-only fixed-pin version validator
+import { createUvSpawnBuildDiagnostic } from "../../scripts/experimental/windows-uv-spawn-build-diagnostic.mjs";
 
 const child = vi.hoisted(() => ({ sync: vi.fn(), async: vi.fn() }));
 vi.mock("node:child_process", () => ({ execFileSync: child.sync, execFile: child.async }));
@@ -19,6 +21,17 @@ function receipt() {
     recipe: windowsUvSpawnRecipe() as { file: string; sha256: string }[], commit, assets: { probe: { name: "uv-spawn-probe.exe", ...fingerprint() } } };
 }
 const parse = (value: unknown, expected = commit) => parseWindowsUvSpawnBuildReceipt(Buffer.from(JSON.stringify(value)), expected);
+const versionKeys = ["visualStudioVersion", "compilerVersion", "linkerVersion", "msbuildVersion", "pythonVersion", "cmakeVersion"] as const;
+const toolVersions = () => ({ visualStudioVersion: "17.14.37906.3", compilerVersion: "19.44.35211.0", linkerVersion: "14.44.35211.0", msbuildVersion: "17.14.23.30406", pythonVersion: "3.12.10", cmakeVersion: "3.31.6" });
+const accepts = (operation: () => unknown) => { try { operation(); return true; } catch { return false; } };
+function previousVersionAcceptance(value: Record<string, unknown>) {
+  if (Object.keys(value).length !== versionKeys.length || !versionKeys.every(key => Object.hasOwn(value, key)) ||
+      !versionKeys.every(key => typeof value[key] === "string" && /^[0-9]{1,6}(?:\.[0-9]{1,6}){2,3}$/.test(value[key]))) return false;
+  const actual = value as Record<string, string>;
+  return actual.visualStudioVersion.startsWith(buildPin.visualStudioVersionPrefix) && actual.compilerVersion.startsWith(buildPin.compilerVersionPrefix) &&
+    actual.linkerVersion.startsWith(buildPin.linkerVersionPrefix) && actual.msbuildVersion.startsWith(buildPin.msbuildVersionPrefix) &&
+    actual.pythonVersion === buildPin.pythonVersion && actual.cmakeVersion === buildPin.cmakeVersion;
+}
 
 it("accepts only the separate fixed issuer, signed source, compiled recipe and unreviewed emission receipt", () => {
   const value = receipt(), parsed = parse(value); expect(parsed).toEqual(value);
@@ -37,6 +50,42 @@ it.each(["stockManifestSha256", "workingManifestSha256", "files", "directories",
 
 it.each(["image", "generator", "toolsetDirectory", "sdk", "targetMacro", "runtimeLibrary", "pythonVersion", "cmakeVersion", "compilerVersion", "linkerVersion", "visualStudioVersion", "offlineMacro"])("refuses an alternative build or observed version: %s", field => {
   const value = receipt(); Object.assign(value.build, { [field]: "changed" }); expect(() => parse(value)).toThrow();
+});
+
+it.each(versionKeys)("keeps prior format, prefix and exact-pin acceptance unchanged for %s", field => {
+  const current = toolVersions();
+  for (const output of [current[field], current[field].split(".").slice(0, 3).join("."), current[field] + ".0", current[field] + "\n",
+    "1.2", "1", "1.2.3.4.5", "1.1000000.3", "1.2.3-private", " " + current[field], "999999.2.3", null, 123]) {
+    const observed = { ...current, [field]: output }, expected = previousVersionAcceptance(observed);
+    // Preserve the original regex and predicates, including their existing final-newline semantics.
+    expect(accepts(() => validateWindowsUvSpawnToolVersions(observed))).toBe(expected);
+    const value = receipt(); Object.assign(value.build, observed); expect(accepts(() => parse(value))).toBe(expected);
+  }
+});
+
+function failedVersionDiagnostic(observed: ReturnType<typeof toolVersions>) {
+  const diagnostic = createUvSpawnBuildDiagnostic(); diagnostic.checkpoint(7);
+  versionKeys.forEach((key, index) => diagnostic.observeVersion(index + 1, index === 5 ? `cmake version ${observed[key]}` : observed[key]));
+  try { validateWindowsUvSpawnToolVersions(observed, diagnostic); } catch (error) { return diagnostic.classify(diagnostic.failure(error)); }
+  throw new Error("The fixed version fault fixture did not fail.");
+}
+
+it.each(versionKeys)("keeps a two-component projection separate from the original format gate for %s", field => {
+  const observed = { ...toolVersions(), [field]: "1.2" }, index = versionKeys.indexOf(field), value = failedVersionDiagnostic(observed);
+  expect(value.versionDiagnostic.subcheckpoint).toBe(8 + index);
+  expect(value.versionDiagnostic.tools[index]).toEqual({ toolId: index + 1, state: 1, components: [1, 2] });
+  const receiptValue = receipt(); Object.assign(receiptValue.build, observed); expect(() => parse(receiptValue)).toThrow();
+});
+
+it("runs every existing format gate before any prefix comparison and keeps individual short-circuit order", () => {
+  for (const [fields, subcheckpoint] of [
+    [{ visualStudioVersion: "18.14.1", msbuildVersion: "private-invalid" }, 11],
+    [{ compilerVersion: "private-invalid", linkerVersion: "private-invalid" }, 9],
+    [{ visualStudioVersion: "18.14.1", compilerVersion: "20.44.1" }, 14],
+    [{ linkerVersion: "15.44.1", msbuildVersion: "18.14.1" }, 16],
+    [{ pythonVersion: "3.12.11", cmakeVersion: "3.31.7" }, 18],
+    [{ cmakeVersion: "3.31.7" }, 19],
+  ] as const) expect(failedVersionDiagnostic({ ...toolVersions(), ...fields }).versionDiagnostic.subcheckpoint).toBe(subcheckpoint);
 });
 
 it("rejects missing, reordered or changed compile inputs, and excludes independent runtime proof", () => {

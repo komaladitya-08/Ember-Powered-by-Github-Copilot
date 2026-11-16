@@ -118,6 +118,27 @@ The follow-up passed 293 affected tests across eleven suites, scoped lint, synta
 typecheck passed before a subsequent assertion-only correction that prevents unexpected CLI streams from printing
 on test failure; the same exact JSON/status predicates remain, and all 30 diagnostic tests and lint passed afterward.
 
+The automatic diagnostic retry
+[43897227391](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43897227391), at head
+`b7af0852d8995ce3c0f3f0cbe214d95b99837939`, passed 293 Linux tests and 271 Windows tests with the same 22 expected
+Linux-only skips. Windows returned `{schema:1,status:"failed",checkpoint:7}` during version retrieval, parsing or
+validation. The source/identity stages before it completed, but source-before, configure and compilation were not
+reached. Upload was skipped and no build/emission artifact or native result was produced. This identifies an owned
+phase, not a particular observed version mismatch or command failure.
+
+The phase-7 evidence extension distinguishes the PowerShell call, JSON decoding and shape check; the CMake call
+and exact banner check; the VS/MSBuild version calls; and the six existing format checks followed by their existing
+prefix/exact comparisons. Only checkpoint 7 adds `versionDiagnostic`, with a fixed numeric subcheckpoint and six
+tool slots: VS, compiler, linker, MSBuild, Python and CMake. Each slot is unobserved, numeric or unprojectable; only
+an anchored two-to-four-component numeric version with every component at most 999999 yields a numeric array.
+No suffix, arbitrary string, tool path or captured output survives. Python comes from the earlier successful
+attestation and CMake from its actual exact-prefix banner. All observations are copied and frozen at the first
+owned failure. This projection does not change the original three-to-four-component validation, any prefix/exact
+pin, tool invocation, order or native hold. Other checkpoints retain their original diagnostic shape.
+The phase-7 follow-up passed 317 affected tests across eleven suites, scoped lint, final typecheck, syntax and YAML checks. An earlier
+batch had one five-second deadline failure in the unchanged archive-refusal test; all seven source tests passed
+alone, then the fresh 317-test batch passed without changing the test, source helper or deadline.
+
 Portable source, recipe, decoder, actual observer C-shim and native-owner fault tests are implemented. The Linux shim
 uses test-only Win32 declarations around the production observer; it is not Windows ABI, policy or native evidence.
 The initial frozen affected batch passed 263 tests across ten suites with no skips. Scoped ESLint, final `tsc --noEmit`,

@@ -3,13 +3,18 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 // @ts-expect-error -- portable privately branded host-build diagnostics, outside the application TypeScript build
-import { uvSpawnBuildCheckpoints as checkpoints, createUvSpawnBuildDiagnostic, classifyUvSpawnBuildFailure } from "../../scripts/experimental/windows-uv-spawn-build-diagnostic.mjs";
+import { uvSpawnBuildCheckpoints as checkpoints, uvSpawnVersionSubcheckpoints as versionSteps, createUvSpawnBuildDiagnostic, classifyUvSpawnBuildFailure } from "../../scripts/experimental/windows-uv-spawn-build-diagnostic.mjs";
 // @ts-expect-error -- read-only compile recipe for a trusted Windows-only producer; no build is invoked
 import { windowsUvSpawnRecipe } from "../../scripts/experimental/build-windows-uv-spawn-probe.mjs";
 
-type Diagnostic = { checkpoint: (code: unknown) => void; failure: (error?: unknown) => Error; classify: (error: unknown) => object };
+type Tool = { toolId: number; state: number; components: number[] };
+type Failure = { schema: number; status: string; checkpoint: number; versionDiagnostic?: { schema: number; subcheckpoint: number; tools: Tool[] } };
+type Diagnostic = { checkpoint: (code: unknown) => void; subcheckpoint: (code: unknown) => void; observeVersion: (toolId: unknown, value: unknown) => void;
+  failure: (error?: unknown) => Error; classify: (error: unknown) => Failure };
 const create = (): Diagnostic => createUvSpawnBuildDiagnostic();
-const closed = (checkpoint: number) => ({ schema: 1, status: "failed", checkpoint });
+const emptyTools = () => Array.from({ length: 6 }, (_, index) => ({ toolId: index + 1, state: 0, components: [] }));
+const closed = (checkpoint: number) => ({ schema: 1, status: "failed", checkpoint,
+  ...(checkpoint === checkpoints.versions ? { versionDiagnostic: { schema: 1, subcheckpoint: 0, tools: emptyTools() } } : {}) });
 
 it("defines a fixed closed checkpoint range and emits no process, output or native-admission facts", () => {
   expect(Object.values(checkpoints)).toEqual(Array.from({ length: 21 }, (_, index) => index));
@@ -77,6 +82,80 @@ it("rejects invalid checkpoint selectors without coercion or replacing the last 
     expect(() => diagnostic.checkpoint(value)).toThrow("fixed build checkpoint was refused");
   }
   expect(diagnostic.classify(diagnostic.failure())).toEqual(closed(checkpoints.python)); expect(touched).toBe(0);
+});
+
+it("defines only fixed Phase7 subcheckpoints and exposes no version facts in other phases", () => {
+  expect(Object.values(versionSteps)).toEqual(Array.from({ length: 20 }, (_, index) => index)); expect(Object.isFrozen(versionSteps)).toBe(true);
+  const diagnostic = create();
+  expect(() => diagnostic.subcheckpoint(versionSteps.powershellCall)).toThrow("fixed version checkpoint was refused");
+  expect(() => diagnostic.observeVersion(1, "17.14.1")).toThrow("fixed version observation was refused");
+  diagnostic.checkpoint(checkpoints.versions); diagnostic.subcheckpoint(versionSteps.visualStudioCall); diagnostic.observeVersion(1, "17.14.1");
+  diagnostic.checkpoint(checkpoints.configure);
+  expect(diagnostic.classify(diagnostic.failure())).toEqual(closed(checkpoints.configure));
+});
+
+it.each([1, 2, 3, 4, 5, 6])("projects only anchored 2–4 component successful version text for fixed tool ID%s", toolId => {
+  for (const [text, components] of [["0.999999", [0, 999999]], ["17.14.35207", [17, 14, 35207]], ["19.44.35211.0", [19, 44, 35211, 0]]] as const) {
+    const diagnostic = create(); diagnostic.checkpoint(checkpoints.versions); diagnostic.observeVersion(toolId, toolId === 6 ? `cmake version ${text}` : text);
+    const projected = diagnostic.classify(diagnostic.failure()).versionDiagnostic!.tools;
+    expect(projected[toolId - 1]).toEqual({ toolId, state: 1, components: [...components] });
+    expect(projected.filter(item => item.toolId !== toolId)).toEqual(emptyTools().filter(item => item.toolId !== toolId));
+  }
+});
+
+it("turns malformed, suffixed, too-long or foreign version outputs into fixed unknown state without partial extraction", () => {
+  for (const toolId of [1, 6]) for (const output of ["1", "1.2.3.4.5", "1.1000000.3", "-1.2.3", "1.2.3-private", "1.2.3\n", " 1.2.3", "1.2.3 ",
+    "private ".repeat(20), null, 123, Symbol("private")]) {
+    const diagnostic = create(); diagnostic.checkpoint(checkpoints.versions);
+    diagnostic.observeVersion(toolId, toolId === 6 && typeof output === "string" ? `cmake version ${output}` : output);
+    expect(diagnostic.classify(diagnostic.failure()).versionDiagnostic!.tools[toolId - 1]).toEqual({ toolId, state: 2, components: [] });
+  }
+  const diagnostic = create(); diagnostic.checkpoint(checkpoints.versions); diagnostic.observeVersion(6, "3.31.6");
+  expect(diagnostic.classify(diagnostic.failure()).versionDiagnostic!.tools[5]).toEqual({ toolId: 6, state: 2, components: [] });
+});
+
+it("deep-freezes the first version snapshot against later observations, subphases and reentrant invocations", () => {
+  const diagnostic = create(); diagnostic.checkpoint(checkpoints.versions); diagnostic.subcheckpoint(versionSteps.msbuildCall);
+  diagnostic.observeVersion(2, "19.44.35211.0"); diagnostic.observeVersion(5, "3.12.10"); const first = diagnostic.failure("private");
+  const snapshot = diagnostic.classify(first), encoded = JSON.stringify(snapshot);
+  expect(snapshot.versionDiagnostic!.subcheckpoint).toBe(versionSteps.msbuildCall);
+  expect(Object.isFrozen(snapshot.versionDiagnostic)).toBe(true); expect(Object.isFrozen(snapshot.versionDiagnostic!.tools)).toBe(true);
+  expect(Object.isFrozen(snapshot.versionDiagnostic!.tools[1].components)).toBe(true);
+  diagnostic.observeVersion(2, "999999.1"); diagnostic.observeVersion(1, "17.14.1"); diagnostic.subcheckpoint(versionSteps.cmakePin);
+  expect(JSON.stringify(diagnostic.classify(first))).toBe(encoded); expect(diagnostic.failure()).toBe(first);
+  const next = create(); next.checkpoint(checkpoints.versions); const second = next.failure(first);
+  expect(next.classify(second)).toEqual(closed(checkpoints.versions)); expect(diagnostic.classify(second)).toEqual(closed(0));
+  expect(() => snapshot.versionDiagnostic!.tools[1].components.push(5)).toThrow();
+});
+
+it("never reads foreign output or selector getters, including revoked proxies and boxed strings", () => {
+  let touched = 0; const trap = () => { touched++; throw new Error("private"); };
+  const hostile = new Proxy({}, { get: trap, ownKeys: trap, getOwnPropertyDescriptor: trap, getPrototypeOf: trap, has: trap });
+  const revoked = Proxy.revocable({}, {}); revoked.revoke();
+  const boxed = Object.defineProperties(Object("1.2.3"), { toString: { get: trap }, valueOf: { get: trap }, toJSON: { get: trap } });
+  const diagnostic = create(); diagnostic.checkpoint(checkpoints.versions);
+  for (const value of [hostile, revoked.proxy, boxed]) {
+    diagnostic.observeVersion(1, value);
+    expect(() => diagnostic.observeVersion(value, "1.2.3")).toThrow("fixed version observation was refused");
+    expect(() => diagnostic.subcheckpoint(value)).toThrow("fixed version checkpoint was refused");
+  }
+  for (const value of [-1, 20, 1.5, "1", null, undefined]) expect(() => diagnostic.subcheckpoint(value)).toThrow();
+  for (const value of [0, 7, 1.5, "1", null, undefined]) expect(() => diagnostic.observeVersion(value, "1.2.3")).toThrow();
+  const output = diagnostic.classify(diagnostic.failure(hostile));
+  expect(output.versionDiagnostic!.tools[0]).toEqual({ toolId: 1, state: 2, components: [] }); expect(touched).toBe(0);
+  expect(JSON.stringify(output)).not.toMatch(/private|message|stack|stderr|stdout|signal|path|native/i);
+});
+
+it("records distinct Phase7 call, JSON, shape and banner checkpoints before the unchanged fallible blocks", () => {
+  const text = fs.readFileSync(new URL("../../scripts/experimental/build-windows-uv-spawn-probe.mjs", import.meta.url), "utf8");
+  const body = text.slice(text.indexOf("diagnostic.checkpoint(checkpoints.versions);"), text.indexOf("diagnostic.checkpoint(checkpoints.sourceBefore);"));
+  const markers = [...body.matchAll(/diagnostic\.subcheckpoint\(versionSteps\.([A-Za-z]+)\);/g)];
+  expect(markers.map(item => item[1])).toEqual(Object.keys(versionSteps).slice(1, 8));
+  const anchors = ["const metadataOutput = captured(", "const metadata = JSON.parse(metadataOutput)", "if (!strict(metadata,", "const cmakeOutput = captured(",
+    "const cmakeVersion = cmakeOutput.split(", "const visualStudioVersion = captured(", "const msbuildVersion = captured("];
+  markers.forEach((marker, index) => expect(body.slice(marker.index, markers[index + 1]?.index).includes(anchors[index])).toBe(true));
+  expect(body).toContain("diagnostic.observeVersion(5, python.version)"); expect(body).toContain("diagnostic.observeVersion(6, cmakeVersion)");
+  expect(body).not.toContain("diagnostic.observeVersion(5, buildPin"); expect(body).not.toContain("diagnostic.observeVersion(6, buildPin");
 });
 
 it("binds every pre-failure block and its diagnostic module to the existing compile authority", () => {

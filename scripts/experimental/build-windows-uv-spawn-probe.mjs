@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { prepareWindowsUvSpawnSource, validateWindowsUvSpawnSource, sourcePin } from "./windows-uv-spawn-source.mjs";
 import { inspectWindowsUvSpawnEmission, parseWindowsUvSpawnEmission, emissionLimits } from "./windows-uv-spawn-emission.mjs";
-import { createUvSpawnBuildDiagnostic, classifyUvSpawnBuildFailure, uvSpawnBuildCheckpoints as checkpoints } from "./windows-uv-spawn-build-diagnostic.mjs";
+import { createUvSpawnBuildDiagnostic, classifyUvSpawnBuildFailure, uvSpawnBuildCheckpoints as checkpoints, uvSpawnVersionSubcheckpoints as versionSteps } from "./windows-uv-spawn-build-diagnostic.mjs";
 export { sourcePin };
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const freeze = value => { if (value && typeof value === "object") { for (const item of Object.values(value)) freeze(item); Object.freeze(value); } return value; };
@@ -31,13 +31,28 @@ const sourceSummary = () => ({ stockManifestSha256: sourcePin.stockManifestSha25
   ...sourcePin.inventory, patches: sourcePin.patches.map(({ file, beforeSha256, afterSha256, kind }) => ({ file, beforeSha256, afterSha256, kind })) });
 const version = value => typeof value === "string" && /^[0-9]{1,6}(?:\.[0-9]{1,6}){2,3}$/.test(value);
 const observationKeys = ["visualStudioVersion", "compilerVersion", "linkerVersion", "msbuildVersion", "pythonVersion", "cmakeVersion"];
-function versions(value) {
-  if (!strict(value, observationKeys) || !observationKeys.every(key => version(value[key])) ||
-      !value.visualStudioVersion.startsWith(buildPin.visualStudioVersionPrefix) || !value.compilerVersion.startsWith(buildPin.compilerVersionPrefix) ||
-      !value.linkerVersion.startsWith(buildPin.linkerVersionPrefix) || !value.msbuildVersion.startsWith(buildPin.msbuildVersionPrefix) ||
-      value.pythonVersion !== buildPin.pythonVersion || value.cmakeVersion !== buildPin.cmakeVersion) fail();
+function versions(value, diagnostic) {
+  if (!strict(value, observationKeys)) fail();
+  for (const [index, key] of observationKeys.entries()) {
+    diagnostic?.subcheckpoint(versionSteps.visualStudioFormat + index);
+    if (!version(value[key])) fail();
+  }
+  diagnostic?.subcheckpoint(versionSteps.visualStudioPrefix);
+  if (!value.visualStudioVersion.startsWith(buildPin.visualStudioVersionPrefix)) fail();
+  diagnostic?.subcheckpoint(versionSteps.compilerPrefix);
+  if (!value.compilerVersion.startsWith(buildPin.compilerVersionPrefix)) fail();
+  diagnostic?.subcheckpoint(versionSteps.linkerPrefix);
+  if (!value.linkerVersion.startsWith(buildPin.linkerVersionPrefix)) fail();
+  diagnostic?.subcheckpoint(versionSteps.msbuildPrefix);
+  if (!value.msbuildVersion.startsWith(buildPin.msbuildVersionPrefix)) fail();
+  diagnostic?.subcheckpoint(versionSteps.pythonPin);
+  if (value.pythonVersion !== buildPin.pythonVersion) fail();
+  diagnostic?.subcheckpoint(versionSteps.cmakePin);
+  if (value.cmakeVersion !== buildPin.cmakeVersion) fail();
   return value;
 }
+/** Read-only alias of the same fixed-pin validator; diagnostic projection never changes its acceptance. */
+export const validateWindowsUvSpawnToolVersions = versions;
 const fingerprint = (value, maximum = buildPin.maximumToolBytes) => strict(value, ["bytes", "sha256"]) && Number.isSafeInteger(value.bytes) && value.bytes >= 1 && value.bytes <= maximum && typeof value.sha256 === "string" && /^[a-f0-9]{64}$/.test(value.sha256);
 /** Pure bounded receipt validation. Recipe is recomputed from the trusted checkout, never supplied by the asset. */
 export function parseWindowsUvSpawnBuildReceipt(bytes, expectedCompileCommit) {
@@ -231,15 +246,31 @@ export async function buildWindowsUvSpawnProbe({ archivePath, destination, pytho
     const tools = Object.fromEntries(Object.entries(toolPaths).map(([name, file]) => [name, snapshot(file)]));
     if (!equal(tools.python, python.fingerprint) || !equal(tools.vswhere, vswhereBefore)) fail();
     diagnostic.checkpoint(checkpoints.versions);
-    const metadata = JSON.parse(captured(path.join(env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    diagnostic.subcheckpoint(versionSteps.powershellCall);
+    diagnostic.observeVersion(5, python.version);
+    const metadataOutput = captured(path.join(env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
       ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop';[pscustomobject]@{compilerVersion=[Diagnostics.FileVersionInfo]::GetVersionInfo($env:EMBER_BUILD_COMPILER).FileVersion;linkerVersion=[Diagnostics.FileVersionInfo]::GetVersionInfo($env:EMBER_BUILD_LINKER).FileVersion}|ConvertTo-Json -Compress"],
-      { ...env, EMBER_BUILD_COMPILER: toolPaths.compiler, EMBER_BUILD_LINKER: toolPaths.linker }, destination));
+      { ...env, EMBER_BUILD_COMPILER: toolPaths.compiler, EMBER_BUILD_LINKER: toolPaths.linker }, destination);
+    diagnostic.subcheckpoint(versionSteps.powershellJson);
+    const metadata = JSON.parse(metadataOutput);
+    diagnostic.subcheckpoint(versionSteps.powershellShape);
     if (!strict(metadata, ["compilerVersion", "linkerVersion"])) fail();
-    const cmakeVersion = captured(toolPaths.cmake, ["--version"], env, destination).split(/\r?\n/, 1)[0];
+    diagnostic.observeVersion(2, metadata.compilerVersion); diagnostic.observeVersion(3, metadata.linkerVersion);
+    diagnostic.subcheckpoint(versionSteps.cmakeCall);
+    const cmakeOutput = captured(toolPaths.cmake, ["--version"], env, destination);
+    diagnostic.subcheckpoint(versionSteps.cmakeBanner);
+    const cmakeVersion = cmakeOutput.split(/\r?\n/, 1)[0];
+    diagnostic.observeVersion(6, cmakeVersion);
     if (cmakeVersion !== `cmake version ${buildPin.cmakeVersion}`) fail();
-    const observed = versions({ visualStudioVersion: captured(vswhere, [...selection, "-property", "installationVersion"], env, destination),
+    diagnostic.subcheckpoint(versionSteps.visualStudioCall);
+    const visualStudioVersion = captured(vswhere, [...selection, "-property", "installationVersion"], env, destination);
+    diagnostic.observeVersion(1, visualStudioVersion);
+    diagnostic.subcheckpoint(versionSteps.msbuildCall);
+    const msbuildVersion = captured(toolPaths.msbuild, ["-version", "-nologo"], env, destination);
+    diagnostic.observeVersion(4, msbuildVersion);
+    const observed = versions({ visualStudioVersion,
       compilerVersion: metadata.compilerVersion, linkerVersion: metadata.linkerVersion,
-      msbuildVersion: captured(toolPaths.msbuild, ["-version", "-nologo"], env, destination), pythonVersion: python.version, cmakeVersion: buildPin.cmakeVersion });
+      msbuildVersion, pythonVersion: python.version, cmakeVersion: buildPin.cmakeVersion }, diagnostic);
     diagnostic.checkpoint(checkpoints.sourceBefore);
     await validateWindowsUvSpawnSource(sources.stockDir, "stock"); await validateWindowsUvSpawnSource(sources.workingDir, "working");
     const projectDirectory = ordinary(path.join(root, "test", "fixtures", "windows-uv-spawn-build")), buildDirectory = ordinary(path.join(destination, "build"));
