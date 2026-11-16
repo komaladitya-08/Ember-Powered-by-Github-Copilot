@@ -1,9 +1,14 @@
 /** Portable ownership model; actual Windows CI separately proves inherited ACLs and native delete semantics. */
 import path from "node:path/win32";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import type { WindowsCodingInfo, WindowsCodingNative, WindowsCodingPin } from "../../app/main/agent/windows-coding-native";
 import type { WindowsControllerNative } from "../../app/main/agent/windows-controller-native";
 
+beforeAll(async () => {
+  // Keep cold module transformation outside operation timing; every fault fixture still resets its instances.
+  await import("../../app/main/agent/windows-controller-storage");
+  vi.resetModules();
+});
 afterEach(() => { vi.doUnmock("../../app/main/agent/windows-coding-native"); vi.doUnmock("../../app/main/agent/windows-controller-native"); vi.restoreAllMocks(); vi.resetModules(); });
 
 async function setup() {
