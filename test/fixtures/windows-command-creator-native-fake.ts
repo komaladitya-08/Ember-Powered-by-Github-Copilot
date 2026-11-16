@@ -4,19 +4,21 @@ import { bindWindowsCommandCopyNative, type FreshWindowsCommandTreeInput, type W
 import type { CodingExportEntry } from "../../app/main/agent/coding-result-export";
 export const OWNER = "S-1-5-21-1-2-3-1001", SYSTEM = "S-1-5-18", PACKAGE = "S-1-15-2-1234-5678";
 const VOLUME = "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\";
-export type Security = { owner: string; aclOwner?: string; package?: string; inherited: boolean; low: boolean; extra?: boolean; badMask?: boolean };
+export type Security = { owner: string; aclOwner?: string; package?: string; inherited: boolean; low: boolean; extra?: boolean; badMask?: boolean; automatic?: boolean };
 export type ObjectRow = { id: bigint; name: string; kind: "file" | "directory"; bytes: Buffer; security: Security; links: number; attributes: number; created: bigint; written: bigint; changed: bigint; streams?: boolean; removed?: boolean; deletePending?: boolean; reportedSize?: number; serial?: number };
 type Handle = { object?: ObjectRow; access: number; share: number; index: number; tokenProcess?: bigint };
 export function setup() {
   const buffers = new Map<bigint, Buffer>(), addresses = new WeakMap<Buffer, bigint>(), texts = new Map<bigint, string>(), sids = new Map<bigint, string>(), descriptors = new Map<bigint, Security>();
   const aclRows = new Map<bigint, { row: ObjectRow; label: boolean }>(), aceRows = new Map<bigint, Buffer>();
+  const converted = new Map<bigint, { security: Security; length: number; dacl: bigint; sacl: bigint }>(), aclHeaders = new Map<bigint, Buffer>();
   const objects = new Map<string, ObjectRow>(), handles = new Map<bigint, Handle>();
   const calls: { name: string; args: unknown[] }[] = [], opened: { raw: bigint; object: ObjectRow; access: number; share: number; fresh: boolean; parent: bigint }[] = [];
   let serial = 100n, nextId = 1n, nextPointer = 0x10000n, sets = 0;
   const control = { fault: "", failSet: 0, current: true, label: true, owner: OWNER, dataReads: 0, yieldRetire: false, retireOnSet: 0, streamBytes: undefined as number | undefined, streamStatus: 0, directoryStatus: 0, directoryBytes: undefined as number | undefined,
     tokenUser: OWNER, tokenPackage: "S-1-15-2-10-11-12-13-14-15-16", tokenOwner: "S-1-5-32-544", tokenFault: "", tokenHook: undefined as ((kind: number) => void) | undefined };
   const fence = { retained: [] as unknown[], failure: undefined as WindowsCommandCopyCleanupError | undefined };
-  const pointer = () => nextPointer += 0x100n;
+  // Each synthetic allocation reserves enough address space for bounded internal descriptor views.
+  const pointer = () => nextPointer += 0x1000n;
   const address = (bytes: Buffer) => { let p = addresses.get(bytes); if (p === undefined) { p = pointer(); addresses.set(bytes, p); buffers.set(p, bytes); } return p; };
   const sidPointer = (sid: string) => { const p = pointer(); sids.set(p, sid); return p; };
   const add = (name: string, kind: "file" | "directory", bytes = Buffer.alloc(0), security: Security = { owner: OWNER, inherited: false, low: true }): ObjectRow => {
@@ -56,9 +58,21 @@ export function setup() {
     ConvertSidToStringSidW: (...args) => { const p = pointer(); texts.set(p, sids.get(args[0] as bigint)!); (args[1] as unknown[])[0] = p; return 1; },
     ConvertStringSecurityDescriptorToSecurityDescriptorW: (...args) => {
       const text = args[0] as string, p = pointer(); const pkg = /0x1301bf;;;([^)]*)/.exec(text)?.[1];
-      descriptors.set(p, { owner: OWNER, package: pkg, inherited: false, low: true }); (args[2] as unknown[])[0] = p; return control.fault === "descriptor false" ? 0 : 1;
+      const security = { owner: OWNER, package: pkg, inherited: false, low: true };
+      descriptors.set(p, security);
+      const dacl = p + 64n, sacl = p + 384n;
+      for (const [raw, count] of [[dacl, pkg ? 3 : 2], [sacl, 1]] as const) {
+        const bytes = Buffer.alloc(8); bytes[0] = 2; bytes.writeUInt16LE(8 + count * 48, 2); bytes.writeUInt16LE(count, 4); aclHeaders.set(raw, bytes);
+      }
+      converted.set(p, { security, length: 512, dacl, sacl });
+      (args[2] as unknown[])[0] = p; return control.fault === "descriptor false" ? 0 : 1;
     },
-    LocalFree: (...args) => { if (control.fault === "free throw") throw new Error("private allocator uncertainty"); return control.fault === "free" ? args[0] : null; },
+    LocalFree: (...args) => {
+      if (control.fault === "free throw") throw new Error("private allocator uncertainty"); if (control.fault === "free") return args[0];
+      const raw = args[0] as bigint, view = converted.get(raw);
+      if (view) { aclHeaders.delete(view.dacl); aclHeaders.delete(view.sacl); converted.delete(raw); }
+      descriptors.delete(raw); return null;
+    },
     GetDriveTypeW: () => 3,
     GetVolumeInformationW: (...args) => { (args[6] as Buffer).write("NTFS\0", "utf16le"); return 1; },
     NtCreateFile: (...args) => {
@@ -91,7 +105,25 @@ export function setup() {
       (args[3] as unknown[])[0] = sidPointer(control.owner === OWNER ? row.security.owner : control.owner);
       (args[5] as unknown[])[0] = dacl; (args[6] as unknown[])[0] = sacl; (args[7] as unknown[])[0] = sd; return 0;
     },
-    GetSecurityDescriptorControl: (...args) => { const sec = descriptors.get(args[0] as bigint)!; (args[1] as number[])[0] = 4 | 16 | (sec.inherited ? 0 : 0x1000); return 1; },
+    GetSecurityDescriptorControl: (...args) => { const sec = descriptors.get(args[0] as bigint)!; (args[1] as number[])[0] = 4 | 16 | (sec.inherited ? 0 : 0x1000) | (sec.automatic ? 0xc00 : 0); return 1; },
+    GetSecurityDescriptorLength: (...args) => converted.get(args[0] as bigint)?.length ?? 0,
+    GetSecurityDescriptorDacl: (...args) => {
+      const view = converted.get(args[0] as bigint); if (!view) return 0;
+      (args[1] as unknown[])[0] = 1; (args[2] as unknown[])[0] = view.dacl; (args[3] as unknown[])[0] = 0; return 1;
+    },
+    GetSecurityDescriptorSacl: (...args) => {
+      const view = converted.get(args[0] as bigint); if (!view) return 0;
+      (args[1] as unknown[])[0] = 1; (args[2] as unknown[])[0] = view.sacl; (args[3] as unknown[])[0] = 0; return 1;
+    },
+    SetSecurityInfo: (...args) => {
+      sets++; if (control.failSet && sets === control.failSet) throw new Error("private partial ACL error");
+      if (args[1] !== 1 || args[2] !== 0x80000014 || args[3] !== null || args[4] !== null) return 87;
+      const descriptor = [...converted.values()].find(value => value.dacl === args[5] && value.sacl === args[6]); if (!descriptor) return 87;
+      const row = file(args[0]), previous = row.security.owner;
+      row.security = { ...descriptor.security, aclOwner: descriptor.security.owner, owner: previous, automatic: true };
+      if (control.retireOnSet && sets === control.retireOnSet) control.current = false;
+      return 0;
+    },
     GetAclInformation: (...args) => { const acl = aclRows.get(args[0] as bigint)!, count = acl.label ? 1 : (acl.row.security.package ? 3 : 2) + (acl.row.security.extra ? 1 : 0); (args[1] as Buffer).writeUInt32LE(count); return 1; },
     GetAce: (...args) => {
       const acl = aclRows.get(args[0] as bigint)!, sec = acl.row.security, index = Number(args[1]), p = pointer(), b = Buffer.alloc(8);
@@ -123,7 +155,7 @@ export function setup() {
       if (control.fault === "close throw") { handles.delete(args[0] as bigint); throw new Error("private close uncertainty"); } if (control.fault === "close") return 0; handles.delete(args[0] as bigint); return 1;
     },
   };
-  const native = { sizeof: () => 8, address, decode: Object.assign((p: bigint) => aceRows.get(p)!, { string16: (p: bigint) => texts.get(p)! }) } as unknown as Parameters<typeof bindWindowsCommandCopyNative>[0];
+  const native = { sizeof: () => 8, address, decode: Object.assign((p: bigint) => aceRows.get(p) ?? aclHeaders.get(p)!, { string16: (p: bigint) => texts.get(p)! }) } as unknown as Parameters<typeof bindWindowsCommandCopyNative>[0];
   const load = () => ({ func(prototype: string) { const name = /\b(\w+)\s*\(/.exec(prototype)![1]; return (...args: unknown[]) => { calls.push({ name, args }); const handler = handlers[name]; if (!handler) throw new Error("unexpected native test call"); return handler(...args); }; } });
   const binding = bindWindowsCommandCopyNative(native, load, fence);
   const input = (entries: readonly CodingExportEntry[] = [{ path: "a.ts", kind: "file", bytes: Buffer.from("baseline"), executable: false }]): FreshWindowsCommandTreeInput => ({ parent: "C:\\scratch", protectedPaths: ["C:\\source"], entries, current: () => control.current });

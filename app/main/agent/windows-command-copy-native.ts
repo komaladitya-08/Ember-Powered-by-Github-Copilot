@@ -38,9 +38,9 @@ export class WindowsCommandCopyCleanupError extends Error {
   constructor() { super("Fresh Windows command-copy ownership is unverified; retain every native owner."); this.name = "WindowsCommandCopyCleanupError"; }
 }
 type FailureStage = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
-type FailureOperation = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26 | 27;
+type FailureOperation = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31;
 type FailurePredicate = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
-type FailureDomain = 0 | 1 | 2;
+type FailureDomain = 0 | 1 | 2 | 3;
 interface OwnerFacts {
   /** 1 host user (may differ from an exact captured creator), 2 known package, 3 SYSTEM, 4 public builtin Administrators, 5 other. */
   readonly ownerClass: 1 | 2 | 3 | 4 | 5;
@@ -60,7 +60,9 @@ interface AceFacts {
   /** Exact-set refusal only: at most three already decoded rows, with unknown SID mapped to class 5. */
   readonly aceRows?: readonly Readonly<AceRowFacts>[];
 }
-export interface WindowsCommandCopyNativeFailure extends Partial<OwnerFacts>, Partial<AceFacts> {
+type NodeFacts = Pick<OwnerFacts, "nodeKind" | "nodeRoot" | "nodeAcl" | "nodeDetached">;
+interface AutoInheritanceFacts { readonly autoControl: number }
+export interface WindowsCommandCopyNativeFailure extends Partial<OwnerFacts>, Partial<AceFacts>, Partial<AutoInheritanceFacts> {
   readonly stage: FailureStage; readonly operation: FailureOperation; readonly predicate: FailurePredicate; readonly domain: FailureDomain; readonly code: number;
 }
 const nativeFailures = new WeakMap<object, WindowsCommandCopyNativeFailure>();
@@ -77,10 +79,12 @@ const OP: Readonly<Record<string, FailureOperation>> = Object.freeze({ NtCreateF
   GetFileInformationByHandleEx: 15, GetFinalPathNameByHandleW: 16, GetDriveTypeW: 17, GetVolumeInformationW: 18,
   FlushFileBuffers: 19, OpenProcessToken: 20, GetTokenInformation: 21, ConvertSidToStringSidW: 22,
   ConvertStringSecurityDescriptorToSecurityDescriptorW: 23, GetSecurityInfo: 24, GetSecurityDescriptorControl: 25,
-  GetAclInformation: 26, GetAce: 27 });
+  GetAclInformation: 26, GetAce: 27, GetSecurityDescriptorLength: 28, GetSecurityDescriptorDacl: 29,
+  GetSecurityDescriptorSacl: 30, SetSecurityInfo: 31 });
 const NT_STATUS = new Set(["NtCreateFile", "NtQueryDirectoryFile", "NtQueryInformationFile", "NtReadFile", "NtWriteFile", "NtSetInformationFile", "NtSetSecurityObject", "NtQueryObject"]);
-const BOOL_STATUS = new Set(["CloseHandle", "GetHandleInformation", "GetFileInformationByHandle", "GetFileInformationByHandleEx", "GetVolumeInformationW", "FlushFileBuffers", "OpenProcessToken", "GetTokenInformation", "ConvertSidToStringSidW", "ConvertStringSecurityDescriptorToSecurityDescriptorW", "GetSecurityDescriptorControl", "GetAclInformation", "GetAce"]);
+const BOOL_STATUS = new Set(["CloseHandle", "GetHandleInformation", "GetFileInformationByHandle", "GetFileInformationByHandleEx", "GetVolumeInformationW", "FlushFileBuffers", "OpenProcessToken", "GetTokenInformation", "ConvertSidToStringSidW", "ConvertStringSecurityDescriptorToSecurityDescriptorW", "GetSecurityDescriptorControl", "GetAclInformation", "GetAce", "GetSecurityDescriptorDacl", "GetSecurityDescriptorSacl"]);
 function returnedStatus(name: string, value: unknown): { domain: FailureDomain; code: number } {
+  if (name === "SetSecurityInfo") return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0xffffffff ? { domain: 3, code: value } : { domain: 0, code: 0 };
   if (typeof value !== "number" || !Number.isInteger(value) || value < -0x80000000 || value > 0xffffffff) return { domain: 0, code: 0 };
   const domain = NT_STATUS.has(name) ? 1 : BOOL_STATUS.has(name) ? 2 : 0;
   return { domain, code: domain ? value >>> 0 : 0 };
@@ -151,6 +155,10 @@ export const WINDOWS_COMMAND_COPY_FUNCTIONS = {
     "uint32_t __stdcall GetSecurityInfo(void *file, int kind, uint32_t information, _Out_ void **owner, void *group, _Out_ void **dacl, _Out_ void **sacl, _Out_ void **descriptor)",
     "int __stdcall GetSecurityDescriptorControl(void *descriptor, _Out_ uint16_t *control, _Out_ uint32_t *revision)", "int __stdcall GetAclInformation(void *acl, void *information, uint32_t length, int kind)",
     "int __stdcall GetAce(void *acl, uint32_t index, _Out_ void **ace)",
+    "uint32_t __stdcall GetSecurityDescriptorLength(void *descriptor)",
+    "int __stdcall GetSecurityDescriptorDacl(void *descriptor, _Out_ int *present, _Out_ void **acl, _Out_ int *defaulted)",
+    "int __stdcall GetSecurityDescriptorSacl(void *descriptor, _Out_ int *present, _Out_ void **acl, _Out_ int *defaulted)",
+    "uint32_t __stdcall SetSecurityInfo(void *file, int kind, uint32_t information, void *owner, void *group, void *dacl, void *sacl)",
   ],
 } as const;
 
@@ -177,7 +185,7 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
     let creator: CreatorGrant | undefined;
     let phase: "private" | "granting" | "granted" | "revoking" = "private", ticks = 0;
     let stage: FailureStage = 1;
-    const poison = (predicate: FailurePredicate = 8, operation: FailureOperation = 0, status: { domain: FailureDomain; code: number } = { domain: 0, code: 0 }, facts?: OwnerFacts | (AceFacts & Pick<OwnerFacts, "nodeKind" | "nodeRoot" | "nodeAcl" | "nodeDetached">)): never => {
+    const poison = (predicate: FailurePredicate = 8, operation: FailureOperation = 0, status: { domain: FailureDomain; code: number } = { domain: 0, code: 0 }, facts?: OwnerFacts | ((AceFacts | AutoInheritanceFacts) & NodeFacts)): never => {
       const first = !terminal && !fence.failure;
       terminal ??= fence.failure ?? new WindowsCommandCopyCleanupError(); fence.failure ??= terminal;
       if (first) nativeFailures.set(terminal, Object.freeze({ stage, operation, predicate, domain: status.domain, code: status.code, ...facts }));
@@ -278,7 +286,7 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       if (kind === "directory" && count === 0n) return;
       if (count < 38n || count > BigInt(bytes.length) || bytes.readUInt32LE(0) !== 0 || bytes.readUInt32LE(4) !== 14 || bytes.toString("utf16le", 24, 38) !== "::$DATA" || bytes.readBigInt64LE(8) !== BigInt(expectedSize)) return poison(6, OP.NtQueryInformationFile);
     };
-    const security = (node: Node, expected: "private" | "granted" | "inherited", detached = false, allowCreator = false) => {
+    const security = (node: Node, expected: "private" | "granted" | "inherited", detached = false, allowCreator = false, requireAutomatic = false) => {
       if (!detached) metadata(node);
       const descriptor: unknown[] = [null], own: unknown[] = [null], dacl: unknown[] = [null], sacl: unknown[] = [null];
       pending.add(descriptor); let status: unknown;
@@ -295,7 +303,12 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
         nodeAcl: node.acl === "private" ? 1 : node.acl === "granted" ? 2 : 3, nodeDetached: detached ? 1 : 0,
       });
       const controls = [0], revision = [0]; bool("GetSecurityDescriptorControl", [sd, controls, revision]);
+      if (requireAutomatic && (typeof controls[0] !== "number" || !Number.isInteger(controls[0]) || controls[0] < 0 || controls[0] > 65535)) return poison(3, OP.GetSecurityDescriptorControl);
       if (!(controls[0] & 4) || !(controls[0] & 16) || (expected !== "inherited" && !(controls[0] & 0x1000))) return poison(7, OP.GetSecurityDescriptorControl);
+      if (requireAutomatic && (controls[0] & 0xc00) !== 0xc00) return poison(7, OP.GetSecurityDescriptorControl, undefined, {
+        autoControl: controls[0], nodeKind: node.kind === "file" ? 1 : 2, nodeRoot: node.relative === "" ? 1 : 0,
+        nodeAcl: node.acl === "private" ? 1 : node.acl === "granted" ? 2 : 3, nodeDetached: detached ? 1 : 0,
+      });
       const acl = pointer(dacl[0]), details = Buffer.alloc(12); bool("GetAclInformation", [acl, details, details.length, 2]);
       const expectedAces = [{ sid: owner, mask: ALL }, { sid: "S-1-5-18", mask: ALL }, ...(expected === "private" ? [] : [{ sid: packageSid!, mask: MODIFY }])];
       if (details.readUInt32LE(0) !== expectedAces.length) return poison(7, OP.GetAclInformation);
@@ -335,6 +348,33 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       const inherit = directory ? "OICI" : "", sddl = `O:${owner}D:P(A;${inherit};FA;;;${owner})(A;${inherit};FA;;;SY)${granted ? `(A;${inherit};0x1301bf;;;${packageSid})` : ""}S:(ML;${inherit};NW;;;LW)`;
       const output: unknown[] = [null], raw = allocated("ConvertStringSecurityDescriptorToSecurityDescriptorW", [sddl, 1, output, null], output);
       const result = operation(raw); free(raw); return result;
+    };
+    /** Views borrow one already owned conversion allocation; uncertainty retains it and never separately frees an ACL. */
+    const automaticGrant = (node: Node, sd: bigint) => {
+      const length = invoke("GetSecurityDescriptorLength", [sd], () => true); usable();
+      if (typeof length !== "number" || !Number.isInteger(length) || length < 20 || length > 65536 || sd + BigInt(length) >= 0x8000000000000000n) return poison(3, OP.GetSecurityDescriptorLength);
+      const limit = sd + BigInt(length);
+      const view = (name: "GetSecurityDescriptorDacl" | "GetSecurityDescriptorSacl", count: number) => {
+        const present: unknown[] = [-1], output: unknown[] = [null], defaulted: unknown[] = [-1];
+        pending.add(present); pending.add(output); pending.add(defaulted);
+        bool(name, [sd, present, output, defaulted]); usable();
+        if (present[0] !== 1 || defaulted[0] !== 0 || !valid(output[0])) return poison(3, OP[name]);
+        const raw = output[0];
+        if (raw % 4n !== 0n || raw < sd + 20n || raw + 8n > limit) return poison(4, OP[name]);
+        let header: Buffer;
+        try { header = Buffer.from(native.decode(raw, "uint8_t", 8) as Uint8Array); } catch { return poison(3, OP[name]); }
+        usable();
+        if (header.length !== 8 || header[0] !== 2 && header[0] !== 4 || header[1] !== 0 || header.readUInt16LE(6) !== 0 ||
+            header.readUInt16LE(4) !== count || header.readUInt16LE(2) < 8 + count * 12 || raw + BigInt(header.readUInt16LE(2)) > limit) return poison(3, OP[name]);
+        pending.delete(present); pending.delete(output); pending.delete(defaulted);
+        return { raw, end: raw + BigInt(header.readUInt16LE(2)) };
+      };
+      const dacl = view("GetSecurityDescriptorDacl", 3), sacl = view("GetSecurityDescriptorSacl", 1);
+      if (!(dacl.end <= sacl.raw || sacl.end <= dacl.raw)) return poison(4, OP.SetSecurityInfo);
+      // The documented NTFS conversion/propagation API is confined to the fully preflighted, stopped, protected fresh tree.
+      // https://learn.microsoft.com/en-us/windows/win32/secauthz/automatic-propagation-of-inheritable-aces
+      invoke("SetSecurityInfo", [node.raw, 1, (4 | LABEL | PROTECTED_DACL) >>> 0, null, null, dacl.raw, sacl.raw], value => value === 0);
+      usable();
     };
     const pins: { raw: bigint; identity: WindowsCodingInfo }[] = [];
     const pin = async (name: string, directoryRequired = false) => {
@@ -431,11 +471,14 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
     const begin = (admission: boolean, nextStage: FailureStage) => { const previous = stage; stage = nextStage; try { if (admission) active(); else usable(); if (busy) throw boundary(); busy = true; } catch (error) { stage = previous; throw error; } };
     const end = () => { busy = false; };
     const setAcl = (node: Node, granted: boolean, transferOwner = false) => {
-      // SetSecurityInfo propagates inheritance recursively; this held-handle native operation stays inside our bounded walk.
-      // https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setsecurityinfo#remarks
       // The native API accepts the converted self-relative descriptor; its documented user-mode name is NtSetSecurityObject.
       // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-zwsetsecurityobject#remarks
-      withDescriptor(node.kind === "directory", granted, sd => nt("NtSetSecurityObject", [node.raw, (4 | LABEL | PROTECTED_DACL | (transferOwner ? 1 : 0)) >>> 0, sd])); node.acl = granted ? "granted" : "private"; security(node, node.acl); node.identity = info(node.raw);
+      const automatic = granted && selected.creatorProfile !== undefined;
+      withDescriptor(node.kind === "directory", granted, sd => {
+        if (automatic) automaticGrant(node, sd);
+        else nt("NtSetSecurityObject", [node.raw, (4 | LABEL | PROTECTED_DACL | (transferOwner ? 1 : 0)) >>> 0, sd]);
+      });
+      node.acl = granted ? "granted" : "private"; security(node, node.acl, false, false, automatic); node.identity = info(node.raw);
     };
     const retireOldPins = async (keep: readonly Node[], admission: Admission) => { const current = new Set(keep.map(node => node.raw)); for (const node of [...nodes]) { if (!current.has(node.raw)) { if (!detached(node)) return poison(5); closeRaw(node.raw); nodes.delete(node); } await tick(admission); } };
     const tree: FreshWindowsCommandTree = {
@@ -450,6 +493,15 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
           await retireOldPins(current, admit);
           if (creator) creator.known = new Map(current.map(node => [node.identity.id, { ...node.identity }]));
           packageSid = sid; phase = "granting"; for (const node of current) { admit(); setAcl(node, true); await tick(admit); }
+          if (creator) {
+            const sealed = new Map(current.map(node => [node.identity.id, { ...node.identity }])), final = await walk(admit);
+            if (final.length !== sealed.size) return poison(5);
+            for (const node of final) {
+              const before = sealed.get(node.identity.id), original = creator.known.get(node.identity.id);
+              if (!before || !original || !same(before, node.identity, true) || !same(original, node.identity) || original.size !== node.identity.size || original.written !== node.identity.written || original.attributes !== node.identity.attributes) return poison(5);
+              security(node, "granted", false, false, true); await tick(admit);
+            }
+          }
           const metadataPins = new Set([...nodes].map(node => node.raw)); for (const p of pins) metadataPins.add(p.raw);
           if (allocations.size || pending.size || [...handles].some(raw => !metadataPins.has(raw))) return poison();
           phase = "granted"; checkRoot();

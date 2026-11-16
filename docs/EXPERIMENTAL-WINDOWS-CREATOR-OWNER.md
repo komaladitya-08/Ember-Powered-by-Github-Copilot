@@ -44,6 +44,64 @@ decode is added. The final LOW-SID constraint is inferred only after the earlier
 arms of the unchanged original predicate passed. These facts grant no cleanup
 or permission authority, and the first failure remains authoritative.
 
+The second matrix, run `43913675852` at head
+`2025830b91bffdc50155fac44a53656751faaa13`, passed 1,471 contracts with one
+expected skip on each image, then failed its native test. Both receipts identify
+constraint 3 on a non-root, current file tagged as inherited by the tree walk:
+type 0, flags 0, size 36, mask `0x1f01ff`, expected flags 16. That tag describes
+the unknown-ID provenance; it does not prove Windows' inheritance control state.
+The remaining ACL rows and C exit 1 are still unclassified. There is no accepted
+failed report, useful completion, owner normalisation or cleanup result.
+
+## Establishing the parent inheritance model
+
+The original construction uses `D:P` and `NtSetSecurityObject`. `P` means
+protected, while `AR` and `AI` are distinct automatic-inheritance request and
+model bits. Merely adding `AI` text or accepting ACE flags 0 would not prove the
+intended conversion. Microsoft documents that `SetSecurityInfo` imposes the
+current inheritance model on an NTFS hierarchy; the raw native setter has no
+equivalent documented conversion promise:
+
+- [SDDL control flags](https://learn.microsoft.com/en-us/windows/win32/secauthz/security-descriptor-string-format)
+- [Automatic propagation](https://learn.microsoft.com/en-us/windows/win32/secauthz/automatic-propagation-of-inheritable-aces)
+- [SetSecurityInfo](https://learn.microsoft.com/en-us/windows/win32/api/aclapi/nf-aclapi-setsecurityinfo)
+- [NtSetSecurityObject](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-ntsetsecurityobject)
+
+The local correction is opt-in to the creator-profile grant. Before any root
+launch, the complete bounded tree must be private, host-owned and protected,
+with no previous untrusted writer remaining. Each held object receives the same
+protected grant DACL and LOW label through `SetSecurityInfo(SE_FILE_OBJECT)`
+using the unchanged `0x80000014` mask and null owner/group parameters. Existing
+metadata handles already have WRITE_DAC and WRITE_OWNER; no privilege is enabled.
+Default unprofiled grants and every post-Stop native owner-transfer/revoke
+operation retain their original route and masks.
+
+The converted descriptor remains one owned allocation. Its length is bounded
+to 20–65,536 bytes. `GetSecurityDescriptorDacl` and `GetSecurityDescriptorSacl`
+use 32-bit BOOL outputs with unwritten sentinels; both ACLs must be present and
+nondefaulted. The nonnull aligned views and complete ACL spans must lie inside
+that allocation and be disjoint. ACL headers must have the fixed expected
+three/one ACE counts and enough space for those entries. The views are borrowed
+and never independently freed. Uncertain extraction or setter completion
+retains the descriptor and tree.
+
+`SetSecurityInfo` can propagate into existing descendants. Every staged child
+has a protected DACL and was included in the preflight; LOW-label propagation
+remains confined to that same entirely known, stopped tree. Every object is
+explicitly set and strictly revalidated. Before admission, the returned control
+must show both DACL and SACL `AUTO_INHERITED` bits (`0x0c00`) alongside all
+original owner, DACL, label, protection and identity checks. A complete second
+walk must retain every ID and the pregrant size, write time and attributes,
+with no new or replaced entry. The original required child ACE flags 16/19 and
+full SID/mask checks remain unchanged.
+
+New operation IDs 28–31 identify descriptor length, DACL view, SACL view and
+`SetSecurityInfo`. Domain 3 reports only an actual bounded DWORD status returned
+by the setter; it performs no GetLastError query. A failed automatic-control
+readback may report the already returned valid control WORD and existing node
+context. No such fact permits Resume, bytes, revocation or cleanup. The native
+outcome of this correction remains pending.
+
 ## Authority and normalisation
 
 The new path is opt-in and uses a separately compiled C program, report schema,
@@ -145,7 +203,7 @@ the experiment must remain a draft until the actual controls and cleanup pass.
 
 ## Portable verification
 
-The final 17-file affected contract batch passed 1,472 tests with no skips,
+The final 18-file affected contract batch passed 1,533 tests with no skips,
 including the emitted 19-export CJS graph, bounded token ABI, actual
 coordinator/Native/Stop composition, strict report decoder and source verifier.
 The historical DETACHED verifier's positive unit cases use three bounded,
@@ -165,5 +223,7 @@ fixes, the six affected suites passed 458 tests, lint passed, and a fresh full
 full TypeScript check including the historical-test follow-up also passed.
 The ACE diagnostic adds 34 passing boundary cases; its exact-final full
 TypeScript check also passed.
-The first native matrix failed as recorded above. The evidence-only ACE
-follow-up has not yet run on Windows.
+The automatic-grant correction adds 61 passing API, ownership, refusal and
+rewalk cases; its exact-final full TypeScript check also passed. Both native matrices
+failed as recorded above. The automatic-grant correction has not yet run on
+Windows.
