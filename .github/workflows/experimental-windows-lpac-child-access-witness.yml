@@ -1,0 +1,69 @@
+name: experimental-windows-lpac-child-access-witness
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/experimental-windows-lpac-child-access-witness.yml"
+      - "test/fixtures/windows-lpac-child-access-*"
+      - "test/unit/windows-lpac-child-access-*"
+      - "test/integration/windows-lpac-child-access-witness-native.test.ts"
+      - "docs/EXPERIMENTAL-WINDOWS-LPAC-CHILD-ACCESS-WITNESS.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experimental-windows-lpac-child-access-witness-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  portable:
+    name: Portable witness contracts (no collector or driver)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Pure parser, provenance and injected ownership contracts only
+        run: npm test -- test/unit/windows-lpac-child-access-assets.test.ts test/unit/windows-lpac-child-access-parser.test.ts test/unit/windows-lpac-child-access-native.test.ts test/unit/windows-lpac-child-access-watchdog.test.ts test/unit/windows-lpac-child-access-readout.test.ts test/unit/windows-lpac-child-access-workflow.test.ts --maxWorkers=1
+  witness:
+    # This job installs/runs a signed vendor kernel collector only by an explicit manual dispatch.
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: portable
+    name: Manual fixed C access witness (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: One manually authorized bounded trace; numeric counts only
+        timeout-minutes: 4
+        run: node scripts/run-integration.mjs test/integration/windows-lpac-child-access-witness-native.test.ts
+        env:
+          EMBER_LPAC_CHILD_ACCESS_TEST: "1"
+          EMBER_LPAC_CHILD_ACCESS_RUNNER: ${{ matrix.os }}
+      # No raw trace, stdout/stderr, stack, path, identity, command line or artifact upload.
+      # Driver/EULA/config state may remain until this disposable hosted VM is torn down.
