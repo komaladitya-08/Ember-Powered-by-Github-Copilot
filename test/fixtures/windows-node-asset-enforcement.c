@@ -11,6 +11,7 @@
 static const char output[] = "EMBER_ASSET_ACCESS_V1:255:511:1\n";
 static const char errorOutput[] = "EMBER_ASSET_ACCESS_STDERR\n";
 static const char controlBytes[] = "EMBER_ASSET_CONTROL_CREATED\n";
+static int lastProbeOutcome = 4;
 
 static void uncertain(void) { for (;;) Sleep(1000); }
 static void closeKnown(HANDLE owned) { if (!CloseHandle(owned)) uncertain(); }
@@ -30,20 +31,34 @@ static int writeAll(HANDLE owned, const void *bytes, DWORD length) {
   }
   return 1;
 }
+static int errorOutcome(DWORD error) {
+  return error == ERROR_ACCESS_DENIED ? 2 : error == ERROR_SHARING_VIOLATION ? 3 : 4;
+}
+static int failedProbe(HANDLE err, int object, int right) {
+  char frame[] = "EMBER_ASSET_PROBE_V1:0:0:0\n";
+  const size_t prefix = sizeof("EMBER_ASSET_PROBE_V1:") - 1;
+  /* The probe helpers return only after acquired handles close positively. Unknown close emits nothing. */
+  if (object >= 1 && object <= 3 && right >= 1 && right <= 3 && lastProbeOutcome >= 1 && lastProbeOutcome <= 5) {
+    frame[prefix] = (char)('0' + object); frame[prefix + 2] = (char)('0' + right); frame[prefix + 4] = (char)('0' + lastProbeOutcome);
+    (void)writeAll(err, frame, (DWORD)(sizeof(frame) - 1));
+  }
+  return 205;
+}
 static int allowed(const WCHAR *file, DWORD access, int directory) {
   HANDLE owned = CreateFileW(file, access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
     NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | (directory ? FILE_FLAG_BACKUP_SEMANTICS : 0), NULL);
   DWORD flags = 1; int accepted;
-  if (owned == INVALID_HANDLE_VALUE || owned == NULL) return 0;
+  if (owned == INVALID_HANDLE_VALUE || owned == NULL) { lastProbeOutcome = owned == INVALID_HANDLE_VALUE ? errorOutcome(GetLastError()) : 4; return 0; }
   /* Successful security-only opens prove their requested rights. Metadata is held/read by the host pins. */
   accepted = GetHandleInformation(owned, &flags) && flags == 0;
-  closeKnown(owned); return accepted;
+  closeKnown(owned); lastProbeOutcome = accepted ? 1 : 5; return accepted;
 }
 static int denied(const WCHAR *file, DWORD access, int directory) {
   HANDLE owned = CreateFileW(file, access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
     NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | (directory ? FILE_FLAG_BACKUP_SEMANTICS : 0), NULL);
   DWORD error = owned == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
   if (owned != INVALID_HANDLE_VALUE && owned != NULL) closeKnown(owned);
+  lastProbeOutcome = owned != INVALID_HANDLE_VALUE && owned != NULL ? 1 : owned == INVALID_HANDLE_VALUE ? errorOutcome(error) : 4;
   return owned == INVALID_HANDLE_VALUE && error == ERROR_ACCESS_DENIED;
 }
 static int createProbe(const WCHAR *directory, int expected) {
@@ -72,7 +87,9 @@ int wmain(int argc, WCHAR **argv) {
   if (!ReadFile(input, &byte, 1, &count, NULL) || count != 0) return 204;
   for (index = 1; index <= 3; index++) {
     int directory = index != 3;
-    if (!allowed(argv[index], READ_CONTROL, directory) || !denied(argv[index], WRITE_DAC, directory) || !denied(argv[index], WRITE_OWNER, directory)) return 205;
+    if (!allowed(argv[index], READ_CONTROL, directory)) return failedProbe(err, index, 1);
+    if (!denied(argv[index], WRITE_DAC, directory)) return failedProbe(err, index, 2);
+    if (!denied(argv[index], WRITE_OWNER, directory)) return failedProbe(err, index, 3);
   }
   /* Same owner and host-only DACL as the Medium parent; only this known control is Low. */
   if (!allowed(argv[4], WRITE_DAC, 1)) return 206;

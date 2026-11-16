@@ -92,3 +92,20 @@ Prelude stages are: 0 not entered; 1 output creation; 2 launch; 3 suspended crea
 10 Stop authentication; 11 fixed output facts; 12 security recheck; 13 known control-file read; 14 complete.
 Error classes are: 0 unknown; 1 Copy owner; 2 native Copy; 3 Stop; 4 output; 5 creator profile;
 6 proof pin; 7 security witness; 8 Node asset owner. Classes use only `instanceof` against the exact emitted graph.
+
+Diagnostic run `43973341231` at `34372b2c7e2c34910acc7fa7aa1df1265ca8e18f` also remains a failed proof.
+Both Windows 2022 and Windows 2025 cases reached phase 4, prelude stage 11, genuine C exit 205, and unknown error class zero.
+Completion, output close and Stop had authenticated before the unchanged success facts rejected that exit.
+Exit 205 covers the first loop over the parent, asset root and Node image, so it does not identify a failed access
+probe. This append changes only diagnostic evidence: the C program preserves the same access rights, flags,
+short-circuit order, success frames and return 205. On that first-loop failure it attempts one fixed stderr tuple
+only after any acquired handle closes positively. An unknown close emits nothing and keeps the process held.
+
+The host authenticates both the exact completed/run and closed launch/run references before parsing a tuple.
+Only natural exit 205, complete output with reason none, zero stdout, and an exact fixed stderr byte count/frame
+can project three bounded enums. Objects are 1 parent, 2 asset root, 3 Node image. Rights are 1 READ_CONTROL,
+2 WRITE_DAC, 3 WRITE_OWNER. Outcomes are 1 successful open, 2 access denied, 3 sharing violation, 4 other/NULL,
+5 handle-information failure/nonzero flags. Every other frame or outcome projects three unknown zeros. A tuple
+never makes exit 205 satisfy the original success facts, grants cleanup, or exposes raw Windows errors or output.
+Linux portable C contracts compile the actual witness body against fixed test-only Windows API stubs; their
+numeric observations establish control flow and closed-handle ordering, never Windows ABI or access enforcement.
