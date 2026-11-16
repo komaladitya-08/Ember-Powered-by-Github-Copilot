@@ -1,0 +1,58 @@
+name: Experimental ordinary-host pinned POSIX comparison
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'scripts/experimental/build-windows-open-target-posix.mjs'
+      - 'test/fixtures/windows-open-target-posix*'
+      - 'test/unit/windows-open-target-posix*'
+      - 'test/integration/windows-open-target-posix-native.test.ts'
+      - '.github/workflows/experimental-windows-open-target-posix.yml'
+      - 'docs/EXPERIMENTAL-WINDOWS-OPEN-TARGET-POSIX.md'
+permissions:
+  contents: read
+concurrency:
+  group: open-target-posix-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+jobs:
+  contracts:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'ember-improve/20261116-open-target-posix'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '22.23.5'
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - name: Portable fixed-control contracts only
+        run: npx vitest run test/unit/windows-open-target-posix-native.test.ts test/unit/windows-open-target-posix-proof.test.ts test/unit/windows-open-target-posix-report.test.ts test/unit/windows-open-target-posix-build.test.ts --maxWorkers=2
+  native:
+    # PR registration runs no native control. Manual execution requires the separately reviewed fixed branch.
+    if: github.event_name == 'workflow_dispatch' && github.ref_name == 'ember-improve/20261116-open-target-posix'
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.image }}
+    timeout-minutes: 15
+    env:
+      EMBER_WINDOWS_OPEN_TARGET_POSIX_IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '22.23.5'
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - name: Portable fixed-control contracts
+        run: npx vitest run test/unit/windows-open-target-posix-native.test.ts test/unit/windows-open-target-posix-proof.test.ts test/unit/windows-open-target-posix-report.test.ts test/unit/windows-open-target-posix-build.test.ts --maxWorkers=2
+      - name: Required ordinary-host POSIX A validity and held-target B retirement
+        env:
+          EMBER_WINDOWS_OPEN_TARGET_POSIX_TEST: '1'
+        run: npm run test:integration -- test/integration/windows-open-target-posix-native.test.ts --maxWorkers=1
