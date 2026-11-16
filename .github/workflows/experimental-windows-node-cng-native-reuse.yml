@@ -1,0 +1,78 @@
+name: experimental-windows-node-cng-native-reuse
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/experimental-windows-node-cng-native-reuse.yml"
+      - "scripts/experimental/*node-cng-artifact*"
+      - "test/fixtures/windows-node-source-*"
+      - "test/unit/windows-node-source*"
+      - "test/unit/windows-node-cng-artifact.test.ts"
+      - "test/integration/windows-node-source-native.test.ts"
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: experimental-windows-node-cng-native-reuse-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  native-only:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'ember-improve/20261116-source-node-cng-native-reuse'
+    name: Attested CNG source Node native-only diagnostic (windows-2022)
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Portable artifact, source, runtime and ownership contracts
+        run: npm test -- test/unit/windows-node-cng-artifact.test.ts test/unit/windows-node-source.test.ts test/unit/windows-node-source-build.test.ts test/unit/windows-node-source-program.test.ts test/unit/windows-node-source-report.test.ts test/unit/windows-node-source-ownership.test.ts test/unit/windows-node-source-fatal.test.ts test/unit/windows-node-source-child-program.test.ts test/unit/windows-node-source-child-host.test.ts test/unit/windows-node-source-child-io.test.ts test/unit/windows-node-source-child-observer.test.ts test/unit/windows-node-source-child-failure.test.ts test/unit/windows-node-source-child-failure-read.test.ts test/unit/windows-node-source-child-failure-proof.test.ts --maxWorkers=1
+      - name: Authenticate and stage only the exact existing public-source artifact
+        timeout-minutes: 5
+        shell: pwsh
+        env:
+          EMBER_NODE_CNG_ARTIFACT_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $reuseRoot = Join-Path $env:RUNNER_TEMP 'ember-source-node-cng-native-reuse'
+          node scripts/experimental/stage-windows-node-cng-artifact.mjs --destination $reuseRoot
+          if ($LASTEXITCODE -ne 0) { throw 'The exact source artifact could not be authenticated and staged.' }
+      - name: Prepare the unchanged independently pinned official Node control
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pins = Get-Content -LiteralPath scripts/experimental/windows-node-lpac-pin.json -Raw | ConvertFrom-Json
+          $pin = $pins.versions.PSObject.Properties['22.23.5'].Value
+          if (!$pin -or $pin.version -cne '22.23.5') { throw 'No exact official Windows control pin.' }
+          $control = Join-Path $env:RUNNER_TEMP ('ember-node-official-control-' + [Guid]::NewGuid().ToString())
+          [IO.Directory]::CreateDirectory($control) | Out-Null
+          $archive = Join-Path $control $pin.archive
+          Invoke-WebRequest -Uri ($pin.baseUrl + $pin.archive) -OutFile $archive -TimeoutSec 90
+          if ((Get-Item -LiteralPath $archive).Length -ne $pin.archiveBytes -or (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne $pin.archiveSha256) { throw 'The official control archive differs from its independent pin.' }
+          $zip = [IO.Compression.ZipFile]::OpenRead($archive)
+          try {
+            $members = @($zip.Entries | Where-Object { $_.FullName -ceq $pin.member })
+            if ($members.Count -ne 1 -or $members[0].Length -ne $pin.executableBytes -or $members[0].CompressedLength -gt $pin.archiveBytes) { throw 'No unique bounded official node.exe member.' }
+            $node = Join-Path $control 'node.exe'
+            $controlInput = $members[0].Open()
+            $controlOutput = [IO.File]::Open($node, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            try { $controlInput.CopyTo($controlOutput) } finally { $controlOutput.Dispose(); $controlInput.Dispose() }
+          } finally { $zip.Dispose() }
+          if ((Get-Item -LiteralPath $node).Length -ne $pin.executableBytes -or (Get-FileHash -LiteralPath $node -Algorithm SHA256).Hash.ToLowerInvariant() -cne $pin.executableSha256) { throw 'The official control executable differs from its independent pin.' }
+          "EMBER_LPAC_NODE_VERSION=22.23.5" >> $env:GITHUB_ENV
+          "EMBER_LPAC_NODE_ASSET_ROOT=$control" >> $env:GITHUB_ENV
+      - name: Preserve all six original native assertions with closed failure observations only
+        timeout-minutes: 5
+        env:
+          EMBER_NODE_SOURCE_PROBE: "1"
+        run: node scripts/run-integration.mjs test/integration/windows-node-source-native.test.ts
+      # No rebuild, arbitrary artifact input, private native output, report, source tree, trace or dump is uploaded.
