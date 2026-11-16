@@ -1,6 +1,6 @@
 # Fixed Windows pipe namespace prerequisite
 
-This separate experiment compares one generated current-namespace pipe pair and one `LOCAL` pair in an ordinary host and a fresh zero-capability LPAC. It does not execute libuv, Node, project code, a shell or a child process. It changes no product backend, registry, existing ACL, token, capability or policy. Native observations are pending; portable contracts do not establish Windows compatibility.
+This separate experiment compares one generated current-namespace pipe pair and one `LOCAL` pair in an ordinary host and a fresh zero-capability LPAC. It does not execute libuv, Node, project code, a shell or a child process. It changes no product backend, registry, existing ACL, token, capability or policy. The completed native observations below establish this narrow comparison; portable contracts alone do not establish Windows compatibility.
 
 The source basis is [Node22.23.5's pinned libuv pipe implementation](https://github.com/nodejs/node/blob/60553651579ec33ca1aef9e1eedab2c3855f1f7e/deps/uv/src/win/pipe.c#L249). Its generated name lacks `LOCAL`, and its [server loop](https://github.com/nodejs/node/blob/60553651579ec33ca1aef9e1eedab2c3855f1f7e/deps/uv/src/win/pipe.c#L209) retries access-denied errors indefinitely. [Microsoft](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createnamedpipea) documents the `LOCAL` namespace in its Windows10v1709/UWP remarks. The [upstream libuv change](https://github.com/libuv/libuv/commit/2cadaa40167050baf7c6905ac897e6fb57afb2c6) inserts it for AppContainer-generated names. None of these sources establishes our LPAC result in advance.
 
@@ -18,6 +18,28 @@ Only fixed numeric operations, error codes and positively closed pair facts are 
 
 The native suite requires both ordinary-host pairs to connect and close. It records each LPAC pair as connected or refused with verified cleanup; a refusal is not a compatibility success. A later Node child/default-test experiment, any `LOCAL` source backport, and general network API closure each require separate evidence and review. The current fixed source-Node build retains only its existing Winsock-initializer call guard.
 
-Portable validation: the new fixed receipt/report/environment/ownership suite has58 passing cases; the selected existing identity, stdio and LPAC contracts bring the scoped run to251 passes. The actual Windows workflow and source-Node native outcome are independent pending evidence.
+Portable validation: the new fixed receipt/report/environment/ownership suite has58 passing cases; the selected existing identity, stdio and LPAC contracts bring the scoped run to251 passes. Source-Node evidence is tracked separately and cannot be inferred from this comparison.
 
 The [initial cdda2ce3 workflow run43827617751](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43827617751) failed workflow validation before creating any Windows job: `runner.temp` is unavailable in job-level `env`. The fixed build root is now initialized from `RUNNER_TEMP` inside an allocated runner step. This was a workflow configuration refusal, with no compiler or native observation.
+
+## Completed native comparison
+
+[Run43827966699](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43827966699) completed both jobs successfully after the workflow-only repair `de0cfc5e4cff1f873de81f506004b7d2e0b3adf5`. Each ran251 portable contracts and4 native cases with zero skips. The trusted compile receipt and stopped result bind the actual PR merge commit `bf7718663b5cfd287184f70c37231d36e7abf2a6`.
+
+| Hosted image | Completed job | C image bytes | C image SHA256 |
+| --- | --- | ---: | --- |
+| Windows2022, image20261112.366.7 | [133166172984](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43827966699/job/133166172984) | 152576 | `18a24e8bc8ed2dbab8adb4561583c638fce94750d674776ce96a2fd18a4d9639` |
+| Windows2025-VS2026, image20261103.298.1 | [133166173513](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43827966699/job/133166173513) | 152576 | `f39c291baf80b57093a3a16036692352c7697345f1f5b9ea6711d20472b6ff9f` |
+
+Both jobs returned the same namespace facts after cleanup:
+
+| Context and prefix | Operation | Error | Outcome | Created/closed masks |
+| --- | ---: | ---: | --- | --- |
+| Ordinary host, current | 7 | 0 | Connected | 7/7 |
+| Ordinary host, LOCAL | 7 | 0 | Connected | 7/7 |
+| Zero-capability LPAC, current | 2 (`CreateNamedPipeA`) | 5 (`ERROR_ACCESS_DENIED`) | Refused | 1/1 (private event only) |
+| Zero-capability LPAC, LOCAL | 7 | 0 | Connected | 7/7 |
+
+Every pair reported positive close completion, with no pending/cancel/completion/close errors observed. Connected pairs had a noninheritable server and inheritable client. The ordinary parent/child were the same user, AppContainer0, unrestricted, integrity RID12288. Both roots exited0 with private jobs stopped. LPAC controls31 recorded canary and each parent process right denied with code5, plus successful self-query. The canary stayed unchanged and native output was empty. Cancellation receipts have portable decoder tests and the C branch has source review; this run did not observe a native pending operation.
+
+This establishes a source-backed namespace prerequisite on these two hosted images. It does not prove byte transport, libuv execution, child creation, default `node --test`, a Node backport or general runtime compatibility. Those gates remain separate.
