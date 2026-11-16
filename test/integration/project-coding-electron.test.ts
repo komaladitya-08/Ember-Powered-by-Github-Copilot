@@ -26,7 +26,7 @@ const continuationGoal = "Verify the reviewed assertion, rename its test to cont
 const original = "const {test}=require('node:test');const assert=require('node:assert/strict');test('sum',()=>assert.equal(1 + 1, 3));\n";
 
 it.skipIf(process.env.EMBER_ELECTRON_CODING_TEST !== "1" || process.platform !== "linux")(
-  "repairs a private project through real Electron IPC and preserves exported files and history on per-result Forget",
+  "repairs a private project through real Electron IPC, opens its named session review and preserves exports on Forget",
   async () => {
     expect(process.arch, "This native coding journey requires Linux x64").toBe("x64");
     const node = await trustedCodingTestNode();
@@ -159,7 +159,25 @@ it.skipIf(process.env.EMBER_ELECTRON_CODING_TEST !== "1" || process.platform !==
       expect(fs.readFileSync(path.join(source, "test.cjs"), "utf8")).toBe(original);
       await expect.poll(() => home!.evaluate(() => window.ember.conversationTurn()), { timeout: 15_000 }).toBe("idle");
       const requestsBeforeReview = model.requests.length;
-      await home.getByRole("button", { name: /^Review result:/ }).click();
+      const firstSession = (await home.evaluate(() => window.ember.projectSessionsState())).projects.find(project => project.id === projectId)!.sessions.find(session => session.taskId === results[0].taskId)!;
+      expect(firstSession.kind).toBe("coding");
+      const sessionReview = home.locator(`[data-session-review="${firstSession.id}"]`);
+      await expect.poll(() => sessionReview.isEnabled()).toBe(true);
+      await sessionReview.click();
+      await expect.poll(() => home!.locator("#project-coding-patch").textContent()).toContain("1 + 1, 2");
+      expect(await home.evaluate(() => {
+        const title = document.getElementById("project-coding-review-title")!, bounds = title.getBoundingClientRect();
+        return {
+          title: document.activeElement === title,
+          inViewport: bounds.top >= 0 && bounds.bottom <= window.innerHeight,
+          session: document.activeElement instanceof HTMLElement && !!document.activeElement.dataset.sessionReview,
+          body: document.activeElement === document.body,
+          window: document.hasFocus(),
+        };
+      })).toMatchObject({ title: true, inViewport: true });
+      await home.locator("#project-coding-close").click();
+      await expect.poll(() => sessionReview.evaluate(button => document.activeElement === button)).toBe(true);
+      await sessionReview.click();
       await expect.poll(() => home!.locator("#project-coding-patch").textContent()).toContain("1 + 1, 2");
       await home.locator("#project-coding-export").click();
       await expect.poll(() => home!.locator("#project-coding-status").textContent(), { timeout: 15_000 }).toContain("Exported the coding review");
@@ -211,6 +229,8 @@ it.skipIf(process.env.EMBER_ELECTRON_CODING_TEST !== "1" || process.platform !==
       await expect(home.evaluate(id => window.ember.codingResultReview(id), continued.id)).rejects.toThrow("no longer available");
       expect((await home.evaluate(id => window.ember.codingResultReview(id), results[0].id)).id).toBe(results[0].id);
       expect(await home.evaluate(() => window.ember.projectSessionsState())).toEqual(continuedHistory);
+      await expect.poll(() => home!.locator("[data-session-review]").count()).toBe(1);
+      expect(await sessionReview.isEnabled()).toBe(true);
       await home.locator(`[data-result-control="${results[0].id}"]`).click();
       await expect.poll(() => home!.locator("#project-coding-patch").textContent()).toContain("1 + 1, 2");
       expect(await home.locator("#project-coding-patch").textContent()).not.toContain("continued sum");
@@ -221,6 +241,7 @@ it.skipIf(process.env.EMBER_ELECTRON_CODING_TEST !== "1" || process.platform !==
       await expect(home.evaluate(id => window.ember.codingResultReview(id), results[0].id)).rejects.toThrow("no longer available");
       expect(await home.evaluate(() => window.ember.projectSessionsState())).toEqual(history);
       expect(await home.locator("#project-coding-review").isHidden()).toBe(true);
+      await expect.poll(() => home!.locator("[data-session-review]").count()).toBe(0);
       expect(fs.readFileSync(path.join(source, "test.cjs"), "utf8")).toBe(original);
       expect(fs.existsSync(path.join(destination, "review.json"))).toBe(true);
       expect((await home.evaluate(id => window.ember.projectCodingWorkspaceState(id), projectId)).folder?.path).toBe(source);

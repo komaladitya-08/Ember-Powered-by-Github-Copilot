@@ -910,8 +910,7 @@ function renderTaskReasoning(): void {
 }
 
 const projectReady = mountProject();
-mountProjectSessions();
-mountProjectCoding();
+mountProjectSessions(mountProjectCoding());
 function renderAgent(a: AgentStatus | null): void {
   if (!a) return;
   // Connected again after a send was refused for want of a connection: its reason no longer holds (reliability-c7-2).

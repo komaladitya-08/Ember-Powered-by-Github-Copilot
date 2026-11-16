@@ -21,6 +21,12 @@ import { CONVERSATION_LIMIT, CONVERSATION_REQUEST_LIMIT, type HistoryProblemKind
 import { NATURAL_CHOICES, naturalModelHint, type NaturalModel } from "./natural-copy";
 import { searchFold } from "./search-copy";
 
+/** A named coding session opens its existing review, without starting or applying work. */
+export function sessionReviewWords(title: string): { button: string; label: string } {
+  return { button: "Review changes", label: `Review changes: ${title}` };
+}
+export function sessionReviewChanged(): string { return "This coding review changed. Open it again from the current session."; }
+
 export const CONVERSATION_RETENTION = `Keeps the latest ${CONVERSATION_LIMIT} messages while Ember runs. Older messages are forgotten as new ones arrive. Closing Ember or signing out forgets this conversation.`;
 export const CONVERSATION_KEEP_LABEL = "Keep my recent conversation after Ember closes";
 export const CONVERSATION_KEEP_HINT = "Off by default. When on, Ember saves these messages on this computer, in a file only you can read, and shows them again after it restarts. They are for you to read: Ember itself starts a fresh conversation and doesn't remember them, and nothing in them is run again.";

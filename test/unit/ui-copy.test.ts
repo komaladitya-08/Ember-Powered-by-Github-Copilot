@@ -31,6 +31,10 @@ import { friendlyError, lostWords } from "../../app/main/agent/presenter";
 import { PROVIDER_NO_KEYRING, PROVIDER_NO_MODEL_HERE, providerSealLine, PROVIDER_WORDS, reminderDeleteScope, betterRecallDownloadLabel, betterRecallProgress, betterRecallText, modelDestination, providerAgreedChecked, providerAgreedText, providerAgreedUnlisted, providerHeldUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, recipientWords, providerHint, providerTestText, providerTestWaits } from "../../app/renderer/home/copy";
 
 describe("settings window words", () => {
+  it("labels named coding-session reviews and their changed-result notice", () => {
+    expect(conv.sessionReviewWords("Review the API")).toEqual({ button: "Review changes", label: "Review changes: Review the API" });
+    expect(conv.sessionReviewChanged()).toBe("This coding review changed. Open it again from the current session.");
+  });
   it("counts model calls and tokens the way people say them", () => {
     expect(usageLine({ calls: 0, inputTokens: 0, outputTokens: 0 })).toBe("");
     expect(usageLine({ calls: 1, inputTokens: 312, outputTokens: 40 })).toBe("This session: 1 model call, 312 tokens in, 40 tokens out.");

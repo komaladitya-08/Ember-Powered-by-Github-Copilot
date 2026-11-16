@@ -116,6 +116,15 @@ row should be green on RHEL 8.4 with GNOME on Xorg. If `npm ci` reports that Ele
 Each test run works in a temporary folder of its own (`ember-run-…`), which it removes at the end with vitest's module
 cache (test/temp-folder.ts).
 
+The Projects session board receives a renderer-only review bridge from `mountProjectCoding()`. It reuses that board's
+result fetch and review panel, correlating exact project/task IDs and pinning result/source identity across the wait.
+No title match, folder reread or extra IPC grants access. `test/unit/session-review-mapping.test.ts` covers mapping;
+`EMBER_UIUX_TEST=1 EMBER_CHROMIUM_PATH=/usr/bin/chromium npm run test:integration -- test/integration/session-coding-review-renderer.test.ts`
+drives both actual boards, including focus, replacement, Forget and account/project retirement with fixture preload replies.
+After `npm run build`, the existing `home-panes-renderer.test.ts` case matching `built named-session review action`
+checks the actual Home HTML/CSS at 600/1000 px in light/dark, Larger text, contrast, forced colours and Calm. Set
+`EMBER_UI_EVIDENCE` to a scratch directory outside the repository to keep its board and review-panel screenshots.
+
 Host-owned coding adapters may explicitly select `scopedCoding.mode: "files-only"` with a guarded `platform.files`
 broker. The Host captures that restricted authority with the request's project/folder grant before any wait, starts
 the file worker without a local command service, and tells the conductor that coding commands and tests are

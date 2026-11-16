@@ -16,6 +16,8 @@ import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { AGREE_ARM_MS } from "../../app/shared/provider";
 import { unbrokenRuns } from "../../app/renderer/home/computers-copy";
 import type { TaskEntry, ActivityItem } from "../../app/shared/activity";
+import type { CodingResultReview } from "../../app/shared/project-coding";
+import type { ProjectSessionsState } from "../../app/shared/project-sessions";
 import type { ActivityEntry, StatusPlatform, UpdateStatus } from "../../app/shared/ipc";
 import { FALLBACK_SHORTCUTS, heldShortcuts, SHORTCUTS, shownShortcuts } from "../../app/shared/shortcuts";
 
@@ -39,6 +41,7 @@ declare global {
 const gate = process.env.EMBER_UIUX_TEST !== "1";
 
 interface Seed { /** How the approval modes stand, as main sends it with the status (absent: main sent none). */ approvals?: ApprovalsState; settings?: Record<string, unknown>; admin?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number }; checks?: { id: string; status: string; label: string; detail: string; fix?: string }[]; platform?: StatusPlatform; updates?: UpdateStatus; provider?: boolean; /** The targets runtime, answering after this many ms as in the app (Computers and Commands show then). */ targets?: number; /** Holds actual native resize deliveries until an already-positioned layout is scrolled. */ holdJumpResize?: boolean }
+interface Seed { sessionReview?: { state: ProjectSessionsState; review: CodingResultReview } }
 
 /** Interactive chosen, its card agreed to as it reads now: the user's own setting. */
 const INTERACTIVE: ApprovalsSetting = { mode: "interactive", consent: { interactive: { version: FEATURE_CONSENT_VERSION.autonomy, at: "2026-11-04T12:00:00Z" }, assisted: { version: 0, at: null }, autopilot: { version: 0, at: null } } };
@@ -73,7 +76,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
   const page = await browser.newPage({ viewport: seed.viewport ?? { width: 1000, height: 900 } }) as Page & { errors: string[] };
   page.errors = [];
   page.on("pageerror", e => page.errors.push(e.message));
-  await page.addInitScript(({ settings, admin, activity, checks, platform, updates, provider, targets, approvals, holdJumpResize }) => {
+  await page.addInitScript(({ settings, admin, activity, checks, platform, updates, provider, targets, approvals, holdJumpResize, sessionReview }) => {
     const subs: Record<string, ((v: unknown) => void)[]> = {};
     // Main's list as last pushed: what a read after a task control gets.
     let tasks: unknown = [];
@@ -109,6 +112,13 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
     window.ember = new Proxy({}, { get: (_t, name: string) => {
       if (name.startsWith("on")) return (fn: (v: unknown) => void) => { (subs[name] ??= []).push(fn); return () => undefined; };
       if (name === "getStatus") return async () => status();
+      if (sessionReview) {
+        if (name === "agentStatus") return async () => ({ phase: "ready", detail: "Connected.", models: [], conductorModel: null, workerModel: null, usage: { calls: 0, inputTokens: 0, outputTokens: 0 } });
+        if (name === "projectSessionsState") return async () => sessionReview.state;
+        if (name === "projectCodingWorkspaceState") return async (projectId: string) => ({ projectId, folder: null, available: false, canChoose: true, message: "Retained coding reviews are available." });
+        if (name === "codingResultsState") return async () => [sessionReview.review];
+        if (name === "codingResultReview") return async () => sessionReview.review;
+      }
       if (name === "recheckSetup") return async () => status().environment;
       if (name === "updates" && updates) return async () => updates;
       if (name === "updateSettings") return async (patch: Record<string, unknown>) => { h.calls.push(`save:${JSON.stringify(patch)}`); return {}; };
@@ -121,7 +131,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       if (name === "activity") return async (limit?: number) => { h.reads++; h.limits.push(limit ?? 500); if (h.activity === "fail") throw new Error("EACCES: permission denied"); return h.activity.slice(0, limit ?? 500); };
       return () => new Promise(() => undefined);
     } }) as never;
-  }, { settings, admin, activity: seed.activity ?? [], checks: seed.checks ?? [], platform: seed.platform ?? null, updates: seed.updates ?? null, provider: seed.provider ?? false, targets: seed.targets ?? null, approvals: seed.approvals ?? null, holdJumpResize: seed.holdJumpResize ?? false });
+  }, { settings, admin, activity: seed.activity ?? [], checks: seed.checks ?? [], platform: seed.platform ?? null, updates: seed.updates ?? null, provider: seed.provider ?? false, targets: seed.targets ?? null, approvals: seed.approvals ?? null, holdJumpResize: seed.holdJumpResize ?? false, sessionReview: seed.sessionReview ?? null });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   await page.waitForSelector(`a[href='#${pane}-h']`);
   await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
@@ -151,6 +161,48 @@ async function redrawn(p: Page, push: () => Promise<unknown>): Promise<void> {
 const focusedName = (p: Page) => p.evaluate(() => {
   const a = document.activeElement as HTMLElement | null;
   return a ? a.getAttribute("aria-label") ?? a.textContent?.trim().slice(0, 80) ?? a.tagName : "";
+});
+
+describe.skipIf(gate)("the built named-session review action", () => {
+  it("keeps the session and review usable above and below 640 px across appearance and access settings", async () => {
+    const review: CodingResultReview = { id: "review-one", projectId: "project-one", taskId: "task-one", title: "API changes", sourcePath: "/work/original-app", status: "done", files: 1, conflicts: 0, patchComplete: true,
+      checks: { ran: 0, passed: 0, failed: 0 }, message: "Private copy ready for review.", changes: [{ path: "src/api.ts", kind: "modify", conflicts: [], patchUnsupported: [] }], textPatch: "--- a/src/api.ts\n+++ b/src/api.ts\n-old\n+new", limitations: [], previewMessage: "Text patch preview." };
+    const state: ProjectSessionsState = { selectedProjectId: "project-one", projects: [{ id: "project-one", name: "API project", goal: "Review the API changes", createdAt: 1,
+      sessions: [{ id: "session-one", taskId: "task-one", title: "Review the API", kind: "coding", status: "done", detail: "Private copy complete", summary: "One proposed change is ready to review.", startedAt: 1 }] }] };
+    for (const width of [600, 1000]) for (const scheme of ["light", "dark"] as const) {
+      const page = await open("project", { viewport: { width, height: 900 }, sessionReview: { state, review } });
+      const media = await page.context().newCDPSession(page);
+      const action = page.getByRole("button", { name: "Review changes: Review the API", exact: true });
+      await expect.poll(() => action.isEnabled()).toBe(true);
+      for (const mode of ["default", "larger", "contrast", "forced-colors", "calm"]) {
+        await media.send("Emulation.setEmulatedMedia", { features: [
+          { name: "prefers-color-scheme", value: scheme }, { name: "prefers-contrast", value: mode === "contrast" ? "more" : "no-preference" }, { name: "forced-colors", value: mode === "forced-colors" ? "active" : "none" },
+        ] });
+        await page.evaluate(mode => { document.documentElement.dataset.textSize = mode === "larger" ? "larger" : "default"; document.documentElement.classList.toggle("calm", mode === "calm"); }, mode);
+        await action.scrollIntoViewIfNeeded();
+        const geometry = await action.evaluate(button => {
+          const box = button.getBoundingClientRect(), board = document.getElementById("project-sessions")!.getBoundingClientRect();
+          return { inside: box.left >= board.left && box.right <= board.right && box.height > 0, overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth, font: getComputedStyle(button).fontSize };
+        });
+        expect(geometry.inside, `${width}/${scheme}/${mode}`).toBe(true);
+        expect(geometry.overflow, `${width}/${scheme}/${mode}`).toBeLessThanOrEqual(0);
+        if (mode === "larger") expect(parseFloat(geometry.font)).toBeGreaterThan(13);
+        const dir = process.env.EMBER_UI_EVIDENCE;
+        if (dir) { fs.mkdirSync(dir, { recursive: true }); await page.locator("#project-sessions").screenshot({ path: path.join(dir, `session-review-${width}-${scheme}-${mode}.png`) }); }
+        await action.click();
+        await expect.poll(() => page.locator("#project-coding-review").isVisible()).toBe(true);
+        const position = await page.locator("#project-coding-review-title").evaluate(title => { const box = title.getBoundingClientRect(); return { top: box.top, bottom: box.bottom, height: innerHeight }; });
+        expect(position.top, `${width}/${scheme}/${mode}: review starts in view`).toBeGreaterThanOrEqual(0);
+        expect(position.bottom, `${width}/${scheme}/${mode}: review ends in view`).toBeLessThanOrEqual(position.height);
+        expect(await focusedName(page)).toBe("API changes");
+        if (dir && mode === "default") await page.locator("#project-coding-review").screenshot({ path: path.join(dir, `session-review-panel-${width}-${scheme}.png`) });
+        await page.locator("#project-coding-close").click();
+        expect(await focusedName(page)).toBe("Review changes: Review the API");
+      }
+      expect(page.errors).toEqual([]);
+      await page.close();
+    }
+  }, 60_000);
 });
 
 const step = (i: number, words: string): ActivityItem => ({ id: `s${i}`, kind: "step", at: i * 500, endedAt: i * 500 + 200, state: "done", words, group: "click", app: "Text Editor" });
