@@ -24,7 +24,9 @@
 // SSH target can be set up, so staging stops unless --allow-missing-remote-parts.
 // --with-runtimes: the Node runtimes Ember sends to computers reached over SSH go in resources/remote-parts/runtime (from
 // node scripts/package/runtimes.mjs, each checked against remote-runtime.json), so it never downloads one.
-// usage: node scripts/package/stage.mjs [--allow-missing-sidecar] [--allow-missing-remote-parts] [--with-models] [--with-runtimes]
+// --with-windows-node-toolchain: Windows x64 only; stage the exact offline coding Node, licence and producer receipt
+// from .cache/windows-node-toolchain into resources/coding/windows-node-x64. This does not enable command execution.
+// usage: node scripts/package/stage.mjs [--allow-missing-sidecar] [--allow-missing-remote-parts] [--with-models] [--with-runtimes] [--with-windows-node-toolchain]
 //   (after npm run build and node scripts/package/remote-parts.mjs)
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
@@ -41,8 +43,9 @@ import { writeIco, writeIconset } from "./icon.mjs";
 import { exeResourceMismatches, readExeResources, rewriteExeResources } from "./exe-resources.mjs";
 import { finishMacBundle } from "./mac-bundle.mjs";
 import { stageParts } from "./remote-parts.mjs";
+import { stageWindowsNodeToolchain, verifyWindowsNodeToolchain, WINDOWS_NODE_TOOLCHAIN_DIRECTORY } from "./windows-node-toolchain.mjs";
 
-const FLAGS = ["--allow-missing-sidecar", "--allow-missing-remote-parts", "--with-models", "--with-runtimes"];
+const FLAGS = ["--allow-missing-sidecar", "--allow-missing-remote-parts", "--with-models", "--with-runtimes", "--with-windows-node-toolchain"];
 const flags = process.argv.slice(2);
 const unknown = flags.filter(f => !FLAGS.includes(f));
 if (unknown.length) { console.error(`unknown option ${unknown[0]}\nusage: node scripts/package/stage.mjs [${FLAGS.join("] [")}]`); process.exit(2); }
@@ -51,6 +54,13 @@ const withModels = flags.includes("--with-models");
 
 const layout = layoutFor(process.platform, process.arch);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const withWindowsNode = flags.includes("--with-windows-node-toolchain");
+const windowsNodeSource = path.join(root, ".cache/windows-node-toolchain");
+if (withWindowsNode) {
+  if (layout.target !== "win32-x64") throw new Error("The pinned coding Node toolchain supports Windows x64 only.");
+  // Check before replacing any existing package. No runtime credential, network download or host Node fallback.
+  verifyWindowsNodeToolchain(windowsNodeSource, "producer");
+}
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const out = path.join(root, "dist/package");
 const app = path.join(out, layout.appDir);
@@ -174,6 +184,10 @@ if (wrongFuses.length) throw new Error(`the staged binary's fuses didn't take: $
 // 2. The app: its package.json, the build, and production dependencies only.
 const appDir = path.join(resources, "app");
 fs.mkdirSync(appDir, { recursive: true });
+if (withWindowsNode) {
+  fs.mkdirSync(path.join(resources, "coding"), { recursive: true });
+  stageWindowsNodeToolchain(windowsNodeSource, path.join(resources, WINDOWS_NODE_TOOLCHAIN_DIRECTORY));
+}
 const { name, version, description, license, author, main } = pkg;
 fs.writeFileSync(path.join(appDir, "package.json"), JSON.stringify({ name, productName: "Ember", version, description, license, author, main, type: pkg.type, dependencies: pkg.dependencies }, null, 2) + "\n");
 fs.copyFileSync(path.join(root, "LICENSE"), path.join(appDir, "LICENSE"));
@@ -291,6 +305,7 @@ fs.writeFileSync(path.join(app, layout.noticesDir, "THIRD_PARTY_NOTICES"), [
   `--- Ember's LICENSE ---\n${fs.readFileSync(path.join(root, "LICENSE"), "utf8").trim()}`,
   `Electron ${electronVersion}: MIT (LICENSE beside this file). Chromium and the libraries in it, among them FFmpeg\n(LGPL-2.1-or-later): LICENSES.chromium.html beside this file.`,
   `Inter 4.1 (the typeface of Ember's windows, ${fonts}): OFL-1.1\n\n--- LICENSE.txt ---\n${fs.readFileSync(path.join(root, "assets/fonts/LICENSE.txt"), "utf8").trim()}`,
+  ...(withWindowsNode ? [`Offline coding Node 22.23.5 and its bundled dependencies: ${path.posix.relative(layout.noticesDir, `${layout.resourcesDir}/${WINDOWS_NODE_TOOLCHAIN_DIRECTORY}/LICENSE`)}. The exact producer receipt accompanies it; this fork supplies no shell, networking, child processes or dependency installation.`] : []),
   ...(layout.voiceNative ? [capiNotice(path.posix.relative(layout.noticesDir, `${layout.resourcesDir}/${layout.voiceNative}`))] : []),
   ...sections,
 ].join(`\n\n${"=".repeat(78)}\n\n`) + "\n");
