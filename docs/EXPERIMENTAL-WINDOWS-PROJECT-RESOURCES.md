@@ -5,6 +5,12 @@ project folder, account, task, result publication and Forget interfaces used by 
 a production backend, enable a product gate, discover a toolchain, execute a command or supply Windows SDK/controller
 storage isolation. The mode is always `files-only`; availability explicitly reports `canContinue: false`.
 
+The development product candidate connects this owner through `project-coding-backend.ts` and the ordinary main/Host
+interfaces. Selection is fixed by platform, captures no model-supplied mode, and never falls back after initialization
+failure. Only workspaces minted by that selector may open its file broker. The live review-base getter survives
+asynchronous initialization. Windows uses the separately protected trusted controller; Linux keeps its command
+backend. This wiring needs the dedicated Windows SDK/native and real Electron tests before merge or client acceptance.
+
 Source capture uses the native NTFS read-only boundary and excludes `.git` and `node_modules`. File tools operate
 only in the fresh owner/SYSTEM copy. The host must finish controller disposal and close the file broker before
 attesting the adapter's review seal. A sealed review compares baseline, proposed and current source; publishing

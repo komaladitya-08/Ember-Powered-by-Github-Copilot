@@ -11,6 +11,14 @@ on:
       - "app/main/agent/windows-coding-policy.ts"
       - "app/main/agent/windows-coding-copy.ts"
       - "app/main/agent/windows-scoped-coding-files.ts"
+      - "app/main/agent/windows-coding-resources.ts"
+      - "app/main/agent/windows-file-only-workspace.ts"
+      - "app/main/agent/project-coding-backend.ts"
+      - "app/main/agent/scoped-coding-worker.ts"
+      - "app/main/agent/host.ts"
+      - "app/main/main.ts"
+      - "app/main/project-coding-ipc.ts"
+      - "app/renderer/home/project-coding.ts"
       - "app/main/agent/scoped-coding-files.ts"
       - "app/main/agent/coding-platform.ts"
       - "app/main/agent/coding-privacy*.ts"
@@ -24,6 +32,7 @@ on:
       - "app/main/agent/runtime.ts"
       - "app/main/platform/win32/system/ffi.ts"
       - "test/integration/windows-controller-private-native.test.ts"
+      - "test/integration/project-coding-windows-electron.test.ts"
       - "test/unit/windows-controller-*.test.ts"
       - "test/unit/private-controller-runtime*.test.ts"
       - "test/unit/custom-coding-controller.test.ts"
@@ -61,7 +70,33 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - name: Separate controller ACL, exact ownership and disposal faults
         run: npm test -- test/unit/windows-controller-native.test.ts test/unit/windows-controller-storage.test.ts test/unit/private-controller-runtime.test.ts test/unit/private-controller-runtime-windows.test.ts test/unit/custom-coding-controller.test.ts --maxWorkers=1
-      # Trusted normal-token SDK control plane only. No command runtime or Windows product gate is enabled.
+      # Trusted normal-token SDK control plane only; this supplies no command runtime or LPAC compatibility claim.
       - name: Pinned SDK private NTFS storage and forbidden execution contract
         timeout-minutes: 10
         run: node scripts/run-integration.mjs test/integration/windows-controller-private-native.test.ts --maxWorkers=1
+  electron-file-only:
+    name: Windows file-only Electron product journey (${{ matrix.image }})
+    needs: native-controller
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.image }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      # Download the real Electron binary; this job runs the built app with its normal sandbox.
+      - run: npm ci
+      - run: npm run build
+      - name: Home, preload, IPC, conductor, native file-only session, review, export and Forget with commands off
+        timeout-minutes: 5
+        run: node scripts/run-integration.mjs test/integration/project-coding-windows-electron.test.ts --maxWorkers=1
+        env:
+          EMBER_ELECTRON_WINDOWS_CODING_TEST: "1"

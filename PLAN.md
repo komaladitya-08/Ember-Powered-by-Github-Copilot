@@ -4867,3 +4867,12 @@ failure before runtime assignment now survives custom-controller startup sanitiz
 ambient-configuration negatives, and disposable native/plugin positive controls. Windows product availability and
 Host/resources wiring remain separate work; this foundation does not claim a command runtime or project process-stop
 proof.
+
+**Windows files-only product candidate (2026-11-16, draft).** The fixed platform selector now connects the Windows
+resource owner, private trusted controller, native file-only workspace and ordinary project/Host lifecycle without
+requiring local command services. Windows work edits a fresh private source copy and publishes a sealed review after
+awaited controller/file disposal; explicit export and Forget retain exact native ownership. Its UI/tool metadata
+discloses unavailable commands, tests, dependencies and result continuation. Linux command behavior and the legacy
+disabled SDK gate remain unchanged. Dedicated Server 2022/2025 tests cover resource lifecycle, actual SDK admission
+and real Electron Home/preload/IPC sessions with commands off; their exact candidate results and Windows 10/11 client
+acceptance remain required. No main merge or release is authorized by portable tests alone.
