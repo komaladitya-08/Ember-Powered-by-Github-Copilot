@@ -12,6 +12,9 @@ import type { PrivateControllerRuntimeInput } from "./private-controller-runtime
 import type { TaskSpec, WorkerResult } from "./worker";
 import { handoffContext } from "./handoff-context";
 import { CodingPrivacyCleanupError } from "./coding-privacy-scanner";
+import { WindowsCodingCleanupError } from "./windows-coding-native";
+import { CodingArtifactCleanupError } from "./coding-artifact-store";
+import { CodingSeedCleanupError } from "./coding-seed-snapshot";
 
 export interface ScopedCodingChecks { ran: number; passed: number; failed: number }
 interface ScopedCodingWorkerBaseOptions {
@@ -202,7 +205,10 @@ export class ScopedCodingWorker {
       result = await this.controller.run(this.spec.goal + handoffContext(this.spec.handoffSummary), this.lifetime.signal);
     } catch (error) {
       pipelineFailed = true;
-      if (error instanceof CodingControllerCleanupError || error instanceof CodingPrivacyCleanupError) this.cleanupFailed = true;
+      // A failed factory may retain an owner without ever returning its workspace capability.
+      if (error instanceof CodingControllerCleanupError || error instanceof CodingPrivacyCleanupError ||
+          error instanceof WindowsCodingCleanupError || error instanceof CodingArtifactCleanupError ||
+          error instanceof CodingSeedCleanupError) this.cleanupFailed = true;
       if (this.invalid) result = { success: false, stopped: true, summary: "The coding context changed, so I stopped this task." };
       else if (signal.aborted || (this.lifetime.signal.aborted && !this.commandFailed)) result = { success: false, stopped: true, summary: "Stopped." };
       else if (this.commandFailed) result = { success: false, summary: "A command was refused, stopped or could not be fully observed. The coding task stopped." };

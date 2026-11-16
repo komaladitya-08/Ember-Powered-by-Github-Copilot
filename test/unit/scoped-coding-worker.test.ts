@@ -6,7 +6,11 @@ import type { CommandService } from "../../app/main/commands/types";
 import type { TaskSpec } from "../../app/main/agent/worker";
 import { CodingPrivacyCleanupError } from "../../app/main/agent/coding-privacy-scanner";
 import { CustomCodingController, CodingControllerCleanupError } from "../../app/main/agent/custom-coding-controller";
-import type { CodingFileBroker, CodingReviewWorkspace, CodingWorkspaceReview } from "../../app/main/agent/coding-platform";
+import { ScopedCodingFileError, type CodingFileBroker, type CodingReviewWorkspace, type CodingWorkspaceReview } from "../../app/main/agent/coding-platform";
+import { WindowsCodingCleanupError } from "../../app/main/agent/windows-coding-native";
+import { WindowsFileOnlyWorkspaceCleanupError } from "../../app/main/agent/windows-file-only-workspace";
+import { CodingArtifactCleanupError } from "../../app/main/agent/coding-artifact-store";
+import { CodingSeedCleanupError } from "../../app/main/agent/coding-seed-snapshot";
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 function fixture() {
@@ -124,6 +128,48 @@ it("retains an unknown privacy-worker exit during startup as an unsafe disposal 
   expect(await f.worker.run(new AbortController().signal)).toMatchObject({ success: false, summary: expect.stringContaining("blocked") });
   expect(await f.worker.disposed).toBe(false); expect(f.worker.handoffSafe()).toBe(false);
   await expect(f.worker.dispose()).rejects.toThrow("verified as closed"); expect(f.facts).not.toHaveBeenCalled();
+});
+
+class NativeWorkspaceCleanupError extends WindowsCodingCleanupError {}
+
+it.each([
+  ["native owner", () => new WindowsCodingCleanupError()],
+  ["native workspace subtype", () => new NativeWorkspaceCleanupError()],
+  ["artifact owner", () => new CodingArtifactCleanupError()],
+  ["file-only workspace subtype", () => new WindowsFileOnlyWorkspaceCleanupError()],
+  ["continuation seed", () => new CodingSeedCleanupError()],
+] as const)("retains unknown %s cleanup when stopped during a rejecting workspace factory", async (_kind, failure) => {
+  const f = fixture(), entered = deferred<void>(), release = deferred<void>();
+  const seal = vi.fn(async () => undefined); Object.assign(f.backend, { sealForReview: seal });
+  f.createWorkspace.mockImplementationOnce(async () => { entered.resolve(); await release.promise; throw failure(); });
+  const running = f.worker.run(new AbortController().signal); await entered.promise;
+  const disposing = f.worker.dispose(), disposalFailure = disposing.then(() => null, error => error);
+  expect(f.worker.dispose()).toBe(disposing);
+  try {
+    release.resolve();
+    expect(await running).toMatchObject({ success: false, summary: expect.stringContaining("blocked") });
+    expect(await disposalFailure).toMatchObject({ message: expect.stringContaining("verified as closed") });
+    expect(await f.worker.disposed).toBe(false); expect(f.worker.cleanupComplete()).toBe(false); expect(f.worker.handoffSafe()).toBe(false);
+    expect(f.worker.dispose()).toBe(disposing);
+    expect(f.backend.stop).not.toHaveBeenCalled(); expect(f.backend.close).not.toHaveBeenCalled();
+    expect(seal).not.toHaveBeenCalled(); expect(f.backend.exportReview).not.toHaveBeenCalled(); expect(f.options.publish).not.toHaveBeenCalled();
+    expect(f.facts).not.toHaveBeenCalled(); expect(f.options.commandContext).not.toHaveBeenCalled(); expect(f.service.runner.start).not.toHaveBeenCalled();
+  } finally { release.resolve(); await Promise.allSettled([running, disposing]); }
+});
+
+it.each(["unavailable", "cancelled", "lookalike"] as const)("keeps known-safe %s factory refusal separate from typed cleanup uncertainty", async kind => {
+  const f = fixture(), entered = deferred<void>(), release = deferred<void>();
+  const failure = kind === "lookalike" ? Object.assign(new Error("Fixture refusal"), {
+    name: "WindowsCodingCleanupError", code: "windows-coding-cleanup-unverified",
+  }) : new ScopedCodingFileError(kind);
+  f.createWorkspace.mockImplementationOnce(async () => { entered.resolve(); await release.promise; throw failure; });
+  const running = f.worker.run(new AbortController().signal); await entered.promise;
+  if (kind === "cancelled") f.worker.stop();
+  try {
+    release.resolve(); expect((await running).success).toBe(false); await f.worker.dispose();
+    expect(await f.worker.disposed).toBe(true); expect(f.worker.cleanupComplete()).toBe(true); expect(f.worker.handoffSafe()).toBe(false);
+    expect(f.options.publish).not.toHaveBeenCalled(); expect(f.facts).not.toHaveBeenCalled(); expect(f.backend.exportReview).not.toHaveBeenCalled();
+  } finally { release.resolve(); await Promise.allSettled([running, f.worker.dispose()]); }
 });
 
 function sealedFixture(controllerClose: () => Promise<void>, filesClose: () => Promise<void>) {
