@@ -25,7 +25,6 @@ jobs:
     env:
       EMBER_PIPE_NAMESPACE_IMAGE: ${{ matrix.os }}
       EMBER_PIPE_NAMESPACE_PROBE: "1"
-      EMBER_PIPE_NAMESPACE_BUILD_ROOT: ${{ runner.temp }}\ember-pipe-namespace-build
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -40,6 +39,11 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - name: Portable receipt, environment and terminal-owner contracts
         run: npm test -- test/unit/windows-pipe-namespace.test.ts test/unit/windows-libuv-host-identity.test.ts test/unit/windows-node-lpac-io.test.ts test/unit/experimental-windows-lpac.test.ts test/unit/experimental-windows-lpac-api.test.ts --maxWorkers=1
+      - name: Select the fresh fixed build root on the allocated runner
+        shell: pwsh
+        run: |
+          $pipeBuildRoot = Join-Path $env:RUNNER_TEMP 'ember-pipe-namespace-build'
+          "EMBER_PIPE_NAMESPACE_BUILD_ROOT=$pipeBuildRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Compile only the fixed repository C program
         timeout-minutes: 5
         run: node scripts/experimental/build-windows-pipe-namespace.mjs --destination "$env:EMBER_PIPE_NAMESPACE_BUILD_ROOT" --image "$env:EMBER_PIPE_NAMESPACE_IMAGE"
