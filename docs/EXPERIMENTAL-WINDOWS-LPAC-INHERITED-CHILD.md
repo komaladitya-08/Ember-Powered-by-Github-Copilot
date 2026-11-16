@@ -193,3 +193,16 @@ passed 161 portable tests and both denial controls on each image. AAP-only, NULL
 all returned the same natural stage 18/error 5/`0xc0000022`; every contained writer stopped and closed normally.
 The detached case retained full mapped process/thread DACL grants, while NULL security correctly had no supplied-SD
 payload. Neither isolated input change was sufficient to create the intended child.
+
+At `908b296f63266b742cde52168c6762278c145151`, [run 43836058537](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43836058537)
+passed 162 portable contracts and both denial controls per image. Server 2022's inherited-console variant also
+returned natural stage 18/error 5/`0xc0000022`, complete mapped DACL grants and known Stop/cleanup. Server 2025's
+sixth case encountered host lifecycle uncertainty before payload readout, retaining owners/pins; its creation outcome
+is unknown. The five earlier cases retained their observed natural denials on both images.
+
+Uncertain lifecycle receipts expose only the first host failure's fixed numeric variant, phase, host-operation,
+domain and bounded code. Phases are 1 candidate token verification, 2 caught terminal runtime ownership, 3 fixture Stop,
+4 stopped lease assertion, 5 independent observer Stop, 6 terminal readout gate, 7 observer close, 8 held-image check/close,
+and 9 fixture close. Unknown error shapes remain domain/code 0; no native owner is queried for this receipt, and no C
+payload, root exit, PID, path, message or cause is published after uncertainty. Stop order and retained-owner barriers
+remain unchanged.

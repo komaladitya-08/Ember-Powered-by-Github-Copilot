@@ -2,9 +2,9 @@
 import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { bindInheritedChildObserver, INHERITED_CHILD_FUNCTIONS, InheritedChildCleanupError,
-  inheritedChildNumericFailure, inheritedChildCompilerFailure, inheritedChildVisualStudioRange,
+  inheritedChildNumericFailure, inheritedChildCompilerFailure, inheritedChildVisualStudioRange, inheritedChildLifecycleDiagnostics,
   INHERITED_CHILD_VARIANTS, INHERITED_CHILD_UNCERTAIN_CLEANUP_EXIT, inheritedChildReadout, inheritedChildVariantDefine, inheritedChildSuppliedSdDiagnostic,
-  type InheritedChildAdmission, type InheritedChildFence } from "../fixtures/windows-lpac-inherited-child";
+  type InheritedChildAdmission, type InheritedChildFence, type InheritedChildLifecyclePhase } from "../fixtures/windows-lpac-inherited-child";
 
 describe("inherited-child closed setup diagnostics", () => {
   it("isolates every fixed creation selector without combining the security/console comparisons", () => {
@@ -52,6 +52,27 @@ describe("inherited-child closed setup diagnostics", () => {
     expect(inheritedChildCompilerFailure("LINK : fatal error LNK2019: secret" )).toEqual({ domain: 5, code: 2019 });
     expect(inheritedChildCompilerFailure("private error C12345: extra digit" )).toEqual({ domain: 0, code: 0 });
     expect(inheritedChildCompilerFailure("private non-compiler text" )).toEqual({ domain: 0, code: 0 });
+  });
+  it.each([1, 2, 3, 4, 5, 6, 7, 8, 9] as const)("captures uncertain host phase %s without exposing error payloads", phase => {
+    const diagnostics = inheritedChildLifecycleDiagnostics();
+    const error = Object.assign(new Error("C:\\private\\payload", { cause: { token: "private" } }), { code: "EACCES" });
+    diagnostics.capture(phase, 5, error);
+    expect(diagnostics.observation()).toEqual({ phase, hostOperation: 5, domain: 1, code: 1 });
+    expect(JSON.stringify(diagnostics.observation())).not.toMatch(/private|payload|token|cause/);
+  });
+  it("preserves the first uncertain failure without inspecting later errors or mutable receipt references", () => {
+    const diagnostics = inheritedChildLifecycleDiagnostics(), inspected = vi.fn(() => { throw new Error("private getter"); });
+    diagnostics.capture(3, 4, new Error("CloseHandle failed (Windows error 6)."));
+    const later = new Error("private" ); Object.defineProperty(later, "code", { get: inspected });
+    diagnostics.capture(9, 6, later);
+    const copy = diagnostics.observation(); copy.code = 0;
+    expect(diagnostics.observation()).toEqual({ phase: 3, hostOperation: 4, domain: 2, code: 6 });
+    expect(inspected).not.toHaveBeenCalled();
+  });
+  it.each([[NaN, 5, 0, 5], [10, 5, 0, 5], [1, -1, 1, 0], [1, Infinity, 1, 0]])("closes invalid host lifecycle metadata to zero (%s, %s)", (phase, operation, expectedPhase, expectedOperation) => {
+    const diagnostics = inheritedChildLifecycleDiagnostics();
+    diagnostics.capture(phase as InheritedChildLifecyclePhase, operation, new Error("unclassified private native text"));
+    expect(diagnostics.observation()).toEqual({ phase: expectedPhase, hostOperation: expectedOperation, domain: 0, code: 0 });
   });
 });
 

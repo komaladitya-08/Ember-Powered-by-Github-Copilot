@@ -8,7 +8,8 @@ import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { ExperimentalWindowsLpacFixture } from "../../app/main/agent/experimental-windows-lpac";
 import { loadExperimentalWindowsLpacApi, type WindowsLpacProfile, type WindowsHandle, type WindowsSuspendedProcess } from "../../app/main/agent/experimental-windows-lpac-api";
 import { loadInheritedChildObserver, InheritedChildCleanupError, inheritedChildNumericFailure, inheritedChildCompilerFailure, inheritedChildVisualStudioRange,
-  INHERITED_CHILD_VARIANTS, inheritedChildReadout, inheritedChildVariantDefine, inheritedChildSuppliedSdDiagnostic, type InheritedChildVariant } from "../fixtures/windows-lpac-inherited-child";
+  inheritedChildLifecycleDiagnostics, INHERITED_CHILD_VARIANTS, inheritedChildReadout, inheritedChildVariantDefine, inheritedChildSuppliedSdDiagnostic,
+  type InheritedChildVariant, type InheritedChildLifecyclePhase } from "../fixtures/windows-lpac-inherited-child";
 import { nativeChecks, WindowsNodeProofCleanupError } from "../fixtures/windows-node-lpac-proof";
 import { parseWindowsLpacChildSdDiagnostic, readWindowsLpacChildSdDiagnostic, WINDOWS_LPAC_CHILD_SD_BYTES, type WindowsLpacChildSdDiagnostic } from "../fixtures/windows-lpac-child-sd-diagnostic";
 
@@ -143,6 +144,8 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
       throw fixedFailure();
     }
     let unsafe = false, stopped = false, failed = false, child: number | null = null, descendantRemained = false, hostOperation = 0;
+    const lifecycle = inheritedChildLifecycleDiagnostics();
+    const uncertain = (phase: InheritedChildLifecyclePhase, error: unknown) => { lifecycle.capture(phase, hostOperation, error); unsafe = true; };
     let imagePin: ReturnType<ReturnType<typeof nativeChecks>["pin"]> | undefined;
     let outcome: { mode: InheritedChildVariant; rootExit: number; report: number[] | null; failure: number[] | null; sdAccess: WindowsLpacChildSdDiagnostic | null;
       sdAccessInvalid: boolean; jobStopped: true; membersStopped: true; admitted: boolean; descendantRemained: boolean; profilePaths: boolean } | undefined;
@@ -168,7 +171,7 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
           hostOperation = 4;
           child = observer.admit({ job: exactJob, rootProcess: exactProcess.process, rootPid: exactProcess.pid, image: fixture.paths.program,
             current: () => { imagePin!.unchanged(); return !api.exited(exactProcess.process); }, verifyToken: value => {
-              try { api.verifyToken(exactProfile, value); } catch { unsafe = true; throw fixedFailure(); }
+              try { api.verifyToken(exactProfile, value); } catch (error) { uncertain(1, error); throw fixedFailure(); }
             },
             grant: value => writeAdmission(path.join(fixture.paths.state, "child-admit.bin"), value) });
           if (child === null) await new Promise<void>(resolve => setTimeout(resolve, 10));
@@ -193,10 +196,15 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
         imagePin.unchanged(); descendantRemained = observer.observeDescendants();
         if (!descendantRemained) throw fixedFailure();
       }
-    } catch (error) { failed = true; if (error instanceof InheritedChildCleanupError || error instanceof WindowsNodeProofCleanupError) unsafe = true; }
+    } catch (error) { failed = true; if (error instanceof InheritedChildCleanupError || error instanceof WindowsNodeProofCleanupError) uncertain(2, error); }
     finally {
       restoreEnvMarker(previous);
-      try { const lease = await fixture.stop(15_000); lease.requireStopped(); observer.requireStopped(); stopped = true; } catch { unsafe = true; }
+      let stopPhase: InheritedChildLifecyclePhase = 3;
+      try {
+        const lease = await fixture.stop(15_000);
+        stopPhase = 4; lease.requireStopped();
+        stopPhase = 5; observer.requireStopped(); stopped = true;
+      } catch (error) { uncertain(stopPhase, error); }
       if (stopped && !unsafe) try {
         imagePin?.unchanged();
         const rootExit = fixture.exitCode();
@@ -221,13 +229,17 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
         return { mode: variant, rootExit, report, failure: diagnostic, sdAccess, sdAccessInvalid,
           jobStopped: true as const, membersStopped: true as const, admitted: child !== null, descendantRemained, profilePaths };
         });
-      } catch (error) { failed = true; if (error instanceof InheritedChildCleanupError) unsafe = true; }
-      if (!unsafe) try { observer.closeStopped(); } catch { unsafe = true; }
-      if (!unsafe && imagePin) try { imagePin.unchanged(); imagePin.close(); imagePin = undefined; } catch { unsafe = true; }
-      if (!unsafe) try { await fixture.close(); } catch { unsafe = true; }
+      } catch (error) { failed = true; if (error instanceof InheritedChildCleanupError) uncertain(6, error); }
+      if (!unsafe) try { observer.closeStopped(); } catch (error) { uncertain(7, error); }
+      if (!unsafe && imagePin) try { imagePin.unchanged(); imagePin.close(); imagePin = undefined; } catch (error) { uncertain(8, error); }
+      if (!unsafe) try { await fixture.close(); } catch (error) { uncertain(9, error); }
       if (unsafe) { safeToRemove = false; retainedOwners.push({ fixture, profile, job, process, observer, parent, imagePin, native }); }
     }
-    if (unsafe) throw new InheritedChildCleanupError();
+    if (unsafe) {
+      // This is captured host lifecycle metadata, never a native/C payload or a query of an uncertain owner.
+      console.info("Inherited-child lifecycle uncertainty", JSON.stringify({ variant: INHERITED_CHILD_VARIANTS.indexOf(variant) + 1, ...lifecycle.observation() }));
+      throw new InheritedChildCleanupError();
+    }
     if (!outcome) throw fixedFailure();
     const sdAccessMissing = inheritedChildSuppliedSdDiagnostic(variant) && outcome.failure?.[0] === 18 && outcome.failure?.[24] !== 0xffffffff && !outcome.sdAccess;
     if (sdAccessMissing || outcome.sdAccessInvalid) failed = true;

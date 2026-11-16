@@ -35,6 +35,21 @@ export function inheritedChildNumericFailure(error: unknown): { domain: number; 
   } catch { /* Unknown host/ABI error shapes remain unclassified. */ }
   return unknown;
 }
+export type InheritedChildLifecyclePhase = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+/** Host metadata only. Capture the first uncertain lifecycle failure without querying its retained native owners. */
+export function inheritedChildLifecycleDiagnostics() {
+  type Receipt = { phase: number; hostOperation: number; domain: number; code: number };
+  let first: Receipt | undefined;
+  return {
+    capture(phase: InheritedChildLifecyclePhase, hostOperation: number, error: unknown): void {
+      if (first) return;
+      first = { phase: Number.isInteger(phase) && phase >= 1 && phase <= 9 ? phase : 0,
+        hostOperation: Number.isInteger(hostOperation) && hostOperation >= 1 && hostOperation <= 6 ? hostOperation : 0,
+        ...inheritedChildNumericFailure(error) };
+    },
+    observation: (): Receipt => first ? { ...first } : { phase: 0, hostOperation: 0, domain: 0, code: 0 },
+  };
+}
 export function inheritedChildCompilerFailure(text: string): { domain: number; code: number } {
   // Compiler output is inspected in memory and never included in the resulting exception or receipt.
   const match = /\b(?:fatal )?error (C\d{4}|LNK\d{4})\b/.exec(text);
