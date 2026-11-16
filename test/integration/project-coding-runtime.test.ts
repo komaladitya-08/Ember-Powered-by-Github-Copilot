@@ -204,10 +204,18 @@ it.skipIf(process.env.EMBER_UIUX_TEST !== "1" || process.platform !== "linux" ||
     const second = await prepare("Account cleanup review", cleanupRequest), secondResult = access.state(second)[0];
     expect(secondResult).toMatchObject({ status: "done", files: 0, checks: { ran: 0, passed: 0, failed: 0 } });
     expect(fs.readdirSync(resources.reviewBase)).not.toEqual([]);
+    // A finished worker can precede the conductor's final reply. The provider switch waits for that reply, and its
+    // scope is revoked before the asynchronous reconnect clears the project book. Do not announce a forgotten
+    // account while Home's post-forgotten refresh could still read that old book.
+    await expect.poll(() => host!.conversationTurn).toBe("idle");
     provider = { ...provider, config: { ...provider.config, apiKey: "synthetic-second-account" } };
-    host.providerChanged();
+    const reconnected = host.providerChanged();
+    expect(reconnected).not.toBeNull();
     expect(host.projectWorkspaceScope()).toBeNull();
+    expect(host.projectSessionsState().selectedProjectId).toBe(second);
     await codingIpc.reset(); await resources.invalidate();
+    expect(await reconnected).toBe("ready");
+    expect(host.projectSessionsState()).toEqual({ projects: [], selectedProjectId: null });
     emit("onConversationForgotten"); await events;
     expect(access.state(second)).toEqual([]); expect(await access.review(secondResult.id)).toBeNull();
     expect(fs.readdirSync(resources.reviewBase)).toEqual([]);
