@@ -77,7 +77,7 @@ export function parseWindowsUvSpawnBuildReceipt(bytes, expectedCompileCommit) {
     }
     if (!strict(listing, ["bytes", "sha256", "review"]) || listing.review !== "not-reviewed" || !fingerprint({ bytes: listing.bytes, sha256: listing.sha256 }, buildPin.maximumListingBytes) ||
         !fingerprint(object, buildPin.maximumObjectBytes) || !strict(emission, ["name", "bytes", "sha256", "schema", "review", "status"]) ||
-        emission.name !== "observer-emission.json" || emission.schema !== 1 || emission.review !== "not-reviewed" || !["candidate", "refused"].includes(emission.status) ||
+        emission.name !== "observer-emission.json" || emission.schema !== 2 || emission.review !== "not-reviewed" || !["candidate", "refused"].includes(emission.status) ||
         !fingerprint({ bytes: emission.bytes, sha256: emission.sha256 }, emissionLimits.artifactBytes) ||
         !equal(value.build, { ...buildPin, ...observed, generatedProjects: projects, observerListing: listing, observerObject: object, observerEmission: emission }) ||
         !strict(value.tools, ["compiler", "linker", "msbuild", "vcvars", "vswhere", "python", "cmake"]) || !Object.values(value.tools).every(item => fingerprint(item)) || !strict(value.assets, ["probe"])) fail();
@@ -392,7 +392,7 @@ export async function buildWindowsUvSpawnProbe({ archivePath, destination, pytho
     fs.writeFileSync(emissionFile, emissionBytes, { flag: "wx" });
     const emissionReadback = inputBytes(emissionFile, emissionLimits.artifactBytes); if (!emissionBytes.equals(emissionReadback)) fail();
     parseWindowsUvSpawnEmission(emissionReadback);
-    const observerEmission = { name: "observer-emission.json", bytes: emissionReadback.length, sha256: hash(emissionReadback), schema: 1, review: "not-reviewed", status: emission.status };
+    const observerEmission = { name: "observer-emission.json", bytes: emissionReadback.length, sha256: hash(emissionReadback), schema: emission.schema, review: "not-reviewed", status: emission.status };
     diagnostic.checkpoint(checkpoints.object);
     const object = inputBytes(path.join(buildDirectory, "ember_uv_spawn_probe.dir", buildPin.configuration, "windows-uv-spawn-observe.obj"), buildPin.maximumObjectBytes);
     const observerObject = { bytes: object.length, sha256: hash(object) };

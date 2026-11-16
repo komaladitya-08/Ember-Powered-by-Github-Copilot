@@ -238,12 +238,49 @@ fixed target/constraint/unit IDs and a count capped at 17 (meaning at least 17).
 captured compiler output or foreign exception. Its constructor is internal trusted plumbing, not an authentication
 boundary. Other checkpoints retain their prior shapes; this is evidence, never compile or native admission.
 The correction passed all 447 affected tests across fifteen suites, scoped lint, syntax, YAML/native-hold and diff
-checks, a fresh final typecheck and independent review. Its actual Windows readback/build/emission outcome remains pending.
+checks, a fresh final typecheck and independent review. The subsequent Windows result is below.
+
+The sixth automatic compile-only run
+[43915980258](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43915980258), at head
+`872b64ab986c09c0632a46d49f6d44f1fc0efc07`, passed: Linux 447 tests; Windows 424 passed and 23 expected skips.
+The trusted compile merge was `91d9e300531ed59d3daaceec244901af6e05abae`. Artifact `14251015628` was exactly
+134733 bytes with SHA-256 `b032a14c0f950f7fc136d3ec3b6bfde2e334f2fa38db1026bfdf574cdb12d0e7` and contained only
+the fixed PE, licence, build receipt and closed emission metadata. Receipt/source/current 16-file recipe, tool versions,
+project readbacks, PE identity, emission hash and licence were independently verified. The PE was 246272 bytes with
+SHA-256 `dfbfd00d0b61862582d61c0e8664c8b7ebf1b846fa6b45aebeb668c335ba9bc1`; no PE was executed locally or by this workflow.
+
+The actual schema-1 emission metadata was `refused` and `not-reviewed`, with six all-zero unknown function records.
+Its private listing identity was 28630 bytes, SHA-256 `7bc9da2ac5b7b5f90e7e447c09c94e65a8cb9d3d646283b338590d490491ca0e`.
+Those placeholders do not prove zero API calls, any recognised delegate, argument/return dataflow or LastError preservation.
+No raw listing, object or compiler log was published or viewed during the post-build review. Native execution remains held.
+
+The next evidence-only format is emission schema 2; the build receipt's observerEmission schema is consistently 2.
+The original inspection predicate, status and six function observations are preserved. Only after an original
+refusal does a bounded replay add a fixed `refusal` object: schema, phase/reason IDs, fixed function ID (0 means
+unknown), count capped at 10000 and mask capped at 63. Candidate carries `refusal:null`, remains `not-reviewed`, and
+cannot admit native execution. Schema 1 is not silently read as this new format; the sixth result remains bound to
+its original recipe and schema.
+
+Reasons distinguish input/encoding/line bounds, PROC/ENDP structure, missing fixed wrappers, transfer syntax and
+the final call-count contract. Encoding masks expose only byte classes (including byte 127 in the above-126 class)
+and recognised UTF-8/UTF-16 BOM prefixes;
+they neither emit bytes nor normalise/accept encodings. Structure masks refer only to the six fixed wrappers.
+Call-contract masks describe only the existing count predicates. Transfer refusals retain priority over the final
+all-records count gate. Early placeholders stay unknown; a final call-contract reason identifies completed syntax
+observations, not machine behavior. Diagnostic exceptions become unknown/internal refusals without reading their
+properties, text or captured streams. No raw line, symbol, operand, address, path or assembly is included.
+
+The diagnostic passed all 469 affected tests across sixteen suites, scoped lint, syntax, YAML/native-hold and diff
+checks, a fresh final typecheck and independent review. An earlier full batch passed 468 tests but the unchanged
+nine-subprocess reader test exceeded its five-second aggregate limit; the isolated 31 reader tests and a fresh
+469-test batch passed without code, test or deadline changes. The seventh compile-only outcome remains pending. Even a future syntax candidate
+requires separate reviewed emitted Windows ABI/LastError controls before the full native probe can be considered;
+this change adds no machine-code parser, instruction rewriting or native admission.
 
 Portable source, recipe, decoder, actual observer C-shim and native-owner fault tests are implemented. The Linux shim
 uses test-only Win32 declarations around the production observer; it is not Windows ABI, policy or native evidence.
 The initial frozen affected batch passed 263 tests across ten suites with no skips. Scoped ESLint, final `tsc --noEmit`,
 YAML/action pins/job-scope and diff checks passed. New source preparation against the existing authenticated archive also passed: both 155-file
 stock/working trees were independently revalidated against the exact manifests above, without a download or build.
-The Windows build/emission verification and all native outcomes remain pending. The reviewed workflow may
+The Windows compile verification passed above; emitted-behavior verification and all native outcomes remain pending. The reviewed workflow may
 compile and publish only the public fixed PE, licence, compact receipt and closed unreviewed emission metadata.

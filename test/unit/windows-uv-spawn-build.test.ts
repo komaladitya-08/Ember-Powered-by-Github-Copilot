@@ -16,7 +16,7 @@ function receipt() {
     build: { ...buildPin, visualStudioVersion: "17.14.37906.3", compilerVersion: "19.44.35211.0", linkerVersion: "14.44.35211.0", msbuildVersion: "17.14.23.30406",
       pythonVersion: "3.12.10", cmakeVersion: "3.31.6", generatedProjects: ["uv_a", "ember_uv_spawn_probe"].map(target => ({ target, ...fingerprint(), targetMacro: "0x0602", releaseDefinitionCount: 1 })),
       observerListing: { ...fingerprint(), review: "not-reviewed" }, observerObject: fingerprint(),
-      observerEmission: { name: "observer-emission.json", ...fingerprint(), schema: 1, review: "not-reviewed", status: "candidate" } },
+      observerEmission: { name: "observer-emission.json", ...fingerprint(), schema: 2, review: "not-reviewed", status: "candidate" } },
     tools: Object.fromEntries(["compiler", "linker", "msbuild", "vcvars", "vswhere", "python", "cmake"].map(name => [name, fingerprint()])),
     recipe: windowsUvSpawnRecipe() as { file: string; sha256: string }[], commit, assets: { probe: { name: "uv-spawn-probe.exe", ...fingerprint() } } };
 }
@@ -110,6 +110,7 @@ it("bounds tools, public assets, generated project witnesses and private emissio
     (value: ReturnType<typeof receipt>) => { value.build.observerObject.sha256 = "invalid"; },
     (value: ReturnType<typeof receipt>) => { value.build.observerEmission.name = "private-path"; },
     (value: ReturnType<typeof receipt>) => { value.build.observerEmission.review = "approved"; },
+    (value: ReturnType<typeof receipt>) => { value.build.observerEmission.schema = 1; },
   ]) { const value = receipt(); mutate(value); expect(() => parse(value)).toThrow(); }
   expect(() => parse({ ...receipt(), unknown: "private" })).toThrow();
 });
