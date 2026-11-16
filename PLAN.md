@@ -4886,6 +4886,6 @@ image, 97 portable, three native controller and one genuine Electron case, zero 
 in 16.393/15.970 seconds with the normal OS sandbox, sender guards and unforced exit `0`. Continue first read proposal
 `43`, produced `44` against cumulative baseline/current `41`, survived predecessor Forget and preserved completed
 `42`/`44` exports after global erasure. Public #223 advanced to `7eabd077` with the same production source and
-`canContinue: true`; its exact-head native matrix above is green while ordinary full CI remains in progress.
+`canContinue: true`; its exact-head native matrix above is green while ordinary CI is blocked by the known Windows LPAC child-launch case.
 Command-runtime software blockers, live-provider verification and Windows 10/11 laptop acceptance
 remain separate requirements. No main merge or release is authorised by these candidate proofs.

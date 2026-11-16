@@ -88,5 +88,5 @@ Electron completed in 16.393/15.970 seconds, retaining the normal OS sandbox, se
 Continuation first read the prior `43` proposal, then produced `44` against cumulative baseline/current `41`.
 Predecessor Forget preserved the independent copy; global erasure preserved only completed `42`/`44` user exports.
 Public PR #223 advanced to `7eabd077` with the same production source and `canContinue: true`; its exact-head native
-matrix above is green while ordinary full CI remains in progress.
+matrix above is green while ordinary CI is blocked by the known Windows LPAC child-launch case.
 No live-provider, physical Windows client, Windows command-runtime, merge or release acceptance is claimed.

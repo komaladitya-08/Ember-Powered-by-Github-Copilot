@@ -49,7 +49,7 @@ Electron completed in 16.393/15.970 seconds with the normal OS sandbox, sender g
 Continue read the previous proposal `43` before changing it to `44`, preserved baseline/current `41`, survived
 predecessor Forget and retained completed `42`/`44` user exports after global erasure. Public PR #223 is now
 `7eabd077`, with the same production source and `canContinue: true`; its native matrix above is green while the
-ordinary full CI run remains in progress.
+ordinary CI remains blocked by the known Windows LPAC child-launch case.
 These remain candidate proofs, not merge, release, live-provider or physical Windows acceptance.
 
 The real bundled runtime tests demonstrate two unresolved boundaries:

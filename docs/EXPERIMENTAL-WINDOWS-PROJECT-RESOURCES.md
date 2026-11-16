@@ -65,7 +65,7 @@ servers: 97 portable, three native controller and one actual Electron case per i
 completed in 16.393/15.970 seconds with the normal OS sandbox, sender guards and unforced exit `0`. Continue read
 prior proposal `43`, produced `44` with cumulative baseline/current `41`, survived predecessor Forget and preserved
 completed `42`/`44` exports after global erasure. Public PR #223 advanced to `7eabd077` with the same production
-source and `canContinue: true`. Its exact-head native matrix above is green; ordinary full CI remains in progress.
+source and `canContinue: true`. Its exact-head native matrix above is green; ordinary CI is blocked by the known Windows LPAC child-launch case.
 These results do not certify a merge, live provider, native picker UI or Windows 10/11 laptop.
 
 Portable resource tests exercise the host ledgers and lifecycle using a native model that distinguishes drive paths

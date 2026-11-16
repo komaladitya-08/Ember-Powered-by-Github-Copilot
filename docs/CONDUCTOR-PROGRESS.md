@@ -2,7 +2,7 @@
 
 Reviewed 16 November 2026. The original submitted baseline was `audit/beta-readiness` at `76d0a2c9`;
 main was `85b5bd56`. The follow-up now includes a Windows files-only product candidate and native continuation
-implementation. Its completed native/product proofs are distinguished below; ordinary full CI is still running. The legacy native-SDK coding
+implementation. Its completed native/product proofs are distinguished below; ordinary CI remains blocked by the known Windows LPAC child-launch case. The legacy native-SDK coding
 gate remains false. This is not a merge or release certification.
 
 ## What was already implemented
@@ -153,7 +153,7 @@ skips or failures. Electron completed in 16.393/15.970 seconds. Continue first r
 it to `44`, and retained cumulative baseline/current `41`. Predecessor Forget preserved the independent `44` copy;
 global erasure retained only completed `42`/`44` user exports. The normal OS sandbox, sender guards and unforced
 exit `0` remained verified. Public PR #223 advanced to `7eabd077` with the same production source and
-`canContinue: true`. The exact-head native matrix above is green; the ordinary full CI run is still in progress.
+`canContinue: true`. The exact-head native matrix above is green; ordinary CI is blocked by the known Windows LPAC child-launch case.
 Commands, live-provider and physical Windows acceptance remain separate; the candidate is not ready to merge.
 
 ## What still needs implementation or verification
@@ -197,6 +197,18 @@ the coding isolation, persistent recovery and orchestration work above. Main sho
 requirements and relevant native acceptance are satisfied.
 
 ## Verification
+
+At submitted head `7eabd077`, [ordinary CI 43813490098](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43813490098)
+completed with Linux, macOS, RHEL 8, voice, evaluation and RPM/AppImage packaging successful. Windows units, build,
+desktop, voice, UI Automation, staging and ZIP checks passed; its job failed solely at the existing experimental LPAC
+stage-18 child access denial (`CreateProcessW` error 5). Overall CI remains red and the candidate is not merge-ready.
+
+The Linux job passed 19,656 units with 38 environment skips, 304 integration cases with 732 platform/environment
+skips, two kill-switch cases, the genuine Electron coding journey (7.867 seconds) and 294 renderer cases. Skipped
+platform cases are unverified there. Dedicated PR [controller 43813490107](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43813490107)
+passed 202 checks and [artifact 43813490028](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43813490028)
+passed 410 across the two Windows Server images. These PR jobs checked merge `4893079a` of exact `7eabd077` into
+`0f70a7f7`; the direct-head manual proofs above remain separate receipts.
 
 At `410161e7`, full run `43804472777` passed Linux lint/types/build/lab, 19,480 units (38 environment skips), two Stop
 deadlines, 300 integrations (698 environment skips), the genuine sandboxed Electron journey (1/1, 8.77 seconds) and
