@@ -94,6 +94,13 @@ The conductor can give coding sessions the same bounded display names as desktop
 project board label; the task goal, original permission words, captured project and folder remain separate. Offered
 coding tools still check live availability before starting, and mixed handoff guidance appears only when that tool exists.
 
+Finished, failed or stopped coding sessions now offer Review changes when exactly one retained result matches
+that session's project, task and source. It opens the existing review without a model request or new work. The
+renderer checks current session/result metadata again after the asynchronous read; Forget, replacement and navigation
+cannot attach a stale review to another session. Opening from the still-focused session control brings the review
+heading into view; navigation during loading keeps the user's focus. Closing returns focus to the current matching
+session control.
+
 The [explicit continuation flow](CODING-CONTINUATION-MATERIALIZATION.md) carries a reviewed result's complete proposed
 files into a fresh coding session while preserving the original cumulative baseline. Home requires a new typed request;
 the host pins its result, project, account and original source before waiting. Earlier task permissions never carry over.
@@ -205,6 +212,8 @@ Home-to-Host coding session or physical client acceptance; see [development chec
    remain future work. Native coding/desktop sequencing remains gated.
 5. **Real-provider verification.** Offline mock-provider tests establish deterministic behavior, not successful live
    authentication, provider tool compatibility or useful task completion. Verify those on the chosen account/provider.
+   No accepted live-provider credential was available in this environment, so no live model request was attempted.
+   This verification needs the chosen account's sign-in; it is not intrinsically dependent on a Windows laptop.
 
 The [Windows coding boundary plan](WINDOWS-CODING-BOUNDARY-PLAN.md) turns the isolation blocker into explicit native
 acceptance gates. Its launcher, ACL/handle containment, whole runtime, toolchains and result traversal need actual
@@ -222,6 +231,30 @@ the coding isolation, persistent recovery and orchestration work above. Main sho
 requirements and relevant native acceptance are satisfied.
 
 ## Verification
+
+The current integrated product candidate is [draft #236](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/236)
+at `88106606726e0f24e43f8ae7f5d430f899ab0f34`, including the session review change from
+[draft #235](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/235) at `f5871bbe`.
+[Completed CI 43877755675](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43877755675)
+has six successful jobs, one failed Windows job and two gated skips. The sole Windows failure remains the existing
+LPAC stage-18 child denial (`CreateProcessW` error 5, NT status `0xc0000022`); overall CI is red and this candidate
+is not merge-ready. All non-Windows jobs succeeded. Linux passed 19,755 units (38 skipped), 306 offline integrations
+(753 platform/gated skips), both isolated Stop cases, the genuine sandboxed Electron journey and all 314 renderer
+cases across 21 files. Windows passed 19,357 units (432 skipped), and macOS 19,406 (387 skipped).
+
+The separate [controller run 43877755446](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43877755446)
+passed all six jobs. Each Windows Server image passed 97 portable cases, three native controller cases, one ZIP
+case and one genuine files-only Electron journey, with zero skips. These retain mock providers and supplied picker
+answers. The preceding session-review candidate likewise passed its
+[dedicated controller run](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43876270000);
+its [ordinary CI](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43876269950) had the
+same sole Windows LPAC failure and successful non-Windows jobs.
+
+Focused local verification of the combined candidate passed 198 wait/lifecycle and 149 mapping/copy cases, plus
+one real pinned-SDK integration with two inert workers and a combined reply in the same turn. The genuine Electron
+coding journey passed with the normal OS sandbox in 30.08 seconds, and both Stop deadline cases passed without
+changing their deadlines. These checks do not establish live-provider completion, physical laptop behaviour or a
+Windows command backend. The native diagnostic sibling drafts are separate experiments, not product capabilities.
 
 At submitted head `7eabd077`, [ordinary CI 43813490098](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43813490098)
 completed with Linux, macOS, RHEL 8, voice, evaluation and RPM/AppImage packaging successful. Windows units, build,
