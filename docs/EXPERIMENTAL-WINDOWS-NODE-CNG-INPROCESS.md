@@ -55,8 +55,32 @@ not identify that branch. Classification occurs only after the existing stop and
 is wiped in `finally`, and later cleanup uncertainty suppresses publication. Original arguments, test failures,
 ownership rules and cleanup acceptance remain unchanged. The follow-up passed all 734 affected tests across 18 files
 with zero skips, including 32 focused output/lifecycle cases, plus scoped lint, YAML and diff checks. Root independently
-reviewed the actual source and pinned Node implementation. The exact-final TypeScript check passed. The next native
-outcome remains pending.
+reviewed the actual source and pinned Node implementation. The exact-final TypeScript check passed; its second
+native outcome is recorded below.
+
+The second [native run 43921520917](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43921520917),
+at exact head `5de5556dc7cb19efa09b63f5020750e479e64bb3` and runtime merge
+`50578b0daa64252a2e0eaaf2ac6eb8210b4ee8ee`, passed 733 portable tests with one expected skip per image. Both
+ordinary-host cases passed. Both LPAC cases still failed with exit 1, no fixed report and 144 private output bytes,
+now classified as discovery enum 1. Jobs stopped and known cleanup completed. This establishes the exact CLI
+could-not-find branch before test import; it does not identify the particular denied underlying operation.
+
+The narrow routing correction passes `..\tools\<role>-cng-inprocess.test.cjs` from the existing work cwd. A host-only
+builder requires the exact sibling work/tools relationship and verifies that this literal pattern resolves to the
+same pinned absolute test file. Program bytes, image, copied module, permissions, zero-capability policy, ordinary
+control, report/output gates and Stop/cleanup remain unchanged. The classifier compares the actual selected fixed
+pattern and retains its absolute-form refusal coverage. No arbitrary user command is rewritten.
+
+Pinned [Glob source](https://github.com/nodejs/node/blob/60553651579ec33ca1aef9e1eedab2c3855f1f7e/lib/internal/fs/glob.js#L372)
+routes an absolute Windows pattern through the drive root, while leading `..` visits only the parent of the current
+work directory. A local real Node/public-Glob control synthetically denies metadata outside a disposable owned
+tree: absolute discovery yields no match, while the relative route finds and imports the identical file. Separate
+actual in-process CLI controls exercise the relative pattern. This is a routing simulation, not Windows enforcement
+or proof of the next native result. The correction passed 52 focused cases and the full 749-case gate across 19 files
+with zero skips, plus scoped lint, YAML and diff checks. The first focused attempt exposed a test-only wrapper dropping
+the new pattern parameter; forwarding the parameter restored that coverage without changing production acceptance.
+Root's actual final source, test and workflow review closed clean, and the exact-final TypeScript check passed.
+The third native outcome remains pending.
 
 Even successful fixed tests would only advance feasibility:
 product work still needs root-only command ownership, canaries, bounded execution/output, stopped-tree transfer,

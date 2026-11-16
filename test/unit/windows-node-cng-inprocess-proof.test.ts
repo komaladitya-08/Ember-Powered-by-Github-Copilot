@@ -67,15 +67,16 @@ vi.mock("../fixtures/windows-node-lpac-startup", async original => {
 vi.mock("../fixtures/windows-node-lpac-io", async original => {
   const actual = await original<typeof import("../fixtures/windows-node-lpac-io")>();
   return { ...actual, loadWindowsNodeIo: () => ({
-    createHost(_program: string, command: Buffer) { state.events.push("host-create"); expect(command.toString("utf16le")).toContain('"--experimental-test-isolation=none"'); return { process: 20n, thread: 21n, pid: 22 }; },
+    createHost(_program: string, command: Buffer) { state.events.push("host-create"); expect(command.toString("utf16le")).toContain('"--experimental-test-isolation=none"'); expect(command.toString("utf16le")).toContain('"..\\tools\\host-cng-inprocess.test.cjs"'); return { process: 20n, thread: 21n, pid: 22 }; },
     createLpac(_profile: unknown, _program: string, command: Buffer) {
       state.events.push("lpac-create"); expect(command.toString("utf16le")).toContain('"--experimental-test-isolation=none"');
+      expect(command.toString("utf16le")).toContain('"..\\tools\\lpac-cng-inprocess.test.cjs"');
       if (!state.fault.startsWith("discovery")) state.files.set(state.statePath + "\\lpac-cng-inprocess-report.bin", state.fault === "report" ? Buffer.alloc(64) : report(1)); return { process: 40n, thread: 41n, pid: 42 };
     },
     acceptHostControl() { state.events.push("host-io-accepted"); },
     readAfterStopped(stopped: () => void) {
       stopped(); state.events.push("output-writer-exclusion"); stopped();
-      const bytes = state.fault.startsWith("discovery") ? Buffer.from(`Could not find '${state.toolsPath}\\lpac-cng-inprocess.test.cjs'\n`) : Buffer.alloc(0);
+      const bytes = state.fault.startsWith("discovery") ? Buffer.from("Could not find '..\\tools\\lpac-cng-inprocess.test.cjs'\n") : Buffer.alloc(0);
       state.outputBuffers.push(bytes); return bytes;
     },
     close() { state.events.push("io-close"); if (state.fault === "io-close") throw state.cleanup(); },
@@ -83,8 +84,8 @@ vi.mock("../fixtures/windows-node-lpac-io", async original => {
 });
 vi.mock("../fixtures/windows-node-cng-inprocess-output", async original => {
   const actual = await original<typeof import("../fixtures/windows-node-cng-inprocess-output")>();
-  return { ...actual, classifyWindowsNodeCngInprocessOutput(bytes: Buffer, file: string) {
-    state.events.push("output-classify"); return actual.classifyWindowsNodeCngInprocessOutput(bytes, file);
+  return { ...actual, classifyWindowsNodeCngInprocessOutput(bytes: Buffer, file: string, selectedPattern?: string) {
+    state.events.push("output-classify"); return actual.classifyWindowsNodeCngInprocessOutput(bytes, file, selectedPattern);
   } };
 });
 beforeEach(() => {

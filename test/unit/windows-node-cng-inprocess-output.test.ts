@@ -23,3 +23,12 @@ it("does not resolve a different, noncanonical or control-bearing host filename"
     expect(classifyWindowsNodeCngInprocessOutput(Buffer.from(message + "\n"), value as string)).toBe(0);
   }
 });
+it("compares the actual selected fixed relative pattern while retaining the absolute form", () => {
+  const relative = "..\\tools\\lpac-cng-inprocess.test.cjs";
+  expect(classifyWindowsNodeCngInprocessOutput(Buffer.from(`Could not find '${relative}'\n`), file, relative)).toBe(1);
+  expect(classifyWindowsNodeCngInprocessOutput(Buffer.from(message + "\n"), file)).toBe(1);
+  expect(classifyWindowsNodeCngInprocessOutput(Buffer.from(message + "\n"), file, relative)).toBe(0);
+  for (const pattern of ["..\\other\\lpac-cng-inprocess.test.cjs", relative.replace("lpac-", "host-"), "../tools/lpac-cng-inprocess.test.cjs", "..\\..\\tools\\lpac-cng-inprocess.test.cjs"]) {
+    expect(classifyWindowsNodeCngInprocessOutput(Buffer.from(`Could not find '${pattern}'\n`), file, pattern)).toBe(0);
+  }
+});

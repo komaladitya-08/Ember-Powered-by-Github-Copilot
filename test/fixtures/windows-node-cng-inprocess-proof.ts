@@ -17,6 +17,7 @@ import { parseWindowsNodeSourceBuildReceipt } from "../../scripts/experimental/b
 import { windowsNodeCngInprocessPrograms, windowsNodeCngInprocessProgramReceipts, WINDOWS_NODE_CNG_INPROCESS_ISSUER, WINDOWS_NODE_CNG_INPROCESS_MODULE } from "./windows-node-cng-inprocess-program.mjs";
 import artifactPin from "../../scripts/experimental/windows-node-cng-artifact-pin.json";
 import { classifyWindowsNodeCngInprocessOutput } from "./windows-node-cng-inprocess-output";
+import { windowsNodeCngInprocessTestRoute } from "./windows-node-cng-inprocess-route";
 
 export { parseWindowsNodeSourceBuildReceipt };
 
@@ -114,6 +115,7 @@ export async function runWindowsNodeCngInprocessProbe(input: { parent: string; b
   const directories: WindowsHandle[] = [], pins: ReturnType<typeof native.pin>[] = [], attemptedPins = new Set<object>();
   let fixture: ExperimentalWindowsLpacFixture | undefined, profile: WindowsLpacProfile | undefined, lpacProcess: WindowsSuspendedProcess | undefined;
   let io: ReturnType<typeof loadWindowsNodeIo> | undefined, program = "", environment: Buffer | undefined;
+  let routes: Readonly<Record<"host" | "lpac", ReturnType<typeof windowsNodeCngInprocessTestRoute>>> | undefined;
   let phase = "receipt";
   let stoppedHost: { exitCode: number; jobStopped: true } | undefined, hostReportFact: ReturnType<typeof parseWindowsNodeCngInprocessReport> | null = null;
   let hostIdentity: WindowsLibuvHostIdentity | undefined;
@@ -148,10 +150,10 @@ export async function runWindowsNodeCngInprocessProbe(input: { parent: string; b
     },
   };
   const argumentsFor = (role: "host" | "lpac") => {
-    if (!fixture) throw new Error("No fixed in-process fixture exists.");
+    if (!fixture || !routes) throw new Error("No fixed in-process fixture exists.");
     return ["--no-warnings", "--experimental-test-isolation=none", "--test-reporter=tap",
       `--test-reporter-destination=${path.join(fixture.paths.state, `${role}-cng-inprocess.tap`)}`, "--test",
-      path.join(fixture.paths.tools, `${role}-cng-inprocess.test.cjs`)];
+      routes[role].pattern];
   };
   const readReport = (token: 0 | 1) => {
     if (!fixture) throw new Error("No fixed source-Node in-process probe fixture was created.");
@@ -204,6 +206,8 @@ export async function runWindowsNodeCngInprocessProbe(input: { parent: string; b
       },
     });
     if (!profile) throw new Error("The fixed source-Node in-process probe has no fresh package identity.");
+    routes = Object.freeze({ host: windowsNodeCngInprocessTestRoute(fixture.paths.work, fixture.paths.tools, "host"),
+      lpac: windowsNodeCngInprocessTestRoute(fixture.paths.work, fixture.paths.tools, "lpac") });
     program = path.join(fixture.paths.tools, "source-node.exe");
     controlled.writeNewFile(program, bytes, experimentalWindowsSddl(controlled.ownerSid(), profile.sidText, "read", false));
     const stagedPin = acquirePin(program, 128 * 1024 * 1024); pins.push(stagedPin);
@@ -213,7 +217,7 @@ export async function runWindowsNodeCngInprocessProbe(input: { parent: string; b
       if (stagedBytes.length !== record.bytes || digest(stagedBytes) !== record.sha256) throw new Error("The staged fixed source-Node in-process probe differs from its verified build asset.");
     } finally { stagedBytes.fill(0); }
     for (const role of ["host", "lpac"] as const) {
-      const file = path.join(fixture.paths.tools, `${role}-cng-inprocess.test.cjs`), data = Buffer.from(windowsNodeCngInprocessPrograms[role], "utf8");
+      const file = routes[role].file, data = Buffer.from(windowsNodeCngInprocessPrograms[role], "utf8");
       if (data.length < 1 || data.length > 16 * 1024) throw new Error("The fixed in-process test file exceeds its limit.");
       controlled.writeNewFile(file, data, experimentalWindowsSddl(controlled.ownerSid(), profile.sidText, "read", false));
       pins.push(acquirePin(file, 16 * 1024)); data.fill(0);
@@ -257,7 +261,7 @@ export async function runWindowsNodeCngInprocessProbe(input: { parent: string; b
     const outputBytes = ownedIo.readAfterStopped(() => { prepared.exitCode(); });
     let output: Readonly<{ bytes: number; empty: boolean; discovery: 0 | 1 }>;
     try { output = Object.freeze({ bytes: outputBytes.length, empty: outputBytes.length === 0,
-      discovery: classifyWindowsNodeCngInprocessOutput(outputBytes, path.join(prepared.paths.tools, "lpac-cng-inprocess.test.cjs")) }); }
+      discovery: classifyWindowsNodeCngInprocessOutput(outputBytes, routes.lpac.file, routes.lpac.pattern) }); }
     finally { outputBytes.fill(0); }
     const lpacReport = readReport(1);
     checkPins();

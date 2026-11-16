@@ -15,29 +15,31 @@ const moduleFile = fileURLToPath(new URL("../fixtures/windows-node-cng-inprocess
 /** Actual Node CLI/test runner, module import, filesystem callback and timer; Windows metadata is synthetic off Windows. */
 function run(role: "host" | "lpac", fault = "") {
   const root = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), "ember-cng-inprocess-unit-")); roots.push(root);
-  const work = process.platform === "win32" ? path.join(root, "work") : "C:\\ember-work";
+  const actualWork = path.join(root, "work"), actualTools = path.join(root, "tools"); fs.mkdirSync(actualWork); fs.mkdirSync(actualTools);
+  const work = process.platform === "win32" ? actualWork : "C:\\ember-work";
   const state = process.platform === "win32" ? path.join(root, "state") : "C:\\ember-state";
-  const resolved = (file: string) => path.resolve(root, file);
-  fs.mkdirSync(resolved(work)); fs.mkdirSync(resolved(state));
+  const resolved = (file: string) => path.resolve(actualWork, file);
+  if (!fs.existsSync(resolved(work))) fs.mkdirSync(resolved(work)); fs.mkdirSync(resolved(state));
   fs.writeFileSync(resolved(path.win32.join(work, "cng-inprocess-copied.cjs")), `module.exports = ${fault === "module" ? 43 : 42};\n`);
   const report = resolved(path.win32.join(state, `${role}-cng-inprocess-report.bin`));
   if (fault === "occupied") fs.writeFileSync(report, "private-existing-marker");
-  const wrapper = path.join(root, "fixed.test.cjs"), tap = path.join(root, "private-test.tap");
+  const wrapper = path.join(actualTools, "fixed.test.cjs"), tap = path.join(root, "private-test.tap"), pattern = path.relative(actualWork, wrapper);
   fs.writeFileSync(wrapper, `const vm=require('node:vm'),path=require('node:path');
 const {windowsNodeCngInprocessPrograms}=require(${JSON.stringify(moduleFile)});
 const nativeRequire=require;
-const limited=name=>name===${JSON.stringify(path.win32.join(work, "cng-inprocess-copied.cjs"))}?nativeRequire(path.resolve(${JSON.stringify(root)},name)):nativeRequire(name);
+const limited=name=>name===${JSON.stringify(path.win32.join(work, "cng-inprocess-copied.cjs"))}?nativeRequire(path.resolve(${JSON.stringify(actualWork)},name)):nativeRequire(name);
 const supplied={versions:{node:'22.23.5'},execArgv:process.execArgv,env:{EMBER_LPAC_WORK:${JSON.stringify(work)},EMBER_LPAC_STATE:${JSON.stringify(state)}},cwd:()=>${JSON.stringify(work)}};
 vm.runInNewContext(windowsNodeCngInprocessPrograms[${JSON.stringify(role)}],{require:limited,process:supplied,Buffer,setTimeout});\n`);
   const env: NodeJS.ProcessEnv = {};
   for (const name of ["SystemRoot", "WINDIR", "PATH"]) if (process.env[name]) env[name] = process.env[name];
-  const result = spawnSync(process.execPath, ["--no-warnings", "--experimental-test-isolation=none", "--test-reporter=tap", `--test-reporter-destination=${tap}`, "--test", wrapper],
-    { cwd: root, env, encoding: "utf8", timeout: 10_000, maxBuffer: 4096, windowsHide: true });
-  return { result, bytes: fs.existsSync(report) ? fs.readFileSync(report) : null, tapExists: fs.existsSync(tap) };
+  const result = spawnSync(process.execPath, ["--no-warnings", "--experimental-test-isolation=none", "--test-reporter=tap", `--test-reporter-destination=${tap}`, "--test", pattern],
+    { cwd: actualWork, env, encoding: "utf8", timeout: 10_000, maxBuffer: 4096, windowsHide: true });
+  return { result, bytes: fs.existsSync(report) ? fs.readFileSync(report) : null, tapExists: fs.existsSync(tap), pattern };
 }
 
 it.each(["host", "lpac"] as const)("runs the fixed %s test through the actual in-process CLI without exposing TAP", role => {
   const value = run(role);
+  expect(value.pattern).toBe(path.join("..", "tools", "fixed.test.cjs"));
   expect(value.result.status).toBe(0); expect(value.result.stdout === "" && value.result.stderr === "").toBe(true); expect(value.tapExists).toBe(true);
   expect(parseWindowsNodeCngInprocessReport(value.bytes!, role === "host" ? 0 : 1)).toEqual({ role: role === "host" ? 0 : 1, stage: 4, status: 1,
     error: 0, features: 15, tests: 1, moduleValue: 42, readBytes: 21, fsCallbacks: 1, timerCallbacks: 1, runtimeVersion: 22023005, checkpoints: 3 });
