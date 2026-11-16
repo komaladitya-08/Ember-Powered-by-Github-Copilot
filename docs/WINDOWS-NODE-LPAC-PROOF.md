@@ -52,6 +52,17 @@ it refuses payload-read, delete, append, execute, attribute-write and security-d
 `CreateFileW` still requests only `0x2`; no ACL, inherited-handle list, token or deadline changes. Native validation
 of this predicate repair and the subsequent host/LPAC launches remains pending.
 
+At `5ef69758`, [run 43796961370](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43796961370)
+passed all 218 contracts on every matrix combination. All four two-handle host controls then exited zero with zero
+output bytes after verified job stop. All four LPAC fixed evals still exited `0x80000003`; each produced a 48-byte
+private artifact that the source-location parser refused as `unreadable`. Valid private standard handles therefore
+did not resolve this observed LPAC startup failure. No public callsite was recovered.
+
+The parser now has a separate inspection receipt containing only its closed refusal stage and, for refused encoding,
+an alternating ASCII/zero byte-shape class (`utf16le-ascii`, `utf16be-ascii` or `other`). Its original output contract
+and source/encoding acceptance remain unchanged. It does not decode or log refused bytes. Native classification of
+the 48-byte artifacts remains pending; a refused representation is not evidence of any particular fatal message.
+
 No result or copied content is read by the host until the real root handle has exited and both private job counters are zero. Unverified shutdown retains its scratch and pins. No ACL, AppContainer, network, PowerShell, CLR or registry compatibility fallback is permitted. PowerShell runs only as a trusted host-side signature or event observer, outside the LPAC job; Node is the executable under test inside that job.
 
 The dedicated workflow is `experimental-windows-node-lpac.yml`; it explicitly sets `EMBER_LPAC_NODE_PROOF=1` and the exact asset/version inputs, so its configured Windows jobs must execute or fail. Unconfigured general integration runs skip this separate diagnostic.
