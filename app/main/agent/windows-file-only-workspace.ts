@@ -34,13 +34,15 @@ export class WindowsFileOnlyWorkspace implements CodingReviewWorkspace {
   #terminal: WindowsFileOnlyWorkspaceCleanupError | null = null;
 
   private constructor(input: WindowsFileOnlyWorkspaceInput) {
-    this.#input = { ...input, current: input.current.bind(input), protectedPaths: [...input.protectedPaths],
+    const { continuation: _continuation, ...captured } = input;
+    this.#input = { ...captured, current: captured.current.bind(captured), protectedPaths: [...input.protectedPaths],
       review: { ...input.review, binding: { ...input.review.binding }, current: input.review.current.bind(input.review) } };
   }
   static async create(input: WindowsFileOnlyWorkspaceInput): Promise<WindowsFileOnlyWorkspace> {
     if (!input?.review || typeof input.reviewBase !== "string" || !input.reviewBase) throw new ScopedCodingFileError("unavailable");
     const owner = new WindowsFileOnlyWorkspace(input);
-    owner.#copy = await WindowsCodingCopy.create({ ...owner.#input, review: { ...owner.#input.review, controllerClosed: () => owner.#sealed } });
+    owner.#copy = await WindowsCodingCopy.create({ ...owner.#input, ...(input.continuation ? { continuation: input.continuation } : {}),
+      review: { ...owner.#input.review, controllerClosed: () => owner.#sealed } });
     return owner;
   }
   get excludedRoots(): readonly string[] { return this.#copy.excludedRoots; }

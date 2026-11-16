@@ -17,10 +17,14 @@ import { CodingArtifactCleanupError, type CodingArtifactSourceRef } from "./codi
 import { createCodingReviewExport, type CodingExportBinding, type CodingExportEntry, type CodingExportTree } from "./coding-result-export";
 import { codingProjectManifest, type CodingExcludedRoot, type CodingProjectManifest, type CodingScopeOmission } from "./coding-project-scope";
 import { clearWindowsCodingTree, ownWindowsCodingReview, type WindowsCodingReviewProducer } from "./windows-coding-review";
+import type { CodingWorkspaceContinuation } from "./coding-seed-snapshot";
+import { prepareWindowsCodingContinuation, materializeWindowsCodingContinuation } from "./windows-coding-continuation-seed";
 
 export interface WindowsCodingCopyReviewInput {
   binding: CodingExportBinding;
   store: WindowsCodingArtifactStore;
+  /** Exact same-store source identity captured before a predecessor review was read. Never a new path grant. */
+  sourceBoundary?: CodingArtifactSourceRef;
   /** Account/project publication authority, independent of task Stop; false is latched permanently. */
   current(): boolean;
   /** Trusted host attestation after awaited controller/file-broker teardown, never a native process-stop proof. */
@@ -33,6 +37,8 @@ export interface WindowsCodingCopyInput {
   /** Omissions are explicit host scope; no dependencies or commands are made available. */
   scope?: { excludeRoots: readonly CodingExcludedRoot[] };
   review?: WindowsCodingCopyReviewInput;
+  /** Only a host-verified complete prior review may seed a fresh copy. Never a preview, path or SDK conversation. */
+  continuation?: CodingWorkspaceContinuation;
 }
 export interface WindowsCodingTreeEntry { path: string; handle: WindowsCodingHandle; info: WindowsCodingInfo }
 export interface WindowsCodingTree {
@@ -103,7 +109,9 @@ export class WindowsCodingCopy implements ScopedCodingWorkspace {
     if (selectedReview && (!(selectedReview.store instanceof WindowsCodingArtifactStore) || typeof selectedReview.current !== "function" || typeof selectedReview.controllerClosed !== "function")) throw new ScopedCodingFileError("unavailable");
     const review = selectedReview ? { ...selectedReview, binding: { ...selectedReview.binding }, current: selectedReview.current.bind(selectedReview), controllerClosed: selectedReview.controllerClosed.bind(selectedReview) } : undefined;
     if (review) createCodingReviewExport({ binding: review.binding, baseline: { binding: review.binding, entries: [] }, proposed: { binding: review.binding, entries: [] } });
-    input = { ...input, protectedPaths: [...input.protectedPaths], current: input.current.bind(input), scope: { excludeRoots: exclusions }, review };
+    const { continuation, ...capturedInput } = input;
+    if (continuation && (!review || !review.sourceBoundary)) throw new ScopedCodingFileError("boundary");
+    input = { ...capturedInput, protectedPaths: [...input.protectedPaths], current: capturedInput.current.bind(capturedInput), scope: { excludeRoots: exclusions }, review };
     const privacyScope = captureCodingPrivacyScope(), limits = windowsCodingLimits({ ...(review ? REVIEW_LIMITS : {}), ...input.limits });
     if (review && Object.entries(REVIEW_LIMITS).some(([key, value]) => limits[key as keyof ScopedCodingFileLimits] > value)) throw new ScopedCodingFileError("limit");
     const check = () => { try { assertCodingPrivacyScope(privacyScope); if (input.signal.aborted || input.current() !== true) throw new ScopedCodingFileError("cancelled"); } catch (error) { throw windowsCodingSafeError(error); } };
@@ -113,58 +121,66 @@ export class WindowsCodingCopy implements ScopedCodingWorkspace {
       catch { throw new ScopedCodingFileError("cancelled"); }
       check();
     };
-    reviewCurrent();
-    // Capture provenance before the copy opens. A later path cannot mint authority for a renamed original.
-    const sourceBoundary = review ? await review.store.sourceBoundary(input.source, reviewCurrent) : null;
-    if (review && !sourceBoundary) throw new ScopedCodingFileError("boundary");
-    reviewCurrent(); const api = loadWindowsCodingNative(), pins: WindowsCodingPin[] = [], protectedFiles: WindowsCodingHandle[] = [];
-    let base: WindowsCodingPin | undefined, copy: WindowsCodingCopy | undefined, root: WindowsCodingHandle | undefined, problem: unknown, failed = false;
+    // This function clones complete trees synchronously, before source provenance or any other work can await.
+    const seed = continuation ? prepareWindowsCodingContinuation(continuation, review!.binding, exclusions, privacyScope, input.signal, reviewCurrent, limits) : undefined;
     try {
-      const source = api.pin(input.source, "read"); pins.push(source);
-      if (review) {
-        const fresh = await review.store.sourceBoundary(input.source, reviewCurrent);
-        if (!await review.store.sameSource(sourceBoundary, fresh, reviewCurrent)) throw new ScopedCodingFileError("boundary");
-      }
-      base = api.pin(input.privateBase, "base");
-      const sourceInfo = api.info(source.handle), baseInfo = api.info(base.handle), protectedInfo: WindowsCodingInfo[] = [];
-      for (const location of input.protectedPaths) {
-        check();
-        try { const pin = api.pin(location, "read"); pins.push(pin); protectedInfo.push(api.info(pin.handle)); }
-        catch (error) {
-          if (!(error instanceof ScopedCodingFileError) || error.code === "io") throw error;
-          const parent = api.pin(path.dirname(location), "read"); pins.push(parent);
-          const file = api.open(parent.handle, path.basename(location), "file", "source"); protectedFiles.push(file); protectedInfo.push(api.info(file));
-        }
-      }
-      if (windowsCodingWithin(baseInfo.finalPath, sourceInfo.finalPath) || windowsCodingWithin(sourceInfo.finalPath, baseInfo.finalPath) || protectedInfo.some(info =>
-        windowsCodingWithin(sourceInfo.finalPath, info.finalPath) || windowsCodingWithin(info.finalPath, sourceInfo.finalPath))) throw new ScopedCodingFileError("boundary");
-      check(); root = api.create(base.handle, `ember-windows-copy-${randomUUID()}`, "directory"); api.assertPrivate(root);
-      copy = new WindowsCodingCopy(input, api, base, root, limits, privacyScope, sourceInfo, protectedInfo); base = undefined; root = undefined;
-      copy.#sourceBoundary = sourceBoundary;
-      const pending = copy.#capture(source.handle, sourceInfo, protectedInfo, { destination: copy.#root, retain: !!review, check: reviewCurrent, signal: copy.signal }).then(captured => {
+      reviewCurrent();
+      // Capture provenance before the copy opens. A later path cannot mint authority for a renamed original.
+      const sourceBoundary = review ? await review.store.sourceBoundary(input.source, reviewCurrent, review.sourceBoundary) : null;
+      if (review && !sourceBoundary) throw new ScopedCodingFileError("boundary");
+      reviewCurrent(); const api = loadWindowsCodingNative(), pins: WindowsCodingPin[] = [], protectedFiles: WindowsCodingHandle[] = [];
+      let base: WindowsCodingPin | undefined, copy: WindowsCodingCopy | undefined, root: WindowsCodingHandle | undefined, problem: unknown, failed = false;
+      try {
+        const source = api.pin(input.source, "read"); pins.push(source);
         if (review) {
-          copy!.#baseline = { binding: review.binding, entries: captured.entries };
-          copy!.#manifest = codingProjectManifest({ version: 1, source: { excludedRoots: exclusions, omitted: captured.omitted, byteLimit: limits.workspaceBytes }, dependencies: null });
-          createCodingReviewExport({ binding: review.binding, baseline: copy!.#baseline, proposed: copy!.#baseline, current: copy!.#baseline, scope: copy!.#manifest });
+          const fresh = await review.store.sourceBoundary(input.source, reviewCurrent);
+          if (!await review.store.sameSource(sourceBoundary, fresh, reviewCurrent)) throw new ScopedCodingFileError("boundary");
         }
-      });
-      copy.#tail = pending.then(() => undefined, error => { copy!.#failure = error; });
-      await pending; reviewCurrent(); copy.#checkRoot();
-    } catch (error) { failed = true; problem = error; }
-    const cleanupErrors: unknown[] = [];
-    for (const handle of protectedFiles.reverse()) { try { api.close(handle); } catch (error) { cleanupErrors.push(error); } }
-    for (const pin of pins.reverse()) for (const handle of pin.handles.slice().reverse()) { try { api.close(handle); } catch (error) { cleanupErrors.push(error); } }
-    if (failed || cleanupErrors.length) {
-      if (copy) { try { await copy.close(); } catch (error) { cleanupErrors.push(error); } }
-      else if (root !== undefined) {
-        try { api.remove(root); } catch (error) { cleanupErrors.push(error); }
-        try { api.close(root); } catch (error) { cleanupErrors.push(error); }
+        base = api.pin(input.privateBase, "base");
+        const sourceInfo = api.info(source.handle), baseInfo = api.info(base.handle), protectedInfo: WindowsCodingInfo[] = [];
+        for (const location of input.protectedPaths) {
+          check();
+          try { const pin = api.pin(location, "read"); pins.push(pin); protectedInfo.push(api.info(pin.handle)); }
+          catch (error) {
+            if (!(error instanceof ScopedCodingFileError) || error.code === "io") throw error;
+            const parent = api.pin(path.dirname(location), "read"); pins.push(parent);
+            const file = api.open(parent.handle, path.basename(location), "file", "source"); protectedFiles.push(file); protectedInfo.push(api.info(file));
+          }
+        }
+        if (windowsCodingWithin(baseInfo.finalPath, sourceInfo.finalPath) || windowsCodingWithin(sourceInfo.finalPath, baseInfo.finalPath) || protectedInfo.some(info =>
+          windowsCodingWithin(sourceInfo.finalPath, info.finalPath) || windowsCodingWithin(info.finalPath, sourceInfo.finalPath))) throw new ScopedCodingFileError("boundary");
+        check(); root = api.create(base.handle, `ember-windows-copy-${randomUUID()}`, "directory"); api.assertPrivate(root);
+        copy = new WindowsCodingCopy(input, api, base, root, limits, privacyScope, sourceInfo, protectedInfo); base = undefined; root = undefined;
+        copy.#sourceBoundary = sourceBoundary;
+        const pending = seed ? materializeWindowsCodingContinuation(seed, api, copy.#root, reviewCurrent).then(materialized => {
+          // Retain transferred baseline ownership before any subsequent formatter validation can fail.
+          copy!.#baseline = materialized.baseline; copy!.#manifest = materialized.scope;
+          createCodingReviewExport({ binding: review!.binding, baseline: copy!.#baseline, proposed: copy!.#baseline, scope: copy!.#manifest });
+        }) : copy.#capture(source.handle, sourceInfo, protectedInfo, { destination: copy.#root, retain: !!review, check: reviewCurrent, signal: copy.signal }).then(captured => {
+          if (review) {
+            copy!.#baseline = { binding: review.binding, entries: captured.entries };
+            copy!.#manifest = codingProjectManifest({ version: 1, source: { excludedRoots: exclusions, omitted: captured.omitted, byteLimit: limits.workspaceBytes }, dependencies: null });
+            createCodingReviewExport({ binding: review.binding, baseline: copy!.#baseline, proposed: copy!.#baseline, current: copy!.#baseline, scope: copy!.#manifest });
+          }
+        });
+        copy.#tail = pending.then(() => undefined, error => { copy!.#failure = error; });
+        await pending; reviewCurrent(); copy.#checkRoot();
+      } catch (error) { failed = true; problem = error; }
+      const cleanupErrors: unknown[] = [];
+      for (const handle of protectedFiles.reverse()) { try { api.close(handle); } catch (error) { cleanupErrors.push(error); } }
+      for (const pin of pins.reverse()) for (const handle of pin.handles.slice().reverse()) { try { api.close(handle); } catch (error) { cleanupErrors.push(error); } }
+      if (failed || cleanupErrors.length) {
+        if (copy) { try { await copy.close(); } catch (error) { cleanupErrors.push(error); } }
+        else if (root !== undefined) {
+          try { api.remove(root); } catch (error) { cleanupErrors.push(error); }
+          try { api.close(root); } catch (error) { cleanupErrors.push(error); }
+        }
+        if (base) for (const handle of base.handles.slice().reverse()) { try { api.close(handle); } catch (error) { cleanupErrors.push(error); } }
+        if (cleanupErrors.length) throw retireWindowsCodingNative();
+        throw windowsCodingSafeError(problem);
       }
-      if (base) for (const handle of base.handles.slice().reverse()) { try { api.close(handle); } catch (error) { cleanupErrors.push(error); } }
-      if (cleanupErrors.length) throw retireWindowsCodingNative();
-      throw windowsCodingSafeError(problem);
-    }
-    return copy!;
+      return copy!;
+    } finally { seed?.dispose(); }
   }
   admitted(): boolean {
     if (this.#closed || this.#retired || this.#failure !== undefined || this.signal.aborted) return false;

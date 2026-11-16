@@ -485,7 +485,7 @@ it.each(["forget-result", "forget-project", "reset", "owner-aba", "source-replac
   const f = await setup(), value = await f.open(); await f.bind(value); const previous = await predecessor(f, value);
   const entered = deferred<void>(), gate = deferred<void>(), load = f.CodingResultRegistry.prototype.loadContinuation;
   let decoded: CodingExportInput | undefined;
-  vi.spyOn(f.CodingResultRegistry.prototype, "loadContinuation").mockImplementation(async function (this: InstanceType<typeof f.CodingResultRegistry>, ...args) {
+  vi.spyOn(f.CodingResultRegistry.prototype, "loadContinuation").mockImplementation(async function (this: Awaited<ReturnType<typeof f.CodingResultRegistry.create>>, ...args) {
     decoded = await load.apply(this, args); entered.resolve(); await gate.promise; return decoded;
   });
   const signal = new AbortController(), creating = value.createWorkspace(previous.task, signal.signal, () => true).catch(error => error);
@@ -504,7 +504,7 @@ it("drains and wipes a delayed continuation load before closing private storage"
   const f = await setup(), value = await f.open(); await f.bind(value); const previous = await predecessor(f, value);
   const entered = deferred<void>(), gate = deferred<void>(), load = f.CodingResultRegistry.prototype.loadContinuation;
   let decoded: CodingExportInput | undefined;
-  vi.spyOn(f.CodingResultRegistry.prototype, "loadContinuation").mockImplementation(async function (this: InstanceType<typeof f.CodingResultRegistry>, ...args) {
+  vi.spyOn(f.CodingResultRegistry.prototype, "loadContinuation").mockImplementation(async function (this: Awaited<ReturnType<typeof f.CodingResultRegistry.create>>, ...args) {
     decoded = await load.apply(this, args); entered.resolve(); await gate.promise; return decoded;
   });
   const creating = value.createWorkspace(previous.task, new AbortController().signal, () => true).catch(error => error); await entered.promise;
@@ -537,7 +537,7 @@ it("does not accept a genuine predecessor capability for another project", async
 it("captures the opaque predecessor before any asynchronous load and ignores later mutation of the task grant", async () => {
   const f = await setup(), value = await f.open(); await f.bind(value); const previous = await predecessor(f, value);
   const entered = deferred<void>(), gate = deferred<void>(), load = f.CodingResultRegistry.prototype.loadContinuation;
-  vi.spyOn(f.CodingResultRegistry.prototype, "loadContinuation").mockImplementation(async function (this: InstanceType<typeof f.CodingResultRegistry>, ...args) {
+  vi.spyOn(f.CodingResultRegistry.prototype, "loadContinuation").mockImplementation(async function (this: Awaited<ReturnType<typeof f.CodingResultRegistry.create>>, ...args) {
     const decoded = await load.apply(this, args); entered.resolve(); await gate.promise; return decoded;
   });
   const creating = value.createWorkspace(previous.task, new AbortController().signal, () => true); await entered.promise;
