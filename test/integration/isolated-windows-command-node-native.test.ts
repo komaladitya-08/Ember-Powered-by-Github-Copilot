@@ -7,6 +7,7 @@ import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { loadExperimentalWindowsLpacApi } from "../../app/main/agent/experimental-windows-lpac-api";
 import { compileWindowsNodeBootstrap, prepareWindowsNodeProof, windowsNodeProofPin, WindowsNodeProofCleanupError, type WindowsNodeProofMode } from "../fixtures/windows-node-lpac-proof";
+import { observeWindowsNodeApplicationError } from "../fixtures/windows-node-lpac-events";
 
 const denial = z.object({ denied: z.boolean(), code: z.string().max(32).nullable() }).strict();
 const direct = z.object({ version: z.string().max(32), pid: z.number().int().positive(), environmentAbsent: z.boolean(), copiedEdit: z.boolean(),
@@ -60,6 +61,13 @@ describe.skipIf(process.platform !== "win32" || process.env.EMBER_LPAC_NODE_PROO
       }
       const lease = await proof.fixture.waitStopped(15_000); lease.requireStopped();
       const exit = proof.fixture.exitCode();
+      if (mode === "startup" && exit !== 0) {
+        // Event1000 publication may follow root exit. This short diagnostic grace is bounded and proves nothing
+        // about compatibility; identity is reissued only after another stopped-job observation below.
+        await new Promise<void>(resolve => setTimeout(resolve, 750));
+        const diagnostic = observeWindowsNodeApplicationError(proof.eventIdentity(), api.windowsDirectory(), proof.fixture.paths.state);
+        console.info("Node LPAC application-error diagnostic", JSON.stringify(diagnostic));
+      }
       if (mode !== "startup") {
         const failure = proof.report("failure.json");
         if (failure !== null) throw new Error(`Pinned Node ${version} ${mode} reported a bounded probe failure: ${failure}`);

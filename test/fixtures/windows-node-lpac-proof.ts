@@ -10,6 +10,7 @@ import { ExperimentalWindowsLpacFixture, experimentalWindowsEnvironment, experim
 import { loadExperimentalWindowsLpacApi, type WindowsHandle, type WindowsLpacApi, type WindowsSuspendedProcess, type WindowsLpacProfile } from "../../app/main/agent/experimental-windows-lpac-api";
 import { loadWindowsCommandAssetReader, ordinaryWindowsCommandAssetSize } from "../../app/main/agent/isolated-windows-command-assets";
 import { WINDOWS_NODE_STARTUP_ARGS, WindowsNodeHostCleanupError, WindowsNodeStartupGate, runWindowsNodeHostStartup } from "./windows-node-lpac-startup";
+import type { WindowsNodeEventIdentity } from "./windows-node-lpac-events";
 
 type NodePin = (typeof pins.versions)[keyof typeof pins.versions];
 export type WindowsNodeProofMode = "startup" | "direct" | "inprocess" | "child";
@@ -151,6 +152,8 @@ export interface WindowsNodeProof {
   launch(): Promise<number>;
   /** Explicit trusted-host diagnostic only; it can never substitute for an LPAC result. Startup mode only. */
   hostStartup(): Promise<{ exitCode: number; jobStopped: true }>;
+  /** Exact verified image/PID for optional diagnostics. No identity is released before root exit and job zero. */
+  eventIdentity(): WindowsNodeEventIdentity;
   report(name: "direct.json" | "inprocess.json" | "child.json" | "failure.json" | "test.tap"): string | null;
   close(): Promise<void>;
 }
@@ -162,6 +165,7 @@ export async function prepareWindowsNodeProof(input: { parent: string; bootstrap
   let fixture: ExperimentalWindowsLpacFixture | undefined, profileSid = "", created: WindowsSuspendedProcess | undefined, privateJob: WindowsHandle | undefined;
   const profileCapture: { value?: WindowsLpacProfile } = {};
   let program = "", args: string[] = [], signatureVerified = false, closing: Promise<void> | undefined;
+  let launchedAt: number | undefined;
   const startupGate = new WindowsNodeStartupGate();
   let expectedBootstrap = "", expectedWork = "", expectedState = "", expectedEnvironment: Buffer | undefined;
   const observations = { assigned: false, token: false, image: false, resumed: false };
@@ -188,6 +192,7 @@ export async function prepareWindowsNodeProof(input: { parent: string; bootstrap
         !expectedEnvironment || !env.equals(expectedEnvironment) || profile.sidText !== profileSid)
         throw new Error("The direct Node redirect rejected an unexpected bootstrap, argument or environment.");
       for (const file of filePins) file.unchanged();
+      launchedAt = Date.now();
       created = api.createSuspended(profile, program, windowsNodeProofCommand(program, args), cwd, env); return created;
     },
     assign(job, process) { if (!created || job !== privateJob || process !== created.process) throw new Error("Unexpected Node job assignment."); api.assign(job, process); observations.assigned = true; },
@@ -229,6 +234,11 @@ export async function prepareWindowsNodeProof(input: { parent: string; bootstrap
     const prepared = fixture;
     return { fixture: prepared, version: pin.version, get observations() { return { ...observations }; }, profile: Object.freeze({ ...profilePaths }),
       launch: () => startupGate.launch(() => prepared.launch()),
+      eventIdentity() {
+        prepared.exitCode();
+        if (!created || launchedAt === undefined) throw new Error("No stopped Node process identity is available.");
+        return Object.freeze({ pid: created.pid, image: program, startedAt: launchedAt });
+      },
       hostStartup() {
         if (input.mode !== "startup") return Promise.reject(new Error("Use the separate trusted-host control only for the fixed startup probe before LPAC launch."));
         return startupGate.host(() => runWindowsNodeHostStartup({ program, command: windowsNodeProofCommand(program, args), cwd: expectedWork, environment: expectedEnvironment!,
