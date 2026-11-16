@@ -16,7 +16,7 @@ const SOURCE_PINS: readonly Readonly<{ path: string; bytes: number; sha256: stri
   {"path":"scripts/experimental/build-windows-command-creator-owner-proof.mjs","bytes":21015,"sha256":"9e1c2c71d2d19cd6fbc9a69528c83db433ad033c383e94603152a783143364cc"},
   {"path":"app/main/agent/windows-command-copy.ts","bytes":14129,"sha256":"3146ef9176842c98ec45cfcb786768aa4b5104c9b801f6152585140331410c75"},
   {"path":"app/main/agent/windows-command-stop.ts","bytes":26800,"sha256":"a2e462c61688b1a30277e96099a79aa2d11ffb5bf0361e1572d42ae8c4570cb4"},
-  {"path":"app/main/agent/windows-command-copy-native.ts","bytes":67493,"sha256":"48650c50326a68c5a528d86a9c37573bc5fb5a14dc22cebb3e04295e9dad68af"},
+  {"path":"app/main/agent/windows-command-copy-native.ts","bytes":68095,"sha256":"feee7245882c10b02fd5e14ae7082995457b26f9a2414c984e271f4db31c7841"},
   {"path":"app/main/agent/windows-command-creator-profile.ts","bytes":13151,"sha256":"ee34e5c14b35b7b851a4ee90d9fb03a72ce327f26577d0fd9c543dccac2f35e3"},
   {"path":"app/main/agent/windows-command-creator-token.ts","bytes":1374,"sha256":"205ecfd4538d1a30a825aafe488051856bbc91b1d227a9df9fbbec30baba4e73"},
   {"path":"test/fixtures/windows-command-copy-proof-native.ts","bytes":7446,"sha256":"e8fd9c25b0d3b61a9790ed516edd44369a0686ea34f2dea0094b9922db3928c3"},

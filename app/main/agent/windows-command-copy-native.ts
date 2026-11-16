@@ -531,7 +531,17 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
           if (selected.creatorProfile !== undefined && (!profileBound || requireWindowsCommandCreatorTree(selected.creatorProfile, ownerRecord) !== sid || !creator || creator.state !== "prepared")) return poison(8);
           const current = await walk(admit); for (const node of current) { security(node, "private"); await tick(admit); }
           await retireOldPins(current, admit);
-          if (creator) creator.known = new Map(current.map(node => [node.identity.id, { ...node.identity }]));
+          if (creator) {
+            // The root's cached identity predates child staging. Capture the actual private pregrant epoch on held objects.
+            const snapshot = new Map<string, WindowsCodingInfo>();
+            for (const node of current) {
+              admit(); const fresh = metadata(node); admit();
+              if (node.kind === "file" && (node.identity.size !== fresh.size || node.identity.written !== fresh.written || node.identity.attributes !== fresh.attributes))
+                return metadataRefusal(9, node, node.identity, fresh, 32 | 64 | 256);
+              snapshot.set(fresh.id, { ...fresh }); await tick(admit);
+            }
+            creator.known = snapshot;
+          }
           packageSid = sid; phase = "granting"; for (const node of current) { admit(); setAcl(node, true); await tick(admit); }
           if (creator) {
             const sealed = new Map(current.map(node => [node.identity.id, { ...node.identity }])), final = await walk(admit);

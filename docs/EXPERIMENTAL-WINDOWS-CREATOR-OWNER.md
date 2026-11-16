@@ -161,6 +161,39 @@ context is included only when that node already exists. No identifiers,
 counts, paths, timestamps, values, extra queries, fallback acceptance or later
 error replacement are added.
 
+The fourth matrix, run `43923610592` at head
+`ac2af0663f7517abb537e149b4e1ff529576bccb`, passed 1,581 contracts with 15
+expected skips per image, then failed both native tests. Server 2022 returned
+exit 212 with strict failed operation 9, features `0x0f0f`, error 5 and
+replacement stage 2. This proves MoveFileEx returned FALSE after temporary-file
+preparation succeeded; it does not establish why access was denied. Its first
+Stop/revoke, private owner readback and the four in-run ACL denials passed.
+Server 2025 instead refused at metadata constraint 9, changed-field bit 64:
+the root directory's pregrant write time differed. Its sealed postsetter
+comparison and original identity checks passed before that refusal.
+
+## Fresh private pregrant epoch
+
+The root node's cached metadata is captured while the directory is empty.
+Trusted staging then creates children, which can update the directory's write
+time. Walks retain that root object, and private security checks read fresh
+metadata without updating the cache. Cloning `node.identity` into the creator
+map therefore used a construction-era root timestamp rather than the actual
+pregrant timestamp. A regression that advances the root write time during
+trusted child staging reproduces the old refusal.
+
+The local correction captures fresh metadata from the same held objects after
+the complete private preflight. Work admission is checked before and after
+each query. Identity is still checked against the held object; files must also
+retain the private walk's size, write time and attributes during capture. The
+complete captured map becomes the comparison epoch before any grant setter.
+Every original postsetter sealed, identity, write-time, size, attribute,
+security and Stop check remains. A root write-time mutation after capture still
+refuses; cancellation before a setter still uses a genuine empty Stop and
+unchanged native revoke. No write-time difference is simply ignored, and no
+identity pin or permission is changed. The actual replacement failure remains
+an independent blocker.
+
 ## Authority and normalisation
 
 The new path is opt-in and uses a separately compiled C program, report schema,
@@ -262,7 +295,7 @@ the experiment must remain a draft until the actual controls and cleanup pass.
 
 ## Portable verification
 
-The final 19-file affected contract batch passed 1,596 tests with no skips,
+The final 19-file affected contract batch passed 1,600 tests with no skips,
 including the emitted 19-export CJS graph, bounded token ABI, actual
 coordinator/Native/Stop composition, strict report decoder and source verifier.
 The historical DETACHED verifier's positive unit cases use three bounded,
@@ -283,9 +316,14 @@ full TypeScript check including the historical-test follow-up also passed.
 The ACE diagnostic adds 34 passing boundary cases; its exact-final full
 TypeScript check also passed.
 The automatic-grant correction adds 61 passing API, ownership, refusal and
-rewalk cases; its exact-final full TypeScript check also passed. All three
+rewalk cases; its exact-final full TypeScript check also passed. All four
 native matrices failed as recorded above. The combined replacement/metadata
 follow-up adds 27 metadata cases, 22 main observation cases and 14 Linux-only
 actual-C-body logic cases. The latter use fixed mocks and provide no Windows
 ABI proof; Windows intentionally skips those 14 logic cases. The follow-up's
-exact-final full TypeScript check passed, and it has not yet run on Windows.
+exact-final full TypeScript check passed. The fourth matrix's outcomes are
+recorded above. The fresh-private-epoch correction adds four passing regressions
+and its exact-final TypeScript check passed. Its staging-clock reproducer failed
+against the old capture path before the correction; all 31 metadata cases now
+pass, including write-time mutation after capture and known cancellation.
+Windows execution remains pending for this correction.

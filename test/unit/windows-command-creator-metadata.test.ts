@@ -27,8 +27,16 @@ function freshProfile(text: string) {
   }), { retained: [] }).create();
 }
 
-async function prepared() {
+async function prepared(stagedRootWrite = false) {
   const s = setup(), ref = freshProfile(s.control.tokenPackage), pkg = windowsCommandCreatorProfile(ref).sidText;
+  if (stagedRootWrite) {
+    const create = s.handlers.NtCreateFile;
+    s.handlers.NtCreateFile = (...args) => {
+      const result = create(...args), opened = s.opened.at(-1);
+      if (args[7] === 2 && opened?.fresh && opened.object !== s.root()) s.root().written++;
+      return result;
+    };
+  }
   const tree = await s.binding.createFreshWindowsCommandTree({ ...s.input(), creatorProfile: ref });
   const api = { createJob: () => 50000n, assign() {}, resume() {}, terminateJob() {}, terminateProcess() {} } as unknown as WindowsLpacApi;
   const native: WindowsCommandRootOnlyStopNative = { configure() {}, assertLimits() {}, state: () => ({ total: 0, active: 0, pids: [] }),
@@ -196,6 +204,46 @@ it("accepts a setter-only changeTime under the original identity and payload pre
   const v = await prepared(); afterSet(v, v.s.root(), () => { v.s.root().changed++; });
   await v.tree.grant(v.pkg); await v.tree.revokeCreator!(v.grant, await v.stop.stop()); await v.tree.close(); closeWindowsCommandCreatorProfile(v.ref);
   expect(v.s.fence.failure).toBeUndefined();
+});
+
+it("captures the private root's actual write time after trusted staged-child creation", async () => {
+  const v = await prepared(true);
+  await v.tree.grant(v.pkg);
+  await v.tree.revokeCreator!(v.grant, await v.stop.stop()); await v.tree.close(); closeWindowsCommandCreatorProfile(v.ref);
+  expect(v.s.fence.failure).toBeUndefined(); expect(v.s.handles.size).toBe(0);
+});
+
+it("still refuses root write-time mutation after the fresh pregrant snapshot", async () => {
+  const v = await prepared(true); afterSet(v, v.s.root(), () => { v.s.root().written++; });
+  const { facts } = await refusal(v, 9, 64); expect(facts).toMatchObject({ nodeKind: 2, nodeRoot: 1, nodeAcl: 2 });
+});
+
+it("refuses a file payload mutation between the private walk and fresh capture before any setter", async () => {
+  const v = await prepared(true), security = v.s.handlers.GetSecurityInfo, control = v.s.handlers.GetSecurityDescriptorControl;
+  let selected = false, mutated = false;
+  v.s.handlers.GetSecurityInfo = (...args) => { selected = v.s.handles.get(args[0] as bigint)?.object === v.file; return security(...args); };
+  v.s.handlers.GetSecurityDescriptorControl = (...args) => {
+    const result = control(...args); if (selected && !mutated) { mutated = true; v.file.bytes = Buffer.concat([v.file.bytes, Buffer.from("x")]); }
+    return result;
+  };
+  const { facts } = await refusal(v, 9, 32); expect(facts).toMatchObject({ nodeKind: 1, nodeRoot: 0, nodeAcl: 1 });
+  expect(v.s.calls.some(call => call.name === "SetSecurityInfo")).toBe(false);
+});
+
+it("rechecks work admission after a fresh snapshot query and can unwind an unchanged empty grant", async () => {
+  const v = await prepared(true), security = v.s.handlers.GetSecurityInfo, information = v.s.handlers.GetFileInformationByHandle;
+  let lastPrivateFile = false, cancelled = false;
+  v.s.handlers.GetSecurityInfo = (...args) => { if (v.s.handles.get(args[0] as bigint)?.object === v.file) lastPrivateFile = true; return security(...args); };
+  v.s.handlers.GetFileInformationByHandle = (...args) => {
+    const result = information(...args);
+    if (lastPrivateFile && !cancelled && v.s.handles.get(args[0] as bigint)?.object === v.s.root()) { cancelled = true; v.s.control.current = false; }
+    return result;
+  };
+  const error = await rejected(v.tree.grant(v.pkg)); expect(error).toMatchObject({ code: "cancelled" });
+  expect(cancelled).toBe(true); expect(v.s.calls.some(call => call.name === "SetSecurityInfo")).toBe(false);
+  expect(windowsCommandCopyNativeFailure(error)).toBeUndefined();
+  await v.tree.revokeCreator!(v.grant, await v.stop.stop()); await v.tree.close(); closeWindowsCommandCreatorProfile(v.ref);
+  expect(v.s.handles.size).toBe(0);
 });
 
 it("omits unknown entry projection while preserving the actual prior rejection and private error", async () => {
