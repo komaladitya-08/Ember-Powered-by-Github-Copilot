@@ -1,0 +1,49 @@
+name: experimental-windows-pipe-namespace
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/experimental-windows-pipe-namespace.yml"
+      - "scripts/experimental/*windows-pipe-namespace*"
+      - "test/fixtures/windows-pipe-namespace*"
+      - "test/unit/windows-pipe-namespace*"
+      - "test/integration/windows-pipe-namespace-native.test.ts"
+permissions:
+  contents: read
+concurrency:
+  group: experimental-windows-pipe-namespace-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  fixed-pipe-prerequisite:
+    name: Fixed C namespace prerequisite (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      EMBER_PIPE_NAMESPACE_IMAGE: ${{ matrix.os }}
+      EMBER_PIPE_NAMESPACE_PROBE: "1"
+      EMBER_PIPE_NAMESPACE_BUILD_ROOT: ${{ runner.temp }}\ember-pipe-namespace-build
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Portable receipt, environment and terminal-owner contracts
+        run: npm test -- test/unit/windows-pipe-namespace.test.ts test/unit/windows-libuv-host-identity.test.ts test/unit/windows-node-lpac-io.test.ts test/unit/experimental-windows-lpac.test.ts test/unit/experimental-windows-lpac-api.test.ts --maxWorkers=1
+      - name: Compile only the fixed repository C program
+        timeout-minutes: 5
+        run: node scripts/experimental/build-windows-pipe-namespace.mjs --destination "$env:EMBER_PIPE_NAMESPACE_BUILD_ROOT" --image "$env:EMBER_PIPE_NAMESPACE_IMAGE"
+      - name: Independent ordinary host and zero-capability LPAC namespace observations
+        run: node scripts/run-integration.mjs test/integration/windows-pipe-namespace-native.test.ts
+      # No raw output, private scratch, nonce, paths, SIDs, handles or process IDs are published.
+      # These observations never enable a product backend or establish Node/libuv compatibility.
