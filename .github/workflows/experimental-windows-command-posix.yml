@@ -1,0 +1,62 @@
+name: Experimental LPAC pinned POSIX workspace witness
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/experimental-windows-command-posix.yml'
+      - 'scripts/experimental/build-windows-command-posix-proof.mjs'
+      - 'test/fixtures/windows-command-posix-*'
+      - 'test/unit/windows-command-posix-*.test.ts'
+      - 'test/integration/windows-command-posix-native.test.ts'
+      - 'docs/EXPERIMENTAL-WINDOWS-COMMAND-POSIX.md'
+permissions:
+  contents: read
+concurrency:
+  group: command-posix-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+jobs:
+  contracts:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'ember-improve/20261116-command-creator-posix'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.23.5'
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - name: Original creator-owner gates and separate POSIX producer contracts
+        run: npx vitest run test/unit/windows-command-stop.test.ts test/unit/windows-command-copy.test.ts test/unit/windows-command-copy-native.test.ts test/unit/windows-command-copy-build.test.ts test/unit/windows-command-copy-report.test.ts test/unit/windows-command-copy-proof-native.test.ts test/unit/windows-command-copy-proof.test.ts test/unit/windows-command-copy-detached-variant.test.ts test/unit/windows-command-creator-owner-build.test.ts test/unit/windows-command-creator-token.test.ts test/unit/windows-command-creator-profile.test.ts test/unit/windows-command-creator-native.test.ts test/unit/windows-command-creator-ace.test.ts test/unit/windows-command-creator-auto-inherit.test.ts test/unit/windows-command-creator-metadata.test.ts test/unit/windows-command-creator-owner-report.test.ts test/unit/windows-command-creator-owner-proof.test.ts test/unit/windows-command-creator-owner-host.test.ts test/unit/windows-command-creator-owner-variant.test.ts test/unit/windows-command-posix-build.test.ts test/unit/windows-command-posix-variant.test.ts test/unit/windows-command-posix-replacement.test.ts --maxWorkers=2
+  native:
+    # Registration is portable only; each reviewed native attempt needs a fresh explicit manual dispatch.
+    if: github.event_name == 'workflow_dispatch' && github.ref_name == 'ember-improve/20261116-command-creator-posix'
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.image }}
+    timeout-minutes: 18
+    env:
+      EMBER_WINDOWS_COMMAND_POSIX_IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.23.5'
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - name: Separate producer and unchanged observer contracts
+        run: npx vitest run test/unit/windows-command-posix-build.test.ts test/unit/windows-command-posix-variant.test.ts test/unit/windows-command-posix-replacement.test.ts test/unit/windows-command-creator-owner-report.test.ts test/unit/windows-command-creator-owner-proof.test.ts --maxWorkers=1
+      - name: Required eight useful operations, denials, Stop and private cleanup
+        env:
+          EMBER_WINDOWS_COMMAND_POSIX_TEST: '1'
+        run: npm run test:integration -- test/integration/windows-command-posix-native.test.ts --maxWorkers=1
