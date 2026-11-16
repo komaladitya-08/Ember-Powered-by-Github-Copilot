@@ -155,7 +155,7 @@ it.each([
 
 it.each([
   ["wrong ID", "output-identity"], ["wrong NUL name", "null-name"], ["nonEOF stdin", "null-eof"],
-  ["inheritable pin", "pin-inheritance"], ["readable writer", "writer-rights"], ["disk stdin", "null-type"],
+  ["inheritable pin", "pin-inheritance"], ["disk stdin", "null-type"],
 ])("reports only a stage for a failed predicate without sampling stale LastError: %s", (fault, stage) => {
   const s = setup(fault); s.control.lastError = 0xdeadbeef;
   let error: unknown; try { s.bind(); } catch (caught) { error = caught; }
@@ -173,9 +173,19 @@ it("uses the actual unsigned NTSTATUS rather than Win32 LastError for a failed o
 it.each(["short basic information", "oversized basic information"])("rejects a successful rights query with a mismatched ABI receipt: %s", fault => {
   const s = setup(fault);
   let error: unknown; try { s.bind(); } catch (caught) { error = caught; }
-  expect(windowsNodeIoSetupReceipt(error)).toEqual({ stage: "writer-rights" });
+  expect(windowsNodeIoSetupReceipt(error)).toEqual({ stage: "writer-rights", operation: "NtQueryObject", detail: "returned-size", value: fault === "short basic information" ? 8 : 64 });
   expect(s.calls.some(call => call.name === "GetLastError")).toBe(false);
   expect(closedHandles(s.calls)).toEqual([10n, 12n, 11n]);
+});
+
+it.each([["readable writer", 3], ["deletable writer", 0x10002], ["executable writer", 0x22]])("reports only the granted numeric access for a successful rights query refusing %s", (fault, access) => {
+  const s = setup(fault as string); s.control.lastError = "stale private exception";
+  let error: unknown; try { s.bind(); } catch (caught) { error = caught; }
+  const receipt = windowsNodeIoSetupReceipt(error);
+  expect(receipt).toEqual({ stage: "writer-rights", operation: "NtQueryObject", detail: "unexpected-rights", value: access });
+  expect(Object.isFrozen(receipt)).toBe(true);
+  expect(s.calls.some(call => call.name === "GetLastError")).toBe(false);
+  expect(JSON.stringify(receipt)).not.toMatch(/stale|private|C:|S-1-|handle|credential/);
 });
 
 it.each([NaN, -1, 0x100000000, "private native error", undefined])("discards a malformed native error value: %s", value => {
