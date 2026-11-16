@@ -276,6 +276,21 @@ function ffi() {
   const bind = () => bindWindowsCommandRootOnlyStopNative(koffi, load);
   return { functions, koffi, load, bind, dlls, prototypes, limits: () => limits };
 }
+const stateRefusals = [
+  { label: "lifetime history", total: 2, active: 1, terminated: 0, assigned: 1, listed: 1, constraint: 15 },
+  { label: "active exceeds history", total: 0, active: 1, terminated: 0, assigned: 1, listed: 1, constraint: 16 },
+  { label: "terminated exceeds history", total: 1, active: 1, terminated: 2, assigned: 1, listed: 1, constraint: 17 },
+  { label: "incomplete assigned list", total: 1, active: 1, terminated: 0, assigned: 2, listed: 1, constraint: 18 },
+  { label: "active/list disagreement", total: 1, active: 0, terminated: 0, assigned: 1, listed: 1, constraint: 19 },
+  { label: "over-budget list also disagrees with active", total: 1, active: 1, terminated: 0, assigned: 2, listed: 2, constraint: 19 },
+  { label: "overlapping history/active/terminated/list failures", total: 2, active: 3, terminated: 4, assigned: 4, listed: 3, constraint: 15 },
+  { label: "assigned failure before active/list failure", total: 1, active: 0, terminated: 0, assigned: 2, listed: 1, constraint: 18 },
+  { label: "active failure before terminated failure", total: 0, active: 1, terminated: 1, assigned: 1, listed: 1, constraint: 16 },
+] as const;
+function writeState(bytes: Buffer, kind: unknown, value: typeof stateRefusals[number]) {
+  if (kind === 1) { bytes.writeUInt32LE(value.total, 36); bytes.writeUInt32LE(value.active, 40); bytes.writeUInt32LE(value.terminated, 44); }
+  if (kind === 3) { bytes.writeUInt32LE(value.assigned, 0); bytes.writeUInt32LE(value.listed, 4); }
+}
 describe("root-only Win64 FFI contracts", () => {
   it("binds fixed synchronous APIs only and configures exact one-root/no-breakaway limits", () => {
     const f = ffi(), native = f.bind(); native.configure(10n);
@@ -385,6 +400,56 @@ describe("root-only first-failure observations", () => {
     expect(windowsCommandRootOnlyFailure({ ...error as object })).toBeUndefined(); expect(windowsCommandRootOnlyFailure(JSON.parse(JSON.stringify(error)))).toBeUndefined();
     expect(windowsCommandRootOnlyFailure(failure)).toBeUndefined(); expect(windowsCommandRootOnlyFailure(error)).toBe(failure);
     expect(f.prototypes).toEqual(WINDOWS_COMMAND_ROOT_ONLY_STOP_FUNCTIONS); expect(f.prototypes.some(value => value.includes("GetLastError"))).toBe(false);
+  });
+  it.each(stateRefusals)("classifies only the first existing returned-buffer state failure: $label", value => {
+    const f = ffi(), query = f.functions.QueryInformationJobObject, calls: unknown[][] = [];
+    f.functions.QueryInformationJobObject = (...args) => { calls.push(args); query(...args); writeState(args[2] as Buffer, args[1], value); return 1; };
+    const error = caught(() => f.bind().state(10n)), failure = windowsCommandRootOnlyFailure(error);
+    expect(failure).toEqual({ stage: 4, operation: 2, predicate: 5, constraint: value.constraint, domain: 0, code: 0 });
+    expect(calls.map(args => [args[0], args[1], args[3], args[4]])).toEqual([[10n, 1, 48, null], [10n, 3, 16, null]]);
+    expect(Object.keys(failure!).sort()).toEqual(["code", "constraint", "domain", "operation", "predicate", "stage"]);
+    expect(Object.isFrozen(failure)).toBe(true); expect(String(error)).not.toContain(PRIVATE); expect(f.functions.CloseHandle).not.toHaveBeenCalled();
+    expect(f.prototypes).toEqual(WINDOWS_COMMAND_ROOT_ONLY_STOP_FUNCTIONS);
+  });
+  it.each([0n, 0x100000000n, 0xffffffffffffffffn])("classifies existing returned PID bounds without emitting the PID %#", pid => {
+    const f = ffi(), query = f.functions.QueryInformationJobObject, calls: unknown[][] = [];
+    f.functions.QueryInformationJobObject = (...args) => { calls.push(args); query(...args); if (args[1] === 3) (args[2] as Buffer).writeBigUInt64LE(pid, 8); return 1; };
+    expect(windowsCommandRootOnlyFailure(caught(() => f.bind().state(10n)))).toEqual({ stage: 4, operation: 2, predicate: 5, constraint: 21, domain: 0, code: 0 });
+    expect(calls.map(args => [args[1], args[3]])).toEqual([[1, 48], [3, 16]]); expect(f.functions.CloseHandle).not.toHaveBeenCalled();
+  });
+  it.each([1n, 200n, 0xffffffffn])("preserves existing one-root PID acceptance and query order %#", pid => {
+    const f = ffi(), query = f.functions.QueryInformationJobObject, calls: unknown[][] = [];
+    f.functions.QueryInformationJobObject = (...args) => { calls.push(args); query(...args); if (args[1] === 3) (args[2] as Buffer).writeBigUInt64LE(pid, 8); return 1; };
+    expect(f.bind().state(10n)).toEqual({ total: 1, active: 1, pids: [Number(pid)] });
+    expect(calls.map(args => [args[1], args[3]])).toEqual([[1, 48], [3, 16]]);
+  });
+  it.each([0, 1])("preserves empty-list acceptance for existing total %s without a PID read", total => {
+    const f = ffi(), query = f.functions.QueryInformationJobObject, reads: number[] = [];
+    f.functions.QueryInformationJobObject = (...args) => {
+      query(...args); const bytes = args[2] as Buffer;
+      if (args[1] === 1) { bytes.writeUInt32LE(total, 36); bytes.writeUInt32LE(0, 40); }
+      if (args[1] === 3) { bytes.writeUInt32LE(0, 0); bytes.writeUInt32LE(0, 4);
+        const read = bytes.readBigUInt64LE.bind(bytes); vi.spyOn(bytes, "readBigUInt64LE").mockImplementation(offset => { reads.push(offset ?? 0); return read(offset); }); }
+      return 1;
+    };
+    expect(f.bind().state(10n)).toEqual({ total, active: 0, pids: [] }); expect(reads).toEqual([]);
+  });
+  it.each(stateRefusals)("preserves first stage12 owner refusal and retained handles after $label", async value => {
+    const h = harness(), f = ffi(), query = f.functions.QueryInformationJobObject, calls: unknown[][] = []; let completion = false;
+    f.functions.IsProcessInJob = (_process, _job, inside) => { (inside as unknown[])[0] = h.api.assign.mock.calls.length ? 1 : 0; return 1; };
+    f.functions.QueryInformationJobObject = (...args) => {
+      calls.push(args); query(...args); const bytes = args[2] as Buffer;
+      if (!h.api.assign.mock.calls.length && (args[1] === 1 || args[1] === 3)) bytes.fill(0);
+      if (completion) writeState(bytes, args[1], value); return 1;
+    };
+    const owner = createWindowsCommandRootOnlyStopOwner(h.binding, h.api, f.bind(), h.clock, h.fence); await launch(h, owner);
+    completion = true; calls.length = 0;
+    const error = await cleanup(owner.stop()), failure = windowsCommandRootOnlyFailure(error);
+    expect(failure).toEqual({ stage: 12, operation: 2, predicate: 5, constraint: value.constraint, domain: 0, code: 0 });
+    expect(calls.map(args => [args[1], args[3]])).toEqual([[9, 144], [4, 4], [1, 48], [3, 16]]);
+    expect(h.fence.retained).toHaveLength(1); expect(f.functions.CloseHandle).not.toHaveBeenCalled(); expect(h.api.close).not.toHaveBeenCalled();
+    const count = calls.length; await expect(owner.stop()).rejects.toBe(error); expect(calls).toHaveLength(count);
+    expect(windowsCommandRootOnlyFailure(error)).toBe(failure);
   });
   it.each([[0, 1], [8, 2], [16, 3], [20, 4], [24, 5], [32, 6], [40, 7], [44, 8], [48, 9], [112, 12], [120, 13], [-1, 14]])("labels only existing mismatching limit span %s as constraint %s", (offset, constraint) => {
     const f = ffi(), original = f.functions.QueryInformationJobObject, calls: unknown[][] = []; let armed = false;

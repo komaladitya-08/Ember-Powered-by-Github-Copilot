@@ -13,7 +13,7 @@ const bool = (value: unknown): value is number => typeof value === "number" && N
 type FailureStage = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13;
 type FailureOperation = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
 type FailurePredicate = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
-type FailureConstraint = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14;
+type FailureConstraint = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21;
 // Stages 1..13: load, job create, configure/readback, initial state, creator, preassign, assign,
 // attest, postattest, resume, Stop request, completion, close. Operations 1..7 follow the fixed prototypes below.
 // Predicates 1..11: call throw, ABI, returned failure, limit readback, job state, identity,
@@ -41,6 +41,8 @@ const refused = (stage: FailureStage, predicate: FailurePredicate, operation: Fa
 };
 // Constraints 1..9: process/job time, flags, padding20, min/max workset, active limit, padding44,
 // affinity. Historical 10/11 are reserved; 12/13/14 remain process/job memory/UI. No values leave here.
+// 15..20 select the first failed existing state comparison in source order, not every failed comparison;
+// 21 is existing PID bounds. The listed>1 comparison (20) overlaps earlier checks and is never first.
 const LIMIT_SPANS = [[0, 8], [8, 16], [16, 20], [20, 24], [24, 32], [32, 40], [40, 44], [44, 48], [48, 56]] as const;
 export class WindowsCommandRootOnlyCleanupError extends WindowsCodingCleanupError {
   constructor() { super(); this.name = "WindowsCommandRootOnlyCleanupError"; this.message = "Windows root-only command writer cleanup could not be verified."; }
@@ -124,9 +126,13 @@ export function bindWindowsCommandRootOnlyStopNative(koffi: Pick<typeof Koffi, "
       const accounting = query(job, 1, 48, 4), list = query(job, 3, 16, 4);
       const total = accounting.readUInt32LE(36), active = accounting.readUInt32LE(40), terminated = accounting.readUInt32LE(44);
       const assigned = list.readUInt32LE(0), listed = list.readUInt32LE(4);
-      if (total > 1 || active > total || terminated > total || assigned !== listed || active !== listed || listed > 1) throw refused(4, 5, 2);
+      if (total > 1 || active > total || terminated > total || assigned !== listed || active !== listed || listed > 1) {
+        // Only already-decoded scalars are compared after the complete original predicate refused.
+        const first = [total > 1, active > total, terminated > total, assigned !== listed, active !== listed, listed > 1].findIndex(Boolean);
+        throw refused(4, 5, 2, (first < 0 ? 0 : first + 15) as FailureConstraint);
+      }
       const pids: number[] = [];
-      if (listed) { const value = list.readBigUInt64LE(8); if (value < 1n || value > 0xffffffffn) throw refused(4, 5, 2); pids.push(Number(value)); }
+      if (listed) { const value = list.readBigUInt64LE(8); if (value < 1n || value > 0xffffffffn) throw refused(4, 5, 2, 21); pids.push(Number(value)); }
       release(accounting); release(list); return { total, active, pids };
     },
     processId(process) { const value = call(6, 3, "GetProcessId", [process]); if (!dword(value) || value === 0) throw refused(6, 6, 3); return value; },

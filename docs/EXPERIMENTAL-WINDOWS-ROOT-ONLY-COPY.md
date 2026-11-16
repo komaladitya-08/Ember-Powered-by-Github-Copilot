@@ -272,9 +272,48 @@ execution or cleanup authority. A refused Stop/revocation, changed pin, absent o
 complete report, uncertain acquisition/read/close or diagnostic callback cannot replace that initial error;
 the existing outer failure path retains the complete graph and requests only non-disposing Stop of known roots.
 There is no work snapshot, `files()` call, C-image change, flag change, permission change or product enablement.
-The next Windows result remains pending.
+The subsequent sixth matrix is recorded below.
 
 This candidate passes 717 focused contracts, final composed TypeScript, scoped lint and diff checks. Its real
 coordinator/Stop composition tests hold ACL revocation pending after job closure and verify that no report pin
 is acquired until revocation fulfils; a revocation refusal retains the owner and never reads the report. Root's
 actual-file review closed. These portable checks do not establish a sixth Windows result.
+
+The sixth manual matrix at `3400533f`,
+[run 43884035955](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43884035955),
+passed 716 portable cases per image plus the expected unsupported-host guard skip; its separate portable job
+passed all 717 cases. Both native cases retained the fifth result's phase `3`, subphase `4`, ownership `0`, boundary
+`0`, fileCode `0`, `exit={phase:1,code:1}`. The diagnostic Stop then supplied stage `12`, operation `2`, predicate
+`5`, constraint `0`, domain `0`, code `0`: the real Stop binding refused its existing accounting/process-list
+consistency check. No stopped receipt, grant revocation or failed-report read is claimed; `failedReport` was absent.
+The original C operation and the specific failed state comparison remain unknown from this result.
+
+The next diagnostic preserves that entire state predicate and all native calls. Only after the unchanged full
+condition refuses does it select the first failed comparison, using already-decoded scalars and these closed IDs:
+
+| Constraint | Existing failed comparison |
+| --- | --- |
+| 15 | Lifetime process total exceeds the one-root budget |
+| 16 | Active process count exceeds the lifetime total |
+| 17 | Limit-terminated count exceeds the lifetime total |
+| 18 | Assigned-process count differs from returned-list length |
+| 19 | Active process count differs from returned-list length |
+| 20 | Returned-list length exceeds the one-root budget |
+| 21 | Existing returned PID is outside the valid nonzero DWORD range |
+
+IDs 15 through 20 follow the original source order and identify only the first failed comparison. Multiple checks
+can fail together. In particular, ID 20 is a stable shadowed slot: an oversized list necessarily fails an earlier
+comparison under the one-root constraints, so it cannot be selected first. ID 21 applies to the subsequent existing
+PID-bounds check. No counts, process identifiers, handles, extra query or error-text lookup are exposed. The owner
+copies this first branded metadata into its existing terminal stage `12` refusal, retains all owners and never
+authorises report readout from the diagnostic.
+
+Microsoft's [accounting structure documentation](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_accounting_information)
+states that lifetime totals include failed associations caused by limit violations and describes a temporary active
+increment for those failed associations. Its [process-list documentation](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_process_id_list)
+distinguishes the number of identifiers to store from the number actually returned. These contracts do not identify
+the sixth run's failed comparison or justify dropping any history, consistency, completion or root-only check.
+The next Windows result remains pending; no DETACHED comparison is implemented in this candidate.
+
+This diagnostic passes 743 focused contracts, including 266 Stop cases, final composed TypeScript, scoped lint
+and diff checks. Root's actual-file review closed. These portable checks do not establish the next native result.
