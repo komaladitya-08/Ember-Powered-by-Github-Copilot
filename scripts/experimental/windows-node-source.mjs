@@ -62,7 +62,7 @@ export async function validateSourceInputs(root, variant = "stock", { allowGener
 /**
  * The operator must supply a trusted Python interpreter; this standalone preparer cannot authenticate arbitrary
  * caller executables. The Windows builder attests its fixed hosted interpreter before calling either preparer.
- * Keep the baseline out of all builds; only the working copy receives the one fixed compile-time guard.
+ * Keep the baseline out of all builds; only the working copy receives the fixed reviewed source deltas.
  */
 export async function prepareNodeSource({ archivePath, destination, pythonPath = "python", executionEnv, cwd }) {
   try {
@@ -71,7 +71,8 @@ export async function prepareNodeSource({ archivePath, destination, pythonPath =
     if (!result || result.schema !== 1 || result.issuer !== sourcePin.issuer || result.version !== sourcePin.version || Object.keys(result).length !== 5) fail();
     const baseline = checked(result.baseline, "stock", false), working = checked(result.working, "offline", false);
     const receipt = { schema: 1, issuer: sourcePin.issuer, version: sourcePin.version, archive: sourcePin.sourceArchive, provenance: sourcePin.provenance,
-      patch: { file: sourcePin.patch.file, beforeSha256: sourcePin.patch.beforeSha256, afterSha256: sourcePin.patch.afterSha256, macro: sourcePin.patch.macro, value: sourcePin.patch.value }, baseline, working };
+      patch: { file: sourcePin.patch.file, beforeSha256: sourcePin.patch.beforeSha256, afterSha256: sourcePin.patch.afterSha256, macro: sourcePin.patch.macro, value: sourcePin.patch.value },
+      patches: sourcePin.patches.map(({ file, beforeSha256, afterSha256, kind }) => ({ file, beforeSha256, afterSha256, kind })), baseline, working };
     await fs.writeFile(path.join(destination, "source-receipt.json"), JSON.stringify(receipt, null, 2) + "\n", { flag: "wx", mode: 0o600 });
     return { baselineDir: path.join(destination, "baseline"), workingDir: path.join(destination, "working"), receipt };
   } catch { fail(); }

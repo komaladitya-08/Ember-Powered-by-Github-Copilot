@@ -48,7 +48,7 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - name: Source preparation, compile recipe and bounded receipt contracts
-        run: npm test -- test/unit/windows-node-source.test.ts test/unit/windows-node-source-build.test.ts test/unit/windows-node-source-program.test.ts test/unit/windows-node-source-report.test.ts test/unit/windows-node-source-ownership.test.ts --maxWorkers=1
+        run: npm test -- test/unit/windows-node-source.test.ts test/unit/windows-node-source-build.test.ts test/unit/windows-node-source-program.test.ts test/unit/windows-node-source-report.test.ts test/unit/windows-node-source-ownership.test.ts test/unit/windows-node-source-fatal.test.ts test/unit/windows-node-source-child-program.test.ts test/unit/windows-node-source-child-host.test.ts test/unit/windows-node-source-child-io.test.ts test/unit/windows-node-source-child-observer.test.ts --maxWorkers=1
       - name: Prepare the unchanged independently pinned official Node control
         timeout-minutes: 3
         shell: pwsh

@@ -16,6 +16,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   native-only:
+    # This exact new source variant needs a fresh build, not the old immutable PE.
+    if: github.head_ref != 'ember-improve/20261116-source-node-cng-pipes' && github.ref_name != 'ember-improve/20261116-source-node-cng-pipes'
     name: Attested source Node native-only diagnostic (windows-2022)
     runs-on: windows-2022
     timeout-minutes: 15

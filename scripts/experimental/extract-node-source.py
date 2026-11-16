@@ -121,6 +121,10 @@ def _validate_catalog(catalog, pin):
     if (total != pin["inventory"]["stockBytes"] or _file_manifest(files) != pin["inventory"]["stockManifestSha256"] or
             _directory_manifest(directories) != pin["inventory"]["directoryManifestSha256"]):
         _fail("catalog")
+    records = dict((entry["path"], entry) for entry in files)
+    for name, patch in _patches(pin).items():
+        if name not in records or records[name]["bytes"] != patch["beforeBytes"] or records[name]["sha256"] != patch["beforeSha256"]:
+            _fail("patch")
     known_directories = set(directories)
     for name in [entry["path"] for entry in files] + directories:
         components = name.split("/")
@@ -167,8 +171,18 @@ def _hash_file(file_path, expected_size, expected_hash=None, include_bytes=False
         return b"".join(chunks) if include_bytes else value
 
 
-def _patched_core(data, pin):
-    patch = pin["patch"]
+def _patches(pin):
+    patches = pin.get("patches")
+    expected = ["deps/uv/src/win/core.c",
+                "deps/openssl/openssl/providers/implementations/rands/seeding/rand_win.c",
+                "deps/uv/src/win/pipe.c"]
+    if (not isinstance(patches, list) or len(patches) != 3 or
+            pin.get("patch") != patches[0] or [entry["file"] for entry in patches] != expected):
+        _fail("patch")
+    return dict((entry["file"], entry) for entry in patches)
+
+
+def _patched_source(data, patch):
     if len(data) != patch["beforeBytes"] or hashlib.sha256(data).hexdigest() != patch["beforeSha256"]:
         _fail("patch")
     needle, replacement = patch["needle"].encode("utf-8"), patch["replacement"].encode("utf-8")
@@ -239,7 +253,7 @@ def _extract_members(archive, destination, pin):
             full = root.joinpath(*_safe_relative(directory, pin))
             _ancestors(full.parent)
             os.mkdir(str(full), 0o700)
-    records = []
+    records, patches = [], _patches(pin)
     # Preserve archive order while reading xz data; canonicalize the finished catalog separately.
     for name, member in files.items():
         current()
@@ -251,7 +265,7 @@ def _extract_members(archive, destination, pin):
         for root, _ in roots:
             full = root.joinpath(*_safe_relative(name, pin))
             _ancestors(full.parent)
-            content = _patched_core(data, pin) if root == working and name == pin["patch"]["file"] else data
+            content = _patched_source(data, patches[name]) if root == working and name in patches else data
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
             with os.fdopen(os.open(str(full), flags, 0o600), "wb") as writer:
                 opened = os.fstat(writer.fileno())
@@ -375,11 +389,12 @@ def validate_source_inputs(root, variant, allow_generated):
         _check_exact_inventory(root, files, directories, pin)
     for name in directories:
         _ancestors(root.joinpath(*_safe_relative(name, pin)))
-    observed = []
+    observed, patches = [], _patches(pin)
     for entry in files:
         size, value = entry["bytes"], entry["sha256"]
-        if variant == "offline" and entry["path"] == pin["patch"]["file"]:
-            size, value = pin["patch"]["afterBytes"], pin["patch"]["afterSha256"]
+        if variant == "offline" and entry["path"] in patches:
+            patch = patches[entry["path"]]
+            size, value = patch["afterBytes"], patch["afterSha256"]
         actual = _hash_file(root.joinpath(*_safe_relative(entry["path"], pin)), size, value)
         observed.append({"path": entry["path"], "bytes": size, "sha256": actual})
     _ancestors(root)
