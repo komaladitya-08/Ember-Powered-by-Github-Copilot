@@ -248,8 +248,26 @@ passed [its first matrix](https://github.com/komaladitya-08/Ember-Powered-by-Git
 both Server images. With the two documented preserve-symlink flags and explicit single-process test isolation, the
 fixed CommonJS import, async read, timer and Node test completed with exit 0, empty output, genuine job Stop and
 known cleanup. The earlier unflagged failures remain unchanged. This is useful compatibility evidence for a declared
-invocation, not command-backend integration; bounded live output, genuine stopped proposal transfer and complete
-product journeys still need implementation and proof.
+invocation, not command-backend integration. The later output and transfer foundations below advance that bridge;
+complete Windows Node/product journeys remain unproved.
+
+The corrected bounded-output foundation [#249](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/249)
+at `e9deced4` passed 1,801 focused cases and full types. Its separate fixed C witness
+[#252](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/252) passed
+[manual run 43948135820](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43948135820)
+on Server 2022 and 2025: 201 portable and three actual native cases each. Natural exit 17 retained complete output;
+overflow and explicit cancellation caused genuine automatic Stop before completion was requested. Every case
+verified stdin EOF, live output, drained pipes, snapshot/unchanged seed and complete known tree/pin/profile cleanup.
+This is a C output/lifecycle proof, not a Node or product execution result.
+
+The disabled canonical transfer foundation
+[#251](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/251) at `d526b644` implements complete
+privacy-scanned input, authentic stopped/output-closed snapshots, one-shot claims and fresh-root adoption against
+the original baseline. Final 55 affected cases and full types passed; earlier aggregate failures are disclosed in
+its validation document. Actual native transfer remains to be exercised. The fixed asset packaging foundation
+[#253](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/253) at `f934068f` passed 113 portable
+and six real pinned-artifact checks plus full types. It supplies no native execution authority. The dedicated native
+asset owner and Windows Node-only workspace still need implementation/composition and native product verification.
 
 The separate [observer ABI control #246](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/246)
 passed [run 43935627569](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43935627569):
@@ -282,6 +300,15 @@ Windows passed 19,402 units and its build/desktop/UIA/voice/package checks, then
 failure. RHEL 8's saved-workspace restart case waited for a disabled Save button; 85 desktop cases passed, one failed
 and one skipped. Its test and renderer/IPC implementation are unchanged from the preceding candidate; investigation
 continues. Overall CI remains red, and Windows command integration/live-account/laptop acceptance remain unfinished.
+
+The failure-only workspace diagnostic [#250](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/250)
+subsequently passed its RHEL desktop suite in
+[run 43941583962](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43941583962), without
+changing product behaviour or deadlines; the earlier Save-button cause remains unknown. That run retained the known
+Windows LPAC failure and failed one unchanged macOS redaction budget case at 322.895 ms versus 300 ms. The separate
+reviewed [redaction change #255](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/255) skips an
+impossible MySQL password search when its literal `-p` prerequisite is absent, retaining the exact regex, unguarded
+reference and budget. Its 457 focused cases, full types, lint and build passed; hosted macOS confirmation is pending.
 
 The preceding integrated product candidate was [draft #236](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/236)
 at `88106606726e0f24e43f8ae7f5d430f899ab0f34`, including the session review change from
