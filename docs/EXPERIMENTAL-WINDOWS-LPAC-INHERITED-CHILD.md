@@ -19,6 +19,8 @@ The separate fixture includes the original helpers and preserves its complete as
 Image, writable command line, explicit new-process/thread security, current directory, environment, no-window and
 suspended creation, breakaway attempt and zero inherited handles remain the same. There is no runtime fallback to
 ordinary AppContainer, a different package or a broader capability set.
+The host also retains a read-only image handle denying write/delete sharing from staged hash readback through child
+admission, job Stop and report inspection; it releases that pin before verified fixture cleanup and retains it on uncertainty.
 
 Before the first child instruction, the LPAC root still requires its original exact-package, AppContainer,
 zero-capability and own-package-versus-AAP access witnesses. The host discovers the one child using its owned private

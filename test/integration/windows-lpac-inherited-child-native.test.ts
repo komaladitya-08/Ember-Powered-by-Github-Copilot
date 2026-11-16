@@ -8,6 +8,7 @@ import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { ExperimentalWindowsLpacFixture } from "../../app/main/agent/experimental-windows-lpac";
 import { loadExperimentalWindowsLpacApi, type WindowsLpacProfile, type WindowsHandle, type WindowsSuspendedProcess } from "../../app/main/agent/experimental-windows-lpac-api";
 import { loadInheritedChildObserver, InheritedChildCleanupError } from "../fixtures/windows-lpac-inherited-child";
+import { nativeChecks, WindowsNodeProofCleanupError } from "../fixtures/windows-node-lpac-proof";
 
 const required = process.env.EMBER_LPAC_INHERITED_CHILD_TEST === "1", supported = process.platform === "win32";
 const retainedOwners: unknown[] = [];
@@ -92,8 +93,8 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
 
   async function run(variant: "explicit" | "inherited") {
     if (retainedOwners.length) throw new InheritedChildCleanupError();
-    let api: ReturnType<typeof loadExperimentalWindowsLpacApi>, observer: ReturnType<typeof loadInheritedChildObserver>;
-    try { api = loadExperimentalWindowsLpacApi(); observer = loadInheritedChildObserver(); }
+    let api: ReturnType<typeof loadExperimentalWindowsLpacApi>, observer: ReturnType<typeof loadInheritedChildObserver>, native: ReturnType<typeof nativeChecks>;
+    try { api = loadExperimentalWindowsLpacApi(); observer = loadInheritedChildObserver(); native = nativeChecks(api); }
     catch (error) { if (error instanceof InheritedChildCleanupError) { safeToRemove = false; throw error; } throw fixedFailure(); }
     const executable = executables.get(variant)!;
     let profile: WindowsLpacProfile | undefined, job: WindowsHandle | undefined, process: WindowsSuspendedProcess | undefined, expectedLocalAppData = "";
@@ -107,11 +108,13 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
       });
     } catch { safeToRemove = false; retainedOwners.push({ api, observer, parent, profile, job, process }); throw fixedFailure(); }
     let unsafe = false, stopped = false, failed = false, child: number | null = null, descendantRemained = false;
+    let imagePin: ReturnType<ReturnType<typeof nativeChecks>["pin"]> | undefined;
     let outcome: { mode: "explicit" | "inherited"; rootExit: number; report: number[] | null; failure: number[] | null; jobStopped: true; admitted: boolean; descendantRemained: boolean; profilePaths: boolean } | undefined;
     const previous = processEnvMarker();
     try {
+      imagePin = native.pin(fixture.paths.program, 16 * 1024 * 1024);
       const staged = boundedRead(fixture.paths.program, 16 * 1024 * 1024); if (!staged) throw fixedFailure();
-      try { if (digest(staged) !== digest(executable)) throw fixedFailure(); } finally { staged.fill(0); }
+      try { if (digest(staged) !== digest(executable)) throw fixedFailure(); imagePin.unchanged(); } finally { staged.fill(0); }
       api.writeNewFile(path.join(fixture.paths.root, "all-app-packages.txt"), Buffer.from("disposable LPAC canary"),
         `D:P(A;;FA;;;${api.ownerSid()})(A;;FA;;;SY)(A;;FR;;;AC)S:(ML;;NW;;;ME)`);
       expect(fs.readFileSync(path.join(fixture.paths.root, "all-app-packages.txt"), "utf8")).toBe("disposable LPAC canary");
@@ -123,7 +126,7 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
           if (api.exited(process.process) || performance.now() >= deadline) throw fixedFailure();
           const exactProcess = process, exactJob = job, exactProfile = profile;
           child = observer.admit({ job: exactJob, rootProcess: exactProcess.process, rootPid: exactProcess.pid, image: fixture.paths.program,
-            current: () => !api.exited(exactProcess.process), verifyToken: value => {
+            current: () => { imagePin!.unchanged(); return !api.exited(exactProcess.process); }, verifyToken: value => {
               try { api.verifyToken(exactProfile, value); } catch { unsafe = true; throw fixedFailure(); }
             },
             grant: value => writeAdmission(path.join(fixture.paths.state, "child-admit.bin"), value) });
@@ -137,11 +140,12 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
         if (!descendantRemained) throw fixedFailure();
         await expect(fixture.waitStopped(100)).rejects.toThrow("descendants");
       }
-    } catch (error) { failed = true; if (error instanceof InheritedChildCleanupError) unsafe = true; }
+    } catch (error) { failed = true; if (error instanceof InheritedChildCleanupError || error instanceof WindowsNodeProofCleanupError) unsafe = true; }
     finally {
       restoreEnvMarker(previous);
       try { const lease = await fixture.stop(15_000); lease.requireStopped(); stopped = true; } catch { unsafe = true; }
       if (stopped && !unsafe) try {
+        imagePin?.unchanged();
         const report = reportWords(path.join(fixture.paths.state, "report.bin"), 12), diagnostic = reportWords(path.join(fixture.paths.state, "failure.bin"), 25);
         let profilePaths = false;
         if (report) {
@@ -153,8 +157,9 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
         }
         outcome = { mode: variant, rootExit: fixture.exitCode(), report, failure: diagnostic, jobStopped: true, admitted: child !== null, descendantRemained, profilePaths };
       } catch (error) { failed = true; if (error instanceof InheritedChildCleanupError) unsafe = true; }
+      if (!unsafe && imagePin) try { imagePin.unchanged(); imagePin.close(); imagePin = undefined; } catch { unsafe = true; }
       if (!unsafe) try { await fixture.close(); } catch { unsafe = true; }
-      if (unsafe) { safeToRemove = false; retainedOwners.push({ fixture, profile, job, process, observer, parent }); }
+      if (unsafe) { safeToRemove = false; retainedOwners.push({ fixture, profile, job, process, observer, parent, imagePin, native }); }
     }
     if (unsafe) throw new InheritedChildCleanupError();
     if (!outcome) throw fixedFailure();
