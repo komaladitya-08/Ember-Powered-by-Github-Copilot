@@ -91,6 +91,30 @@ describe.skipIf(process.platform !== "win32" && !required)("native Windows proje
     await resource.close(); expect(fs.existsSync(common)).toBe(false);
   });
 
+  it("continues the prior proposal in a fresh native copy, keeps the cumulative baseline and survives predecessor Forget", async () => {
+    const resource = await open(); expect(resource.availability().available).toBe(true); await bind(resource);
+    const firstTask = task(resource), signal = new AbortController();
+    const first = await resource.createWorkspace(firstTask, signal.signal, () => true) as WindowsFileOnlyWorkspace;
+    const firstBroker = await first.filesBroker(signal.signal); await firstBroker.writeText("app.ts", PROPOSED);
+    await firstBroker.close(); await first.stop(); await first.sealForReview();
+    const firstOutput = await first.exportReview(resource.reviewBase), previous = await resource.publish(firstTask, firstOutput, "stopped", checks);
+    await first.close();
+    const continuation = resource.captureContinuation(previous.id, PROJECT); expect(continuation).not.toBeNull();
+    const nextTask = task(resource); nextTask.codingWorkspace = { ...nextTask.codingWorkspace!, continuation: continuation! };
+    const next = await resource.createWorkspace(nextTask, signal.signal, () => true) as WindowsFileOnlyWorkspace;
+    const nextBroker = await next.filesBroker(signal.signal); expect((await nextBroker.readText("app.ts")).text).toBe(PROPOSED);
+    const results = await resource.results(); await results.forgetResult(previous.id);
+    expect(resource.continuationCurrent(continuation!, PROJECT)).toBe(false);
+    await nextBroker.replaceText("app.ts", "42", "43"); await nextBroker.close(); await next.stop(); await next.sealForReview();
+    const nextOutput = await next.exportReview(resource.reviewBase), continued = await resource.publish(nextTask, nextOutput, "done", checks);
+    const exported = await results.export(continued.id, destination, () => true); expect(exported.ok).toBe(true);
+    const decoded = decodeCodingReviewExport(fs.readFileSync(path.join(exported.directory!, "review.json")), nextOutput.review.binding);
+    expect(text(decoded.baseline, "app.ts")).toBe(ORIGINAL); expect(text(decoded.proposed, "app.ts")).toBe("export const answer = 43;\n");
+    expect(text(decoded.current, "app.ts")).toBe(ORIGINAL); expect(results.state(PROJECT).map(result => result.id)).toEqual([continued.id]);
+    expect(fs.readFileSync(path.join(source, "app.ts"), "utf8")).toBe(ORIGINAL);
+    await results.forgetResult(continued.id); await next.close(); await resource.close(); expect(fs.existsSync(common)).toBe(false);
+  });
+
   it.each([false, true])("retains a pre-existing common root without adopting or modifying it (contains data: %s)", async data => {
     fs.mkdirSync(common); const identity = fs.statSync(common, { bigint: true }).ino;
     if (data) fs.writeFileSync(path.join(common, "prior.txt"), "prior-private-canary");

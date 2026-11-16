@@ -10,6 +10,11 @@ import type { CodingArtifactStore, CodingArtifactFiles, CodingArtifactInput, Cod
 import type { CodingWorkspaceReview } from "../../app/main/agent/coding-platform";
 import type { ProjectCodingWorkspaces } from "../../app/main/agent/project-coding-workspaces";
 import type { TaskSpec } from "../../app/main/agent/worker";
+import type { CodingWorkspaceContinuation } from "../../app/main/agent/coding-seed-snapshot";
+import type { CodingExportInput, CodingExportTree } from "../../app/main/agent/coding-result-export";
+
+type ContinuedWorkspaceInput = Omit<WindowsFileOnlyWorkspaceInput, "review"> & { continuation?: CodingWorkspaceContinuation;
+  review: WindowsFileOnlyWorkspaceInput["review"] & { sourceBoundary?: CodingArtifactSourceRef } };
 
 const A = "a".repeat(64), B = "b".repeat(64), P = "11111111-1111-4111-8111-111111111111", Q = "22222222-2222-4222-8222-222222222222";
 const COMMON = "C:\\temporary\\ember-coding", SOURCE = "C:\\project", SECOND = "C:\\second-project";
@@ -193,7 +198,7 @@ async function setup(options: { existingCommon?: boolean; unknownChildren?: numb
   });
   vi.doMock("../../app/main/agent/windows-coding-artifact-store", () => ({ WindowsCodingArtifactStore: { create: storeCreate } }));
   interface Backend {
-    input: WindowsFileOnlyWorkspaceInput; executionRoot: string; sourceBoundary: CodingArtifactSourceRef;
+    input: ContinuedWorkspaceInput; executionRoot: string; sourceBoundary: CodingArtifactSourceRef; seed?: CodingWorkspaceContinuation;
     stop: ReturnType<typeof vi.fn<() => Promise<void>>>; close: ReturnType<typeof vi.fn<() => Promise<void>>>;
     sealForReview(): Promise<void>; exportReview(base: string): Promise<CodingWorkspaceReview>; transferReview(output: CodingWorkspaceReview): void;
     files<T>(operation: (directory: string) => Promise<T>): Promise<T>;
@@ -202,18 +207,26 @@ async function setup(options: { existingCommon?: boolean; unknownChildren?: numb
   }
   const backends: Backend[] = []; let createGate: ReturnType<typeof deferred<void>> | undefined;
   const createEntered = deferred<void>();
-  const createBackend = vi.fn(async (input: WindowsFileOnlyWorkspaceInput) => {
+  const createBackend = vi.fn(async (input: ContinuedWorkspaceInput) => {
     if (!/^[A-Za-z]:\\/.test(input.privateBase) || input.protectedPaths.some(value => !/^[A-Za-z]:\\/.test(value))) throw new Error("Adapter paths must be drive spellings.");
-    const sourceBoundary = await store.sourceBoundary(input.source, () => { if (!input.current()) throw new errors.CodingResultRegistryError("stale"); });
+    const clone = (tree: CodingExportTree): CodingExportTree => ({ binding: { ...tree.binding }, entries: tree.entries.map(entry => entry.kind === "file" ? { ...entry, bytes: Buffer.from(entry.bytes) } : { ...entry }) });
+    // Faithful admission seam: the real Copy owns clones before its first await; source bytes remain caller-owned.
+    const seed = input.continuation ? { ...input.continuation, baseline: clone(input.continuation.baseline), proposed: clone(input.continuation.proposed) } : undefined;
+    const check = () => { if (!input.current()) throw new errors.CodingResultRegistryError("stale"); };
+    const sourceBoundary = await store.sourceBoundary(input.source, check, input.review.sourceBoundary);
     if (!sourceBoundary) throw new errors.CodingResultRegistryError("artifact");
+    const fresh = await store.sourceBoundary(input.source, check);
+    if (!await store.sameSource(sourceBoundary, fresh, check)) throw new errors.CodingResultRegistryError("stale");
     const directory = path.join(input.privateBase, `copy-${randomUUID()}`); node(directory, "directory", true);
     let exporting: Promise<CodingWorkspaceReview> | undefined;
-    const backend: Backend = { input, executionRoot: "/work", sourceBoundary, transferred: false, sealed: false,
+    const backend: Backend = { input, seed, executionRoot: "/work", sourceBoundary, transferred: false, sealed: false,
       stop: vi.fn(async () => { events.push("backend-stop"); }),
       close: vi.fn(async () => {
         events.push("backend-close"); if (backend.closeGate) await backend.closeGate.promise;
         await exporting?.catch(() => undefined);
         if (backend.output && !backend.transferred) await store.discard(backend.output);
+        for (const tree of [backend.seed?.baseline, backend.seed?.proposed]) for (const entry of tree?.entries ?? []) if (entry.kind === "file") entry.bytes.fill(0);
+        backend.seed = undefined;
         nodes.delete(key(directory));
       }),
       async sealForReview() { await backend.stop(); backend.sealed = true; },
@@ -238,17 +251,18 @@ async function setup(options: { existingCommon?: boolean; unknownChildren?: numb
     backends.push(backend); createEntered.resolve(); if (createGate) await createGate.promise; return backend;
   });
   vi.doMock("../../app/main/agent/windows-file-only-workspace", () => ({ WindowsFileOnlyWorkspace: { create: createBackend } }));
-  interface Selection { path: string; owner: string | null; epoch: number; live: boolean }
+  interface Selection { path: string; id: string; owner: string | null; epoch: number; live: boolean }
   const selections = new Map<string, Selection>();
   const folders = {
     capture: vi.fn((projectId: string) => {
       const selected = selections.get(projectId); if (!selected || selected.owner !== owner || selected.epoch !== ownerEpoch || !projects.has(projectId) || !selected.live) return null;
-      return { path: selected.path, current: () => selections.get(projectId) === selected && selected.owner === owner && selected.epoch === ownerEpoch && selected.live && projects.has(projectId) };
+      return { path: selected.path, current: () => selections.get(projectId) === selected && nodes.get(key(selected.path))?.info.id === selected.id && selected.owner === owner && selected.epoch === ownerEpoch && selected.live && projects.has(projectId) };
     }),
     ownerCurrent: vi.fn(() => { const selected = owner, epoch = ownerEpoch; return () => owner !== null && selected === owner && epoch === ownerEpoch; }),
     ownerReset: vi.fn(() => { ownerEpoch++; selections.clear(); }),
   };
   const { WindowsProjectCodingResources } = await import("../../app/main/agent/windows-coding-resources");
+  const { CodingResultRegistry } = await import("../../app/main/agent/coding-result-registry");
   const changed = vi.fn();
   const open = async () => {
     const value = await WindowsProjectCodingResources.create({ userData: "C:\\data", protectedPaths: ["C:\\data", "C:\\application"],
@@ -259,7 +273,7 @@ async function setup(options: { existingCommon?: boolean; unknownChildren?: numb
   };
   const bind = async (value: WindowsProjectCodingResources, projectId = P, source = SOURCE) => {
     const selected = await value.validateSource({ path: source, current: () => true });
-    selections.set(projectId, { path: selected.path, owner, epoch: ownerEpoch, live: true });
+    selections.set(projectId, { path: selected.path, id: nodes.get(key(selected.path))!.info.id, owner, epoch: ownerEpoch, live: true });
   };
   const spec = (value: WindowsProjectCodingResources, projectId = P): TaskSpec => {
     const workspace = value.workspace(projectId); expect(workspace).not.toBeNull();
@@ -273,7 +287,7 @@ async function setup(options: { existingCommon?: boolean; unknownChildren?: numb
     await workspace.sealForReview?.(); return workspace.exportReview(value.reviewBase);
   };
   return { open, bind, spec, start, review, api, nodes, handles, node, key, location, removed, closed, events, backends, store, storeCreate, discover, changed, folders, projects,
-    createBackend, createEntered, storeEntered, claimEntered, errors, native, retirePrivacy,
+    createBackend, createEntered, storeEntered, claimEntered, errors, native, retirePrivacy, CodingResultRegistry,
     setOwner(value: string | null) { owner = value; folders.ownerReset(); },
     failNextClose() { failClose = true; }, gateCreate() { return createGate = deferred<void>(); }, gateStore() { return storeGate = deferred<void>(); }, gateClaim() { return claimGate = deferred<void>(); },
   };
@@ -427,10 +441,114 @@ it("makes unknown native cleanup terminal, retains its owned roots and blocks a 
   const next = await f.open(); expect(next.availability().available).toBe(false); expect(f.createBackend).not.toHaveBeenCalled();
 });
 
-it("explicitly refuses continuation tokens instead of starting again from the original folder", async () => {
+it.each([null, Object.freeze({})])("refuses a missing/forged predecessor capability instead of recapturing the original folder", async continuation => {
   const f = await setup(), value = await f.open(); await f.bind(value); const task = f.spec(value);
-  task.codingWorkspace = { ...task.codingWorkspace!, continuation: Object.freeze({}) as NonNullable<TaskSpec["codingWorkspace"]>["continuation"] };
-  await expect(value.createWorkspace(task, new AbortController().signal, () => true)).rejects.toThrow("unavailable on Windows");
+  task.codingWorkspace = { ...task.codingWorkspace!, continuation: continuation as NonNullable<TaskSpec["codingWorkspace"]>["continuation"] };
+  await expect(value.createWorkspace(task, new AbortController().signal, () => true)).rejects.toThrow("changed");
   expect(value.captureContinuation("old-result", P)).toBeNull(); expect(value.continuationCurrent(Object.freeze({}) as never, P)).toBe(false);
   expect(f.createBackend).not.toHaveBeenCalled();
+});
+
+async function predecessor(f: Awaited<ReturnType<typeof setup>>, value: WindowsProjectCodingResources) {
+  const first = await f.start(value), output = await f.review(value, first.workspace);
+  const result = await value.publish(first.task, output, "stopped", { ran: 0, passed: 0, failed: 0 }); await first.workspace.close();
+  const ref = value.captureContinuation(result.id, P); expect(ref).not.toBeNull();
+  const task = f.spec(value); task.codingWorkspace = { ...task.codingWorkspace!, continuation: ref! };
+  return { result, ref: ref!, task };
+}
+function treeText(tree: CodingExportTree | undefined): string | undefined { const entry = tree?.entries[0]; return entry?.kind === "file" ? entry.bytes.toString() : undefined; }
+function treeBytes(input: CodingExportInput): Buffer[] { return [input.baseline, input.proposed, input.current].flatMap(tree => tree?.entries.flatMap(entry => entry.kind === "file" ? [entry.bytes] : []) ?? []); }
+
+it("loads an opaque predecessor through its original same-store source boundary and hands complete independent trees to the fresh copy", async () => {
+  const f = await setup(), value = await f.open(); await f.bind(value); const previous = await predecessor(f, value);
+  const load = vi.spyOn(f.CodingResultRegistry.prototype, "loadContinuation"), workspace = await value.createWorkspace(previous.task, new AbortController().signal, () => true);
+  expect(load).toHaveBeenCalledOnce(); const [ref, projectId, boundary, current] = load.mock.calls[0];
+  expect(ref).toBe(previous.ref); expect(projectId).toBe(P); expect(boundary).toBe(f.backends[1].input.review.sourceBoundary); expect(current()).toBe(true);
+  expect(f.backends[1].sourceBoundary).toBe(boundary); expect(treeText(f.backends[1].seed?.baseline)).toBe("original\n");
+  expect(treeText(f.backends[1].seed?.proposed)).toBe("changed\n");
+  const decoded = await load.mock.results[0].value as CodingExportInput;
+  expect(treeBytes(decoded).every(bytes => bytes.every(byte => byte === 0))).toBe(true);
+  expect(f.backends[1].seed?.proposed.entries[0]).not.toBe(decoded.proposed.entries[0]);
+  expect(value.availability()).toMatchObject({ canContinue: false, mode: "files-only" }); await workspace.close();
+});
+
+it("forgets the predecessor after admission without revoking the independent new copy or its result", async () => {
+  const f = await setup(), value = await f.open(); await f.bind(value); const previous = await predecessor(f, value);
+  const workspace = await value.createWorkspace(previous.task, new AbortController().signal, () => true), backend = f.backends[1];
+  await (await value.results()).forgetResult(previous.result.id);
+  expect(value.continuationCurrent(previous.ref, P)).toBe(false); expect(backend.input.current()).toBe(true); expect(treeText(backend.seed?.proposed)).toBe("changed\n");
+  const output = await f.review(value, workspace), result = await value.publish(previous.task, output, "done", { ran: 0, passed: 0, failed: 0 });
+  expect((await value.results()).state(P).map(item => item.id)).toEqual([result.id]);
+});
+
+it.each(["forget-result", "forget-project", "reset", "owner-aba", "source-replaced", "stop"] as const)("refuses a decoded but still pending predecessor load after %s and wipes all decoded bytes", async change => {
+  const f = await setup(), value = await f.open(); await f.bind(value); const previous = await predecessor(f, value);
+  const entered = deferred<void>(), gate = deferred<void>(), load = f.CodingResultRegistry.prototype.loadContinuation;
+  let decoded: CodingExportInput | undefined;
+  vi.spyOn(f.CodingResultRegistry.prototype, "loadContinuation").mockImplementation(async function (this: InstanceType<typeof f.CodingResultRegistry>, ...args) {
+    decoded = await load.apply(this, args); entered.resolve(); await gate.promise; return decoded;
+  });
+  const signal = new AbortController(), creating = value.createWorkspace(previous.task, signal.signal, () => true).catch(error => error);
+  await entered.promise;
+  if (change === "forget-result") await (await value.results()).forgetResult(previous.result.id);
+  else if (change === "forget-project") await (await value.results()).forgetProject(P);
+  else if (change === "reset") await (await value.results()).reset();
+  else if (change === "owner-aba") { f.setOwner(B); f.setOwner(A); }
+  else if (change === "source-replaced") f.nodes.get(f.key(SOURCE))!.info.id = "replacement-id";
+  else signal.abort();
+  gate.resolve(); expect(await creating).toBeInstanceOf(Error); expect(f.createBackend).toHaveBeenCalledTimes(1);
+  expect(decoded).toBeDefined(); expect(treeBytes(decoded!).every(bytes => bytes.every(byte => byte === 0))).toBe(true);
+});
+
+it("drains and wipes a delayed continuation load before closing private storage", async () => {
+  const f = await setup(), value = await f.open(); await f.bind(value); const previous = await predecessor(f, value);
+  const entered = deferred<void>(), gate = deferred<void>(), load = f.CodingResultRegistry.prototype.loadContinuation;
+  let decoded: CodingExportInput | undefined;
+  vi.spyOn(f.CodingResultRegistry.prototype, "loadContinuation").mockImplementation(async function (this: InstanceType<typeof f.CodingResultRegistry>, ...args) {
+    decoded = await load.apply(this, args); entered.resolve(); await gate.promise; return decoded;
+  });
+  const creating = value.createWorkspace(previous.task, new AbortController().signal, () => true).catch(error => error); await entered.promise;
+  let closed = false; const closing = value.close().then(() => { closed = true; }); await Promise.resolve(); expect(closed).toBe(false);
+  expect(f.nodes.has(f.key(COMMON))).toBe(true); gate.resolve(); expect(await creating).toBeInstanceOf(Error); await closing;
+  expect(treeBytes(decoded!).every(bytes => bytes.every(byte => byte === 0))).toBe(true); expect(f.nodes.has(f.key(COMMON))).toBe(false);
+});
+
+it("checks predecessor current through fresh-copy admission, closes a late copy after predecessor Forget, and never falls back", async () => {
+  const f = await setup(), value = await f.open(); await f.bind(value); const previous = await predecessor(f, value), gate = f.gateCreate();
+  const creating = value.createWorkspace(previous.task, new AbortController().signal, () => true).catch(error => error);
+  await vi.waitFor(() => expect(f.backends).toHaveLength(2)); await (await value.results()).forgetResult(previous.result.id);
+  expect(f.backends[1].input.current()).toBe(false); gate.resolve(); expect(await creating).toBeInstanceOf(Error);
+  expect(f.createBackend).toHaveBeenCalledTimes(2); expect(f.backends[1].stop).toHaveBeenCalledOnce(); expect(f.backends[1].close).toHaveBeenCalledOnce();
+});
+
+it("refuses a predecessor tied to another source directory even when project selection is explicitly rebound", async () => {
+  const f = await setup(), value = await f.open(); await f.bind(value); const previous = await predecessor(f, value); await f.bind(value, P, SECOND);
+  previous.task.codingWorkspace = { ...value.workspace(P)!, continuation: previous.ref };
+  await expect(value.createWorkspace(previous.task, new AbortController().signal, () => true)).rejects.toThrow(); expect(f.createBackend).toHaveBeenCalledTimes(1);
+});
+
+it("does not accept a genuine predecessor capability for another project", async () => {
+  const f = await setup(), value = await f.open(); await f.bind(value); await f.bind(value, Q, SECOND); const previous = await predecessor(f, value);
+  const task = f.spec(value, Q); task.codingWorkspace = { ...task.codingWorkspace!, continuation: previous.ref };
+  await expect(value.createWorkspace(task, new AbortController().signal, () => true)).rejects.toThrow("changed");
+  expect(f.createBackend).toHaveBeenCalledTimes(1); expect(value.captureContinuation(previous.result.id, Q)).toBeNull();
+});
+
+it("captures the opaque predecessor before any asynchronous load and ignores later mutation of the task grant", async () => {
+  const f = await setup(), value = await f.open(); await f.bind(value); const previous = await predecessor(f, value);
+  const entered = deferred<void>(), gate = deferred<void>(), load = f.CodingResultRegistry.prototype.loadContinuation;
+  vi.spyOn(f.CodingResultRegistry.prototype, "loadContinuation").mockImplementation(async function (this: InstanceType<typeof f.CodingResultRegistry>, ...args) {
+    const decoded = await load.apply(this, args); entered.resolve(); await gate.promise; return decoded;
+  });
+  const creating = value.createWorkspace(previous.task, new AbortController().signal, () => true); await entered.promise;
+  previous.task.codingWorkspace!.continuation = Object.freeze({}) as never; gate.resolve();
+  const workspace = await creating; expect(treeText(f.backends[1].seed?.proposed)).toBe("changed\n"); await workspace.close();
+});
+
+it("latches native seed-cleanup uncertainty during continuation admission and retains the private roots", async () => {
+  const f = await setup(), value = await f.open(); await f.bind(value); const previous = await predecessor(f, value);
+  class WindowsSeedCleanupFailure extends f.native.WindowsCodingCleanupError {}
+  f.createBackend.mockRejectedValueOnce(new WindowsSeedCleanupFailure());
+  await expect(value.createWorkspace(previous.task, new AbortController().signal, () => true)).rejects.toBeInstanceOf(WindowsSeedCleanupFailure);
+  expect(value.availability().available).toBe(false); await expect(value.close()).rejects.toThrow(); expect(f.nodes.has(f.key(COMMON))).toBe(true);
 });

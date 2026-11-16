@@ -14,7 +14,8 @@ import { WindowsFileOnlyWorkspace } from "./windows-file-only-workspace";
 import { WindowsCodingArtifactStore } from "./windows-coding-artifact-store";
 import { CodingResultRegistry, CodingResultRegistryError } from "./coding-result-registry";
 import { CodingArtifactCleanupError, type CodingArtifactInput, type CodingArtifactSourceRef } from "./coding-artifact-store";
-import type { CodingContinuationRef } from "./coding-continuation";
+import { clearCodingContinuation, type CodingContinuationRef } from "./coding-continuation";
+import type { CodingExportInput } from "./coding-result-export";
 import { CodingPrivacyCleanupError, captureCodingPrivacyScope, assertCodingPrivacyScope, retireCodingPrivacyScanners,
   codingPrivacyCleanupFailure, type CodingPrivacyScope } from "./coding-privacy-scanner";
 import { loadWindowsCodingNative, retireWindowsCodingNative, WindowsCodingCleanupError,
@@ -247,16 +248,21 @@ export class WindowsProjectCodingResources {
     const folder = this.folders.capture(projectId);
     return folder ? Object.freeze({ path: folder.path, projectId, current: folder.current }) : null;
   }
-  captureContinuation(_id: string, _projectId: string): CodingContinuationRef | null { return null; }
-  continuationCurrent(_ref: CodingContinuationRef, _projectId: string): boolean { return false; }
+  captureContinuation(id: string, projectId: string): CodingContinuationRef | null {
+    return this.availability().available ? this.#registry?.captureContinuation(id, projectId) ?? null : null;
+  }
+  continuationCurrent(ref: CodingContinuationRef, projectId: string): boolean {
+    return this.availability().available && this.#registry?.continuationCurrent(ref, projectId) === true;
+  }
 
   createWorkspace(spec: TaskSpec, signal: AbortSignal, admit: () => boolean): Promise<CodingReviewWorkspace> {
     const grant = spec.codingWorkspace, projectId = grant?.projectId, owner = this.#owner();
-    if (grant?.continuation !== undefined) return Promise.reject(new Error("Continuing a previous coding result is unavailable on Windows. Start a fresh request explicitly."));
     if (!this.availability().available || !grant || !projectId || !owner || !this.#project(projectId) || this.#tasks.has(spec.id)) return Promise.reject(stale());
     let privacy: CodingPrivacyScope;
     try { privacy = captureCodingPrivacyScope(); } catch (error) { if (nativeUncertain(error)) this.#failure(); return Promise.reject(error); }
     const source = grant.path, sourceCurrent = grant.current.bind(grant), selected = this.folders.capture(projectId), epoch = this.#epoch;
+    const continuationRef = grant.continuation, hasContinuation = continuationRef !== undefined;
+    let continuationReady = false;
     const authority: Authority = { taskId: spec.id, owner, projectId, source,
       title: titleOf(spec.goal).replace(/[\p{Cc}\p{Cf}]/gu, value => `\\u${value.codePointAt(0)!.toString(16).padStart(4, "0")}`),
       ownerCurrent: this.folders.ownerCurrent(), publicationEpoch: this.#publicationEpoch, projectRevision: this.#projectRevisions.get(projectId) ?? 0,
@@ -264,19 +270,32 @@ export class WindowsProjectCodingResources {
     const current = () => {
       try { assertCodingPrivacyScope(privacy); } catch { return false; }
       return !this.#closed && !this.#failed && this.#epoch === epoch && !signal.aborted && !authority.cancel.signal.aborted && this.availability().available &&
-        this.#owner() === owner && safe(authority.ownerCurrent) && this.#project(projectId) && selected?.path === source && safe(selected.current) && safe(sourceCurrent) && safe(admit);
+        this.#owner() === owner && safe(authority.ownerCurrent) && this.#project(projectId) && selected?.path === source && safe(selected.current) && safe(sourceCurrent) && safe(admit) &&
+        (!hasContinuation || continuationReady || this.#registry?.continuationCurrent(continuationRef!, projectId) === true);
     };
     if (!current()) return Promise.reject(stale());
     this.#tasks.set(spec.id, authority); this.#authorities.set(spec, authority);
     const pending = (async () => {
+      let continuation: CodingExportInput | undefined;
       try {
         await this.validateSource({ path: source, current: sourceCurrent }); if (!current()) throw stale();
         this.#storageCurrent(); const store = await this.#storeValue(); if (!current()) throw stale();
+        authority.sourceBoundary = await store.sourceBoundary(source, () => { if (!current()) throw stale(); });
+        if (!authority.sourceBoundary || !current()) throw stale();
+        if (hasContinuation) {
+          if (!this.#registry) throw stale();
+          continuation = await this.#registry.loadContinuation(continuationRef!, projectId, authority.sourceBoundary, current);
+          if (!current()) throw stale();
+        }
         const backend = await WindowsFileOnlyWorkspace.create({ source, privateBase: this.#copies, protectedPaths: this.#roots,
           signal: AbortSignal.any([signal, authority.cancel.signal]), current, scope: { excludeRoots: [".git", "node_modules"] }, reviewBase: this.#reviews,
-          review: { binding: { owner, session: randomUUID(), snapshot: randomUUID() }, store, current: () => this.#reviewCurrent(authority) } });
+          ...(continuation ? { continuation: { baseline: continuation.baseline, proposed: continuation.proposed, scope: continuation.scope, current } } : {}),
+          review: { binding: { owner, session: randomUUID(), snapshot: randomUUID() }, store,
+            sourceBoundary: authority.sourceBoundary ?? undefined, current: () => this.#reviewCurrent(authority) } });
         authority.workspace = backend; this.#active.set(backend, authority);
         if (!current()) { await backend.stop(); await this.#closeBackend(backend); throw stale(); }
+        // The admitted copy owns its fresh bytes; predecessor Forget cannot revoke this independent session.
+        continuationReady = true;
         return this.#wrapped(backend, authority);
       } catch (error) {
         if (nativeUncertain(error) || authority.workspace && this.#active.has(authority.workspace)) this.#failure();
@@ -284,7 +303,7 @@ export class WindowsProjectCodingResources {
         if (nativeUncertain(error)) throw error;
         // Raw filesystem errors may contain a private host path; outward errors use fixed host-owned words.
         throw copyFailed();
-      }
+      } finally { clearCodingContinuation(continuation); }
     })();
     this.#creating.add(pending); void pending.then(() => this.#creating.delete(pending), () => this.#creating.delete(pending)); return pending;
   }

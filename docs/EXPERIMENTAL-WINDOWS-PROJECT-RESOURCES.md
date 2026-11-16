@@ -36,13 +36,20 @@ through its original COPY handle. A successful final close leaves the common pat
 to allocate there. An unknown namespace or unverifiable cleanup retains private data and refuses further coding;
 there is no path-based recovery or best-effort recursive deletion.
 
-Continuing a previous result is explicitly refused before allocation. A fresh source capture cannot be silently
-substituted for a continuation. Windows continuation needs a separately reviewed fresh-file materializer and actual
-native verification before this capability can change.
+The host-only continuation handoff reads a complete verified predecessor artifact through the same Windows store,
+bound to the selected project's original source identity before loading. It passes baseline, proposal and scope to
+the fresh-file materializer and wipes every caller-owned decoded buffer after admission or failure. The predecessor
+must stay current until the fresh copy has been accepted. An admitted independent copy then survives deletion of its
+predecessor; account, project, original source, privacy and task revocation still apply. Invalid, forgotten, mismatched
+or malformed predecessor capabilities are refused without falling back to a fresh capture of the original folder.
+The exposed `canContinue` capability remains false pending integrated native proof and the production controller
+boundary. Implementing this internal handoff does not enable the Home continuation action.
 
 Portable resource tests exercise the host ledgers and lifecycle using a native model that distinguishes drive paths
 from GUID receipts and BASE/read handles from COPY handles. The real suite uses actual project folder binding,
-protected files, copied edits, stopped-review publication, export, Forget and final native removal:
+protected files, copied edits, stopped-review publication, export, Forget and final native removal. The continuation
+case additionally edits the prior proposal, preserves the original cumulative baseline and proves predecessor Forget
+does not revoke the newly admitted copy:
 
 ```bash
 node node_modules/vitest/vitest.mjs run test/unit/windows-coding-resources.test.ts
