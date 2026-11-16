@@ -25,23 +25,41 @@ const samePath = (a: string, b: string) => path.resolve(a).toLowerCase() === pat
 /** Scan only this fixture's fresh controller tree; never follow links or inspect an ambient credential file. */
 function excludesSyntheticState(directory: string, values: readonly string[]): boolean {
   let count = 0, bytes = 0;
+  let stage: "list" | "metadata" | "read" = "list", currentDepth = 0;
+  const refuse = (reason: string, facts: Record<string, number | boolean | string> = {}): false => {
+    // Report only fixed reasons and synthetic indices/metadata; never paths, file bodies or credential values.
+    console.info("Windows synthetic state scan refusal:", { reason, stage, depth: currentDepth, ...facts });
+    return false;
+  };
   const visit = (folder: string, depth: number): boolean => {
-    if (depth > 64) return false;
+    currentDepth = depth; stage = "list";
+    if (depth > 64) return refuse("depth-limit");
     for (const name of fs.readdirSync(folder)) {
-      if (++count > 10_000) return false;
+      currentDepth = depth; stage = "metadata";
+      if (++count > 10_000) return refuse("entry-limit");
       const filename = path.join(folder, name), stat = fs.lstatSync(filename);
-      if (stat.isSymbolicLink()) return false;
+      if (stat.isSymbolicLink()) return refuse("link");
       if (stat.isDirectory()) { if (!visit(filename, depth + 1)) return false; }
       else {
-        if (!stat.isFile() || stat.nlink !== 1 || stat.size > 16 * 1024 * 1024 || (bytes += stat.size) > 64 * 1024 * 1024) return false;
+        if (!stat.isFile() || stat.nlink !== 1 || stat.size > 16 * 1024 * 1024 || (bytes += stat.size) > 64 * 1024 * 1024) {
+          return refuse("file-metadata", { file: stat.isFile(), links: stat.nlink, size: stat.size, bytes });
+        }
+        stage = "read";
         const data = fs.readFileSync(filename);
-        try { if (values.some(value => data.includes(Buffer.from(value)))) return false; }
+        try {
+          const syntheticIndex = values.findIndex(value => data.includes(Buffer.from(value)));
+          if (syntheticIndex >= 0) return refuse("synthetic-value", { syntheticIndex });
+        }
         finally { data.fill(0); }
       }
     }
     return true;
   };
-  try { return visit(directory, 0); } catch { return false; }
+  try { return visit(directory, 0); }
+  catch (error) {
+    const code = (error as { code?: unknown })?.code;
+    return refuse("io", { code: typeof code === "string" && /^E[A-Z0-9]{1,24}$/.test(code) ? code : "unknown" });
+  }
 }
 const runtimePath = () => {
   const runtime = runtimeFor("win32", "x64"), located = locateRuntime({ appPath: process.cwd(), runtimeId: runtime.id, exe: runtime.exe });
