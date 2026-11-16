@@ -1,0 +1,183 @@
+/** Separate inherited-token child diagnostic. The original explicit-attribute acceptance fixture is unchanged. */
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createHash } from "node:crypto";
+import { execFileSync, spawnSync } from "node:child_process";
+import { beforeAll, afterAll, describe, expect, it } from "vitest";
+import { ExperimentalWindowsLpacFixture } from "../../app/main/agent/experimental-windows-lpac";
+import { loadExperimentalWindowsLpacApi, type WindowsLpacProfile, type WindowsHandle, type WindowsSuspendedProcess } from "../../app/main/agent/experimental-windows-lpac-api";
+import { loadInheritedChildObserver, InheritedChildCleanupError } from "../fixtures/windows-lpac-inherited-child";
+
+const required = process.env.EMBER_LPAC_INHERITED_CHILD_TEST === "1", supported = process.platform === "win32";
+const retainedOwners: unknown[] = [];
+const fixedFailure = () => new Error("The inherited-child native experiment failed; only stopped numeric facts may leave its fixture.");
+const ordinary = (value: string): string => {
+  if (!/^[A-Za-z]:\\/.test(value) || path.win32.normalize(value) !== value || /[%!^&|<>"\p{Cc}\p{Cf}]/u.test(value)) throw fixedFailure(); return value;
+};
+const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+function boundedRead(file: string, maximum: number): Buffer | null {
+  let fd: number | undefined, result: Buffer | undefined, failed = false;
+  try {
+    const before = fs.lstatSync(file);
+    if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size > maximum) throw fixedFailure();
+    fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0)); const opened = fs.fstatSync(fd);
+    if (opened.ino !== before.ino || opened.dev !== before.dev || opened.size !== before.size || opened.nlink !== 1 || !opened.isFile()) throw fixedFailure();
+    const bytes = Buffer.alloc(before.size + 1); let offset = 0;
+    while (offset < bytes.length) { const count = fs.readSync(fd, bytes, offset, bytes.length - offset, offset); if (!count) break; offset += count; }
+    const after = fs.fstatSync(fd), observed = fs.lstatSync(file);
+    if (offset !== before.size || after.ino !== opened.ino || after.dev !== opened.dev || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs ||
+      after.ctimeMs !== opened.ctimeMs || observed.ino !== opened.ino || observed.dev !== opened.dev || !observed.isFile() || observed.isSymbolicLink() || observed.nlink !== 1) throw fixedFailure();
+    result = bytes.subarray(0, offset);
+  } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") failed = true; }
+  if (fd !== undefined) try { fs.closeSync(fd); } catch { result?.fill(0); throw new InheritedChildCleanupError(); }
+  if (failed) { result?.fill(0); throw fixedFailure(); } return result ?? null;
+}
+function reportWords(file: string, count: number): number[] | null {
+  const bytes = boundedRead(file, count * 4);
+  if (!bytes) return null;
+  try { if (bytes.length !== count * 4) throw fixedFailure(); return Array.from({ length: count }, (_, index) => bytes.readUInt32LE(index * 4)); }
+  finally { bytes.fill(0); }
+}
+function writeAdmission(file: string, child: number): void {
+  const bytes = Buffer.alloc(8); bytes.writeUInt32LE(0x43495045); bytes.writeUInt32LE(child, 4); let fd: number | undefined, failed = false;
+  const pending = file + ".pending";
+  try {
+    fd = fs.openSync(pending, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | (fs.constants.O_NOFOLLOW ?? 0), 0o600);
+    if (fs.writeSync(fd, bytes, 0, bytes.length, 0) !== bytes.length) throw fixedFailure(); fs.fsyncSync(fd);
+  } catch { failed = true; }
+  if (fd !== undefined) try { fs.closeSync(fd); } catch { bytes.fill(0); throw new InheritedChildCleanupError(); }
+  bytes.fill(0); if (failed) throw fixedFailure();
+  // Publish the closed complete control message; the child never observes a partially written acknowledgement.
+  try { fs.lstatSync(file); throw fixedFailure(); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw fixedFailure(); }
+  try { fs.renameSync(pending, file); } catch { throw fixedFailure(); }
+}
+
+describe.skipIf(!supported && !required)("separate LPAC inherited-token child experiment", () => {
+  let root = "", safeToRemove = true;
+  const executables = new Map<"explicit" | "inherited", Buffer>();
+  beforeAll(() => {
+    expect(process.platform).toBe("win32"); expect(process.arch).toBe("x64");
+    try {
+    const temporary = fs.realpathSync.native(os.tmpdir()), parent = path.basename(temporary).startsWith("ember-run-") ? path.dirname(temporary) : temporary;
+    root = fs.realpathSync.native(fs.mkdtempSync(path.join(parent, "ember-lpac-inherited-")));
+    const build = path.join(root, "build"), profile = path.join(build, "profile"), temporaryBuild = path.join(build, "temporary");
+    for (const directory of [build, profile, temporaryBuild, path.join(profile, "Local"), path.join(profile, "Roaming")]) fs.mkdirSync(directory);
+    const windows = ordinary(process.env.SystemRoot ?? "C:\\Windows"), programFiles = ordinary(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)");
+    const vswhere = path.join(programFiles, "Microsoft Visual Studio", "Installer", "vswhere.exe");
+    const env: NodeJS.ProcessEnv = { SystemRoot: windows, WINDIR: windows, ComSpec: path.join(windows, "System32", "cmd.exe"),
+      ProgramFiles: process.env.ProgramFiles ?? "C:\\Program Files", "ProgramFiles(x86)": programFiles, ProgramW6432: process.env.ProgramW6432 ?? "C:\\Program Files",
+      SystemDrive: path.win32.parse(windows).root.slice(0, 2), PATH: `${path.join(windows, "System32")};${windows}`, PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      USERPROFILE: profile, APPDATA: path.join(profile, "Roaming"), LOCALAPPDATA: path.join(profile, "Local"), TEMP: temporaryBuild, TMP: temporaryBuild,
+      PROCESSOR_ARCHITECTURE: "AMD64", NUMBER_OF_PROCESSORS: "2" };
+      const installation = ordinary(execFileSync(vswhere, ["-latest", "-version", "[17.0,18.0)", "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"],
+        { encoding: "utf8", env, timeout: 15_000, windowsHide: true, maxBuffer: 32 * 1024 }).trim());
+      for (const variant of ["explicit", "inherited"] as const) {
+        const source = ordinary(path.resolve("test/fixtures", variant === "explicit" ? "experimental-windows-lpac.c" : "experimental-windows-lpac-inherited.c"));
+        const output = ordinary(path.join(build, `${variant}.exe`)), object = ordinary(path.join(build, `${variant}.obj`)), command = path.join(build, `${variant}.cmd`);
+        fs.writeFileSync(command, `@echo off\r\ncall "${path.join(installation, "VC", "Auxiliary", "Build", "vcvars64.bat")}" >nul\r\nif errorlevel 1 exit /b 1\r\ncl.exe /nologo /O1 /GS- /Zl /Fo"${object}" /Fe"${output}" "${source}" /link /NODEFAULTLIB /ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE kernel32.lib advapi32.lib\r\n`, { flag: "wx" });
+        const built = spawnSync(env.ComSpec!, ["/d", "/s", "/c", `""${command}""`], { env, encoding: "utf8", timeout: 60_000,
+          windowsHide: true, windowsVerbatimArguments: true, maxBuffer: 256 * 1024 });
+        if (built.status !== 0 || built.error || built.signal) throw fixedFailure();
+        const bytes = boundedRead(output, 16 * 1024 * 1024);
+        if (!bytes || bytes.length < 2 || bytes.toString("ascii", 0, 2) !== "MZ") throw fixedFailure(); executables.set(variant, bytes);
+      }
+    } catch { safeToRemove = false; throw new Error("The fixed inherited-child fixture compilation failed; synthetic build scratch retained."); }
+  }, 150_000);
+  afterAll(() => {
+    for (const bytes of executables.values()) bytes.fill(0);
+    if (root && safeToRemove) try { fs.rmSync(root, { recursive: true, force: true }); }
+    catch { safeToRemove = false; throw new InheritedChildCleanupError(); }
+  });
+
+  async function run(variant: "explicit" | "inherited") {
+    if (retainedOwners.length) throw new InheritedChildCleanupError();
+    let api: ReturnType<typeof loadExperimentalWindowsLpacApi>, observer: ReturnType<typeof loadInheritedChildObserver>;
+    try { api = loadExperimentalWindowsLpacApi(); observer = loadInheritedChildObserver(); }
+    catch (error) { if (error instanceof InheritedChildCleanupError) { safeToRemove = false; throw error; } throw fixedFailure(); }
+    const executable = executables.get(variant)!;
+    let profile: WindowsLpacProfile | undefined, job: WindowsHandle | undefined, process: WindowsSuspendedProcess | undefined, expectedLocalAppData = "";
+    let parent = "";
+    let fixture: ExperimentalWindowsLpacFixture;
+    try { parent = fs.mkdtempSync(path.join(root, `${variant}-`)); fixture = ExperimentalWindowsLpacFixture.prepare(parent, executable, { ...api,
+        createProfile(name) { profile = api.createProfile(name); return profile; },
+        createJob() { job = api.createJob(); return job; },
+        createSuspended(...args) { process = api.createSuspended(...args); return process; },
+        profileLocalAppDataBase(value) { const base = api.profileLocalAppDataBase(value); expectedLocalAppData = path.join(base, "Packages", value.name, "AC"); return base; },
+      });
+    } catch { safeToRemove = false; retainedOwners.push({ api, observer, parent, profile, job, process }); throw fixedFailure(); }
+    let unsafe = false, stopped = false, failed = false, child: number | null = null, descendantRemained = false;
+    let outcome: { mode: "explicit" | "inherited"; rootExit: number; report: number[] | null; failure: number[] | null; jobStopped: true; admitted: boolean; descendantRemained: boolean; profilePaths: boolean } | undefined;
+    const previous = processEnvMarker();
+    try {
+      const staged = boundedRead(fixture.paths.program, 16 * 1024 * 1024); if (!staged) throw fixedFailure();
+      try { if (digest(staged) !== digest(executable)) throw fixedFailure(); } finally { staged.fill(0); }
+      api.writeNewFile(path.join(fixture.paths.root, "all-app-packages.txt"), Buffer.from("disposable LPAC canary"),
+        `D:P(A;;FA;;;${api.ownerSid()})(A;;FA;;;SY)(A;;FR;;;AC)S:(ML;;NW;;;ME)`);
+      expect(fs.readFileSync(path.join(fixture.paths.root, "all-app-packages.txt"), "utf8")).toBe("disposable LPAC canary");
+      await fixture.launch([String(globalThis.process.pid)]);
+      if (!process || !job || !profile) throw fixedFailure();
+      if (variant === "inherited") {
+        const deadline = performance.now() + 10_000;
+        while (child === null) {
+          if (api.exited(process.process) || performance.now() >= deadline) throw fixedFailure();
+          const exactProcess = process, exactJob = job, exactProfile = profile;
+          child = observer.admit({ job: exactJob, rootProcess: exactProcess.process, rootPid: exactProcess.pid, image: fixture.paths.program,
+            current: () => !api.exited(exactProcess.process), verifyToken: value => {
+              try { api.verifyToken(exactProfile, value); } catch { unsafe = true; throw fixedFailure(); }
+            },
+            grant: value => writeAdmission(path.join(fixture.paths.state, "child-admit.bin"), value) });
+          if (child === null) await new Promise<void>(resolve => setTimeout(resolve, 10));
+        }
+      }
+      await fixture.waitRootExited(15_000);
+      if (variant === "inherited") {
+        const state = api.jobState(job), members = observer.members(job);
+        descendantRemained = state.active === 1 && state.listed === 1 && members.length === 1 && members[0] === child;
+        if (!descendantRemained) throw fixedFailure();
+        await expect(fixture.waitStopped(100)).rejects.toThrow("descendants");
+      }
+    } catch (error) { failed = true; if (error instanceof InheritedChildCleanupError) unsafe = true; }
+    finally {
+      restoreEnvMarker(previous);
+      try { const lease = await fixture.stop(15_000); lease.requireStopped(); stopped = true; } catch { unsafe = true; }
+      if (stopped && !unsafe) try {
+        const report = reportWords(path.join(fixture.paths.state, "report.bin"), 12), diagnostic = reportWords(path.join(fixture.paths.state, "failure.bin"), 25);
+        let profilePaths = false;
+        if (report) {
+          profilePaths = true;
+          for (const [name, expected] of [["local-app-data-path.txt", expectedLocalAppData], ["temp-path.txt", path.join(expectedLocalAppData, "Temp")]]) {
+            const bytes = boundedRead(path.join(fixture.paths.state, name), 16 * 1024);
+            try { profilePaths &&= !!bytes && bytes.toString("utf16le").toLowerCase() === expected.toLowerCase(); } finally { bytes?.fill(0); }
+          }
+        }
+        outcome = { mode: variant, rootExit: fixture.exitCode(), report, failure: diagnostic, jobStopped: true, admitted: child !== null, descendantRemained, profilePaths };
+      } catch (error) { failed = true; if (error instanceof InheritedChildCleanupError) unsafe = true; }
+      if (!unsafe) try { await fixture.close(); } catch { unsafe = true; }
+      if (unsafe) { safeToRemove = false; retainedOwners.push({ fixture, profile, job, process, observer, parent }); }
+    }
+    if (unsafe) throw new InheritedChildCleanupError();
+    if (!outcome) throw fixedFailure();
+    if (failed) {
+      console.info("Stopped inherited-child refusal", JSON.stringify({ mode: variant, rootExit: outcome.rootExit, jobStopped: true, stage: outcome.failure?.[0] ?? null,
+        error: outcome.failure?.[1] ?? null, childNtStatus: outcome.failure?.[24] ?? null }));
+      throw fixedFailure();
+    }
+    return outcome;
+  }
+  it("preserves the separately compiled original explicit-attribute denial as an observed control", async () => {
+    const result = await run("explicit"); expect(result.rootExit).toBe(18); expect(result.report).toBeNull();
+    expect(result.failure?.slice(0, 2)).toEqual([18, 5]); expect(result.failure?.[24]).toBe(0xc0000022);
+    expect(result.failure?.slice(2, 14)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0]);
+    console.info("Stopped explicit child control", JSON.stringify({ mode: "explicit", rootExit: 18, stage: 18, error: 5, childNtStatus: 0xc0000022, jobStopped: true }));
+  }, 45_000);
+  it("admits only a suspended exact-package inherited child in the private job and observes it outlive the root before Stop", async () => {
+    const result = await run("inherited"); expect(result.rootExit).toBe(0); expect(result.failure).toBeNull();
+    expect(result.report?.slice(0, 9)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1]); expect(result.report?.[9]).toBeGreaterThan(0);
+    expect(result.report?.slice(10)).toEqual([1, 1]); expect(result).toMatchObject({ admitted: true, descendantRemained: true, profilePaths: true, jobStopped: true });
+    console.info("Stopped inherited child result", JSON.stringify({ mode: "inherited", rootExit: 0, jobStopped: true, admitted: true, descendantRemained: true, allChecks: true, profilePaths: true }));
+  }, 45_000);
+});
+
+function processEnvMarker(): string | undefined { const old = process.env.GH_TOKEN; process.env.GH_TOKEN = "synthetic-inherited-child-marker"; return old; }
+function restoreEnvMarker(previous: string | undefined): void { if (previous === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = previous; }
