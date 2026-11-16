@@ -1,0 +1,54 @@
+name: Experimental ordinary-host open-target comparison
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'scripts/experimental/build-windows-open-target-replace.mjs'
+      - 'test/fixtures/windows-open-target-replace*'
+      - 'test/unit/windows-open-target-replace*'
+      - 'test/integration/windows-open-target-replace-native.test.ts'
+      - '.github/workflows/experimental-windows-open-target-replace.yml'
+      - 'docs/EXPERIMENTAL-WINDOWS-OPEN-TARGET-REPLACE.md'
+permissions:
+  contents: read
+concurrency:
+  group: open-target-replace-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+jobs:
+  contracts:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'ember-improve/20261116-open-target-replace'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '22.23.5'
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - name: Portable fixed-control contracts only
+        run: npx vitest run test/unit/windows-open-target-replace-native.test.ts test/unit/windows-open-target-replace-proof.test.ts test/unit/windows-open-target-replace-report.test.ts test/unit/windows-open-target-replace-build.test.ts --maxWorkers=2
+  native:
+    # PR registration runs no native control. Manual execution requires the separately reviewed fixed branch.
+    if: github.event_name == 'workflow_dispatch' && github.ref_name == 'ember-improve/20261116-open-target-replace'
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.image }}
+    timeout-minutes: 15
+    env:
+      EMBER_WINDOWS_OPEN_TARGET_REPLACE_IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '22.23.5'
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - name: Portable fixed-control contracts
+        run: npx vitest run test/unit/windows-open-target-replace-native.test.ts test/unit/windows-open-target-replace-proof.test.ts test/unit/windows-open-target-replace-report.test.ts test/unit/windows-open-target-replace-build.test.ts --maxWorkers=2
+      - name: Required ordinary-host A validity and held-target B observation
+        env:
+          EMBER_WINDOWS_OPEN_TARGET_REPLACE_TEST: '1'
+        run: npm run test:integration -- test/integration/windows-open-target-replace-native.test.ts --maxWorkers=1
