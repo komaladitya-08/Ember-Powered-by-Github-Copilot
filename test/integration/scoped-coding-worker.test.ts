@@ -86,24 +86,37 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("publishes an 
   } finally { await worker.dispose(); await model.close(); facts.mockRestore(); fs.rmSync(f.root, { recursive: true, force: true }); }
 }, 45_000);
 
-it.skipIf(process.platform !== "linux" || process.arch !== "x64")("fixes a real failing Node check through custom files and policy-approved commands, then exports without changing the source", async ctx => {
+for (const tool of ["run_command", "run_node", "node_only"] as const) it.skipIf(process.platform !== "linux" || process.arch !== "x64")(`fixes a real failing Node check through ${tool}, then exports without changing the source`, async ctx => {
   if (!supported()) { ctx.skip(); return; }
   const asset = await trustedCodingTestNodeOrSkip(ctx);
   let step = 0;
   const model = await startMockLlm({ delayMs: 0, respond: () => {
     step++;
-    if (step === 1 || step === 3) return { tool: { name: "run_command", args: { target: "This computer", command: "node --test test.cjs", why: "Verify the copied check" } } };
+    if (step === 1 || step === 3) return { tool: { name: tool === "node_only" ? "run_node" : tool, args: tool !== "run_command"
+      ? { argv: ["--test", "test.cjs"], why: "Verify the copied check" }
+      : { target: "This computer", command: "node --test test.cjs", why: "Verify the copied check" } } };
     if (step === 2) return { tool: { name: "coding_replace", args: { path: "test.cjs", oldText: "1 + 1, 3", newText: "1 + 1, 2" } } };
     if (step === 4) return { tool: { name: "finish_coding", args: { success: true, summary: "Fixed the copied assertion and reran its exact Node check successfully." } } };
     return { text: "Ready for review." };
   } });
-  const f = fixture(model, asset.nodePath), original = "const {test}=require('node:test');const assert=require('node:assert/strict');test('sum',()=>assert.equal(1 + 1, 3));\n";
+  // Host capability facts advertise no model shell for this case; the actual Linux isolation/Node backend is unchanged.
+  const f = fixture(model, asset.nodePath, tool === "node_only" ? { platform: {
+    facts: (_workspace, host) => ({ ...host, os: "linux", home: "/state", shells: [], shellPaths: {}, script: null, pty: false, extraPath: [] }),
+    files: (workspace, signal) => ScopedCodingFiles.create({ workspace, signal }),
+  } } : {}), original = "const {test}=require('node:test');const assert=require('node:assert/strict');test('sum',()=>assert.equal(1 + 1, 3));\n";
   fs.writeFileSync(path.join(f.source, "test.cjs"), original);
   try {
     expect(await f.worker.run(new AbortController().signal)).toEqual({ success: true, summary: "Fixed the copied assertion and reran its exact Node check successfully." });
     await f.worker.dispose(); expect(await f.worker.disposed).toBe(true); expect(f.worker.handoffSafe()).toBe(true);
     expect(f.nativeStart).not.toHaveBeenCalled(); expect(f.contexts).toHaveBeenCalledTimes(1); expect(f.asks).toHaveBeenCalledTimes(2);
     expect(f.attach).toHaveBeenCalledTimes(2); expect(f.states[0].cwd).toBe("/work");
+    if (tool !== "run_command") {
+      expect(f.attach.mock.calls.map(([card]) => card)).toEqual([expect.objectContaining({ kind: "node", argv: ["--test", "test.cjs"] }), expect.objectContaining({ kind: "node", argv: ["--test", "test.cjs"] })]);
+      expect(f.attach.mock.calls.every(([card]) => card.shell === undefined)).toBe(true);
+      expect(JSON.stringify(f.audit)).not.toContain('"argv"');
+      expect(model.requests.every((request: { tools: string[] }) => request.tools.includes("run_node"))).toBe(true);
+      if (tool === "node_only") expect(model.requests.every((request: { tools: string[] }) => !request.tools.includes("run_command"))).toBe(true);
+    }
     expect(f.published).toHaveLength(1); expect(f.published[0]).toMatchObject({ status: "done", checks: { ran: 2, passed: 1, failed: 1 } });
     const review = f.published[0].output.review;
     expect(review.patchComplete).toBe(true); expect(review.changes).toHaveLength(1); expect(review.textPatch).toContain("1 + 1, 2");

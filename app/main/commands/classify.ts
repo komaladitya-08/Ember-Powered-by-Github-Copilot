@@ -33,6 +33,7 @@ import {
 } from "./tables";
 import { commandLineSecret } from "./redact";
 import { judgedText } from "./unroll";
+import { copyNodeArgv } from "./node-invocation";
 import posix from "node:path/posix";
 import win32 from "node:path/win32";
 
@@ -258,7 +259,7 @@ export const SAYS = {
 /** Where a part of the command is judged. */
 interface Scope {
   family: ShellFamily;
-  shell: ShellId;
+  shell?: ShellId;
   /** Whose rules: lookup case, path flavour. */
   os: OS;
   path: PathEnv;
@@ -558,7 +559,7 @@ class Classifier {
   /** The names each `read` sets, by command index, with its scope: a loop's here-string gives them values (result). */
   private readSets = new Map<number, { names: string[]; sc: Scope }>();
 
-  constructor(readonly ctx: ClassifyContext, readonly topShell: ShellId) {}
+  constructor(readonly ctx: ClassifyContext, readonly topShell?: ShellId) {}
 
   // ----------------------------------------------------------------------------------------------------------------
   // Findings.
@@ -1643,6 +1644,25 @@ export function classifyCommand(text: string, shell: ShellId, ctx: ClassifyConte
   }
 }
 
+/** Analyze literal native payload arguments recorded by the Node handler, without a top-level shell grammar. */
+export function classifyLiteralNativeArgv(program: string, argv: readonly string[], ctx: ClassifyContext): Classification {
+  return new Engine(ctx).runNative(program, argv);
+}
+
+/** Policy for one literal file read, used by native download-argument checks. No shell text is generated. */
+export function classifyNativeReadPath(value: string, ctx: ClassifyContext): Classification {
+  return new Engine(ctx).runNativeRead(value);
+}
+
+/** Node's native argument policy, sharing the existing interpreter/path/script checks without shell parsing. */
+export function classifyNodeArgv(argv: readonly string[], ctx: ClassifyContext): Classification {
+  try { return new Engine(ctx).runNode(copyNodeArgv(argv)); }
+  catch {
+    return { syntax: "argv", family: "posix", findings: [{ cls: "unclear", rule: "internal", says: SAYS.unclear, program: "node", objects: [], widening: [], at: -1 }],
+      refuse: null, probe: [], needsGit: false, downloads: [], programs: ["node"], commands: [], cwd: ctx.cwd, windowsReach: false, scripts: [], writes: [], writesAnywhere: true } as ClassificationExtra;
+  }
+}
+
 // ------------------------------------------------------------------------------------------------------------------
 // The engine: walking each family's syntax, then judging each simple command.
 
@@ -2495,7 +2515,20 @@ class Engine extends Classifier {
     this.heldTo(before, from, "unclear.option-value", SAYS.optionValue);
   }
 
+  runNativeRead(value: string): ClassificationExtra { return this.runNative("cat", ["--", value]); }
+
+  /** Literal native words enter the shared program handlers directly, without a shell tokenizer. */
+  runNative(program: string, argv: readonly string[]): ClassificationExtra {
+    const sc = this.topScope();
+    for (const value of [program, ...argv]) this.checkCharacters(value, sc.family);
+    this.simple({ words: [lit(program), ...argv.map(lit)], redirs: [], stdin: null, fetchBefore: false, background: false }, sc);
+    return { ...this.result(), syntax: "argv" };
+  }
+
+  runNode(argv: readonly string[]): ClassificationExtra { return this.runNative("node", argv); }
+
   run(text: string): ClassificationExtra {
+    if (!this.topShell) throw new Error("A shell grammar is required.");
     const sc = this.topScope();
     if (text.length > MAX_COMMAND_CHARS) {
       this.unclear("unclear.too-long", "It is longer than Ember can check one by one.");
@@ -2520,7 +2553,7 @@ class Engine extends Classifier {
     const own = this.refusal();
     let was: Finding[];
     this.chainUnknown = true;
-    try { was = this.foundApartWhole(() => this.classifyText(text, this.topShell, this.topScope()), undefined, true); } finally { this.chainUnknown = false; }
+    try { was = this.foundApartWhole(() => this.classifyText(text, this.topShell!, this.topScope()), undefined, true); } finally { this.chainUnknown = false; }
     if (own.refuse) this.putRefusal(own);
     if (was.every(f => this.findings.some(g => sameFinding(f, g)))) return;
     this.heldTo(was, 0, "unclear.folder", "Ember can't tell which folder this command runs in.");
@@ -2538,7 +2571,7 @@ class Engine extends Classifier {
     const own = this.refusal();
     let was: Finding[];
     this.mainFolders = true;
-    try { was = this.foundApartWhole(() => this.classifyText(text, this.topShell, this.topScope()), undefined, true); } finally { this.mainFolders = false; }
+    try { was = this.foundApartWhole(() => this.classifyText(text, this.topShell!, this.topScope()), undefined, true); } finally { this.mainFolders = false; }
     if (this.refusal().refuse !== own.refuse) { if (own.refuse) this.putRefusal(own); else this.heldRefusal(); }
     if (was.every(f => this.findings.some(g => sameFinding(f, g)))) return;
     this.heldTo(was, 0, "unclear.option-value", SAYS.optionValue);
@@ -2558,7 +2591,7 @@ class Engine extends Classifier {
     this.judgeReadText();
     const out: ClassificationExtra = {
       shell: this.topShell,
-      family: SHELL_FAMILY[this.topShell] ?? "posix",
+      family: this.topShell ? SHELL_FAMILY[this.topShell] : "posix",
       findings: this.findings,
       refuse: this.refuse,
       probe: this.probe,
@@ -2596,7 +2629,7 @@ class Engine extends Classifier {
     const mountRoot = ctx.wsl ? ctx.wsl.mountRoot.replace(/\/+$/, "") || "/" : null;
     const path = pathEnv({ flavour, os, home: ctx.home || null, cwd: ctx.cwd || null, mountRoot, windows, ember: ctx.ember.paths, tempDirs: ctx.tempDirs });
     return child({
-      family: SHELL_FAMILY[this.topShell] ?? "posix", shell: this.topShell, os, path, cwd: ctx.cwd || null, home: ctx.home || null,
+      family: this.topShell ? SHELL_FAMILY[this.topShell] : "posix", shell: this.topShell, os, path, cwd: ctx.cwd || null, home: ctx.home || null,
       wrappers: [], depth: 0, wsl: !!ctx.wsl, mountRoot, windows, fromWsl: false,
     });
   }

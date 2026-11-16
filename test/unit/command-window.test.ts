@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { COMMANDS_IPC } from "../../app/shared/commands";
 import { COMMANDS_EXTRA_IPC, type AnswerMsg, type OutputMsg, type Snapshot, type WindowView } from "../../app/renderer/command/model";
 import { ANNOUNCE_SCREEN_READER_MS, MAX_TABS, WAITING_MS, awaitsTyping, cardSha256, placeOnDisplay, createCommandWindowController, createCommandWindowPort, outcomeOf, typedPieces, validCard } from "../../app/main/commands/window";
-import { statusLine } from "../../app/renderer/command/copy";
+import { statusLine, headerLine } from "../../app/renderer/command/copy";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../../app/main/targets/types";
 import type { CommandCard, RunExit, RunningCommand } from "../../app/main/commands/types";
 import type { Logger } from "../../app/main/logger";
@@ -1260,5 +1260,28 @@ describe("where the window comes up (review #272)", () => {
     ctl.attach(card(), new FakeRun("0123456789abcdef"));
     expect(win().calls).toContain("place");
     expect(win().calls).not.toContain("workspaces:true");
+  });
+});
+
+
+describe("direct Node command cards", () => {
+  const argv = ["tool.js", "", "a b", "$(echo literal)", "\u202e\n"];
+  async function nodeCard() {
+    const { nodeInvocationDisplay } = await import("../../app/main/commands/node-invocation");
+    return card({ target: "local", targetLabel: "This computer", login: undefined, kind: "node", shell: undefined, argv,
+      cwd: "/work", command: nodeInvocationDisplay(argv) });
+  }
+  it("binds exact structured argv and displays Node without claiming a shell", async () => {
+    const c = await nodeCard(); expect(validCard(c)).toBe(true); expect(headerLine(c)).toBe("On this computer · Node · in /work");
+    expect(validCard({ ...c, shell: "bash" })).toBe(false); expect(validCard({ ...c, target: "ssh:other" })).toBe(false);
+    expect(validCard({ ...c, argv: ["tool.js", "a b"] })).toBe(false); expect(validCard({ ...c, cwd: "/other" })).toBe(false);
+    expect(validCard({ ...c, command: "node tool.js" })).toBe(false); expect(validCard({ ...c, kind: undefined })).toBe(false);
+  });
+  it("requires the entire Node card to be seen and its exact current hash before Allow", async () => {
+    const c = await nodeCard(), h = setup(); h.ctl.showCard(21, c);
+    vi.advanceTimersByTime(1000);
+    h.ipc.send(COMMANDS_IPC.answer, h.page(), { n: 21, answer: "once", sha256: c.sha256 }); expect(h.answers).toHaveLength(0);
+    h.seen(21); h.ipc.send(COMMANDS_IPC.answer, h.page(), { n: 21, answer: "once", sha256: SHA }); expect(h.answers).toHaveLength(0);
+    h.ipc.send(COMMANDS_IPC.answer, h.page(), { n: 21, answer: "once", sha256: c.sha256 }); expect(h.answers).toEqual([{ n: 21, answer: "once", sha256: c.sha256 }]);
   });
 });

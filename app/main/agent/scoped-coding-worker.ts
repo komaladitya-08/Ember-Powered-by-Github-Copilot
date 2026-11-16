@@ -2,10 +2,11 @@
 import type { ProviderConfig } from "@github/copilot-sdk";
 import type { CodingResultSummary } from "../../shared/project-coding";
 import type { CommandService, RunnerFacts, ShellId } from "../commands/types";
-import { runCommandTool, type CommandFlowContext, type CommandConsentSource, type CommandTargetGuard } from "../commands/flow";
-import { CustomCodingController, CodingControllerCleanupError, type CodingControllerResult, type CustomCodingControllerOptions } from "./custom-coding-controller";
+import { runCommandTool, runNodeTool, type CommandFlowContext, type CommandConsentSource, type CommandTargetGuard } from "../commands/flow";
+import { CustomCodingController, CodingControllerCleanupError, type CodingControllerResult, type CustomCodingControllerOptions, type CodingControllerToolContext, type CodingControllerCommandResult } from "./custom-coding-controller";
 import { ScopedCodingFiles } from "./scoped-coding-files";
 import type { CodingCommandWorkspace, CodingReviewWorkspace, CodingWorkspaceReview, CodingPlatformAdapter, CodingFileBroker } from "./coding-platform";
+import type { RunNodeArgs } from "../commands/node-invocation";
 import { IsolatedCodingCommandRunner } from "./isolated-coding-command-runner";
 import type { PrivateControllerRuntimeInput } from "./private-controller-runtime";
 import type { TaskSpec, WorkerResult } from "./worker";
@@ -164,17 +165,17 @@ export class ScopedCodingWorker {
         if (original.binding.id !== "local" || original.binding.kind !== "local") throw new Error("Coding requires the local command service.");
         const hostFacts = await original.runner.facts(); this.requireCurrent();
         const facts: RunnerFacts = commands.facts?.(commandWorkspace, hostFacts) ?? { ...hostFacts, os: "linux", home: "/state", shells: ["bash"], shellPaths: { bash: "/usr/bin/bash" }, script: null, pty: false, extraPath: [] };
-        if (!facts.shells.length || facts.shells.some(shell => !["bash", "sh", "zsh", "powershell"].includes(shell))) throw new Error("The coding platform has no supported command shell.");
+        if (facts.shells.some(shell => !["bash", "sh", "zsh", "powershell"].includes(shell))) throw new Error("The coding platform has no supported command shell.");
         this.runner = new IsolatedCodingCommandRunner({ workspace: commandWorkspace, facts, signal: this.lifetime.signal,
           current: this.current, inspect: (paths, cwd) => this.files ? this.files.inspect(paths, cwd) : Promise.resolve(paths.map(() => ({ exists: null, real: null }))) });
+        if (!facts.shells.length && !this.runner.nodeAvailable) throw new Error("The coding platform has no supported execution capability.");
         const service = isolatedService(original, this.runner, facts.shells), context = commands.context(service, this.lifetime.signal);
         context.state.cwd = this.workspace.executionRoot;
-        this.controller = await CustomCodingController.start({ ...controller, commands: { target: service.binding.label, shells: facts.shells },
-        runCommand: async (args, tool) => {
+        const execute = async (tool: CodingControllerToolContext, invoke: (context: CommandFlowContext) => ReturnType<typeof runCommandTool>) => {
           this.requireCurrent();
           const combined = AbortSignal.any([context.signal, tool.signal, this.lifetime.signal]);
           const sequence = this.runner!.sequence;
-          const output = await runCommandTool(args, { ...context, service, signal: combined,
+          const output = await invoke({ ...context, service, signal: combined,
             isOver: () => combined.aborted || !this.current() || context.isOver(),
             confirmer: { ...context.confirmer, ask: (question, askSignal) => tool.waiting(() => context.confirmer.ask(question,
               askSignal ? AbortSignal.any([combined, askSignal]) : combined)) },
@@ -188,8 +189,14 @@ export class ScopedCodingWorker {
           this.commandStopped = !!observed && ["stopped-user", "stopped-task", "killswitch"].includes(observed.exit.ended);
           this.stop();
           return { result: output, success: false };
-        },
-        });
+        };
+        const runNode = (args: RunNodeArgs, tool: CodingControllerToolContext): Promise<CodingControllerCommandResult> => execute(tool, current => runNodeTool(args, current));
+        this.controller = facts.shells.length
+          ? await CustomCodingController.start({ ...controller,
+            commands: { target: service.binding.label, shells: facts.shells, ...(this.runner.nodeAvailable ? { node: true as const } : {}) },
+            runCommand: (args, tool) => execute(tool, current => runCommandTool(args, current)), ...(this.runner.nodeAvailable ? { runNode } : {}),
+          })
+          : await CustomCodingController.start({ ...controller, commands: { target: service.binding.label, shells: [], node: true }, runNode });
       }
       this.requireCurrent();
       result = await this.controller.run(this.spec.goal + handoffContext(this.spec.handoffSummary), this.lifetime.signal);
