@@ -13,7 +13,17 @@ export type WindowsNodeFatalInspection = {
   output: WindowsNodeFatalOutput;
   refusal?: { stage: (typeof WINDOWS_NODE_FATAL_REFUSALS)[number]; representation?: "utf16le-ascii" | "utf16be-ascii" | "other";
     newlines?: { crlf: number; doubledCrlf: number; bareCr: number; lf: number } };
+  nativeFailure?: { family: "libuv-win32"; operation: NativeOperation; code: number };
 };
+type NativeOperation = "WSAStartup" | "GetModuleHandleA" | "GetModuleHandleW" | "GetProcAddress" |
+  "QueryPerformanceFrequency" | "QueryPerformanceCounter" | "DuplicateHandle" | "GetQueuedCompletionStatusEx";
+// Exact syscall literals from these pinned releases' libuv core.c, winsock.c, util.c, thread.c and winapi.c.
+// uv_fatal_error in win/error.c prints one line then DebugBreak; its FormatMessage text must never escape.
+const commonNativeOperations: readonly NativeOperation[] = ["WSAStartup", "GetProcAddress", "QueryPerformanceFrequency", "QueryPerformanceCounter", "DuplicateHandle", "GetQueuedCompletionStatusEx"];
+const nativeOperations = new Map<string, ReadonlySet<NativeOperation>>([
+  ["22.23.5", new Set<NativeOperation>([...commonNativeOperations, "GetModuleHandleA"])],
+  ["24.21.0", new Set<NativeOperation>([...commonNativeOperations, "GetModuleHandleW"])],
+]);
 
 type FilesByDirectory = Readonly<Record<string, readonly string[]>>;
 const knownFiles = (groups: FilesByDirectory): string[] => Object.entries(groups).flatMap(([directory, names]) =>
@@ -82,7 +92,14 @@ export function inspectWindowsNodeFatalOutput(bytes: Buffer, version: string): W
     return { output: fixed("unreadable"), refusal: { stage: "newline", newlines } };
   }
   const headers = normalized.split("\n").filter(line => line.startsWith("# Fatal error in "));
-  if (!headers.length) return { output: fixed("no-location") };
+  if (!headers.length) {
+    // Match the complete single-line libuv format, not arbitrary embedded log text. The message is discarded.
+    const match = /^([A-Za-z][A-Za-z0-9]*): \(([1-9][0-9]{0,9})\) [\x20-\x7e]+\n?$/.exec(normalized);
+    const code = match ? Number(match[2]) : 0, operation = match?.[1] as NativeOperation | undefined;
+    const nativeFailure: WindowsNodeFatalInspection["nativeFailure"] = operation && nativeOperations.get(version)?.has(operation) && code <= 0x7fffffff
+      ? { family: "libuv-win32", operation, code } : undefined;
+    return { output: fixed("no-location"), ...(nativeFailure ? { nativeFailure } : {}) };
+  }
   if (headers.length !== 1) return { output: fixed("ambiguous") };
   const location = /^# Fatal error in (.*), line ([0-9]{1,6})$/.exec(headers[0]);
   if (!location) return refuse("header");

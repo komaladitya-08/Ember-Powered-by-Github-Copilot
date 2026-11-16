@@ -89,7 +89,8 @@ describe.skipIf(process.platform !== "win32" || process.env.EMBER_LPAC_NODE_PROO
         try { inspection = inspectWindowsNodeFatalOutput(bytes, version); } finally { bytes.fill(0); }
         startup = { host: control!, lpacExit: exit, output: inspection.output };
         console.info("Private-stdio Node LPAC", JSON.stringify({ version, fixedEval: true, inheritedHandles: 2, exitCode: `0x${exit.toString(16)}`, jobStopped: true,
-          output: inspection.output, ...(inspection.refusal ? { outputRefusal: inspection.refusal } : {}) }));
+          output: inspection.output, ...(inspection.refusal ? { outputRefusal: inspection.refusal } : {}),
+          ...(inspection.nativeFailure ? { nativeFailure: inspection.nativeFailure } : {}) }));
       } else if (mode === "startup") {
         startup = { host: control!, lpacExit: exit };
         console.info("Startup-only Node LPAC", JSON.stringify({ version, fixedEval: true, inheritedHandles: false, exitCode: `0x${exit.toString(16)}`, jobStopped: true }));
