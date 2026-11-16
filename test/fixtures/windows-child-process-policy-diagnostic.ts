@@ -11,9 +11,11 @@ export interface WindowsChildPolicyFailure {
    * 5 capability attribute, 6 AAP attribute, 7 child-policy attribute, 8 policy domain,
    * 9 birth equality, 10 exception/contract, 11 terminal cleanup. */
   readonly predicate: number;
-  /** 0 unknown/unvalidated return, 1 an already captured BOOL validated as 0/1 or false/true. */
-  readonly domain: 0 | 1;
+  /** 0 unknown/unvalidated return, 1 validated captured BOOL, 2 captured exit DWORD of this fixed admitted C asset. */
+  readonly domain: 0 | 1 | 2;
   readonly returnedBool?: 0 | 1;
+  /** Domain 2 only, mutually exclusive with returnedBool; never a PID, count, policy value or private output. */
+  readonly returnedExit?: number;
 }
 type Context = Pick<WindowsChildPolicyFailure, "phase" | "operation" | "predicate">;
 const failures = new WeakMap<object, { readonly receipt: Readonly<WindowsChildPolicyFailure>; readonly order: number }>();
@@ -26,6 +28,14 @@ export function brandWindowsChildPolicyFailure<T>(error: T, context: Context, ca
   const returnedBool = capturedBool === 0 || capturedBool === false ? 0 : capturedBool === 1 || capturedBool === true ? 1 : undefined;
   const receipt: Readonly<WindowsChildPolicyFailure> = Object.freeze({ schema: 1, phase: context.phase, operation: context.operation, predicate: context.predicate,
     domain: returnedBool === undefined ? 0 : 1, ...(returnedBool === undefined ? {} : { returnedBool }) });
+  failures.set(error, { receipt, order: order++ }); return error;
+}
+/** The fixed hash-admitted witness's existing exit-code query only; never accepts coercions or adds a query. */
+export function brandWindowsChildPolicyExitFailure<T>(error: T, context: Context, capturedExit: unknown): T {
+  if (!object(error) || failures.has(error) || !bounded(context.phase, 6) || !bounded(context.operation, 15) || !bounded(context.predicate, 11)) return error;
+  const returnedExit = bounded(capturedExit, 0xffffffff) ? capturedExit as number : undefined;
+  const receipt: Readonly<WindowsChildPolicyFailure> = Object.freeze({ schema: 1, phase: context.phase, operation: context.operation, predicate: context.predicate,
+    domain: returnedExit === undefined ? 0 : 2, ...(returnedExit === undefined ? {} : { returnedExit }) });
   failures.set(error, { receipt, order: order++ }); return error;
 }
 /** Copies only the earliest branded facts, preserving the target's authoritative identity and type. */

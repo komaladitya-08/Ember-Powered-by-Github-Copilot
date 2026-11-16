@@ -87,7 +87,23 @@ samples an extra native query or `GetLastError`, reads raw error properties, cha
 Later cleanup facts cannot replace the first receipt or restore disposal authority. All 375 affected portable
 contracts, scoped lint and diff checks pass; tests include actual call boundaries, first-failure retention,
 forged/proxy privacy and no-extra-call checks. Independent source review is complete. The diagnostic native run
-remains pending its coordinated review gate; no third matrix has run.
+is recorded below.
+
+The [third matrix 43875110126](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43875110126),
+at head `3c116d3b79c3669c0bb8e76943e79b59e0593771` and merge compile commit
+`0ba0d38f5e2ab3ac6150414e5a12f64987cb840b`, passed ten Linux C cases and, on each Windows image, 365 portable tests
+with ten Linux-only skips plus the fixed C build. Both native suites still passed cases 0 and 8 and failed the
+other seven. Their first case-1 receipt was phase 2, operation 13, predicate 10, domain 0: the ordinary-host
+exit-code call or zero-success predicate after its natural-exit/private-job-zero wait. No C report was decoded;
+the receipt did not distinguish an API exception from a returned nonzero exit. Restricted-case useful completion,
+enforcement and self-setter behavior remain unknown.
+
+The next metadata-only discriminator captures that same existing exit-code call once and keeps its unchanged
+strict-zero success predicate. For this fixed hash-admitted C asset, domain 2 may include `returnedExit`, a validated
+process-status DWORD from 0 through `0xffffffff`. Well-formed unfamiliar OS statuses are retained; malformed values
+and API exceptions publish no exit value. The field is mutually exclusive with the existing BOOL field. First-failure
+precedence, permanent retention and all original native calls, C, policy and readout gates remain unchanged.
+No private checkpoint, report or stderr is read for diagnosis. The fourth matrix has not run.
 
 Primary sources:
 

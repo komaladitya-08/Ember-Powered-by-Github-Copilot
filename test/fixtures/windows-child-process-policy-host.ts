@@ -1,7 +1,7 @@
 /** Private witness host owner: missing natural completion never becomes disposal authority after Stop. */
 import type { WindowsLpacApi, WindowsSuspendedProcess } from "../../app/main/agent/experimental-windows-lpac-api";
 import { WindowsNodeHostCleanupError, type WindowsNodeHostNative } from "./windows-node-lpac-startup";
-import { brandWindowsChildPolicyFailure, preserveWindowsChildPolicyFailure } from "./windows-child-process-policy-diagnostic";
+import { brandWindowsChildPolicyFailure, brandWindowsChildPolicyExitFailure, preserveWindowsChildPolicyFailure } from "./windows-child-process-policy-diagnostic";
 type HostApi = Pick<WindowsLpacApi, "createJob" | "assign" | "resume" | "terminateJob" | "terminateProcess" | "exited" | "jobState" | "exitCode" | "close">;
 export interface WindowsChildPolicyHostFence { unsafe: boolean; retained: unknown[] }
 const defaultFence: WindowsChildPolicyHostFence = { unsafe: false, retained: [] };
@@ -32,7 +32,8 @@ export async function runWindowsChildPolicyHost(input: { program: string; comman
     operation = 8; api.assign(job, process.process); operation = 9; native.verify(process, input.program);
     operation = 10; input.unchanged(); operation = 11; api.resume(process.thread);
     operation = 12; await wait(20_000); operation = 13;
-    if (api.exitCode(process.process) !== 0) throw new Error();
+    const exitCode = api.exitCode(process.process);
+    if (exitCode !== 0) throw brandWindowsChildPolicyExitFailure(new Error(), { phase: 2, operation: 13, predicate: 10 }, exitCode);
     natural = true;
   } catch (error) { mark(error); fence.unsafe = true; }
   if (!natural || fence.unsafe) {
