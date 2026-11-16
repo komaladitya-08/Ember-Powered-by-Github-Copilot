@@ -250,7 +250,9 @@ export function bindWindowsNodeIo(koffi: Pick<typeof Koffi, "sizeof" | "address"
       setupStage = stage; flags(value, false);
     }
     setupStage = "writer-rights";
-    granted(writer, 0x2, 0x100002); // Win32 may add SYNCHRONIZE to the requested payload-only access.
+    // All four pinned Node/server probes observed 0x100082 from desired access 0x2. Permit only the
+    // added FILE_READ_ATTRIBUTES and SYNCHRONIZE; neither grants payload read, delete or ACL changes.
+    granted(writer, 0x2, 0x100082);
     setupStage = "pin-rights";
     granted(pin, 0x81, 0x100081);
     setupStage = "null-rights";
