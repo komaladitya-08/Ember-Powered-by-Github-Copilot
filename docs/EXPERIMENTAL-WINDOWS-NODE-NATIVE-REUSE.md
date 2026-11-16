@@ -11,15 +11,27 @@ The fixed source origin is repository `komaladitya-08/Ember-Powered-by-Github-Co
 has SHA-256 `34fd4ffd22e81b7927b99663f10c06d9a3086782b5462a394d654bb2f998c5be`. No caller-selected run, artifact,
 binary, script or native argument is accepted.
 
-The workspace authenticated GitHub's run/artifact metadata and API redirect, but its proxy denied the separate
-Azure-blob CONNECT with 403 before any ZIP byte arrived. No local member hash was invented. The fixed outer ZIP
-digest authenticates every contained byte. Windows CI must verify that digest through the same held archive
-before strict four-member extraction, then validate the original source/tool/compile-recipe receipt and both
-PEs. Public member hashes can be derived only after those checks. This is a network-access limitation here;
-it does not require a user's Windows laptop or relax artifact authenticity.
+The workspace's direct Azure-blob CONNECT was denied with 403 before any ZIP byte arrived. The GitHub artifact
+connector subsequently supplied that exact archive through its download service. Its size and complete outer
+SHA-256 were verified before inspection. The unchanged Python extractor, original JS compile-receipt verifier
+and both strict PE checks then passed locally. No PE was executed and no member hash was guessed. The resulting
+four public files have the hashes below. Windows CI retains the same held-archive hash, strict extraction and
+receipt checks; the connector route resolves a local download limitation without requiring a Windows laptop.
+
+| Fixed public member | Bytes | SHA-256 |
+| --- | ---: | --- |
+| LICENSE | 145485 | `c738ae413cf561f174e34f6961f8ca458aae2369a73640dda6234c629b98bcc4` |
+| bootstrap.exe | 2560 | `8219130aa9d30e8e2d271323760f7c73fc6b9f93f9ad5da3ea2be2618e4c678e` |
+| build-receipt.json | 4858 | `f366c3bd034078537f4cc334e77009ce60beacda2180ccd86a9b64d9fe32bff4` |
+| source-node.exe | 120218624 | `c03bb2d43d98260efe194d2026b150e1a492f511ff3cd7667a4b95e8a632e60d` |
 
 The native-only workflow retains the original four controls and required LPAC useful-work assertion. Its
-observations remain pending. It intentionally skips a fresh source compile only for the fixed
+fatal observations remain pending. The [first reuse run43831268214](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43831268214)
+passed 194 portable contracts with one expected Windows privilege skip, authenticated the origin/download/ZIP
+digest, then refused during Python extraction before original-receipt verification or any native execution.
+The unchanged extractor's local success excludes an obvious ZIP-format incompatibility; a Windows-specific
+validation stage still needs its closed diagnostic witness. No acceptance rule is relaxed on that inference.
+The workflow intentionally skips a fresh source compile only for the fixed
 `ember-improve/20261116-source-node-native-reuse` PR head; other source PRs and explicit build dispatch still
 compile normally. Skipping a fresh compile is not a new build
 result. Compiled source/patch/tool/recipe inputs remain byte-identical to the authenticated build; current runtime
@@ -43,3 +55,12 @@ Independent fixed-C namespace evidence is separate: both hosted Server 2022/2025
 pipe prefix at `CreateNamedPipeA` with code 5 while the `LOCAL` pair connected and closed, preserving all canary,
 parent-right, token and Stop controls. That proves a namespace prerequisite, not Node/libuv byte transport,
 child creation, default `node --test` or general offline-runtime compatibility. No pipe backport is in this image.
+
+The pinned default CLI test path also differs from the isolated C child comparisons. Its [test runner](https://github.com/nodejs/node/blob/60553651579ec33ca1aef9e1eedab2c3855f1f7e/lib/internal/test_runner/runner.js#L361)
+uses three pipes without `windowsHide` or `detached`; [normalization](https://github.com/nodejs/node/blob/60553651579ec33ca1aef9e1eedab2c3855f1f7e/lib/child_process.js#L737)
+makes both false. Ordinary CLI environment flags do not include the embedder-only console-hiding bit.
+[libuv process.c1032](https://github.com/nodejs/node/blob/60553651579ec33ca1aef9e1eedab2c3855f1f7e/deps/uv/src/win/process.c#L1032)
+therefore uses `CREATE_UNICODE_ENVIRONMENT` by default, with null process/thread descriptors and inherited CRT
+stdio metadata. `CREATE_NO_WINDOW` is conditional on explicit hiding; detached mode separately adds
+`DETACHED_PROCESS`, a new group and suspension. C results with explicit descriptors, `CREATE_NO_WINDOW` or
+detached flags do not establish this full Node path. Actual default child and test-runner proof remains required.

@@ -21,5 +21,12 @@
     "build-receipt.json": 32768,
     "LICENSE": 1048576
   },
-  "memberHashPolicy": "Derived only after the exact authenticated outer ZIP verifies; no prior individual hashes are claimed."
+  "memberManifestSha256": "8f33b0d39a36383829e6b1a83e46aa3679be718a786c9f94624b4ddf87986829",
+  "verifiedFiles": {
+    "LICENSE": { "bytes": 145485, "sha256": "c738ae413cf561f174e34f6961f8ca458aae2369a73640dda6234c629b98bcc4" },
+    "bootstrap.exe": { "bytes": 2560, "sha256": "8219130aa9d30e8e2d271323760f7c73fc6b9f93f9ad5da3ea2be2618e4c678e" },
+    "build-receipt.json": { "bytes": 4858, "sha256": "f366c3bd034078537f4cc334e77009ce60beacda2180ccd86a9b64d9fe32bff4" },
+    "source-node.exe": { "bytes": 120218624, "sha256": "c03bb2d43d98260efe194d2026b150e1a492f511ff3cd7667a4b95e8a632e60d" }
+  },
+  "memberHashPolicy": "Literal hashes derived only after the exact authenticated ZIP was fetched by the GitHub connector and independently verified/extracted locally; original source receipt and PE checks also passed."
 }

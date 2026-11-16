@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 // @ts-expect-error -- fixed trusted-host JavaScript artifact authority
-import { artifactPin, validateSourceArtifactOrigin, sourceArtifactBlobUrl, downloadSourceArtifact, validateSourceArtifactFiles } from "../../scripts/experimental/stage-windows-node-source-artifact.mjs";
+import { artifactPin, validateSourceArtifactOrigin, sourceArtifactBlobUrl, downloadSourceArtifact, validateSourceArtifactFiles, parseSourceArtifactExtractionRefusal, sourceArtifactExtractionRefusal, verifyPinnedSourceArtifactMembers } from "../../scripts/experimental/stage-windows-node-source-artifact.mjs";
 // @ts-expect-error -- unchanged trusted compile-recipe authority
 import { buildPin, windowsNodeSourceBuildRecipe } from "../../scripts/experimental/build-windows-node-source.mjs";
 import sourcePin from "../../scripts/experimental/windows-node-source-pin.json";
@@ -57,6 +57,61 @@ describe("fixed authenticated source artifact authority", () => {
     let called = 0;
     await expect(downloadSourceArtifact({ archivePath: path.join(temporary(), "archive.zip"), token, request: async () => { called++; throw new Error(); } })).rejects.toThrow();
     expect(called).toBe(0);
+  });
+});
+
+describe("closed extraction refusal metadata", () => {
+  const diagnostic = () => ({ schema: 1, status: "refused", stage: 9, entryCount: 4, acceptedMask: 15, failure: 1, code: 0, identityMismatch: 0,
+    entries: [1, 2, 3, 4].map(member => ({ member, kind: 1, mode: 0o100600, attributes: 0x81800000, compression: 8, flags: 0, bytes: 1024, compressedBytes: 512 })) });
+  it("returns only exact bounded public numeric ZIP fields", () => {
+    const result = parseSourceArtifactExtractionRefusal(Buffer.from(JSON.stringify(diagnostic())));
+    expect(result).toEqual(diagnostic()); expect(Object.isFrozen(result.entries[0])).toBe(true);
+  });
+  it.each(["extra", "stage", "count", "mask", "failure", "code", "identity", "member", "kind", "mode", "attributes", "compression", "flags", "bytes", "compressedBytes", "entry-extra", "early-stage", "length"])("silently discards malformed or private refusal shape: %s", change => {
+    const value = diagnostic();
+    if (change === "extra") Object.assign(value, { privatePath: "private path" });
+    if (change === "stage") value.stage = 18;
+    if (change === "count") value.entryCount = 66;
+    if (change === "mask") value.acceptedMask = 14;
+    if (change === "failure") value.failure = 0;
+    if (change === "code") value.code = 65537;
+    if (change === "identity") value.identityMismatch = 64;
+    if (change === "member") value.entries[0].member = 5;
+    if (change === "kind") value.entries[0].kind = 5;
+    if (change === "mode") value.entries[0].mode = 65536;
+    if (change === "attributes") value.entries[0].attributes = 0x100000000;
+    if (change === "compression") value.entries[0].compression = 65536;
+    if (change === "flags") value.entries[0].flags = 65536;
+    if (change === "bytes") value.entries[0].bytes = artifactPin.maximumExpandedBytes + 2;
+    if (change === "compressedBytes") value.entries[0].compressedBytes = artifactPin.zipBytes + 2;
+    if (change === "entry-extra") Object.assign(value.entries[0], { name: "private raw member" });
+    if (change === "early-stage") value.stage = 5;
+    if (change === "length") value.entries.pop();
+    expect(parseSourceArtifactExtractionRefusal(Buffer.from(JSON.stringify(value)))).toBeUndefined();
+  });
+  it("discards arbitrary stdout and does not brand generic forged errors", () => {
+    for (const bytes of [Buffer.from("private stderr"), Buffer.from("null"), Buffer.alloc(4097)]) expect(parseSourceArtifactExtractionRefusal(bytes)).toBeUndefined();
+    expect(sourceArtifactExtractionRefusal(Object.assign(new Error("forged"), { extraction: diagnostic() }))).toBeUndefined();
+  });
+  it("allows only closed mismatch bits at the actual stat comparison stages", () => {
+    const value = { ...diagnostic(), stage: 4, entryCount: 0, acceptedMask: 0, entries: [], identityMismatch: 16 };
+    expect(parseSourceArtifactExtractionRefusal(Buffer.from(JSON.stringify(value)))).toEqual(value);
+    value.stage = 5; expect(parseSourceArtifactExtractionRefusal(Buffer.from(JSON.stringify(value)))).toBeUndefined();
+  });
+});
+
+describe("independently authenticated literal artifact-member pins", () => {
+  const receipt = () => ({ manifestSha256: artifactPin.memberManifestSha256,
+    files: Object.keys(artifactPin.verifiedFiles).sort().map(name => ({ name, ...artifactPin.verifiedFiles[name] })) });
+  it("binds the exact four now-observed public member hashes/bytes and manifest", () => expect(verifyPinnedSourceArtifactMembers(receipt())).toBe(true));
+  it.each(["manifest", "bytes", "hash", "name", "extra"])("refuses changed public member evidence: %s", change => {
+    const value = receipt();
+    if (change === "manifest") value.manifestSha256 = "0".repeat(64);
+    if (change === "bytes") value.files[0].bytes++;
+    if (change === "hash") value.files[0].sha256 = "0".repeat(64);
+    if (change === "name") value.files[0].name = "foreign";
+    if (change === "extra") value.files.push(value.files[0]);
+    expect(() => verifyPinnedSourceArtifactMembers(value)).toThrow();
   });
 });
 
@@ -138,6 +193,8 @@ if mode == 'encryption':
 with open(archive, 'wb') as output: output.write(data)
 module.PIN = dict(module.PIN)
 module.PIN.update(zipBytes=len(data), zipSha256=hashlib.sha256(data).hexdigest(), members=dict((name, 64) for name in ['source-node.exe','bootstrap.exe','build-receipt.json','LICENSE']), maximumExpandedBytes=256)
+payload = b'x' * 128 if mode == 'oversize' else b'public-fixture'
+module.PIN['verifiedFiles'] = dict((name, dict(bytes=len(payload), sha256=hashlib.sha256(payload).hexdigest())) for name in ['source-node.exe','bootstrap.exe','build-receipt.json','LICENSE'])
 if mode == 'outerhash': module.PIN['zipSha256'] = '0' * 64
 if mode == 'existing': os.mkdir(destination)
 if mode == 'alias':
@@ -159,8 +216,8 @@ if mode == 'growing':
 try:
     result = module.extract(archive, destination)
     print(json.dumps(dict(status='accepted', files=result['files'])))
-except Exception:
-    print(json.dumps(dict(status='refused', boundedGrowth=len(reads) == 1 and reads[0] <= module.PIN['zipBytes'] + 1 and not os.path.exists(destination))))
+except Exception as error:
+    print(json.dumps(dict(status='refused', boundedGrowth=len(reads) == 1 and reads[0] <= module.PIN['zipBytes'] + 1 and not os.path.exists(destination), diagnostic=module.refusal(error))))
 `;
 describe("same-fd authenticated four-member ZIP boundary", () => {
   const run = (mode: string) => {
@@ -171,5 +228,13 @@ describe("same-fd authenticated four-member ZIP boundary", () => {
     const result = run("plain"); expect(result.status).toBe("accepted"); expect(result.files.map((value: { name: string }) => value.name)).toEqual(["LICENSE", "bootstrap.exe", "build-receipt.json", "source-node.exe"]);
   });
   it.each(["traversal", "case", "directory", "control", "duplicate", "symlink", "special", "privileged", "oversize", "crc", "encryption", "outerhash", "existing", "alias"])("refuses %s without weakening the production pin or CLI", mode => expect(run(mode).status).toBe("refused"));
-  it("stops a growing archive after at most pinned bytes plus one, before any output directory", () => expect(run("growing")).toEqual({ status: "refused", boundedGrowth: true }));
+  it("stops a growing archive after at most pinned bytes plus one, before any output directory", () => expect(run("growing")).toMatchObject({ status: "refused", boundedGrowth: true }));
+  it("emits inventory/type refusal metadata only after whole-ZIP authentication", () => {
+    const early = run("outerhash").diagnostic, inventory = run("symlink").diagnostic;
+    expect(early).toMatchObject({ stage: 5, entryCount: 0, acceptedMask: 0, entries: [], failure: 1 });
+    expect(inventory).toMatchObject({ stage: 9, entryCount: 4, acceptedMask: 15, failure: 1 });
+    expect(inventory.entries[0]).toMatchObject({ member: 1, kind: 3 });
+    expect(parseSourceArtifactExtractionRefusal(Buffer.from(JSON.stringify(inventory)))).toEqual(inventory);
+    expect(JSON.stringify(inventory)).not.toMatch(/source-node|fixture.zip|LICENSE|private/);
+  });
 });

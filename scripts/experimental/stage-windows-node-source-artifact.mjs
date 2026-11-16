@@ -13,6 +13,36 @@ const fail = () => { throw new Error("The fixed source artifact failed authentic
 const hash = value => createHash("sha256").update(value).digest("hex");
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const strict = (value, keys) => value !== null && typeof value === "object" && !Array.isArray(value) && equal(Object.keys(value).sort(), [...keys].sort());
+const extractionRefusals = new WeakMap();
+/** Only a strict bounded numeric refusal can leave a failed Python extraction; stderr and exception causes never do. */
+export function parseSourceArtifactExtractionRefusal(bytes) {
+  try {
+    if (!Buffer.isBuffer(bytes) || bytes.length < 1 || bytes.length > 4096) return undefined;
+    const value = JSON.parse(bytes.toString("utf8")), uint = (number, maximum) => Number.isInteger(number) && number >= 0 && number <= maximum;
+    if (!strict(value, ["schema", "status", "stage", "entryCount", "acceptedMask", "entries", "failure", "code", "identityMismatch"]) || value.schema !== 1 || value.status !== "refused" ||
+      !uint(value.stage, 17) || !uint(value.entryCount, 65) || !uint(value.acceptedMask, 15) || !Array.isArray(value.entries) || value.entries.length !== Math.min(value.entryCount, 8) ||
+      !uint(value.failure, 6) || value.failure === 0 || !uint(value.code, 65536) || !uint(value.identityMismatch, 63) ||
+      value.identityMismatch !== 0 && value.stage !== 4 && value.stage !== 16 || value.stage < 7 && (value.entryCount !== 0 || value.acceptedMask !== 0)) return undefined;
+    let mask = 0;
+    for (const item of value.entries) {
+      if (!strict(item, ["member", "kind", "mode", "attributes", "compression", "flags", "bytes", "compressedBytes"]) ||
+        !uint(item.member, 4) || !uint(item.kind, 4) || !uint(item.mode, 65535) || !uint(item.attributes, 0xffffffff) || !uint(item.compression, 65535) ||
+        !uint(item.flags, 65535) || !uint(item.bytes, artifactPin.maximumExpandedBytes + 1) || !uint(item.compressedBytes, artifactPin.zipBytes + 1)) return undefined;
+      if (item.member) mask |= 1 << (item.member - 1);
+    }
+    if (mask !== value.acceptedMask) return undefined;
+    return freeze(value);
+  } catch { return undefined; }
+}
+export function sourceArtifactExtractionRefusal(error) {
+  return error !== null && typeof error === "object" ? extractionRefusals.get(error) : undefined;
+}
+export function verifyPinnedSourceArtifactMembers(receipt) {
+  if (receipt?.manifestSha256 !== artifactPin.memberManifestSha256 || !Array.isArray(receipt.files) || receipt.files.length !== 4) fail();
+  const expected = Object.keys(artifactPin.verifiedFiles).sort().map(name => ({ name, ...artifactPin.verifiedFiles[name] }));
+  if (!equal(receipt.files, expected)) fail();
+  return true;
+}
 const api = `https://api.github.com/repos/${artifactPin.repository}`;
 export function validateSourceArtifactOrigin(repository, run, workflow, artifact) {
   if (repository?.id !== artifactPin.repositoryId || repository.full_name !== artifactPin.repository || run?.id !== artifactPin.runId ||
@@ -132,13 +162,23 @@ export async function stageWindowsNodeSourceArtifact({ destination, token, pytho
     const assets = path.join(destination, "assets"), extractor = fileURLToPath(new URL("./extract-node-source-artifact.py", import.meta.url));
     const extractorBefore = hash(readOrdinary(extractor, 64 * 1024)), pinFile = fileURLToPath(new URL("./windows-node-source-artifact-pin.json", import.meta.url)), pinBefore = hash(readOrdinary(pinFile, 64 * 1024));
     stage = "verified-extraction";
-    const text = execFileSync(python.pythonPath, ["-I", "-B", extractor, archivePath, assets], { env, cwd: destination, encoding: "utf8", windowsHide: true, timeout: 120_000,
-      maxBuffer: 16384, stdio: ["ignore", "pipe", "pipe"] });
-    stage = "compiled-receipt"; const receipt = validateSourceArtifactFiles(assets, JSON.parse(text));
+    let text;
+    try {
+      text = execFileSync(python.pythonPath, ["-I", "-B", extractor, archivePath, assets], { env, cwd: destination, encoding: "utf8", windowsHide: true, timeout: 120_000,
+        maxBuffer: 16384, stdio: ["ignore", "pipe", "pipe"] });
+    } catch (error) {
+      const stdout = error !== null && typeof error === "object" ? error.stdout : undefined;
+      const diagnostic = parseSourceArtifactExtractionRefusal(Buffer.isBuffer(stdout) ? stdout : typeof stdout === "string" ? Buffer.from(stdout) : Buffer.alloc(0));
+      if (diagnostic) {
+        const refusal = new Error("The fixed source artifact extraction was refused."); extractionRefusals.set(refusal, diagnostic); throw refusal;
+      }
+      fail();
+    }
+    stage = "compiled-receipt"; const receipt = validateSourceArtifactFiles(assets, JSON.parse(text)); verifyPinnedSourceArtifactMembers(receipt);
     if (extractorBefore !== hash(readOrdinary(extractor, 64 * 1024)) || pinBefore !== hash(readOrdinary(pinFile, 64 * 1024)) ||
       !equal(python.fingerprint, attestWindowsNodeSourcePython(python.pythonPath, env, destination).fingerprint)) fail();
     return { buildRoot: assets, buildCommit: artifactPin.compileCommit, receipt };
-  } catch { fail(); }
+  } catch (error) { if (sourceArtifactExtractionRefusal(error)) throw error; fail(); }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
@@ -147,5 +187,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (!process.env.GITHUB_ENV) fail();
     fs.appendFileSync(process.env.GITHUB_ENV, `EMBER_NODE_SOURCE_BUILD_ROOT=${value.buildRoot}\nEMBER_NODE_SOURCE_BUILD_COMMIT=${value.buildCommit}\n`);
     console.log(JSON.stringify(value.receipt));
-  } catch { console.error(JSON.stringify({ status: "refused", stage })); process.exitCode = 1; }
+  } catch (error) {
+    const extraction = sourceArtifactExtractionRefusal(error);
+    console.error(JSON.stringify({ status: "refused", stage, ...(extraction ? { extraction } : {}) })); process.exitCode = 1;
+  }
 }
