@@ -17,7 +17,7 @@ import { createWindowsCommandOutput, requireWindowsCommandOutputLaunch, requireW
 import { requireWindowsCommandRootOnlyCompletedOutput, requireWindowsCommandRootOnlyLaunchMetadata, windowsCommandRootOnlyLaunchDirectory,
   type WindowsCommandRootOnlyLaunchContext, type WindowsCommandRootOnlyCompletedRef, type WindowsCommandRootOnlyRunRef } from "./windows-command-copy";
 import { requireWindowsCommandRootOnlyAttestingCurrent, requireWindowsCommandRootOnlyTokenHandle,
-  type WindowsCommandRootOnlyAttestingRef } from "./windows-command-stop";
+  requireWindowsCommandRootOnlyReturned, type WindowsCommandRootOnlyReturnedRef, type WindowsCommandRootOnlyAttestingRef } from "./windows-command-stop";
 import { issueWindowsCommandLaunchCancellation, readConsumedWindowsCommandLaunchCancellation, type WindowsCommandLaunchCancellationRef } from "./windows-command-launch-cancel";
 
 export class WindowsNodeToolchainCleanupError extends WindowsCodingCleanupError {
@@ -40,9 +40,10 @@ type Native = Pick<typeof Koffi, "sizeof" | "address" | "decode">;
 type Handle = { raw: bigint; attempted: boolean; closed: boolean };
 type Allocation = { raw: bigint; size?: number; attempted: boolean; freed: boolean };
 type File = { handle: Handle; identity: WindowsCodingInfo; parent: bigint | null; name: string };
-type Use = { state: State; io: WindowsCommandOutputOwner; launch: WindowsCommandOutputLaunchRef; attested: boolean; finished: boolean; cancellation?: WindowsCommandLaunchCancellationRef };
+type Use = { state: State; io: WindowsCommandOutputOwner; launch: WindowsCommandOutputLaunchRef; context: WindowsCommandRootOnlyLaunchContext; binding: object; serial: number;
+  attested: boolean; finished: boolean; cancellation?: WindowsCommandLaunchCancellationRef };
 type CancellationEvidence = Readonly<{ phase: "empty" | "held"; context: WindowsCommandRootOnlyLaunchContext; profile: WindowsCommandCreatorProfileRef;
-  serial: number; launch?: WindowsCommandOutputLaunchRef; witness?: WindowsCommandRootOnlyAttestingRef }>;
+  point: "creating" | "returned" | "attesting"; serial: number; launch?: WindowsCommandOutputLaunchRef; witness?: WindowsCommandRootOnlyAttestingRef | WindowsCommandRootOnlyReturnedRef }>;
 type Universe = { failure?: WindowsNodeToolchainCleanupError; busy: boolean; owners: Set<State>; handles: Set<bigint>; allocations: Set<bigint> };
 type State = {
   u: Universe; fence: WindowsNodeToolchainFence; native: Native; fn: Record<string, Fn>; libraries: unknown[]; pending: Set<unknown>; buffers: Set<Buffer>;
@@ -55,6 +56,7 @@ type State = {
 };
 const universes = new WeakMap<WindowsNodeToolchainFence, Universe>(), processFence: WindowsNodeToolchainFence = { retained: [] };
 const uses = new WeakMap<object, Use>();
+const returnedUses = new WeakMap<object, Use>();
 const assetKeys = new WeakMap<object, State>();
 const CHUNK = 64 * 1024, MAX_NODE = 128 * 1024 * 1024, READ = 0x120089, DIR = 0x1200a9, META = 0x120080, ALL = 0x1f01ff;
 const DELETE = 0x10000, WRITE_DAC = 0x40000, WRITE_OWNER = 0x80000, OWNER_RIGHTS = "S-1-3-4", SPECIAL = 0x5640 | 0x40000 | 0x400000;
@@ -73,19 +75,43 @@ export function readWindowsNodeToolchainCancellation(key: object): CancellationE
   if (evidence.phase === "empty") {
     if (s.nativeEntries.has(evidence.serial) || s.use && !s.use.finished) throw refuse();
   } else {
-    if (!evidence.launch || s.use?.launch !== evidence.launch || s.use.attested || s.use.finished || !s.nativeEntries.has(evidence.serial)) throw refuse();
-    const actual = requireWindowsCommandOutputLaunch(evidence.launch); requireWindowsCommandOutputActive(evidence.launch);
+    if (!evidence.launch || s.use?.launch !== evidence.launch || evidence.point === "attesting" && s.use.attested || s.use.finished ||
+        s.use.serial !== evidence.serial || returnedUses.get(s.use.binding) !== s.use || !s.nativeEntries.has(evidence.serial)) throw refuse();
+    const actual = requireWindowsCommandOutputLaunch(evidence.launch);
+    if (evidence.point === "attesting") requireWindowsCommandOutputActive(evidence.launch);
     if (actual.context !== evidence.context || actual.profile !== evidence.profile) throw refuse();
   }
   return evidence;
 }
-function cancelLaunch(s: State, evidence: CancellationEvidence): never {
+function claimCancellation(s: State, evidence: CancellationEvidence): WindowsCommandLaunchCancellationRef {
   if (s.cancellation) return poison(s); s.cancellation = Object.freeze(evidence);
   let claim: WindowsCommandLaunchCancellationRef;
   try { claim = issueWindowsCommandLaunchCancellation(s.key); } catch (error) { return poison(s, error); }
   if (evidence.phase === "held") s.use!.cancellation = claim;
   s.attesting = undefined;
-  throw claim;
+  return claim;
+}
+function cancelLaunch(s: State, evidence: CancellationEvidence): never { throw claimCancellation(s, evidence); }
+/** Registry observation only; no caller can register a binding or substitute an asset/PI. */
+export function registeredWindowsNodeToolchainOutput(binding: object): WindowsCommandOutputLaunchRef | undefined {
+  const use = returnedUses.get(binding); if (!use) return undefined; usable(use.state);
+  if (use.finished || use.state.use !== use) throw refuse(); return use.launch;
+}
+/** Called only with Stop's exact identity-checked held root, before any Resume attempt. */
+export function probeWindowsNodeToolchainReturnedCancellation(ref: WindowsCommandRootOnlyReturnedRef): WindowsCommandLaunchCancellationRef | undefined {
+  const held = requireWindowsCommandRootOnlyReturned(ref), use = returnedUses.get(held.binding); if (!use) return undefined;
+  const s = use.state; usable(s); const actual = requireWindowsCommandOutputLaunch(use.launch);
+  if (use !== s.use || use.finished || use.context !== actual.context || use.binding !== held.binding || actual.profile !== s.input.profile ||
+      held.root.process !== actual.root.process || held.root.thread !== actual.root.thread || held.root.pid !== actual.root.pid) return poison(s);
+  for (const raw of [...actual.heldPiHandles, ...actual.handles]) {
+    if (s.u.handles.has(raw) || s.u.allocations.has(raw)) return poison(s);
+    for (const other of s.u.owners) if (raw >= other.profile.sid && raw < other.profile.sid + 40n ||
+        other.allocations.some(a => !a.freed && raw >= a.raw && raw < a.raw + BigInt(a.size ?? 1))) return poison(s);
+  }
+  try { active(s); return undefined; } catch (error) {
+    if (!(error instanceof PreparationCancelled) || s.u.failure || s.fence.failure) return poison(s, error);
+    return claimCancellation(s, { phase: "held", point: "returned", context: use.context, profile: s.input.profile, serial: use.serial, launch: use.launch, witness: ref });
+  }
 }
 
 export const WINDOWS_NODE_TOOLCHAIN_FUNCTIONS = {
@@ -137,7 +163,8 @@ function usable(s: State): void {
 }
 function active(s: State): void {
   usable(s); let current = false;
-  try { current = s.input.current() === true; } catch { /* Unknown admission retires work. */ }
+  try { current = s.input.current() === true; }
+  catch (error) { if (error instanceof WindowsCodingCleanupError) return poison(s, error); /* Ordinary admission loss retires work. */ }
   usable(s); if (s.retired || s.input.signal.aborted || !current) { s.retired = true; throw new PreparationCancelled(); }
 }
 function invoke(s: State, name: string, args: unknown[], accepted: (v: unknown) => boolean = boolean): unknown {
@@ -407,7 +434,9 @@ function owner(s: State): WindowsNodeToolchainOwner {
       let io: WindowsCommandOutputOwner | undefined, launch: WindowsCommandOutputLaunchRef | undefined, line: Buffer | undefined, entered = false;
       try {
         active(s); if (!s.ready || s.closing || s.use && !s.use.finished) throw refuse();
-        windowsCommandRootOnlyLaunchDirectory(context); const captured = copyNodeArgv(argv); usable(s);
+        windowsCommandRootOnlyLaunchDirectory(context); const metadata = requireWindowsCommandRootOnlyLaunchMetadata(context);
+        if (!metadata.live || metadata.profile !== s.input.profile || returnedUses.has(metadata.binding)) throw refuse();
+        const captured = copyNodeArgv(argv); usable(s);
         const properties = Object.getOwnPropertyDescriptors(options); usable(s);
         if (Reflect.ownKeys(properties).sort().join("|") !== "output|signal|timeoutMs" || Object.values(properties).some(p => !Object.hasOwn(p, "value"))) throw refuse();
         const signal = properties.signal.value, timeoutMs = properties.timeoutMs.value, output = properties.output.value;
@@ -418,9 +447,10 @@ function owner(s: State): WindowsNodeToolchainOwner {
         io = s.createOutput(s.input.profile, { ...selected, signal: AbortSignal.any([s.input.signal, selected.signal]) }); usable(s);
         launch = io.createSuspended(context, s.imagePath!, line); usable(s); const actual = requireWindowsCommandOutputLaunch(launch);
         if (actual.profile !== s.input.profile || actual.context !== context) return poison(s);
-        const use = { state: s, io, launch, attested: false, finished: false }; s.use = use; uses.set(launch, use); return launch;
+        const use = { state: s, io, launch, context, binding: metadata.binding, serial, attested: false, finished: false };
+        s.use = use; uses.set(launch, use); returnedUses.set(metadata.binding, use); return launch;
       } catch (error) {
-        if (error instanceof PreparationCancelled && !entered && !s.u.failure && !s.fence.failure) return cancelLaunch(s, { phase: "empty", context, profile: s.input.profile, serial });
+        if (error instanceof PreparationCancelled && !entered && !s.u.failure && !s.fence.failure) return cancelLaunch(s, { phase: "empty", point: "creating", context, profile: s.input.profile, serial });
         if (!entered && !s.u.failure && !s.fence.failure) throw error;
         if (launch) try { retainWindowsCommandOutput(launch); } catch { /* Genuine output retains its positive PI. */ }
         return poison(s, { io, error });
@@ -472,7 +502,7 @@ export function attestWindowsNodeToolchainOutput(launch: WindowsCommandOutputLau
     if (error instanceof PreparationCancelled && !s.u.failure && !s.fence.failure) {
       const actual = requireWindowsCommandOutputLaunch(launch), context = requireWindowsCommandRootOnlyLaunchMetadata(actual.context);
       if (context.binding !== binding || context.profile !== s.input.profile) return poison(s);
-      return cancelLaunch(s, { phase: "held", context: actual.context, profile: s.input.profile, serial: s.serial, launch, witness: ref });
+      return cancelLaunch(s, { phase: "held", point: "attesting", context: actual.context, profile: s.input.profile, serial: s.serial, launch, witness: ref });
     }
     return poison(s, error);
   }

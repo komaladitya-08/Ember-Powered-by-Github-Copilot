@@ -13,11 +13,12 @@ import { windowsCommandCreatorProfile, type WindowsCommandCreatorProfileRef } fr
 import { createWindowsCommandRootOnlyStopOwner, requireWindowsCommandRootOnlyStopped,
   requireWindowsCommandRootOnlyCompletion, requireWindowsCommandRootOnlyNaturalExit,
   matchWindowsCommandRootOnlyOutput, requireWindowsCommandRootOnlyOutputStopped,
+  windowsCommandRootOnlyReturnedForRoot,
   type WindowsCommandRootOnlyNaturalExitRef, type WindowsCommandRootOnlyStoppedRef,
   type WindowsCommandRootOnlyStopOwner } from "./windows-command-stop";
 import { requireWindowsCommandOutputLaunch, activateWindowsCommandOutput, retainWindowsCommandOutput, requireWindowsCommandOutputClosed, type WindowsCommandOutputClosedRef, type WindowsCommandOutputLaunchRef } from "./windows-command-output";
 import { attestWindowsNodeToolchainOutput } from "./windows-node-toolchain-native";
-import { readConsumedWindowsCommandLaunchCancellation } from "./windows-command-launch-cancel";
+import { readConsumedWindowsCommandLaunchCancellation, probeReturnedWindowsCommandCancellation } from "./windows-command-launch-cancel";
 
 export class WindowsRootOnlyCommandCopyCleanupError extends WindowsCodingCleanupError {
   constructor() { super(); this.name = "WindowsRootOnlyCommandCopyCleanupError"; }
@@ -245,7 +246,7 @@ export class WindowsRootOnlyCommandCopy {
       try {
         // The fixed native factory clones every admitted entry synchronously, before its first await.
         creating = createFreshWindowsCommandTree({ parent: owner.#input.parent, protectedPaths: owner.#input.protectedPaths,
-          entries: data.entries, creatorProfile: owner.#input.creatorProfile, current: () => owner.#workCurrent() });
+          entries: data.entries, creatorProfile: owner.#input.creatorProfile, current: owner.#nativeCurrent });
       } finally { erase(); }
       owner.#tree = await creating;
       if ([owner.#tree.prepareCreator, owner.#tree.captureCreator, owner.#tree.revokeCreator].some(method => typeof method !== "function")) throw new ScopedCodingFileError("boundary");
@@ -274,7 +275,7 @@ export class WindowsRootOnlyCommandCopy {
     try {
       // The native factory validates and clones every entry before its first await; no caller buffer becomes a lease.
       const create = dependencies.createTree?.bind(dependencies) ?? createFreshWindowsCommandTree;
-      owner.#tree = await create({ parent: owner.#input.parent, protectedPaths: owner.#input.protectedPaths, entries: input.entries, current: () => owner.#workCurrent(), creatorProfile: owner.#input.creatorProfile });
+      owner.#tree = await create({ parent: owner.#input.parent, protectedPaths: owner.#input.protectedPaths, entries: input.entries, current: owner.#nativeCurrent, creatorProfile: owner.#input.creatorProfile });
       if (owner.#input.creatorProfile !== undefined && [owner.#tree.prepareCreator, owner.#tree.captureCreator, owner.#tree.revokeCreator].some(method => typeof method !== "function"))
         throw new ScopedCodingFileError("boundary");
       owner.#checkWork(); return owner;
@@ -304,14 +305,27 @@ export class WindowsRootOnlyCommandCopy {
   #workCurrent(): boolean {
     if (firstCopyFailures.has(this.#fence) || this.#fence.failure) { this.#poison(); return false; }
     if (this.#unsafe || this.#closed || this.#retired) return false;
-    const admitted = safe(this.#input.current) && safe(this.#input.packageCurrent);
+    const check = (predicate: () => boolean) => {
+      try { return predicate() === true; }
+      catch (error) { if (error instanceof WindowsCodingCleanupError) this.#poison(); return false; }
+    };
+    const admitted = check(this.#input.current) && check(this.#input.packageCurrent);
     if (this.#fence.failure) { this.#poison(); return false; }
     return admitted && !this.#unsafe && !this.#closed && !this.#retired;
   }
+  #nativeCurrent = (): boolean => { const current = this.#workCurrent(); this.#usable(); return current; };
   #checkWork = (): void => {
     this.#usable(); const current = this.#workCurrent(); this.#usable();
     if (!current) throw new ScopedCodingFileError("cancelled");
   };
+  #checkReturnedWork(root: Readonly<WindowsSuspendedProcess>, binding: object): void {
+    this.#usable(); const current = this.#workCurrent(); this.#usable();
+    if (!current) {
+      const returned = windowsCommandRootOnlyReturnedForRoot(root, binding);
+      if (returned) { const claim = probeReturnedWindowsCommandCancellation(returned); if (claim) throw claim; }
+      throw new ScopedCodingFileError("cancelled");
+    }
+  }
   #checkReview = (): void => {
     this.#usable();
     if (!this.#retired || this.#reviewRevoked) throw new ScopedCodingFileError("cancelled");
@@ -452,13 +466,14 @@ export class WindowsRootOnlyCommandCopy {
         // Mark before the first ACL mutation: a known partial grant still needs a closed empty-job proof and revoke.
         run.granted = true;
         await this.#native(() => this.#tree.grant(this.#input.packageSid, this.#checkWork)); this.#checkWork();
+        let verifiedRoot: Readonly<WindowsSuspendedProcess> | undefined;
         const verified = (root: Readonly<WindowsSuspendedProcess>) => {
-          this.#checkWork();
+          this.#checkReturnedWork(root, binding);
           if (capturedAttest(root) !== undefined) throw new ScopedCodingFileError("boundary");
-          this.#checkWork();
+          this.#checkReturnedWork(root, binding); verifiedRoot = root;
         };
-        if (run.creator || output) return await run.owner.launch(capturedCreate, verified, () => this.#workCurrent(), witness => {
-          this.#checkWork();
+        if (run.creator || output) return await run.owner.launch(capturedCreate, verified, this.#nativeCurrent, witness => {
+          if (verifiedRoot) this.#checkReturnedWork(verifiedRoot, binding); else this.#checkWork();
           if (run.creator && this.#tree.captureCreator!(run.creator, witness) !== undefined) throw new ScopedCodingFileError("boundary");
           if (output) {
             const launch = output(), match = matchWindowsCommandRootOnlyOutput(witness, binding, launch), actual = requireWindowsCommandOutputLaunch(launch);
@@ -469,16 +484,19 @@ export class WindowsRootOnlyCommandCopy {
               this.#lease.exit(() => { void this.stop().catch(() => undefined); });
             } };
             actual.signal.addEventListener("abort", abort, { once: true }); run.removeOutputAbort = () => actual.signal.removeEventListener("abort", abort);
-            if (actual.signal.aborted) abort(); this.#checkWork();
+            if (actual.signal.aborted) abort(); this.#checkReturnedWork(verifiedRoot!, binding);
             activateWindowsCommandOutput(launch, match);
-            attestWindowsNodeToolchainOutput(launch, witness, binding); this.#checkWork();
+            attestWindowsNodeToolchainOutput(launch, witness, binding); this.#checkReturnedWork(verifiedRoot!, binding);
           }
-          this.#checkWork();
+          if (verifiedRoot) this.#checkReturnedWork(verifiedRoot, binding); else this.#checkWork();
         });
-        return await run.owner.launch(capturedCreate, verified, () => this.#workCurrent());
+        return await run.owner.launch(capturedCreate, verified, this.#nativeCurrent);
       } catch (error) {
         const cancellation = readConsumedWindowsCommandLaunchCancellation(error, binding), run = this.#run;
         if (cancellation && run?.binding === binding) {
+          if (cancellation.phase === "held" && run.output === undefined) {
+            if (!cancellation.launch || output?.() !== cancellation.launch) throw this.#poison(); run.output = cancellation.launch;
+          }
           this.#retired = true; run.cancelled = true;
           await this.#quiesce();
           if (!run.stopped || !run.revoked || requireWindowsCommandRootOnlyCompletion(run.stopped, binding).rootPresent !== (cancellation.phase === "empty" ? 0 : 1) || run.output !== cancellation.launch) throw this.#poison();

@@ -13,7 +13,7 @@ interface Security { owner: string; rx: boolean; directory: boolean; ownerRights
 export interface AssetRow { id: bigint; name: string; kind: "file" | "directory"; size: number; marker: number; damaged: boolean; links: number; attributes: number; created: bigint; written: bigint; changed: bigint; removed: boolean; security: Security }
 interface Handle { row?: AssetRow; access: number; share: number; cursor: number; role?: "host" | "primary" | "duplicate"; source?: bigint }
 interface Descriptor { bytes: Buffer; security: Security; row?: AssetRow; dacl: bigint; sacl: bigint; behaviouralPrincipal?: string }
-export function nodeAssetFake(configuration: { fence?: WindowsNodeToolchainFence; handleBase?: bigint; io?: ReturnType<typeof outputFake> } = {}) {
+export function nodeAssetFake(configuration: { fence?: WindowsNodeToolchainFence; handleBase?: bigint; io?: ReturnType<typeof outputFake>; signal?: AbortSignal; current?(): boolean } = {}) {
   const io = configuration.io ?? outputFake(), profile = windowsCommandCreatorProfile(io.profile), nodes = new Map<string, AssetRow>(), handles = new Map<bigint, Handle>();
   const buffers = new Map<bigint, Buffer>(), addresses = new WeakMap<Buffer, bigint>(), texts = new Map<bigint, string>(), descriptors = new Map<bigint, Descriptor>();
   const sids = new Map<bigint, string>(), aclEntries = new Map<bigint, { descriptor: Descriptor; label: boolean }>(), memory = new Map<bigint, Buffer>();
@@ -158,7 +158,8 @@ export function nodeAssetFake(configuration: { fence?: WindowsNodeToolchainFence
     return bindWindowsCommandOutputNative(io.native as unknown as Parameters<typeof bindWindowsCommandOutputNative>[0], io.loader, io.profile, { ownerSid: OWNER }, options, io.fence, () => io.state.now);
   };
   const binding = bindWindowsNodeToolchainNative(native as unknown as Parameters<typeof bindWindowsNodeToolchainNative>[0], load, fence, createOutput);
-  const input = () => ({ resourcesPath: "C:\\Ember\\resources", privateParent: "C:\\scratch\\tools", profile: io.profile, signal: io.abort.signal, current: () => state.current });
+  const input = () => ({ resourcesPath: "C:\\Ember\\resources", privateParent: "C:\\scratch\\tools", profile: io.profile,
+    signal: configuration.signal ?? io.abort.signal, current: configuration.current ?? (() => state.current) });
   const prepare = () => binding.prepare(input());
   const launch = async (owner: WindowsNodeToolchainOwner, argv: readonly string[] = ["--preserve-symlinks", "--preserve-symlinks-main", "test.cjs"]) => {
     // A new fake job starts empty; the native allocator may reuse the positively freed COM address.

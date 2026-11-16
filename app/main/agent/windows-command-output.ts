@@ -9,7 +9,8 @@ import { windowsCommandCreatorProfile, type WindowsCommandCreatorProfileRef } fr
 import type { WindowsSuspendedProcess } from "./experimental-windows-lpac-api";
 import { windowsCommandRootOnlyLaunchDirectory, requireWindowsCommandRootOnlyCompletedOutput,
   type WindowsCommandRootOnlyLaunchContext, type WindowsCommandRootOnlyCompletedRef, type WindowsCommandRootOnlyRunRef } from "./windows-command-copy";
-import { requireWindowsCommandRootOnlyOutputMatch, requireWindowsCommandRootOnlyOutputStoppedLaunch, type WindowsCommandRootOnlyOutputMatchRef } from "./windows-command-stop";
+import { requireWindowsCommandRootOnlyOutputMatch, requireWindowsCommandRootOnlyCancelledOutputMatch, requireWindowsCommandRootOnlyOutputStoppedLaunch,
+  type WindowsCommandRootOnlyCancelledOutputMatchRef, type WindowsCommandRootOnlyOutputMatchRef } from "./windows-command-stop";
 
 declare const launchBrand: unique symbol;
 export interface WindowsCommandOutputLaunchRef { readonly scope: "native-output-launch"; readonly [launchBrand]: true }
@@ -52,7 +53,7 @@ type State = {
   descriptor?: bigint; descriptorAttempted: boolean; root?: Readonly<WindowsSuspendedProcess>; launch?: WindowsCommandOutputLaunchRef;
   context?: WindowsCommandRootOnlyLaunchContext;
   piReleased: boolean;
-  matched?: WindowsCommandRootOnlyOutputMatchRef; delegated: boolean; terminateAttempted: boolean; creating: boolean; closed: boolean;
+  matched?: WindowsCommandRootOnlyOutputMatchRef | WindowsCommandRootOnlyCancelledOutputMatchRef; delegated: boolean; terminateAttempted: boolean; creating: boolean; closed: boolean;
   timer?: ReturnType<typeof setTimeout>; pump?: ReturnType<typeof setTimeout>; closing?: Promise<WindowsCommandOutputClosedRef>;
   abort: () => void; notify: Set<() => void>;
 };
@@ -278,12 +279,20 @@ export function requireWindowsCommandOutputActive(ref: WindowsCommandOutputLaunc
 /** Called only with the genuine non-consuming live Stop match, after the exact returned PI was checked. */
 export function activateWindowsCommandOutput(ref: WindowsCommandOutputLaunchRef, match: WindowsCommandRootOnlyOutputMatchRef): void {
   const s = stateFor(ref); requireWindowsCommandRootOnlyOutputMatch(match, ref);
-  if (s.matched || !s.root) throw refusal(); s.matched = match; s.delegated = true;
+  if (s.matched || !s.root) throw refusal(); activate(s, match);
+}
+/** Cleanup only: the held root is already retired and no bytes can be published or execution authorised. */
+export function activateWindowsCommandOutputForCancellation(ref: WindowsCommandOutputLaunchRef, match: WindowsCommandRootOnlyCancelledOutputMatchRef): void {
+  const s = stateFor(ref); requireWindowsCommandRootOnlyCancelledOutputMatch(match, ref); stop(s, "cancelled");
+  if (!s.matched) activate(s, match);
+}
+function activate(s: State, match: WindowsCommandRootOnlyOutputMatchRef | WindowsCommandRootOnlyCancelledOutputMatchRef): void {
+  s.matched = match; s.delegated = true;
   const stdin = s.owned.find(value => !s.streams.some(stream => stream.server === value || stream.writer === value || stream.event === value));
   if (!stdin) return poison(s);
   for (const value of [...s.streams.map(stream => stream.writer), stdin]) close(s, value);
-  for (const stream of s.streams) { read(s, stream); if (s.controller.signal.aborted) return; }
-  s.timer = setTimeout(() => stop(s, "timeout"), s.options.timeoutMs);
+  for (const stream of s.streams) read(s, stream);
+  if (!s.controller.signal.aborted) s.timer = setTimeout(() => stop(s, "timeout"), s.options.timeoutMs);
   schedule(s);
 }
 export function requireWindowsCommandOutputClosed(ref: unknown, launch: WindowsCommandOutputLaunchRef, run: WindowsCommandRootOnlyRunRef): Readonly<WindowsCommandOutputFacts> {

@@ -40,13 +40,31 @@ finishes. Closure removes only the known fresh objects through held identities a
 No callback, Boolean, similarly named record or serialized receipt can attest native Stop or disposal. Unknown calls,
 allocation overlap, reentry or cleanup retain owners behind a private permanent first-failure barrier.
 
-Known task loss uses a separate opaque two-phase cancellation claim. The real asset state, genuine Copy context,
+Known task loss at authenticated clean boundaries uses a separate opaque two-phase cancellation claim. The real asset state, genuine Copy context,
 monotonic native-entry history and a catch-local Stop phase authenticate it. Before PI creation, only an actual
 empty-job Stop and completed revocation permit initial no-run recovery. A prior real generation stays stale. After
-PI creation but before any Resume attempt, output is already genuinely matched/activated; actual root/job Stop and
-revocation finish before Copy returns the issued cancelled run. That run can close its exact output and assets,
+PI creation, a private successful asset-use registry binds the context, profile, generation and exact returned PI.
+Stop checks its held PID/thread/job identities and issues a separate cleanup-only returned-root capability before
+assignment, then probes at completed native boundaries before Resume. Copy's pure admission gates can use only
+that same authentic frozen root and binding; no generic callback exception becomes a cancellation claim. A normally
+returned attester can retire cleanly; its own thrown errors remain terminal.
+
+The cleanup-only output match starts bounded drains for both streams even when the shared signal was already
+aborted, and never publishes bytes. Actual root/job Stop and revocation finish before Copy returns the issued cancelled run. That run can close its exact output and assets,
 but its failed asset attestation never becomes execution authority. Swallowed, forged, foreign or replayed claims
 and every uncertain native operation remain terminal.
+
+A returned-point cancellation may precede the native creator-token capture. Its positive stopped receipt records
+no creator-attestation witness consumed and no Resume attempted. The native tree independently requires its exact
+grant to remain prepared (real capture entry changes it to capturing), with no root/creator-owner claim. Before any
+ACL mutation it checks the complete original post-grant ID set, freshly read metadata including the root, streams
+and security. Added, removed, replaced or changed entries refuse. Callback entry or a generic root-present receipt
+cannot substitute for this combined proof. Both EOFs, every settled read and positive output-handle/allocation
+closure remain required before asset usage is released.
+
+Genuine WindowsCodingCleanupError values from task admission poison the Copy, native tree and asset boundaries;
+they cannot be downgraded to ordinary cancellation or authorise file revocation/closure after uncertainty. Ordinary
+admission errors and false values still retire work when the private native ledgers are known clean.
 
 Portable ABI tests stream synthetic marker bytes at the real fixed sizes. Their node:crypto boundary mock recognises
 only exact marker content and length, with real UUIDs and no production manifest/hash override. They exercise actual
@@ -67,7 +85,7 @@ still attempt WRITE_DAC/WRITE_OWNER on the Medium borrowed parent and both Low h
 Node execution and output, natural exit, overflow/explicit cancellation, precreate/pre-Resume cancellation, complete
 Stop/revoke/output closure and known cleanup on both supported images before product admission.
 
-Affected validation passed 1,104 tests in 19 suites with two workers and unchanged 5-second test deadlines;
+The initial `5ef8b2fc88e5f9f83b941ead57bada5d7c6b64c3` foundation's affected validation passed 1,104 tests in 19 suites with two workers and unchanged 5-second test deadlines;
 scoped ESLint and whitespace checks passed, and Root plus independent source review closed clean. An initial two-case
 cancellation check hit that deadline; the isolated phase1 rerun and later nine-case focused batch passed. An earlier
 unrestricted affected aggregate recorded 1,100 passes and four deadline failures; no source or deadline changed
@@ -75,4 +93,18 @@ before the passing bounded-worker aggregate. Full semantic TypeScript session 30
 errors. Explicit option-value narrowing (including a redundant numeric guard) and erased method-parameter types
 corrected them without changing accepted inputs or authority. All 90 focused asset/transfer/CJS cases then passed
 with the same bounds; both reviews reclosed on those exact bytes. Final unchanged `npm run typecheck` session
-96111 exited 0. No native execution, selector change or publication follows from this document.
+96111 exited 0.
+
+The additive returned-root/shared-signal correction passed 1,142 tests in 19 suites (session 18043, two workers,
+unchanged 5-second test deadlines), including 128 asset/transfer/CJS cases and 38 new regressions. Root and two
+independent source reviewers closed clean; scoped source/test ESLint and whitespace checks passed. An initial
+23-case focused run recorded 19 passes and four deadline failures; its four-case serial retry recorded three
+further deadline failures and one `missing` setup failure. The isolated removed-member case then passed, the full
+15-case canonical transfer run passed, and the final 1,142-case aggregate passed. No cause is attributed to the
+intermediate timing/setup failures and no deadline was increased.
+
+Full semantic TypeScript session 28761 exited 2 for one test-only Buffer generic mismatch. An equivalent
+`Buffer.from(file.bytes)` at the already-cloning replacement fixture boundary corrected it; that exact regression
+passed separately (72384), with lint/whitespace checks passing and production hashes unchanged. Final unchanged
+`npm run typecheck` session 31020 exited 0. No native execution, selector change or historical runtime-pin refresh
+follows from this correction; its new Windows enforcement graph and coordinator acceptance remain separate gates.

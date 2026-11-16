@@ -33,15 +33,17 @@ vi.mock("node:crypto", async original => {
 });
 
 import { nodeAssetFake } from "../fixtures/windows-node-toolchain-native-fake";
-import { WindowsNodeToolchainCleanupError, type WindowsNodeToolchainFence } from "../../app/main/agent/windows-node-toolchain-native";
+import { WindowsNodeToolchainCleanupError, probeWindowsNodeToolchainReturnedCancellation, type WindowsNodeToolchainFence } from "../../app/main/agent/windows-node-toolchain-native";
 import { closeWindowsCommandCreatorProfile } from "../../app/main/agent/windows-command-creator-profile";
 import type { WindowsCommandRootOnlyCompletedRef, WindowsCommandRootOnlyRunRef } from "../../app/main/agent/windows-command-copy";
 import type { WindowsCommandOutputLaunchRef } from "../../app/main/agent/windows-command-output";
 import { requireWindowsCommandOutputLaunch, requireWindowsCommandOutputClosed } from "../../app/main/agent/windows-command-output";
-import { requireWindowsCommandRootOnlyCompleted } from "../../app/main/agent/windows-command-copy";
+import { requireWindowsCommandRootOnlyCompleted, requireWindowsCommandRootOnlyLaunchMetadata } from "../../app/main/agent/windows-command-copy";
 import { issueWindowsCommandLaunchCancellation, consumeWindowsCommandLaunchCancellation } from "../../app/main/agent/windows-command-launch-cancel";
-import type { WindowsCommandRootOnlyCancellationPhaseRef } from "../../app/main/agent/windows-command-stop";
+import { createWindowsCommandRootOnlyStopOwner, requireWindowsCommandRootOnlyReturned, requireWindowsCommandRootOnlyUnconsumedCreatorStopped, windowsCommandRootOnlyReturnedForRoot,
+  type WindowsCommandRootOnlyCancellationPhaseRef, type WindowsCommandRootOnlyReturnedRef } from "../../app/main/agent/windows-command-stop";
 import { ScopedCodingFileError } from "../../app/main/agent/coding-platform";
+import { WindowsCodingCleanupError } from "../../app/main/agent/windows-coding-native";
 
 async function refused(action: () => unknown) { try { await action(); } catch (error) { expect(String(error)).not.toContain("PRIVATE"); return error; } throw Error("The native boundary must refuse."); }
 
@@ -296,6 +298,41 @@ it("arbitrary keys and serialised cancellation claims have no issuer or Stop aut
   expect(s.io.state.creates).toBe(0); expect(s.io.events).not.toContain("resume"); expect(s.io.stopFence.failure).toBeDefined();
 });
 
+it("forged returned-root and unconsumed-creator Stop records cannot enter native cancellation or query a property getter", () => {
+  const s = nodeAssetFake(); let getters = 0;
+  for (const ref of [{}, { scope: "root-only-returned" }, { scope: "root-only-stopped" }, new Proxy({}, { get() { getters++; throw Error("PRIVATE getter"); } })]) {
+    expect(() => requireWindowsCommandRootOnlyReturned(ref as WindowsCommandRootOnlyReturnedRef)).toThrow();
+    expect(() => probeWindowsNodeToolchainReturnedCancellation(ref as WindowsCommandRootOnlyReturnedRef)).toThrow();
+    expect(() => requireWindowsCommandRootOnlyUnconsumedCreatorStopped(ref, {}, s.io.profile)).toThrow();
+  }
+  expect(getters).toBe(0); expect(s.calls).toEqual([]); expect(s.io.calls).toEqual([]); closeWindowsCommandCreatorProfile(s.io.profile);
+});
+
+it("a genuine normally resumed root's closed Stop cannot authorise prepared-before-capture revocation", async () => {
+  const s = nodeAssetFake(), binding = Object.freeze({}); let assigned = false, ended = false;
+  const api = { createJob: () => 60000n, assign() { assigned = true; }, resume() {}, terminateProcess() { ended = true; }, terminateJob() { ended = true; } };
+  const native = { configure() {}, assertLimits() {}, state: () => ({ total: assigned ? 1 : 0, active: assigned && !ended ? 1 : 0, pids: assigned && !ended ? [60003] : [] }),
+    processId: () => 60003, threadProcessId: () => 60003, member: () => assigned, wait: (): 0 | 258 => ended ? 0 : 258, close() {} };
+  const stop = createWindowsCommandRootOnlyStopOwner(binding, api, native, () => 100, { retained: [] });
+  await stop.launch(() => ({ process: 60001n, thread: 60002n, pid: 60003 }), () => undefined, () => true);
+  const stopped = await stop.stop(); expect(() => requireWindowsCommandRootOnlyUnconsumedCreatorStopped(stopped, binding, s.io.profile)).toThrow();
+  expect(s.calls).toEqual([]); expect(s.io.calls).toEqual([]); closeWindowsCommandCreatorProfile(s.io.profile);
+});
+
+it("the returned-root lookup accepts only the exact held object and binding during its live cleanup phase", async () => {
+  const s = nodeAssetFake(), owner = await s.prepare(), copy = await s.io.prepare();
+  let binding: object | undefined, held: Parameters<typeof windowsCommandRootOnlyReturnedForRoot>[0] | undefined, returned: WindowsCommandRootOnlyReturnedRef | undefined, launch: WindowsCommandOutputLaunchRef | undefined;
+  const run = await copy.launchRootOnlyWithOutput(context => { binding = requireWindowsCommandRootOnlyLaunchMetadata(context).binding; return launch = owner.createSuspended(context, ["test.cjs"], s.io.options); }, root => {
+    held = root; returned = windowsCommandRootOnlyReturnedForRoot(root, binding!); expect(returned).toBeDefined(); expect(requireWindowsCommandRootOnlyReturned(returned!).root).toBe(root);
+    const queries = s.calls.length; expect(windowsCommandRootOnlyReturnedForRoot({ ...root }, binding!)).toBeUndefined();
+    expect(() => windowsCommandRootOnlyReturnedForRoot(root, {})).toThrow(); expect(probeWindowsNodeToolchainReturnedCancellation(returned!)).toBeUndefined();
+    expect(s.calls).toHaveLength(queries); expect(s.io.events).not.toContain("resume");
+  });
+  const queries = s.calls.length; expect(() => windowsCommandRootOnlyReturnedForRoot(held!, binding!)).toThrow(); expect(() => requireWindowsCommandRootOnlyReturned(returned!)).toThrow();
+  expect(() => probeWindowsNodeToolchainReturnedCancellation(returned!)).toThrow(); expect(s.calls).toHaveLength(queries); expect(s.io.events).toContain("resume");
+  s.io.state.ended = true; const done = await copy.completeRootOnly(run, s.io.abort.signal); await owner.finishOutput(done, run, launch!); await copy.close(); await owner.close(); closeWindowsCommandCreatorProfile(s.io.profile);
+});
+
 it("a consumed genuine cancellation cannot be consumed by a forged phase or replayed into a foreign Stop owner", async () => {
   const s = nodeAssetFake(), owner = await s.prepare(), copy = await s.io.prepare(); let claim: unknown;
   await refused(() => copy.launchRootOnlyWithOutput(context => {
@@ -361,6 +398,134 @@ it("asset task loss cannot turn output activation uncertainty into a clean cance
   await refused(() => s.launch(owner));
   expect(s.io.events).not.toContain("resume"); expect(s.io.stopFence.failure).toBeDefined(); expect(s.io.copyFence.failure).toBeDefined();
   expect(s.io.fence.failure).toBeDefined(); await refused(() => owner.close()); expect(s.assets().every(row => !row.removed)).toBe(true);
+});
+
+it.each(["created", "first-read"] as const)("shared admission loss during %s obtains real stopped output without resuming", async point => {
+  const s = nodeAssetFake(), owner = await s.prepare(), before = s.calls.length; let aborted = false;
+  s.io.state.onNative = name => {
+    if (point === "created" && name === "CreateProcessW" || point === "first-read" && name === "ReadFile" && s.io.state.creates) {
+      aborted = true; s.io.source.control.current = false; s.io.abort.abort();
+    }
+  };
+  const value = await s.launch(owner);
+  expect(aborted).toBe(true); expect(s.io.events).not.toContain("resume"); expect(s.io.events.includes("assign")).toBe(point === "first-read");
+  expect(s.io.events).toContain("stop-root"); expect(s.io.events).toContain("stop-job"); expect(s.io.events.filter(event => event === "root-close")).toHaveLength(3);
+  expect(s.calls).toHaveLength(before); expect(s.fence.failure).toBeUndefined(); expect(s.io.stopFence.failure).toBeUndefined(); expect(s.io.copyFence.failure).toBeUndefined();
+  const completed = await value.copy.completeRootOnly(value.run, s.io.abort.signal);
+  expect(requireWindowsCommandRootOnlyCompleted(completed, value.run)).toEqual({ outcome: "cancelled", exitCode: null });
+  const closed = await owner.finishOutput(completed, value.run, value.ref);
+  expect(requireWindowsCommandOutputClosed(closed, value.ref, value.run)).toMatchObject({ complete: false, reason: "cancelled" });
+  expect(s.io.pipes.every(pipe => !pipe.pending)).toBe(true); expect(s.io.output).toEqual([]);
+  for (const pipe of s.io.pipes) expect(s.io.calls.some(call => call.name === "ReadFile" && call.args[0] === pipe.server)).toBe(true);
+  await value.copy.close(); await owner.close(); closeWindowsCommandCreatorProfile(s.io.profile);
+});
+
+it("task loss cannot hide an uncertain native operation after the factory writes a positive PI", async () => {
+  const s = nodeAssetFake(), owner = await s.prepare();
+  s.io.state.onNative = name => { if (name === "CreateProcessW") { s.io.source.control.current = false; s.io.abort.abort(); s.io.state.fault = "DeleteProcThreadAttributeList"; } };
+  await refused(() => s.launch(owner));
+  expect(s.io.state.creates).toBe(1); expect(s.io.events).not.toContain("assign"); expect(s.io.events).not.toContain("resume"); expect(s.io.events).not.toContain("root-close");
+  expect(s.io.calls.some(call => call.name === "TerminateProcess" && call.args[0] === 50001n)).toBe(true);
+  expect(s.fence.failure).toBeDefined(); expect(s.io.stopFence.failure).toBeDefined(); expect(s.io.copyFence.failure).toBeDefined(); expect(s.io.fence.failure).toBeDefined();
+  await refused(() => owner.close()); expect(s.assets().every(row => !row.removed)).toBe(true);
+});
+
+it("task loss cannot bypass held process/thread identity checks before the returned cleanup capability", async () => {
+  const s = nodeAssetFake(), owner = await s.prepare();
+  s.io.state.afterNative = (name, _args, result) => { if (name === "CreateProcessW") {
+    s.io.state.returnedPid++; s.io.source.control.current = false; s.io.abort.abort();
+  } return result; };
+  await refused(() => s.launch(owner));
+  expect(s.io.state.creates).toBe(1); expect(s.io.events).not.toContain("assign"); expect(s.io.events).not.toContain("resume"); expect(s.io.events).not.toContain("root-close");
+  expect(s.io.stopFence.failure).toBeDefined(); expect(s.io.copyFence.failure).toBeDefined(); await refused(() => owner.close());
+});
+
+it("a different genuine output PI cannot substitute for the registered Node asset use during cancellation", async () => {
+  const s = nodeAssetFake(), owner = await s.prepare(), copy = await s.io.prepare();
+  s.io.state.onNative = name => { if (name === "CreateProcessW" && s.io.state.creates === 1) { s.io.source.control.current = false; s.io.abort.abort(); } };
+  await refused(() => copy.launchRootOnlyWithOutput(context => {
+    owner.createSuspended(context, ["original.cjs"], s.io.options);
+    s.io.state.profilePointer = 0x20010000n; s.io.state.profileFrees = 0;
+    s.io.state.returnedProcess = 50011n; s.io.state.returnedThread = 50012n; s.io.state.returnedPid = 50013;
+    return s.io.owner().createSuspended(context, "C:\\trusted\\node.exe", s.io.command);
+  }, () => undefined));
+  expect(s.io.state.creates).toBe(2); expect(s.io.events).not.toContain("assign"); expect(s.io.events).not.toContain("resume"); expect(s.io.events).not.toContain("root-close");
+  expect(s.io.stopFence.failure).toBeDefined(); expect(s.io.copyFence.failure).toBeDefined(); expect(s.io.fence.failure).toBeDefined();
+  const terminated = s.io.calls.filter(call => call.name === "TerminateProcess").map(call => call.args[0]);
+  expect(terminated).toEqual(expect.arrayContaining([50001n, 50011n])); await refused(() => owner.close());
+});
+
+it.each(["preentry-base", "preentry-subclass", "returned-base", "returned-subclass"] as const)("a genuine %s admission cleanup error is retained and cannot mint known cancellation", async phase => {
+  const failure = phase.endsWith("subclass") ? new WindowsNodeToolchainCleanupError() : new WindowsCodingCleanupError(); let unsafe = false, mutations: number | undefined;
+  const s = nodeAssetFake({ current: () => { if (unsafe) throw failure; return true; } }), owner = await s.prepare(), copy = await s.io.prepare();
+  if (phase.startsWith("returned")) s.io.state.onNative = name => { if (name === "CreateProcessW") { mutations = s.io.source.sets(); unsafe = true; } };
+  await refused(() => copy.launchRootOnlyWithOutput(context => {
+    if (phase.startsWith("preentry")) { mutations = s.io.source.sets(); unsafe = true; }
+    return owner.createSuspended(context, ["test.cjs"], s.io.options);
+  }, () => undefined));
+  expect(mutations).toBeDefined(); expect(s.io.source.sets()).toBe(mutations); expect(s.io.state.creates).toBe(phase.startsWith("returned") ? 1 : 0);
+  expect(s.io.events).not.toContain("assign"); expect(s.io.events).not.toContain("resume"); expect(s.io.events).not.toContain("root-close");
+  expect(s.fence.failure).toBeDefined(); expect(s.io.stopFence.failure).toBeDefined(); expect(s.io.copyFence.failure).toBeDefined();
+  if (phase.startsWith("returned")) { expect(s.io.events).toContain("stop-root"); expect(s.io.calls.some(call => call.name === "TerminateProcess" && call.args[0] === 50001n)).toBe(true); }
+  const queries = s.calls.length; await refused(() => owner.close()); expect(s.calls).toHaveLength(queries); expect(s.assets().every(row => !row.removed)).toBe(true);
+});
+
+it("ordinary task admission failure after a returned PI remains a known cancellation control", async () => {
+  let retired = false; const s = nodeAssetFake({ current: () => { if (retired) throw Error("PRIVATE task admission failure"); return true; } }), owner = await s.prepare();
+  s.io.state.onNative = name => { if (name === "CreateProcessW") retired = true; };
+  const value = await s.launch(owner); expect(s.io.events).not.toContain("assign"); expect(s.io.events).not.toContain("resume"); expect(s.io.stopFence.failure).toBeUndefined(); expect(s.fence.failure).toBeUndefined();
+  const completed = await value.copy.completeRootOnly(value.run, s.io.abort.signal), closed = await owner.finishOutput(completed, value.run, value.ref);
+  expect(requireWindowsCommandRootOnlyCompleted(completed, value.run)).toEqual({ outcome: "cancelled", exitCode: null }); expect(requireWindowsCommandOutputClosed(closed, value.ref, value.run).complete).toBe(false);
+  await value.copy.close(); await owner.close(); closeWindowsCommandCreatorProfile(s.io.profile);
+});
+
+it.each(["before-launch", "staging", "grant"] as const)("a genuine Copy admission cleanup error during %s retains owners without an empty-job recovery", async phase => {
+  const s = nodeAssetFake(), failure = new WindowsCodingCleanupError(); let unsafe = false, failedAt: number | undefined, setsAt: number | undefined, entered = false;
+  const input = s.io.source.input;
+  s.io.source.input = () => ({ ...input(), current: () => {
+    if (unsafe) { failedAt ??= s.io.source.calls.length; setsAt ??= s.io.source.sets(); throw failure; }
+    return true;
+  } });
+  if (phase === "staging") {
+    const create = s.io.source.handlers.NtCreateFile;
+    s.io.source.handlers.NtCreateFile = (...args) => { const result = create(...args); unsafe = true; return result; };
+    await refused(() => s.io.prepare());
+  } else {
+    const copy = await s.io.prepare();
+    if (phase === "before-launch") unsafe = true;
+    else {
+      const grant = s.io.source.handlers.SetSecurityInfo;
+      s.io.source.handlers.SetSecurityInfo = (...args) => { const result = grant(...args); unsafe = true; return result; };
+    }
+    await refused(() => copy.launchRootOnly(() => { entered = true; throw Error("The test creator must remain unentered."); }, () => undefined));
+    const queries = s.io.source.calls.length; await refused(() => copy.close()); expect(s.io.source.calls).toHaveLength(queries);
+  }
+  expect(failedAt).toBeDefined(); expect(setsAt).toBeDefined(); expect(s.io.source.sets()).toBe(setsAt); expect(entered).toBe(false);
+  expect(s.io.copyFence.failure).toBeDefined(); expect(s.io.copyFence.retained.length).toBeGreaterThan(0); if (phase !== "before-launch") expect(s.io.source.fence.failure).toBeDefined();
+  expect(s.io.source.handles.size).toBeGreaterThan(0); expect(s.io.source.calls.slice(failedAt!).some(call => ["CloseHandle", "NtSetSecurityObject", "SetSecurityInfo", "NtSetInformationFile"].includes(call.name))).toBe(false);
+  expect(s.io.events).not.toContain("root-close"); expect(s.io.state.creates).toBe(0); expect(s.io.events).not.toContain("resume");
+  const queries = s.io.source.calls.length; s.io.copyFence.failure = undefined; unsafe = false; await refused(() => s.io.prepare()); expect(s.io.source.calls).toHaveLength(queries);
+});
+
+it.each(["before-launch", "staging", "grant"] as const)("an ordinary Copy admission exception during %s remains cancellable with positive known cleanup", async phase => {
+  const s = nodeAssetFake(); let retired = false, entered = false;
+  const input = s.io.source.input; s.io.source.input = () => ({ ...input(), current: () => { if (retired) throw Error("PRIVATE task admission"); return true; } });
+  if (phase === "staging") {
+    const create = s.io.source.handlers.NtCreateFile;
+    s.io.source.handlers.NtCreateFile = (...args) => { const result = create(...args); retired = true; return result; };
+    expect(await refused(() => s.io.prepare())).toMatchObject({ code: "cancelled" });
+  } else {
+    const copy = await s.io.prepare();
+    if (phase === "before-launch") retired = true;
+    else {
+      const grant = s.io.source.handlers.SetSecurityInfo;
+      s.io.source.handlers.SetSecurityInfo = (...args) => { const result = grant(...args); retired = true; return result; };
+    }
+    expect(await refused(() => copy.launchRootOnly(() => { entered = true; throw Error("The test creator must remain unentered."); }, () => undefined))).toMatchObject({ code: "cancelled" });
+    await copy.close();
+  }
+  expect(entered).toBe(false); expect(s.io.copyFence.failure).toBeUndefined(); expect(s.io.source.fence.failure).toBeUndefined(); expect(s.io.source.handles.size).toBe(0);
+  expect(s.io.state.creates).toBe(0); expect(s.io.events).not.toContain("resume"); closeWindowsCommandCreatorProfile(s.io.profile);
 });
 
 it.each([1, 11, 25, 31])("bounded token class %s rejects an out-of-buffer SID before converting it", async kind => {
