@@ -9,6 +9,13 @@ type Stage = "binding" | "host-handle" | "current-process" | "parent-open" | "ho
   "parent-user" | "host-user" | "parent-restricted" | "host-restricted" |
   "parent-integrity" | "host-integrity" | "parent-app-container" | "host-app-container";
 type Reason = "native-false" | "abi" | "contract";
+const stages = new Set<Stage>(["binding", "host-handle", "current-process", "parent-open", "host-open", "parent-user", "host-user",
+  "parent-restricted", "host-restricted", "parent-integrity", "host-integrity", "parent-app-container", "host-app-container"]);
+const reasons = new Set<Reason>(["native-false", "abi", "contract"]);
+const failureReceipts = new WeakMap<object, Readonly<{ stage: Stage; reason: Reason; code?: number }>>();
+export function windowsLibuvHostIdentityFailure(error: unknown) {
+  return error !== null && typeof error === "object" ? failureReceipts.get(error) : undefined;
+}
 export interface WindowsLibuvTokenFacts { readonly restricted: boolean; readonly integrityRid: number; readonly appContainer: 0 | 1 }
 export interface WindowsLibuvHostIdentity {
   readonly sameUser: boolean;
@@ -16,8 +23,10 @@ export interface WindowsLibuvHostIdentity {
   readonly host: Readonly<WindowsLibuvTokenFacts>;
 }
 export class WindowsLibuvHostIdentityError extends Error {
-  constructor(readonly stage: Stage, readonly reason: Reason) {
+  constructor(readonly stage: Stage, readonly reason: Reason, code?: number) {
     super("The fixed suspended-host token facts failed their native contract."); this.name = "WindowsLibuvHostIdentityError";
+    if (stages.has(stage) && reasons.has(reason)) failureReceipts.set(this, Object.freeze({ stage, reason,
+      ...(reason === "native-false" && typeof code === "number" && Number.isInteger(code) && code >= 0 && code <= 0xffffffff ? { code } : {}) }));
   }
 }
 export class WindowsLibuvHostIdentityCleanupError extends WindowsNodeHostCleanupError {
@@ -32,7 +41,7 @@ const processFence: WindowsLibuvHostIdentityFence = { retained: [] };
 const INVALID_HANDLE = 0xffffffffffffffffn, MAX_POINTER = INVALID_HANDLE;
 const TOKEN_QUERY = 0x8, MAX_TOKEN_BYTES = 256;
 export const WINDOWS_LIBUV_HOST_IDENTITY_FUNCTIONS = {
-  kernel32: ["void * __stdcall GetCurrentProcess()", "int __stdcall CloseHandle(void *handle)"],
+  kernel32: ["void * __stdcall GetCurrentProcess()", "int __stdcall CloseHandle(void *handle)", "uint32_t __stdcall GetLastError()"],
   advapi32: [
     "int __stdcall OpenProcessToken(void *process, uint32_t access, _Out_ void **token)",
     "int __stdcall GetTokenInformation(void *token, int kind, void *information, uint32_t size, _Out_ uint32_t *returned)",
@@ -77,11 +86,12 @@ export function bindWindowsLibuvHostIdentity(koffi: Pick<typeof Koffi, "sizeof" 
     const owned = new Set<WindowsHandle>(), buffers: Buffer[] = [], outputs: unknown[][] = [];
     let uncertain = false, currentProcess: unknown, result: WindowsLibuvHostIdentity | undefined;
     let failure: WindowsLibuvHostIdentityError | undefined;
-    function fail(stage: Stage, reason: Reason): never { throw new WindowsLibuvHostIdentityError(stage, reason); }
+    function fail(stage: Stage, reason: Reason, code?: number): never { throw new WindowsLibuvHostIdentityError(stage, reason, code); }
+    const lastError = () => { try { const value = fn.GetLastError(); return typeof value === "number" ? value : undefined; } catch { return undefined; } };
     const open = (process: unknown, stage: "parent-open" | "host-open"): WindowsHandle => {
       const output: unknown[] = [null]; outputs.push(output);
-      let ok: unknown;
-      try { ok = fn.OpenProcessToken(process, TOKEN_QUERY, output); }
+      let ok: unknown, code: number | undefined;
+      try { ok = fn.OpenProcessToken(process, TOKEN_QUERY, output); if (ok === 0) code = lastError(); }
       catch { uncertain = true; }
       const token = output[0];
       if (isHandle(token) && token !== hostProcess && token !== currentProcess && !owned.has(token)) owned.add(token);
@@ -89,7 +99,7 @@ export function bindWindowsLibuvHostIdentity(koffi: Pick<typeof Koffi, "sizeof" 
       if (!isBool(ok)) uncertain = true;
       if (ok === 0 && token !== null && token !== 0n) uncertain = true;
       if (uncertain) fail(stage, "abi");
-      if (ok === 0) fail(stage, "native-false");
+      if (ok === 0) fail(stage, "native-false", code);
       if (!isHandle(token) || !owned.has(token)) { uncertain = true; fail(stage, "abi"); }
       return token;
     };
@@ -99,7 +109,7 @@ export function bindWindowsLibuvHostIdentity(koffi: Pick<typeof Koffi, "sizeof" 
       try { ok = fn.GetTokenInformation(token, kind, bytes, bytes.length, returned); }
       catch { fail(stage, "abi"); }
       if (!isBool(ok)) fail(stage, "abi");
-      if (ok === 0) fail(stage, "native-false");
+      if (ok === 0) fail(stage, "native-false", lastError());
       if (!isCount(returned[0], bytes.length) || (bytes.length === 4 && returned[0] !== 4)) fail(stage, "contract");
       return { bytes, returned: returned[0] };
     };

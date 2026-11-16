@@ -12,7 +12,7 @@ import { inspectWindowsNodeFatalOutput } from "./windows-node-lpac-fatal";
 import { parseWindowsLibuvProbeReport } from "./windows-libuv-probe-report";
 import { disposeWindowsLibuvProbe } from "./windows-libuv-probe-disposal";
 import { windowsLibuvBootstrapFacts } from "./windows-libuv-bootstrap";
-import { loadWindowsLibuvHostIdentity, type WindowsLibuvHostIdentity } from "./windows-libuv-host-identity";
+import { loadWindowsLibuvHostIdentity, windowsLibuvHostIdentityFailure, type WindowsLibuvHostIdentity } from "./windows-libuv-host-identity";
 // @ts-expect-error -- fixed trusted-host JavaScript build recipe
 import { selectedWindowsLibuvBuildPin, windowsLibuvRecipe } from "../../scripts/experimental/build-windows-libuv-probe.mjs";
 import sourcePin from "../../scripts/experimental/windows-libuv-source-pin.json";
@@ -50,6 +50,7 @@ const uncertain = (error: unknown) => error instanceof WindowsNodeHostCleanupErr
 const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 const quarantinedProbeOwners: unknown[] = [];
 type FixedFailureReceipt = Readonly<{ variant: "stock" | "offline"; phase: string;
+  identityFailure?: ReturnType<typeof windowsLibuvHostIdentityFailure>;
   host?: Readonly<{ exitCode: number; jobStopped: true; reportState: "not-read" | "valid" | "absent" | "refused";
     identity?: WindowsLibuvHostIdentity;
     bootstrap?: ReturnType<typeof windowsLibuvBootstrapFacts>;
@@ -113,6 +114,7 @@ export async function runWindowsLibuvFixedProbe(input: { parent: string; buildRo
   let phase = "receipt";
   let stoppedHost: { exitCode: number; jobStopped: true } | undefined, hostReportFact: ReturnType<typeof parseWindowsLibuvProbeReport> | null = null;
   let hostIdentity: WindowsLibuvHostIdentity | undefined;
+  let identityFailure: ReturnType<typeof windowsLibuvHostIdentityFailure>;
   let hostReportState: "not-read" | "valid" | "absent" | "refused" = "not-read";
   let unsafe = false, failure: { error: unknown } | undefined;
   let result: { issuer: string; variant: "stock" | "offline"; host: { exitCode: number; jobStopped: true; identity: WindowsLibuvHostIdentity; report: ReturnType<typeof parseWindowsLibuvProbeReport> };
@@ -208,6 +210,7 @@ export async function runWindowsLibuvFixedProbe(input: { parent: string; buildRo
     result = { issuer: "ember-experimental-libuv-fixed-probe", variant: input.variant,
       host: { ...host, identity: hostIdentity, report: hostReport }, lpac: { exitCode, jobStopped: true, report: lpacReport, output } };
   } catch (error) {
+    identityFailure = windowsLibuvHostIdentityFailure(error);
     if (uncertain(error) || phase === "prepare" && !fixture) unsafe = true;
     failure = { error: uncertain(error) ? error : new Error(`The fixed libuv probe failed during ${phase}.`) };
   }
@@ -222,6 +225,7 @@ export async function runWindowsLibuvFixedProbe(input: { parent: string; buildRo
   if (unsafe) throw new WindowsLibuvProbeCleanupError();
   if (failure) {
     if (failure.error !== null && typeof failure.error === "object") failureReceipts.set(failure.error, Object.freeze({ variant: input.variant, phase,
+      ...(identityFailure ? { identityFailure } : {}),
       ...(stoppedHost ? { host: Object.freeze({ ...stoppedHost, ...(hostIdentity ? { identity: hostIdentity } : {}), bootstrap: windowsLibuvBootstrapFacts(stoppedHost.exitCode),
         reportState: hostReportState, report: hostReportFact }) } : {}) }));
     throw failure.error;

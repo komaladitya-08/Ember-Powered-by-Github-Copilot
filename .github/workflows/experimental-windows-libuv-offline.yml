@@ -14,6 +14,11 @@ on:
       - "test/unit/windows-libuv*"
       - "app/main/agent/experimental-windows-lpac*.ts"
   workflow_dispatch:
+    inputs:
+      portable_macos:
+        description: "Also verify the portable source and receipt contracts on macOS"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -23,6 +28,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  portable-macos:
+    name: Portable libuv contracts (macOS)
+    if: github.event_name == 'workflow_dispatch' && inputs.portable_macos
+    runs-on: macos-15
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Portable source and stopped-receipt contracts only
+        run: npm test -- test/unit/windows-libuv-source.test.ts test/unit/windows-libuv-probe-report.test.ts test/unit/windows-libuv-probe-disposal.test.ts test/unit/windows-libuv-build-receipt.test.ts test/unit/windows-libuv-build-environment.test.ts test/unit/windows-libuv-bootstrap.test.ts test/unit/windows-libuv-host-identity.test.ts --maxWorkers=1
   fixed-probe:
     name: Fixed libuv C probe (${{ matrix.os }})
     strategy:

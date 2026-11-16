@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { bindWindowsLibuvHostIdentity, loadWindowsLibuvHostIdentity, WindowsLibuvHostIdentityCleanupError,
-  WindowsLibuvHostIdentityError, WINDOWS_LIBUV_HOST_IDENTITY_FUNCTIONS, type WindowsLibuvHostIdentityFence } from "../fixtures/windows-libuv-host-identity";
+  WindowsLibuvHostIdentityError, windowsLibuvHostIdentityFailure, WINDOWS_LIBUV_HOST_IDENTITY_FUNCTIONS, type WindowsLibuvHostIdentityFence } from "../fixtures/windows-libuv-host-identity";
 import { WindowsNodeHostCleanupError } from "../fixtures/windows-node-lpac-startup";
 
 type Call = { name: string; args: unknown[] };
@@ -21,6 +21,7 @@ function setup() {
     const name = /\b(\w+)\s*\(/.exec(prototype)![1];
     return (...args: unknown[]) => {
       calls.push({ name, args });
+      if (name === "GetLastError") return 5;
       if (name === "GetCurrentProcess") {
         if (control.fault === "current throw") throw new Error("private native current-process failure");
         return control.pseudo;
@@ -137,8 +138,18 @@ it("requires Win64 at bind time and keeps the native loader lazy off Windows", (
 
 it.each(["parent-open", "host-open"])("a definite failed open closes earlier owned tokens without poisoning: %s", at => {
   const s = setup(); Object.assign(s.control, { at, fault: "open false" });
-  expect(() => s.bind().inspect(HOST_PROCESS)).toThrowError(expect.objectContaining({ stage: at, reason: "native-false" }));
+  let error: unknown; try { s.bind().inspect(HOST_PROCESS); } catch (caught) { error = caught; }
+  expect(error).toMatchObject({ stage: at, reason: "native-false" });
+  expect(windowsLibuvHostIdentityFailure(error)).toEqual({ stage: at, reason: "native-false", code: 5 });
   expect(closes(s.calls)).toEqual(at === "host-open" ? [PARENT_TOKEN] : []); expect(s.fence.failure).toBeUndefined();
+});
+
+it("publishes only branded closed failure facts without reading foreign getters", () => {
+  const foreign = Object.defineProperty({}, "stage", { get() { throw new Error("private getter"); } });
+  expect(windowsLibuvHostIdentityFailure(foreign)).toBeUndefined();
+  expect(windowsLibuvHostIdentityFailure(new Error("private error"))).toBeUndefined();
+  expect(windowsLibuvHostIdentityFailure(new WindowsLibuvHostIdentityError("host-user", "contract"))).toEqual({ stage: "host-user", reason: "contract" });
+  expect(windowsLibuvHostIdentityFailure(new WindowsLibuvHostIdentityError("private" as "binding", "contract"))).toBeUndefined();
 });
 
 it.each(["query false", "query throw", "query ABI"])("query-only failure still closes both known token handles safely: %s", fault => {

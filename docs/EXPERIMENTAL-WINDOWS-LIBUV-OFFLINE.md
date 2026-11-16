@@ -49,6 +49,12 @@ wholly contained in their bounded token buffers; raw SIDs are never returned. Un
 failure quarantines the diagnostic. Facts are published only after native root/job stop and verified fixture cleanup.
 No path, SID, native text, ACL or privilege change is involved. The access-denial cause remains pending.
 
+Run [43809707531](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43809707531)
+at `cb24de36f48538f36d3011f98faaa1719b7e761c` built both variants on both Windows images and passed
+386 portable contracts with one privilege skip per image. Its new token inspector refused before host resume;
+neither C bootstrap facts nor LPAC work were observed. The inspector now returns only a branded closed stage/reason
+and immediate bounded Win32 error on native FALSE, after verified cleanup. Its acceptance predicates are unchanged.
+
 The official Node experiment identified `WSAStartup / 10107` on both pinned versions and both Windows Server images,
 with successful ordinary-host controls. See [the bounded native receipts](WINDOWS-NODE-LPAC-PROOF.md).
 The immediate question is whether a few useful local libuv operations can run in the same capability-free LPAC
@@ -120,6 +126,8 @@ quarantines owners and blocks later probes in that process. No raw output, priva
 
 The dedicated workflow is `experimental-windows-libuv-offline.yml`, on Windows Server 2022 and 2025. Its positive
 and negative outcomes must be recorded against the exact build/probe commit. Local platform skips are not native evidence.
+Manual dispatch can additionally enable `portable_macos` to verify the portable source/receipt contracts on macOS;
+the two native Windows jobs still run unconditionally. A portable-only pass cannot establish native compatibility.
 
 ## What this cannot establish
 
