@@ -2433,7 +2433,11 @@ function showPane(p: string, glide = false, remember = true): void {
  * and the like with the current link and its badge off to the side (home-c7-1), as did links that show after the page
  * has loaded (Computers, Commands: home-x7-1). The row alone scrolls, never the page.
  */
+let shownJumpLayout = "";
+const jumpLayout = () => [$("jump").clientWidth, $("jump").clientHeight,
+  ...jumpLinks.flatMap(a => [a.offsetLeft, a.offsetTop, a.offsetWidth, a.offsetHeight])].join(",");
 function showCurrentLink(): void {
+  shownJumpLayout = jumpLayout();
   const row = $("jump");
   const a = jumpLinks.find(l => l.getAttribute("aria-current") === "true");
   if (!a || row.scrollWidth <= row.clientWidth) return;
@@ -2517,7 +2521,12 @@ const linksMoved = new MutationObserver(changes => {
 });
 for (const a of jumpLinks) linksMoved.observe(a, { attributes: true, attributeFilter: ["hidden", "class"] });
 // Badge text and a font arriving can widen links without resizing the row itself (home-c7-1).
-const jumpSizes = new ResizeObserver(() => { placeHighlight(false); showCurrentLink(); });
+const jumpSizes = new ResizeObserver(() => {
+  placeHighlight(false);
+  // A hidden-link mutation or pane selection may already have positioned this layout before its resize arrives.
+  // Replaying that notification must not undo a later manual scroll; actual geometry changes still follow the pane.
+  if (jumpLayout() !== shownJumpLayout) showCurrentLink();
+});
 for (const el of [$("jump"), ...jumpLinks]) jumpSizes.observe(el, { box: "border-box" });
 
 // ───── Search settings: at the top of the sidebar, it narrows the panes to those that hold the words typed, and
