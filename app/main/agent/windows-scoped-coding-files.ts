@@ -6,7 +6,7 @@ import { CodingPrivacyScanner } from "./coding-privacy-scanner";
 import { ScopedCodingFileError, type CodingFileBroker, type ScopedCodingWorkspace, type ScopedCodingFileLimits,
   type ScopedCodingListResult, type ScopedCodingTextResult, type ScopedCodingWriteResult, type ScopedCodingSearchResult } from "./coding-platform";
 import { WindowsCodingCopy, readWindowsCodingFile, type WindowsCodingTree, type WindowsCodingTreeEntry } from "./windows-coding-copy";
-import { windowsCodingLimits, windowsCodingRelative, windowsCodingVirtual, windowsCodingFold, windowsCodingPrivacy, windowsCodingSame, windowsCodingSafeError } from "./windows-coding-policy";
+import { windowsCodingLimits, windowsCodingRelative, windowsCodingVirtual, windowsCodingFold, windowsCodingPrivacy, windowsCodingSame, windowsCodingSafeError, windowsCodingExcludedRoot } from "./windows-coding-policy";
 
 const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 const withheld = () => ({ hidden: 0, sensitive: 0, unsupported: 0, binary: 0, secrets: 0 });
@@ -57,13 +57,16 @@ export class WindowsScopedCodingFiles implements CodingFileBroker {
       });
     } catch (error) { throw windowsCodingSafeError(error); }
   }
-  #allow(relative: string, directory = false): void { if (windowsCodingPrivacy(relative, directory)) throw new ScopedCodingFileError("privacy"); }
+  #isExcluded(relative: string): boolean { return windowsCodingExcludedRoot(relative, this.#copy.excludedRoots) !== undefined; }
+  #allow(relative: string, directory = false): void { if (this.#isExcluded(relative) || windowsCodingPrivacy(relative, directory)) throw new ScopedCodingFileError("privacy"); }
   #privacyProblem(entry: WindowsCodingTreeEntry, tree: WindowsCodingTree): "hidden" | "sensitive" | "unsupported" | null {
+    if (this.#isExcluded(entry.path)) return "unsupported";
     const parts = entry.path.split("/");
     for (let index = 1; index <= parts.length; index++) if ((tree.entries.get(parts.slice(0, index).join("/"))?.info.attributes ?? 0) & 0x6) return "hidden";
     return windowsCodingPrivacy(entry.path, entry.info.kind === "directory");
   }
   #entry(relative: string, tree: WindowsCodingTree): WindowsCodingTreeEntry {
+    if (this.#isExcluded(relative)) throw new ScopedCodingFileError("privacy");
     const entry = tree.entries.get(relative); if (!entry) throw new ScopedCodingFileError("missing");
     if (this.#privacyProblem(entry, tree)) throw new ScopedCodingFileError("privacy"); return entry;
   }
@@ -90,7 +93,8 @@ export class WindowsScopedCodingFiles implements CodingFileBroker {
   list(path = "/work"): Promise<ScopedCodingListResult> {
     return this.#lease(async tree => {
       const relative = windowsCodingRelative(path); if (relative && this.#entry(relative, tree).info.kind !== "directory") throw new ScopedCodingFileError("unsupported");
-      const result: ScopedCodingListResult = { path: windowsCodingVirtual(relative), scope: "direct-children", entries: [], withheld: withheld() };
+      const result: ScopedCodingListResult = { path: windowsCodingVirtual(relative), scope: "direct-children", entries: [], withheld: withheld(),
+        ...(this.#copy.excludedRoots.length ? { excludedRoots: [...this.#copy.excludedRoots] } : {}) };
       for (const entry of [...tree.entries.values()].sort((a, b) => a.path.localeCompare(b.path, "en"))) {
         if (entry.path.split("/").slice(0, -1).join("/") !== relative) continue;
         const why = this.#privacyProblem(entry, tree);
@@ -169,6 +173,7 @@ export class WindowsScopedCodingFiles implements CodingFileBroker {
         try {
           if (typeof value !== "string" || !value) return unknown;
           const relative = windowsCodingRelative(value.startsWith("/") ? value : folder ? `${folder}/${value}` : value);
+          if (this.#isExcluded(relative)) return unknown;
           if (!relative) return { exists: true, real: "/work", dir: true };
           const entry = tree.entries.get(relative); if (entry) return this.#privacyProblem(entry, tree) ? unknown : { exists: true, real: windowsCodingVirtual(relative), ...(entry.info.kind === "directory" ? { dir: true } : {}) };
           for (let i = 1, parts = relative.split("/"); i < parts.length; i++) if (tree.entries.get(parts.slice(0, i).join("/"))?.info.kind === "file") return unknown;
@@ -181,7 +186,8 @@ export class WindowsScopedCodingFiles implements CodingFileBroker {
     return this.#lease(async tree => {
       if (typeof query !== "string" || !query || Buffer.byteLength(query) > 1024 || /[\r\n\0]/.test(query)) throw new ScopedCodingFileError("path"); await this.#scan(query);
       const relative = windowsCodingRelative(path), selected = relative ? this.#entry(relative, tree) : null;
-      const result: ScopedCodingSearchResult = { path: windowsCodingVirtual(relative), matches: [], files: 0, withheld: withheld() };
+      const result: ScopedCodingSearchResult = { path: windowsCodingVirtual(relative), matches: [], files: 0, withheld: withheld(),
+        ...(this.#copy.excludedRoots.length ? { excludedRoots: [...this.#copy.excludedRoots] } : {}) };
       for (const entry of [...tree.entries.values()].sort((a, b) => a.path.localeCompare(b.path, "en"))) {
         if (entry.info.kind !== "file" || relative && entry.path !== relative && (selected?.info.kind !== "directory" || !entry.path.startsWith(relative + "/"))) continue;
         const why = this.#privacyProblem(entry, tree); if (why) { result.withheld[why]++; continue; }

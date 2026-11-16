@@ -8,12 +8,21 @@ on:
       - "app/main/agent/coding-artifact-store.ts"
       - "app/main/agent/coding-result-registry.ts"
       - "app/main/agent/coding-result-export.ts"
+      - "app/main/agent/coding-project-scope.ts"
       - "app/main/agent/coding-platform.ts"
       - "app/main/agent/linux-coding-artifact-store.ts"
       - "app/main/agent/windows-coding-artifact-store.ts"
+      - "app/main/agent/windows-coding-copy.ts"
+      - "app/main/agent/windows-coding-review.ts"
+      - "app/main/agent/windows-scoped-coding-files.ts"
+      - "app/main/agent/coding-privacy*.ts"
+      - "app/main/agent/scoped-coding-files.ts"
       - "app/main/agent/windows-coding-native.ts"
       - "app/main/agent/windows-coding-policy.ts"
       - "test/integration/windows-coding-artifacts-native.test.ts"
+      - "test/integration/windows-coding-review-native.test.ts"
+      - "test/unit/windows-coding-review.test.ts"
+      - "test/unit/windows-coding-sealed-copy.test.ts"
       - "test/unit/coding-artifact-registry.test.ts"
       - "test/unit/windows-coding-artifact-store.test.ts"
 
@@ -46,8 +55,12 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - name: Shared registry contract and native artifact ownership faults
-        run: npm test -- test/unit/coding-artifact-registry.test.ts test/unit/windows-coding-artifact-store.test.ts --maxWorkers=1
+        run: npm test -- test/unit/coding-artifact-registry.test.ts test/unit/windows-coding-artifact-store.test.ts test/unit/windows-coding-review.test.ts test/unit/windows-coding-sealed-copy.test.ts --maxWorkers=1
       # File-only proof: this does not imply a command runtime, stopped writer, or production adapter is available.
       - name: Exact private artifacts, opaque ownership, explicit export and Forget
         timeout-minutes: 8
         run: node scripts/run-integration.mjs test/integration/windows-coding-artifacts-native.test.ts
+      # Separate post-Stop host captures; no command process exists and production availability remains disabled.
+      - name: Sealed Windows baseline, proposal, original-source comparison and opaque review ownership
+        timeout-minutes: 8
+        run: node scripts/run-integration.mjs test/integration/windows-coding-review-native.test.ts

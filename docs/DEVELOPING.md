@@ -2395,6 +2395,26 @@ never with `app.exit()` straight from `ready` or `app.whenReady()`: "ready" come
 there goes through the C runtime's `exit()` while Chromium is still launching its GPU process, which on Windows crashes
 with 0xC0000005 now and then, more often during a theme change (electron/electron#55011).
 
+The separate `experimental-windows-files` and `experimental-windows-artifacts` workflows exercise ordinary fixed-drive
+NTFS fixtures on Server 2022 and 2025 without driving the desktop. Run the sealed-review suite on Windows with:
+
+```bash
+node scripts/run-integration.mjs test/integration/windows-coding-review-native.test.ts
+```
+
+This disabled foundation captures a complete privacy-scanned baseline at intake, then permanently retires ordinary
+file leases before a separate host-only baseline/proposal/current review. Its host must attest that the controller
+and file broker finished closing. The review retains the original intake source identity, creates only fresh native
+artifacts, and transfers an opaque producer capability before registry publication. Account or privacy revocation
+still cancels sealed reads; missing or replaced source folders remain unknown/conflicting. Export reports retained
+temporary data until the host awaits the copy's verified close; only that proof permits a complete-cleanup claim.
+Only explicit `.git` and `node_modules` exclusions are supported; excluded dependencies are unavailable. Windows name
+folding also matches mixed-case spellings of those top-level roots; omission receipts retain their
+canonical names. Folded duplicate names are refused before omission. File tools disclose the excluded roots and refuse
+to recreate or inspect them through another casing. Review-enabled copies are bounded to
+10 MiB per tree, 4 MiB per file and 10,000 entries. These tests establish no command runtime, descendant-stop proof,
+Windows controller storage policy or production coding availability.
+
 ### 10.4 The accessibility helper (UI Automation)
 
 Ember reads and operates apps through Windows UI Automation, in two processes. Ember starts its accessibility host,
