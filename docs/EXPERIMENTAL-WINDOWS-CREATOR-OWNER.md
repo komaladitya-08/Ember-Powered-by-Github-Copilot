@@ -114,10 +114,15 @@ the experiment must remain a draft until the actual controls and cleanup pass.
 
 ## Portable verification
 
-The final 15-file affected contract batch passed 1,394 tests with no skips,
+The final 16-file affected contract batch passed 1,438 tests with no skips,
 including the emitted 19-export CJS graph, bounded token ABI, actual
 coordinator/Native/Stop composition, strict report decoder and source verifier.
-Scoped TypeScript/MJS lint, workflow YAML parsing and diff checks passed. An
+The historical DETACHED verifier's positive unit cases use three bounded,
+independently hash-checked public baseline source blobs as test data. Its runtime
+verifier, 18 source pins and issuer remain unchanged, and a separate case proves
+that it refuses the changed Creator checkout. No baseline source is executed or
+given authority over the new run. Scoped TypeScript/MJS lint, workflow YAML
+parsing and diff checks passed. An
 explicitly required run on Linux failed in `beforeAll` with the Windows-x64
 requirement before preparation or native acquisition; its test was skipped by
 the failed suite, so this is refusal coverage, not a native pass. Independent
@@ -125,5 +130,7 @@ read-only reviews closed the producer, main harness, host control, profile,
 Stop, coordinator and Native ownership scope. The first full TypeScript check
 reported four return-narrowing/test-double typing findings. After those narrow
 fixes, the six affected suites passed 458 tests, lint passed, and a fresh full
-`npm run typecheck` passed. Native C compilation and both Windows control
-outcomes remain unobserved for this candidate.
+`npm run typecheck` passed for the ownership implementation. The exact-final
+full TypeScript check including the historical-test follow-up also passed.
+Native C compilation and both Windows control outcomes remain unobserved for
+this candidate.

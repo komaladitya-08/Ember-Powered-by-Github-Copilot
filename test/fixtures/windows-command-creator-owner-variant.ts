@@ -30,7 +30,7 @@ const SOURCE_PINS: readonly Readonly<{ path: string; bytes: number; sha256: stri
   {"path":"test/fixtures/windows-command-creator-owner-proof.ts","bytes":28508,"sha256":"23a4fe77370606efbde6b7b6d1d690a26ad007e37336a98985fe68c5acf4f18f"},
   {"path":"test/fixtures/windows-command-creator-owner-host.ts","bytes":23517,"sha256":"7c5e9ffd159f6a4ac09f034ada2450e16833ddf184895dc68947afda94040032"},
   {"path":"test/integration/windows-command-creator-owner-native.test.ts","bytes":3349,"sha256":"4a1bcfcbb65f47d0bf70bc54ec87c049f1d2d62135d5e52f47dd1348f5d17367"},
-  {"path":".github/workflows/experimental-windows-command-creator-owner.yml","bytes":2780,"sha256":"93e73f4f82f7ed143ba7d3d82117d0ae4fb8f562bcd7e2338769b369c43facc3"},
+  {"path":".github/workflows/experimental-windows-command-creator-owner.yml","bytes":2970,"sha256":"e2f42f88ef1eb21dec570760c86f50f48263cf83898681c2fb5275370dee1ca8"},
   {"path":"package.json","bytes":2847,"sha256":"f25c9180100351970dc3d61308fcfe406c4340e2d9554db62b5d0742b357e725"},
   {"path":"package-lock.json","bytes":153446,"sha256":"691d75e222d044c6fe87fa5bc84dec081a2a4b95fa8e0564ae0d1cd64f8516d3"},
   {"path":"tsconfig.json","bytes":686,"sha256":"8ddaa10aa1717c06ea51f880089af7320a8a4d01029dda0b117433da810fb7e7"},
