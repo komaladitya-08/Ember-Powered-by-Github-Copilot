@@ -2,8 +2,9 @@
 
 This experiment builds Node 22.23.5 from its verified release source and runs only two fixed JavaScript literals.
 It follows the [completed fixed C feasibility result](EXPERIMENTAL-WINDOWS-LIBUV-OFFLINE.md); it does not enable a
-Windows coding backend, accept project code or establish a general offline runtime. Actual source-built Windows
-compilation and native useful-work outcomes are pending.
+Windows coding backend, accept project code or establish a general offline runtime. The first verified Windows
+build and ordinary-host useful-work control passed. The LPAC process aborted before producing a checkpoint;
+useful source-built Node work in LPAC is still unproved.
 
 ## Source and tool authority
 
@@ -84,7 +85,27 @@ pass. The unchanged fixed literals also complete real local IO and timers in iso
 synthetic Windows path/version metadata. That is program-logic verification, not Windows execution evidence.
 Linux normally skips the native suite; explicitly requiring it on an unsupported host must fail.
 
-No source-built Node native success is recorded yet. Even success here would cover only the fixed operations.
+The [first Server 2022 run43823648292](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43823648292)
+at head `b570de1f700bab85e21b0aa8ebb429b21ad1096e` compiled and completed all source/tool/recipe/PE checks.
+Its actual merge compile commit was `2a1d186c44239ef35686e9eefa1e535d71f25344`. The custom Node image was
+120,218,624 bytes, the inert bootstrap 2,560 bytes, and compiler version 19.44.35230.0. Portable tests passed 122
+cases with one expected privilege skip. The [completed native job133152239151](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43823648292/job/133152239151)
+passed three of four cases: the unchanged official host/startup and stock LPAC `WSAStartup / 10107` controls,
+and custom source-built ordinary-host useful work. The custom host matched the parent's user, integrity RID 12288,
+AppContainer 0 and absent restricting SIDs. It completed all 31 feature bits, 24-byte sync/async operations, one
+read callback, one timer, own-file cleanup and six checkpoints, then exited 0 with its job stopped.
+
+The source-built LPAC instead exited 134, produced no fixed report, and left 1,157 bytes of captured output. Only
+the original parser's closed `no-location` metadata was returned; captured text, stack paths and arguments were
+never printed or uploaded. The private job was stopped and cleanup verified. Its required success assertion
+failed and remains in place. This is a startup blocker, not useful Node execution in LPAC.
+
+The build's four public files were uploaded as artifact 14207138723. Its authenticated ZIP is 38,423,911 bytes,
+SHA-256 `34fd4ffd22e81b7927b99663f10c06d9a3086782b5462a394d654bb2f998c5be`; it contains no private runtime data.
+A [separate native-only reuse lane](EXPERIMENTAL-WINDOWS-NODE-NATIVE-REUSE.md) diagnoses that exact image without
+another source build or a source/runtime policy change.
+
+Even eventual fixed-program success would cover only the stated operations.
 The binary retains general Node/libuv interfaces, including network and UNC paths whose initialization/denial
 behavior is not closed by this guard. General use requires complete applicable API classification and enforcement,
 host/IPC/network canaries, ordinary child and default test-runner proof, descendant cleanup, real command/file/review

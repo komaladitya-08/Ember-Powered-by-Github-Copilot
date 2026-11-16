@@ -7,7 +7,7 @@ import { ExperimentalWindowsCreateUncertain, type WindowsHandle, type WindowsLpa
 import { nativeChecks, windowsNodeProofCommand, WindowsNodeProofCleanupError } from "./windows-node-lpac-proof";
 import { loadWindowsNodeIo, WindowsNodeIoCleanupError } from "./windows-node-lpac-io";
 import { runWindowsNodeHostStartup, WindowsNodeHostCleanupError } from "./windows-node-lpac-startup";
-import { inspectWindowsNodeFatalOutput } from "./windows-node-lpac-fatal";
+import { inspectWindowsNodeSourceFatalOutput } from "./windows-node-source-fatal";
 import { parseWindowsNodeSourceReport } from "./windows-node-source-report";
 import { WindowsNodeSourceOwnership } from "./windows-node-source-ownership";
 import { disposeWindowsLibuvProbe } from "./windows-libuv-probe-disposal";
@@ -124,7 +124,7 @@ export async function runWindowsSourceNodeProbe(input: { parent: string; buildRo
   };
   const acquirePin = (file: string, maximum: number) => owned(() => native.pin(file, maximum));
   let result: { issuer: string; buildCommit: string; runCommit: string; programs: ReturnType<typeof windowsNodeSourceProgramReceipts>; host: { exitCode: number; jobStopped: true; identity: WindowsLibuvHostIdentity; report: ReturnType<typeof parseWindowsNodeSourceReport> };
-    lpac: { exitCode: number; jobStopped: true; report: ReturnType<typeof parseWindowsNodeSourceReport> | null; output: ReturnType<typeof inspectWindowsNodeFatalOutput> } } | undefined;
+    lpac: { exitCode: number; jobStopped: true; report: ReturnType<typeof parseWindowsNodeSourceReport> | null; output: ReturnType<typeof inspectWindowsNodeSourceFatalOutput> } } | undefined;
   const checkPins = () => { for (const pin of pins) pin.unchanged(); };
   const closePin = (pin: ReturnType<typeof native.pin>) => { if (attemptedPins.has(pin)) return; attemptedPins.add(pin); owned(() => pin.close()); };
   const controlled: WindowsLpacApi = { ...api,
@@ -228,8 +228,8 @@ export async function runWindowsSourceNodeProbe(input: { parent: string; buildRo
     const exitCode = prepared.exitCode();
     phase = "stopped-output";
     const outputBytes = ownedIo.readAfterStopped(() => { prepared.exitCode(); });
-    let output: ReturnType<typeof inspectWindowsNodeFatalOutput>;
-    try { output = inspectWindowsNodeFatalOutput(outputBytes, sourcePin.version); } finally { outputBytes.fill(0); }
+    let output: ReturnType<typeof inspectWindowsNodeSourceFatalOutput>;
+    try { output = inspectWindowsNodeSourceFatalOutput(outputBytes); } finally { outputBytes.fill(0); }
     const lpacReport = readReport(1);
     checkPins();
     result = { issuer: sourcePin.issuer, buildCommit: input.buildCommit, runCommit: input.runCommit, programs: windowsNodeSourceProgramReceipts(),
