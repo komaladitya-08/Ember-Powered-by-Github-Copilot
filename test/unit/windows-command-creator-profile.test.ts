@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { bindWindowsCommandCreatorProfileNative, bindWindowsCommandCreatorTree, closeWindowsCommandCreatorProfile,
   requireWindowsCommandCreatorTree, releaseWindowsCommandCreatorTree, windowsCommandCreatorProfile,
+  bindWindowsCommandCreatorAssets, requireWindowsCommandCreatorAssets, releaseWindowsCommandCreatorAssets,
   WindowsCommandCreatorProfileCleanupError, type WindowsCommandCreatorProfileRef } from "../../app/main/agent/windows-command-creator-profile";
 
 const SID = 0x9000n;
@@ -123,6 +124,79 @@ describe("Fresh creator-only AppContainer profile authority", () => {
     expect(() => closeWindowsCommandCreatorProfile(ref)).toThrow(); expect(s.calls).toHaveLength(count); expect(s.fence.failure).toBeUndefined();
     expect(requireWindowsCommandCreatorTree(ref, key)).toBe(windowsCommandCreatorProfile(ref).sidText);
     releaseWindowsCommandCreatorTree(ref, key); closeWindowsCommandCreatorProfile(ref);
+  });
+
+  it("retains the asset owner across sequential work trees and closes only after both roles release", () => {
+    const s = setup(), ref = s.binding.create(), assets = {}, firstTree = {}, secondTree = {}, nextAssets = {};
+    const sid = windowsCommandCreatorProfile(ref).sidText;
+    expect(bindWindowsCommandCreatorAssets(ref, assets)).toBe(sid);
+    expect(bindWindowsCommandCreatorTree(ref, firstTree)).toBe(sid);
+    const before = s.calls.length;
+    expect(() => closeWindowsCommandCreatorProfile(ref)).toThrow(); expect(s.calls).toHaveLength(before);
+    releaseWindowsCommandCreatorTree(ref, firstTree);
+    expect(() => closeWindowsCommandCreatorProfile(ref)).toThrow(); expect(s.calls).toHaveLength(before);
+    expect(requireWindowsCommandCreatorAssets(ref, assets)).toBe(sid);
+    expect(bindWindowsCommandCreatorTree(ref, secondTree)).toBe(sid);
+    releaseWindowsCommandCreatorAssets(ref, assets);
+    expect(() => closeWindowsCommandCreatorProfile(ref)).toThrow(); expect(s.calls).toHaveLength(before);
+    expect(requireWindowsCommandCreatorTree(ref, secondTree)).toBe(sid);
+    releaseWindowsCommandCreatorTree(ref, secondTree);
+    expect(bindWindowsCommandCreatorAssets(ref, nextAssets)).toBe(sid);
+    expect(() => releaseWindowsCommandCreatorAssets(ref, assets)).toThrow();
+    expect(requireWindowsCommandCreatorAssets(ref, nextAssets)).toBe(sid);
+    releaseWindowsCommandCreatorAssets(ref, nextAssets); closeWindowsCommandCreatorProfile(ref); closeWindowsCommandCreatorProfile(ref);
+    expect(names(s).slice(before)).toEqual(["DeleteAppContainerProfile", "FreeSid"]); expect(s.fence.failure).toBeUndefined();
+  });
+
+  it("refuses foreign asset keys and profiles without releasing either independent owner", () => {
+    const s = setup(), ref = s.binding.create(), other = s.binding.create(), assets = {}, foreign = {}, tree = {};
+    bindWindowsCommandCreatorAssets(ref, assets); bindWindowsCommandCreatorTree(ref, tree);
+    const before = s.calls.length;
+    expect(() => bindWindowsCommandCreatorAssets(ref, foreign)).toThrow();
+    expect(() => requireWindowsCommandCreatorAssets(ref, foreign)).toThrow();
+    expect(() => releaseWindowsCommandCreatorAssets(ref, foreign)).toThrow();
+    expect(() => requireWindowsCommandCreatorAssets(other, assets)).toThrow();
+    expect(() => releaseWindowsCommandCreatorAssets(other, assets)).toThrow();
+    expect(() => releaseWindowsCommandCreatorAssets(ref, tree)).toThrow();
+    expect(() => releaseWindowsCommandCreatorTree(ref, assets)).toThrow();
+    expect(s.calls).toHaveLength(before); expect(s.fence.failure).toBeUndefined();
+    expect(requireWindowsCommandCreatorAssets(ref, assets)).toBe(windowsCommandCreatorProfile(ref).sidText);
+    expect(requireWindowsCommandCreatorTree(ref, tree)).toBe(windowsCommandCreatorProfile(ref).sidText);
+    releaseWindowsCommandCreatorAssets(ref, assets); releaseWindowsCommandCreatorTree(ref, tree);
+    closeWindowsCommandCreatorProfile(ref); closeWindowsCommandCreatorProfile(other);
+  });
+
+  it.each([null, undefined, 0, "assets", () => undefined])("refuses a nonobject asset-owner key %# without native cleanup", key => {
+    const s = setup(), ref = s.binding.create(), before = s.calls.length;
+    expect(() => bindWindowsCommandCreatorAssets(ref, key as object)).toThrow();
+    expect(() => requireWindowsCommandCreatorAssets(ref, key as object)).toThrow();
+    expect(() => releaseWindowsCommandCreatorAssets(ref, key as object)).toThrow();
+    expect(s.calls).toHaveLength(before); expect(s.fence.failure).toBeUndefined(); closeWindowsCommandCreatorProfile(ref);
+  });
+
+  it("refuses cloned or closed profile references for every asset operation", () => {
+    const s = setup(), ref = s.binding.create(), key = {};
+    const foreign = [{}, { ...ref }, { name: windowsCommandCreatorProfile(ref).name, sid: SID, sidText: windowsCommandCreatorProfile(ref).sidText }];
+    closeWindowsCommandCreatorProfile(ref); const before = s.calls.length;
+    for (const candidate of [...foreign, ref] as WindowsCommandCreatorProfileRef[]) {
+      expect(() => bindWindowsCommandCreatorAssets(candidate, key)).toThrow();
+      expect(() => requireWindowsCommandCreatorAssets(candidate, key)).toThrow();
+      expect(() => releaseWindowsCommandCreatorAssets(candidate, key)).toThrow();
+    }
+    expect(s.calls).toHaveLength(before); expect(s.fence.failure).toBeUndefined();
+  });
+
+  it("a shared native failure retains asset and tree bindings after the public failure property is cleared", () => {
+    const s = setup(), ref = s.binding.create(), assets = {}, tree = {};
+    bindWindowsCommandCreatorAssets(ref, assets); bindWindowsCommandCreatorTree(ref, tree);
+    s.control.valid = 0; const first = thrown(() => s.binding.create()), before = s.calls.length; s.fence.failure = undefined;
+    expect(first).toBeInstanceOf(WindowsCommandCreatorProfileCleanupError);
+    expect(containsDataReference(s.fence.retained, assets)).toBe(true); expect(containsDataReference(s.fence.retained, tree)).toBe(true);
+    expect(thrown(() => requireWindowsCommandCreatorAssets(ref, assets))).toBe(first);
+    expect(thrown(() => releaseWindowsCommandCreatorAssets(ref, assets))).toBe(first);
+    expect(thrown(() => bindWindowsCommandCreatorAssets(ref, {}))).toBe(first);
+    expect(thrown(() => closeWindowsCommandCreatorProfile(ref))).toBe(first);
+    expect(s.calls).toHaveLength(before); expect(names(s)).not.toContain("DeleteAppContainerProfile"); expect(names(s)).not.toContain("FreeSid");
   });
 
   it("rejects foreign and structurally cloned refs without granting tree authority", () => {

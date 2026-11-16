@@ -1,4 +1,4 @@
-/** Fresh native profile provenance, never a caller-supplied SID/profile claim. Its opaque reference owns one active tree.
+/** Fresh native profile provenance, never a caller-supplied SID/profile claim. Its opaque reference owns one tree and asset owner.
  * Delete/Free uncertainty permanently revokes admissions and retains every allocation; no existing profile is adopted.
  */
 import { randomUUID } from "node:crypto";
@@ -29,7 +29,7 @@ type Owner = {
 };
 type State = {
   owner: Owner; name: string; output: unknown[]; rawSid?: unknown; profile?: Readonly<WindowsLpacProfile>;
-  active: boolean; closing: boolean; closed: boolean; tree?: object; deleteAttempted: boolean; freeAttempted: boolean;
+  active: boolean; closing: boolean; closed: boolean; tree?: object; assets?: object; deleteAttempted: boolean; freeAttempted: boolean;
 };
 type Universe = { failure?: WindowsCommandCreatorProfileCleanupError; busy: boolean; states: Set<State> };
 const profiles = new WeakMap<object, State>();
@@ -77,12 +77,31 @@ export function releaseWindowsCommandCreatorTree(ref: WindowsCommandCreatorProfi
   state.tree = undefined;
 }
 
+/** Only the native asset owner's private identity may bind; its lifetime is independent of the active work tree. */
+export function bindWindowsCommandCreatorAssets(ref: WindowsCommandCreatorProfileRef, key: object): string {
+  const state = active(ref); treeKey(key);
+  if (state.assets !== undefined) throw refusal();
+  state.assets = key; return state.profile.sidText;
+}
+/** Exact profile and asset-owner identities remain required before each native asset admission. */
+export function requireWindowsCommandCreatorAssets(ref: WindowsCommandCreatorProfileRef, key: object): string {
+  const state = active(ref); treeKey(key);
+  if (state.assets !== key) throw refusal();
+  return state.profile.sidText;
+}
+/** The native asset owner calls this only after positively closing its exact owners; this grants no Stop authority. */
+export function releaseWindowsCommandCreatorAssets(ref: WindowsCommandCreatorProfileRef, key: object): void {
+  const state = active(ref); treeKey(key);
+  if (state.assets !== key) throw refusal();
+  state.assets = undefined;
+}
+
 /** Revoke before the first release call. Neither a failed delete nor an uncertain FreeSid can ever be retried. */
 export function closeWindowsCommandCreatorProfile(ref: WindowsCommandCreatorProfileRef): void {
   const state = stateFor(ref);
   if (state.closed) return;
   if (state.closing || state.deleteAttempted || state.freeAttempted) return state.owner.poison();
-  if (state.tree !== undefined || !state.active || !state.profile) throw refusal();
+  if (state.tree !== undefined || state.assets !== undefined || !state.active || !state.profile) throw refusal();
   state.active = false; state.closing = true; state.deleteAttempted = true;
   if (state.owner.invoke("DeleteAppContainerProfile", [state.name]) !== 0) return state.owner.poison();
   state.freeAttempted = true;

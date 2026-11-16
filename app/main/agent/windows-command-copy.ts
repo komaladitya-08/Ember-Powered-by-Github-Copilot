@@ -16,6 +16,8 @@ import { createWindowsCommandRootOnlyStopOwner, requireWindowsCommandRootOnlySto
   type WindowsCommandRootOnlyNaturalExitRef, type WindowsCommandRootOnlyStoppedRef,
   type WindowsCommandRootOnlyStopOwner } from "./windows-command-stop";
 import { requireWindowsCommandOutputLaunch, activateWindowsCommandOutput, retainWindowsCommandOutput, requireWindowsCommandOutputClosed, type WindowsCommandOutputClosedRef, type WindowsCommandOutputLaunchRef } from "./windows-command-output";
+import { attestWindowsNodeToolchainOutput } from "./windows-node-toolchain-native";
+import { readConsumedWindowsCommandLaunchCancellation } from "./windows-command-launch-cancel";
 
 export class WindowsRootOnlyCommandCopyCleanupError extends WindowsCodingCleanupError {
   constructor() { super(); this.name = "WindowsRootOnlyCommandCopyCleanupError"; }
@@ -105,7 +107,12 @@ export function discardWindowsCommandInputSnapshot(input: WindowsCodingCommandIn
 }
 declare const launchContextBrand: unique symbol;
 export interface WindowsCommandRootOnlyLaunchContext { readonly scope: "root-only-launch"; readonly [launchContextBrand]: true }
-const launchContexts = new WeakMap<object, { directory?: string; current?: () => boolean; retire?: () => void; live: boolean }>();
+const launchContexts = new WeakMap<object, { binding: object; profile?: WindowsCommandCreatorProfileRef; directory?: string; current?: () => boolean; retire?: () => void; live: boolean }>();
+/** Provenance only, retained after expiry for cancellation cleanup; no directory or execution grant is exposed. */
+export function requireWindowsCommandRootOnlyLaunchMetadata(context: WindowsCommandRootOnlyLaunchContext): Readonly<{ binding: object; profile?: WindowsCommandCreatorProfileRef; live: boolean }> {
+  const value = context && typeof context === "object" ? launchContexts.get(context) : undefined;
+  if (!value) throw new ScopedCodingFileError("boundary"); return Object.freeze({ binding: value.binding, profile: value.profile, live: value.live });
+}
 /** Host-only launch data. The capability expires when the synchronous trusted creator returns. */
 export function windowsCommandRootOnlyLaunchDirectory(context: unknown): string {
   if (!context || typeof context !== "object") throw new ScopedCodingFileError("boundary");
@@ -369,7 +376,8 @@ export class WindowsRootOnlyCommandCopy {
       const directory = this.#tree.directory;
       if (typeof directory !== "string" || directory.length > 4096 || !/^[A-Za-z]:\\/.test(directory) || /[\0\r\n]/.test(directory)) throw new ScopedCodingFileError("boundary");
       const context = Object.freeze({ scope: "root-only-launch" as const }) as WindowsCommandRootOnlyLaunchContext;
-      const value = { directory: directory as string | undefined, current: (() => this.#workCurrent()) as (() => boolean) | undefined,
+      const value = { binding: generation!.binding, profile: this.#input.creatorProfile,
+        directory: directory as string | undefined, current: (() => this.#workCurrent()) as (() => boolean) | undefined,
         retire: (() => {
           if (this.#run !== generation || !generation) return;
           this.#retired = true; generation.cancelled = true;
@@ -384,7 +392,12 @@ export class WindowsRootOnlyCommandCopy {
       generation = run;
       issued = Object.freeze({ scope: "root-only-run" as const }) as WindowsCommandRootOnlyRunRef;
       runs.set(issued, { owner: this, run });
-    }, output).then(() => issued!);
+    }, output).then(() => issued!, error => {
+      const cancellation = generation && readConsumedWindowsCommandLaunchCancellation(error, generation.binding);
+      if (cancellation?.phase === "held" && issued && generation?.stopped && generation.revoked && generation.output === cancellation.launch) return issued;
+      if (cancellation?.phase === "empty") throw new ScopedCodingFileError("cancelled");
+      throw error;
+    });
   }
   /** Waiting is deliberately outside the native/file queue, so cancellation can always enqueue Stop immediately. */
   completeRootOnly(ref: WindowsCommandRootOnlyRunRef, signal: AbortSignal): Promise<WindowsCommandRootOnlyCompletedRef> {
@@ -431,6 +444,7 @@ export class WindowsRootOnlyCommandCopy {
       this.#checkWork(); if (this.#run) throw new ScopedCodingFileError("boundary");
       await this.#native(() => this.#tree.assertPrivate()); this.#checkWork();
       const binding = Object.freeze({});
+      const hadPreviousRun = this.#lastRun !== undefined;
       try {
         const run: Run = { binding, owner: this.#stopFactory(binding), granted: false }; this.#run = run; this.#lastRun = run;
         issued?.(run);
@@ -455,12 +469,23 @@ export class WindowsRootOnlyCommandCopy {
               this.#lease.exit(() => { void this.stop().catch(() => undefined); });
             } };
             actual.signal.addEventListener("abort", abort, { once: true }); run.removeOutputAbort = () => actual.signal.removeEventListener("abort", abort);
-            if (actual.signal.aborted) abort(); this.#checkWork(); activateWindowsCommandOutput(launch, match);
+            if (actual.signal.aborted) abort(); this.#checkWork();
+            activateWindowsCommandOutput(launch, match);
+            attestWindowsNodeToolchainOutput(launch, witness, binding); this.#checkWork();
           }
           this.#checkWork();
         });
         return await run.owner.launch(capturedCreate, verified, () => this.#workCurrent());
       } catch (error) {
+        const cancellation = readConsumedWindowsCommandLaunchCancellation(error, binding), run = this.#run;
+        if (cancellation && run?.binding === binding) {
+          this.#retired = true; run.cancelled = true;
+          await this.#quiesce();
+          if (!run.stopped || !run.revoked || requireWindowsCommandRootOnlyCompletion(run.stopped, binding).rootPresent !== (cancellation.phase === "empty" ? 0 : 1) || run.output !== cancellation.launch) throw this.#poison();
+          // A prior real generation must remain stale; only initial absence can be restored for no-run recovery.
+          if (cancellation.phase === "empty" && !hadPreviousRun) this.#lastRun = undefined;
+          throw error;
+        }
         if (error instanceof WindowsCodingCleanupError || !(error instanceof ScopedCodingFileError)) throw this.#poison();
         await this.#quiesce(); throw error;
       }

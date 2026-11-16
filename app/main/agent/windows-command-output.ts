@@ -267,9 +267,13 @@ function stateFor(ref: unknown): State {
 }
 
 /** Genuine returned PI, available only to trusted lifecycle code; never a model/IPC field. */
-export function requireWindowsCommandOutputLaunch(ref: WindowsCommandOutputLaunchRef): Readonly<{ root: Readonly<WindowsSuspendedProcess>; profile: WindowsCommandCreatorProfileRef; context: WindowsCommandRootOnlyLaunchContext; handles: readonly bigint[]; signal: AbortSignal }> {
+export function requireWindowsCommandOutputLaunch(ref: WindowsCommandOutputLaunchRef): Readonly<{ root: Readonly<WindowsSuspendedProcess>; heldPiHandles: readonly bigint[]; profile: WindowsCommandCreatorProfileRef; context: WindowsCommandRootOnlyLaunchContext; handles: readonly bigint[]; signal: AbortSignal }> {
   const s = stateFor(ref); if (!s.root || !s.launch || !s.context) throw refusal();
-  return Object.freeze({ root: s.root, profile: s.profile, context: s.context, handles: Object.freeze(s.owned.filter(value => !value.closed).map(value => value.raw)), signal: s.controller.signal });
+  return Object.freeze({ root: s.root, heldPiHandles: Object.freeze(s.piReleased ? [] : [s.root.process, s.root.thread]), profile: s.profile, context: s.context, handles: Object.freeze(s.owned.filter(value => !value.closed).map(value => value.raw)), signal: s.controller.signal });
+}
+/** Negative cleanup prerequisite only. The native owner must already have accepted the genuine live PI match. */
+export function requireWindowsCommandOutputActive(ref: WindowsCommandOutputLaunchRef): void {
+  const s = stateFor(ref); if (!s.matched || !s.delegated || !s.root) throw refusal();
 }
 /** Called only with the genuine non-consuming live Stop match, after the exact returned PI was checked. */
 export function activateWindowsCommandOutput(ref: WindowsCommandOutputLaunchRef, match: WindowsCommandRootOnlyOutputMatchRef): void {

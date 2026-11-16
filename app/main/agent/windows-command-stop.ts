@@ -6,6 +6,7 @@ import type { WindowsHandle, WindowsLpacApi, WindowsSuspendedProcess } from "./e
 import { WindowsCodingCleanupError } from "./windows-coding-native";
 import { loadWindowsCommandRootOnlyExitNative, type WindowsCommandRootOnlyExitNative } from "./windows-command-exit-native";
 import { requireWindowsCommandOutputLaunch, releaseWindowsCommandOutputPI, type WindowsCommandOutputLaunchRef } from "./windows-command-output";
+import { consumeWindowsCommandLaunchCancellation, requireNoWindowsCommandLaunchCancellation } from "./windows-command-launch-cancel";
 
 const LIMITS = 0x2008, MAX_STOP = 15_000;
 const refuse = () => new Error("The Windows root-only command writer contract was refused.");
@@ -68,7 +69,7 @@ export function requireWindowsCommandRootOnlyNaturalExit(ref: unknown, binding: 
 }
 declare const attestingBrand: unique symbol;
 export interface WindowsCommandRootOnlyAttestingRef { readonly scope: "root-only-attesting"; readonly [attestingBrand]: true }
-const attestations = new WeakMap<object, { binding: object; root: Readonly<WindowsSuspendedProcess>; current(): boolean; owns(value: WindowsHandle): boolean; live: boolean; claimed: boolean }>();
+const attestations = new WeakMap<object, { binding: object; root: Readonly<WindowsSuspendedProcess>; current(): boolean; cancellation(): boolean; owns(value: WindowsHandle): boolean; live: boolean; claimed: boolean }>();
 declare const outputMatchBrand: unique symbol;
 export interface WindowsCommandRootOnlyOutputMatchRef { readonly scope: "root-only-output-match"; readonly [outputMatchBrand]: true }
 const outputMatches = new WeakMap<object, { binding: object; launch: WindowsCommandOutputLaunchRef; witness: WindowsCommandRootOnlyAttestingRef }>();
@@ -98,6 +99,23 @@ export function requireWindowsCommandRootOnlyOutputStoppedLaunch(ref: unknown, l
   if (!binding || matchedOutputs.get(binding) !== launch) throw refuse();
 }
 const preparingOwners = new WeakMap<object, () => boolean>();
+const creatingOwners = new WeakMap<object, () => boolean>();
+declare const cancellationPhaseBrand: unique symbol;
+export interface WindowsCommandRootOnlyCancellationPhaseRef { readonly scope: "root-only-cancellation-phase"; readonly [cancellationPhaseBrand]: true }
+const cancellationPhases = new WeakMap<object, { live: boolean; available(): boolean; binding: object; phase: "empty" | "held"; launch?: WindowsCommandOutputLaunchRef }>();
+/** Negative identity checks only: these confer no current execution, byte or Stop authority. */
+export function requireWindowsCommandRootOnlyCancellationCreating(binding: object): void {
+  if (creatingOwners.get(binding)?.() !== true) throw refuse();
+}
+export function requireWindowsCommandRootOnlyCancellationWitness(ref: unknown, binding: object, launch: WindowsCommandOutputLaunchRef): void {
+  const value = ref && typeof ref === "object" ? attestations.get(ref) : undefined;
+  if (!value || value.binding !== binding || !value.live || !value.cancellation() || matchedOutputs.get(binding) !== launch) throw refuse();
+}
+/** A phase exists only inside the exact owner's catch and expires before launch rejects. */
+export function requireWindowsCommandRootOnlyCancellationPhase(ref: WindowsCommandRootOnlyCancellationPhaseRef): Readonly<{ binding: object; phase: "empty" | "held"; launch?: WindowsCommandOutputLaunchRef }> {
+  const value = ref && typeof ref === "object" ? cancellationPhases.get(ref) : undefined;
+  if (!value?.live || !value.available()) throw refuse(); return Object.freeze({ binding: value.binding, phase: value.phase, launch: value.launch });
+}
 const issuedBindings = new WeakSet<object>();
 /** Only the issuing owner, after all native closes, can authorize this exact grant generation's revocation. */
 export function requireWindowsCommandRootOnlyStopped(ref: unknown, binding: object): void {
@@ -245,7 +263,7 @@ export function createWindowsCommandRootOnlyStopOwner(binding: object, api: Stop
   let job: WindowsHandle | undefined, root: Readonly<WindowsSuspendedProcess> | undefined, rawRoot: unknown, knownProcess: WindowsHandle | undefined, knownThread: WindowsHandle | undefined;
   let launched = false, retired = false, closed = false, rootStop = false, jobStop = false, disposalStarted = false, history = 0;
   let stopping: Promise<WindowsCommandRootOnlyStoppedRef> | undefined;
-  let resumed = false, launchedCurrent: (() => boolean) | undefined;
+  let resumed = false, resumeAttempted = false, creating = false, launchedCurrent: (() => boolean) | undefined;
   let observing: Promise<WindowsCommandRootOnlyNaturalExitRef | null> | undefined;
   let wakeObservation: (() => void) | undefined;
   const closeAttempted = new Set<WindowsHandle>(), callbacks: unknown[] = [];
@@ -294,6 +312,8 @@ export function createWindowsCommandRootOnlyStopOwner(binding: object, api: Stop
     initialStage = 3; native.configure(job); native.assertLimits(job); initialStage = 4; const initial = state(); if (initial.total !== 0 || initial.active !== 0) throw refused(4, 5);
   } catch (error) { return terminal(error, false, initialStage, 1); }
   preparingOwners.set(binding, () => !fence.failure && !retired && !closed && !launched && job !== undefined && history === 0);
+  const cancellationAvailable = () => !firstStopFailures.has(fence) && !fence.failure && !closed && !disposalStarted && !resumeAttempted;
+  creatingOwners.set(binding, () => cancellationAvailable() && creating && !root && !knownProcess && !knownThread && rawRoot === undefined && history === 0);
   return Object.freeze({
     scope: "root-only" as const,
     retainStop() {
@@ -310,7 +330,8 @@ export function createWindowsCommandRootOnlyStopOwner(binding: object, api: Stop
       catch (error) { retired = true; if (fence.failure) return terminal(error); throw refused(5, 8); }
       let launchStage: FailureStage = 5;
       try {
-        rawRoot = create();
+        creating = true;
+        try { rawRoot = create(); } finally { creating = false; }
         const value = rawRoot as WindowsSuspendedProcess;
         if (!value) throw refused(5, 7);
         const process = value.process;
@@ -322,6 +343,7 @@ export function createWindowsCommandRootOnlyStopOwner(binding: object, api: Stop
         const pid = value.pid; if (!dword(pid) || !pid) throw refused(5, 6);
         root = Object.freeze({ process, thread, pid });
         usable();
+        requireNoWindowsCommandLaunchCancellation(binding);
         if (retired) throw refused(5, 8);
         launchStage = 6;
         if (native.processId(root.process) !== root.pid || native.threadProcessId(root.thread) !== root.pid || native.member(root.process, job!)) throw refused(6, 6);
@@ -336,7 +358,7 @@ export function createWindowsCommandRootOnlyStopOwner(binding: object, api: Stop
           callbacks.push(capture);
           const selected = root, ref = Object.freeze({ scope: "root-only-attesting" as const }) as WindowsCommandRootOnlyAttestingRef;
           const available = () => !fence.failure && !retired && !closed && root === selected && job !== undefined;
-          const value = { binding, root: selected, live: true, claimed: false,
+          const value = { binding, root: selected, live: true, claimed: false, cancellation: () => cancellationAvailable() && root === selected && job !== undefined,
             owns: (candidate: WindowsHandle) => candidate === job || candidate === knownProcess || candidate === knownThread || peerOwns(candidate), current: () => {
             if (!available()) return false;
             let admitted: unknown; try { admitted = current(); } catch { return false; }
@@ -348,6 +370,7 @@ export function createWindowsCommandRootOnlyStopOwner(binding: object, api: Stop
             if (captured !== undefined || retired) throw refused(8, 8);
           } finally { value.live = false; }
         }
+        requireNoWindowsCommandLaunchCancellation(binding);
         launchStage = 9;
         const admitted = current(); usable();
         if (admitted !== true || retired) throw refused(9, 8);
@@ -355,8 +378,20 @@ export function createWindowsCommandRootOnlyStopOwner(binding: object, api: Stop
         if (native.processId(root.process) !== root.pid || native.threadProcessId(root.thread) !== root.pid || !native.member(root.process, job!)) throw refused(9, 6);
         const final = current(); usable();
         if (final !== true || retired) throw refused(9, 8);
-        launchStage = 10; api.resume(root.thread); resumed = true; return root.pid;
-      } catch (error) { return terminal(error, false, launchStage, 1); }
+        launchStage = 10; resumeAttempted = true; api.resume(root.thread); resumed = true; return root.pid;
+      } catch (error) {
+        const empty = launchStage === 5 && rawRoot === undefined && !root && !knownProcess && !knownThread && history === 0;
+        const held = launchStage === 8 && root !== undefined && matchedOutputs.has(binding);
+        if (cancellationAvailable() && (empty || held)) {
+          const ref = Object.freeze({ scope: "root-only-cancellation-phase" as const }) as WindowsCommandRootOnlyCancellationPhaseRef;
+          const value = { live: true, available: cancellationAvailable, binding, phase: empty ? "empty" as const : "held" as const,
+            launch: empty ? undefined : matchedOutputs.get(binding) }; cancellationPhases.set(ref, value);
+          try { if (consumeWindowsCommandLaunchCancellation(error, ref)) { retired = true; callbacks.push(error); throw error; } }
+          catch (caught) { if (caught === error) throw caught; return terminal(caught, false, launchStage, 1); }
+          finally { value.live = false; }
+        }
+        return terminal(error, false, launchStage, 1);
+      }
     },
     observeNaturalExit(signal: AbortSignal) {
       if (firstStopFailures.has(fence) || fence.failure) { try { usable(); } catch (error) { return Promise.reject(error); } }
