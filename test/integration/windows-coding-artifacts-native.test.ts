@@ -107,7 +107,11 @@ describe.skipIf(process.platform !== "win32")("native Windows private review art
     const result = await registry.put(input);
     await expect(registry.put(input)).rejects.toMatchObject({ code: "invalid" });
     expect(await registry.review(result.id)).not.toBeNull();
-    expect(Object.keys(input.output.artifact!)).toEqual([]); expect(JSON.stringify(result)).not.toContain("artifact");
+    expect(Object.keys(input.output.artifact!)).toEqual([]);
+    expect(result.sourcePath).toBe(source); // A legitimate chooser label may itself contain the word "artifact".
+    expect(Object.keys(result).sort()).toEqual(["id", "projectId", "taskId", "title", "sourcePath", "status", "files", "conflicts", "patchComplete", "checks", "message"].sort());
+    expect(Object.keys(result.checks).sort()).toEqual(["failed", "passed", "ran"]);
+    expect(result).not.toHaveProperty("artifact");
   });
 
   it("never adopts or derives cleanup rights from an existing Windows directory string", async () => {
