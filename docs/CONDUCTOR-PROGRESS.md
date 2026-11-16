@@ -2,7 +2,8 @@
 
 Reviewed 16 November 2026. The original submitted baseline was `audit/beta-readiness` at `76d0a2c9`;
 main was `85b5bd56`. The follow-up now includes a Windows files-only product candidate and native continuation
-implementation. Its completed native/product proofs are distinguished below; ordinary CI remains blocked by the known Windows LPAC child-launch case. The legacy native-SDK coding
+implementation. Its completed native/product proofs are distinguished below; the latest ordinary CI has the known
+Windows LPAC child-launch failure and a saved-workspace desktop-test failure under investigation. The legacy native-SDK coding
 gate remains false. This is not a merge or release certification.
 
 ## What was already implemented
@@ -250,13 +251,39 @@ known cleanup. The earlier unflagged failures remain unchanged. This is useful c
 invocation, not command-backend integration; bounded live output, genuine stopped proposal transfer and complete
 product journeys still need implementation and proof.
 
+The separate [observer ABI control #246](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/246)
+passed [run 43935627569](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43935627569):
+648 portable cases and 96 ordinary-host comparisons of six wrappers using the exact original object. Independent
+verification checked the five public artifact members, source/build recipes, object digest, report and PE imports.
+This proves those fixed control cases, not LPAC execution or general observer admission; the original emission
+refusal and `nativeEmissionReviewed = false` remain unchanged.
+
 Automatic checkpoints, general dependency graphs, future wakeups, automatic source writeback and macOS coding
 are separate extensions. They do not add requirements to this Windows milestone; the implemented limits must
 remain explicit in the product and acceptance results.
 
 ## Verification
 
-The current integrated product candidate is [draft #236](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/236)
+The current integrated product candidate is [draft #247](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/247)
+at `a970a98388d8f8df3e805a518c498571cb37335b`. It adds literal `run_node` arguments to the existing guarded command
+flow, including a genuine Node-only tool inventory; Linux isolation, approvals, output, Stop and repair are shared.
+Windows remains files-only. Local verification passed full types/build/lint, 21 real isolated-workspace cases,
+eight pinned-SDK cases and one normal-sandbox Electron journey. The 1,200-case unit aggregate used a disclosed
+15-second CLI override; 13 selected corpus/direct-Node cases separately passed the original five-second default.
+
+[Remote run 43935924791](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43935924791)
+passed all 11 eligible jobs with two gated skips, and
+[controller run 43935924838](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43935924838)
+passed all six Windows jobs, including both files-only Electron journeys.
+[Ordinary CI 43935924802](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43935924802)
+completed with five successful jobs, two failures and two gated skips. Linux passed 19,800 units, 316 offline
+integrations, two isolated Stop cases, the Electron journey and 314 renderer cases; macOS passed 19,451 units.
+Windows passed 19,402 units and its build/desktop/UIA/voice/package checks, then retained the existing LPAC stage-18
+failure. RHEL 8's saved-workspace restart case waited for a disabled Save button; 85 desktop cases passed, one failed
+and one skipped. Its test and renderer/IPC implementation are unchanged from the preceding candidate; investigation
+continues. Overall CI remains red, and Windows command integration/live-account/laptop acceptance remain unfinished.
+
+The preceding integrated product candidate was [draft #236](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/236)
 at `88106606726e0f24e43f8ae7f5d430f899ab0f34`, including the session review change from
 [draft #235](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/235) at `f5871bbe`.
 [Completed CI 43877755675](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43877755675)
