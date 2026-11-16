@@ -736,6 +736,8 @@ const activityMore = () => activityRead.length >= activityWanted && activityWant
 function drawActivity(): void {
   const list = $("activity");
   const problem = $("activity-problem");
+  // Share the locale lookup across this draw's rows, refreshing it for the next draw's locale and time zone.
+  const rowTime = new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" });
   const held = document.activeElement instanceof HTMLElement && list.contains(document.activeElement) ? document.activeElement.dataset.key : undefined;
   const lines = activityLines(activityRead, entryWords(platform));
   const seen = new Map<string, number>();
@@ -752,7 +754,8 @@ function drawActivity(): void {
     const li = document.createElement("li");
     li.dataset.key = `${l.t}|${n}`;
     li.dataset.line = String(i);
-    const t = Object.assign(document.createElement("time"), { textContent: time(l.t), dateTime: l.t });
+    const date = new Date(l.t);
+    const t = Object.assign(document.createElement("time"), { textContent: Number.isNaN(date.getTime()) ? time(l.t) : rowTime.format(date), dateTime: l.t });
     const tag = Object.assign(document.createElement("span"), { className: `tag ${l.view.cls}`, textContent: l.view.tag });
     const what = Object.assign(document.createElement("span"), { className: "what", textContent: l.view.what });
     if (l.view.why) what.append(Object.assign(document.createElement("span"), { className: "why", textContent: l.view.why }));
