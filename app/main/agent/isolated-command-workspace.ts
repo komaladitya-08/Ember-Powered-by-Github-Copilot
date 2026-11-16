@@ -15,6 +15,7 @@ import { createCodingSnapshot, type CodingSnapshot } from "./coding-snapshot";
 import { createCodingReviewExport, type CodingExportBinding, type CodingExportEntry, type CodingExportTree, type CodingReviewExport } from "./coding-result-export";
 import { ExperimentalNamespaceReceipt } from "./experimental-stop-receipt";
 import { copyIsolatedCommandAssets } from "./isolated-command-assets";
+import { isolatedCommandSeccomp } from "./isolated-command-seccomp";
 import { codingWorkspaceFilePathProblem, codingWorkspaceFileProblemAsync } from "./scoped-coding-files";
 import { CodingPrivacyScanner, CodingPrivacyCleanupError, CodingPrivacyScanError, captureCodingPrivacyScope, assertCodingPrivacyScope, type CodingPrivacyScope } from "./coding-privacy-scanner";
 import { codingProjectManifest, type CodingProjectManifest, type CodingProjectScope, type CodingExcludedRoot } from "./coding-project-scope";
@@ -57,17 +58,6 @@ async function closeHandles(handles: readonly (Promise<unknown> | undefined)[], 
   if (unsafeCleanup) throw unsafeCleanup;
   const failed = closed.find((result): result is PromiseRejectedResult => result.status === "rejected");
   if (failed) throw failed.reason;
-}
-
-/** Same Linux x64 defence-in-depth process-inspection filter used by the existing namespace experiment. */
-function seccomp(): Buffer {
-  const code: Buffer[] = [];
-  const add = (op: number, yes: number, no: number, value: number) => { const b = Buffer.alloc(8); b.writeUInt16LE(op); b[2] = yes; b[3] = no; b.writeUInt32LE(value, 4); code.push(b); };
-  add(0x20, 0, 0, 4); add(0x15, 1, 0, 0xc000003e); add(0x06, 0, 0, 0x80000000);
-  add(0x20, 0, 0, 0); add(0x45, 0, 1, 0x40000000); add(0x06, 0, 0, 0x80000000);
-  for (const syscall of [101, 310, 311, 312, 304, 298, 321, 323, 425, 434, 438]) { add(0x15, 0, 1, syscall); add(0x06, 0, 0, 0x00050001); }
-  add(0x06, 0, 0, 0x7fff0000);
-  return Buffer.concat(code);
 }
 
 async function treeBytes(snapshot: CodingSnapshot, binding: CodingExportBinding, check: () => void = () => undefined): Promise<CodingExportTree> {
@@ -193,7 +183,7 @@ export class IsolatedCommandWorkspace {
         for (const name of excludedRoots) await fs.mkdir(path.join(rootfs, "excluded", name), { mode: 0o700 });
       }
       await fs.symlink("usr/bin", path.join(rootfs, "bin"));
-      await fs.writeFile(path.join(scratch, "seccomp.bpf"), seccomp(), { flag: "wx", mode: 0o600 });
+      await fs.writeFile(path.join(scratch, "seccomp.bpf"), isolatedCommandSeccomp(), { flag: "wx", mode: 0o600 });
       admitted();
       if (!await sameRoot(source, sourceIdentity) || !await sameRoot(base, baseIdentity)) throw new Error("The project or private coding folder changed while preparing commands.");
       admitted();

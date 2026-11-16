@@ -7,6 +7,7 @@ import crypto from "node:crypto";
 import { codingTestIsolationSupported, trustedCodingTestNodeOrSkip } from "../fixtures/coding/trusted-node";
 import { IsolatedCommandWorkspace, type IsolatedCommandWorkspaceInput } from "../../app/main/agent/isolated-command-workspace";
 import { ExperimentalNamespaceReceipt } from "../../app/main/agent/experimental-stop-receipt";
+import { linuxKeyringProbe } from "../fixtures/coding/linux-keyring-probe";
 
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
@@ -22,6 +23,23 @@ async function fixture(extra: Partial<IsolatedCommandWorkspaceInput> = {}) {
 }
 const signal = () => new AbortController().signal;
 function deferred<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
+
+it.skipIf(process.platform !== "linux" || process.arch !== "x64")("denies direct kernel key APIs in a real command while copied Node and Bash remain usable", async ctx => {
+  if (!supported()) { ctx.skip(); return; }
+  const asset = await trustedCodingTestNodeOrSkip(ctx), f = await fixture({ nodePath: asset.nodePath }), probe = linuxKeyringProbe();
+  fs.writeFileSync(path.join(f.source, "keyring-probe"), probe, { mode: 0o700 });
+  const workspace = await IsolatedCommandWorkspace.create(f.input);
+  try {
+    const chunks: Uint8Array[] = [];
+    const result = await workspace.run("./keyring-probe", "/work", bytes => chunks.push(Uint8Array.from(bytes)), signal());
+    expect(result).toMatchObject({ exitCode: 0, observed: true, stopped: false, outputLimited: false });
+    const values = Buffer.concat(chunks); expect(values.length).toBe(24);
+    expect([0, 8, 16].map(offset => values.readBigInt64LE(offset))).toEqual([-1n, -1n, -1n]); // EPERM
+    // The ambient container may already refuse these APIs. Independent BPF semantics prove Ember's own denial.
+    expect(await workspace.run("test 2 -gt 1 && node -p '6 * 7'", "/work", () => undefined, signal())).toMatchObject({ exitCode: 0, output: "42\n", observed: true });
+    expect(fs.readFileSync(path.join(f.source, "keyring-probe"))).toEqual(probe);
+  } finally { await workspace.close(); }
+}, 30_000);
 
 it.skipIf(process.platform !== "linux" || process.arch !== "x64")("runs useful copied Node tests without a host environment, network, source mount or SDK process", async ctx => {
   if (!supported()) { ctx.skip(); return; }

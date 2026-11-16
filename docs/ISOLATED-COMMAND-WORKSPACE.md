@@ -34,6 +34,16 @@ environment values, a private `/proc` and an ephemeral `/tmp`. It has no network
 The exact command is executed by `/usr/bin/bash --noprofile --norc -c`; no profile, shell history, host environment or
 SDK tools are loaded. A trusted stdin barrier holds the command until the host records the namespace PID1 identity.
 
+The Linux x64 seccomp policy also denies `add_key`, `request_key` and `keyctl` with `EPERM`; the offline toolchain
+needs none of these kernel key APIs. A new user or terminal session does not discard an inherited session keyring:
+the [kernel's credential-copy and exec paths](https://github.com/torvalds/linux/blob/v6.12/kernel/cred.c) and
+[user-namespace setup](https://github.com/torvalds/linux/blob/v6.12/kernel/user_namespace.c) retain that subscription,
+while [Bubblewrap's `--new-session`](https://github.com/containers/bubblewrap/blob/v0.12.0/bwrap.xml)
+creates a terminal session with `setsid()`. These denials block the key APIs without erasing inherited references
+or claiming complete kernel-key metadata isolation. No readable host-key canary was demonstrated in this review.
+Tests evaluate the generated BPF independently of ambient policy, then exercise raw syscalls and ordinary Node/Bash
+commands in a real workspace; a surrounding container may already deny the key APIs.
+
 The host verifies PID start time and namespace identities, then releases the barrier. On completion or Stop, it
 requires that same namespace init to have exited before another operation can access files. Linux terminates its
 remaining namespace descendants when PID1 exits, so a background process cannot continue writing during the next
