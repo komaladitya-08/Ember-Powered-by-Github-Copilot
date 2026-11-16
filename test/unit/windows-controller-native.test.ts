@@ -22,6 +22,7 @@ async function fixture(deferBinding = false) {
   let next = 100n, address = 10_000n, failMetadata = false, failClose = false, failFree = false, disposition: number | "unknown" = 0;
   let rawPatch: Partial<WindowsCodingInfo> | undefined, onSecurity: ((row: Row) => void) | undefined;
   let tokenFault: "false-output" | "throw-output" | "throw-empty" | undefined;
+  let allocationFault: "sid" | "security" | undefined;
   const add = (handle: bigint, suffix: string, directory = false, fixed = false) => {
     rows.set(handle, { info: { id: handle.toString(16).padStart(16, "0"), volume: volume.toLowerCase(), finalPath: volume + suffix,
       kind: directory ? "directory" : "file", attributes: directory ? 0x10 : 0x80, links: 1, size: directory ? 0 : 7, created: "1", written: "2", changed: "3" }, acl: acl(directory, fixed), removed: false });
@@ -36,7 +37,10 @@ async function fixture(deferBinding = false) {
       return tokenFault === "false-output" ? 0 : 1;
     },
     GetTokenInformation: (...args) => { const kind = args[1] as number; queries.push(kind); (args[2] as Buffer).writeBigUInt64LE(kind === 1 ? 91n : 92n); (args[4] as number[])[0] = 16; return 1; },
-    ConvertSidToStringSidW: (...args) => { const text = address++; strings.set(text, sids.get(args[0] as bigint)!); (args[1] as unknown[])[0] = text; return 1; },
+    ConvertSidToStringSidW: (...args) => {
+      if (allocationFault === "sid") throw new Error("synthetic unknown SID allocation completion");
+      const text = address++; strings.set(text, sids.get(args[0] as bigint)!); (args[1] as unknown[])[0] = text; return 1;
+    },
     LocalFree: (...args) => {
       const raw = args[0] as bigint; frees.push(raw);
       if (failFree && descriptors.has(raw)) { failFree = false; return raw; }
@@ -63,6 +67,7 @@ async function fixture(deferBinding = false) {
     },
     GetFinalPathNameByHandleW: (...args) => { const name = row(args[0] as bigint).info.finalPath; (args[1] as Buffer).write(name, "utf16le"); return name.length; },
     GetSecurityInfo: (...args) => {
+      if (allocationFault === "security") throw new Error("synthetic unknown descriptor allocation completion");
       const selected = row(args[0] as bigint).row, security = address; address += 1000n;
       descriptors.set(security, selected.acl); acls.set(security + 200n, selected.acl); sids.set(security + 100n, selected.acl.owner);
       (args[3] as unknown[])[0] = security + 100n; (args[5] as unknown[])[0] = security + 200n; (args[7] as unknown[])[0] = security;
@@ -93,7 +98,8 @@ async function fixture(deferBinding = false) {
   return { module, authority, bind, api, rows, opened, closed, objects, frees, queries, dispositions, descriptors,
     failMetadata: () => { failMetadata = true; }, failClose: () => { failClose = true; }, failFree: () => { failFree = true; },
     rawPatch: (patch: Partial<WindowsCodingInfo>) => { rawPatch = patch; }, onSecurity: (callback: (selected: Row) => void) => { onSecurity = callback; },
-    disposition: (result: number | "unknown") => { disposition = result; }, tokenFault: (fault: NonNullable<typeof tokenFault>) => { tokenFault = fault; } };
+    disposition: (result: number | "unknown") => { disposition = result; }, tokenFault: (fault: NonNullable<typeof tokenFault>) => { tokenFault = fault; },
+    throwAllocation: (kind: NonNullable<typeof allocationFault>) => { allocationFault = kind; } };
 }
 
 it("captures actual token user and default owner once and accepts protected roots plus inherited SDK descendants", async () => {
@@ -120,6 +126,19 @@ it("fences an unknown token acquisition when no returned handle can establish wh
   try { f.bind(); } catch (error) { failure = error; }
   expect(failure).toBeInstanceOf(f.module.WindowsControllerNativeCleanupError);
   expect(() => f.bind()).toThrow(failure as Error); expect(f.closed).toEqual([]); expect(f.queries).toEqual([]);
+});
+
+it.each(["sid", "security"] as const)("fences an unknown %s allocation when no returned pointer can establish cleanup ownership", async kind => {
+  const f = await fixture(kind === "sid"), boundary = kind === "security" ? f.authority.boundary(f.api, 1n) : null;
+  f.throwAllocation(kind); let failure: unknown;
+  try { if (boundary) boundary.claim(2n, 1n); else f.bind(); } catch (error) { failure = error; }
+  expect(failure).toBeInstanceOf(f.module.WindowsControllerNativeCleanupError);
+  expect(f.objects.size).toBe(0); expect(f.descriptors.size).toBe(0);
+  expect(f.closed).toContain(kind === "sid" ? 90n : f.opened.at(-1)!.raw);
+  const queries = f.queries.length, opened = f.opened.length, frees = f.frees.length;
+  expect(() => f.bind()).toThrow(failure as Error);
+  if (boundary) expect(() => boundary.claim(3n, 1n)).toThrow(failure as Error);
+  expect(f.queries).toHaveLength(queries); expect(f.opened).toHaveLength(opened); expect(f.frees).toHaveLength(frees);
 });
 
 it("binds every claim to the minted root, an already claimed direct parent, and the held native identities", async () => {

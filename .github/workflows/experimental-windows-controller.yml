@@ -1,0 +1,67 @@
+name: experimental-windows-controller
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/experimental-windows-controller.yml"
+      - "app/main/agent/private-controller-*.ts"
+      - "app/main/agent/windows-controller-*.ts"
+      - "app/main/agent/windows-coding-native.ts"
+      - "app/main/agent/windows-coding-policy.ts"
+      - "app/main/agent/windows-coding-copy.ts"
+      - "app/main/agent/windows-scoped-coding-files.ts"
+      - "app/main/agent/scoped-coding-files.ts"
+      - "app/main/agent/coding-platform.ts"
+      - "app/main/agent/coding-privacy*.ts"
+      - "app/main/agent/coding-budget.ts"
+      - "app/main/agent/coding-completion.ts"
+      - "app/main/agent/custom-coding-controller.ts"
+      - "app/main/agent/session-config.ts"
+      - "app/main/agent/runtime-env.ts"
+      - "app/main/agent/redacting-client.ts"
+      - "app/main/agent/credential-env.ts"
+      - "app/main/agent/runtime.ts"
+      - "app/main/platform/win32/system/ffi.ts"
+      - "test/integration/windows-controller-private-native.test.ts"
+      - "test/unit/windows-controller-*.test.ts"
+      - "test/unit/private-controller-runtime*.test.ts"
+      - "test/unit/custom-coding-controller.test.ts"
+      - "test/mock-llm/**"
+      - "package.json"
+      - "package-lock.json"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experimental-windows-controller-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-controller:
+    name: Native Windows trusted controller (${{ matrix.image }})
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.image }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Separate controller ACL, exact ownership and disposal faults
+        run: npm test -- test/unit/windows-controller-native.test.ts test/unit/windows-controller-storage.test.ts test/unit/private-controller-runtime.test.ts test/unit/private-controller-runtime-windows.test.ts test/unit/custom-coding-controller.test.ts --maxWorkers=1
+      # Trusted normal-token SDK control plane only. No command runtime or Windows product gate is enabled.
+      - name: Pinned SDK private NTFS storage and forbidden execution contract
+        timeout-minutes: 10
+        run: node scripts/run-integration.mjs test/integration/windows-controller-private-native.test.ts --maxWorkers=1

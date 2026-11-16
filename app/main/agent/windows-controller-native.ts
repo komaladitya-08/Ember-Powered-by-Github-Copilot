@@ -35,7 +35,7 @@ const ALL = 0x1f01ff, READ_CONTROL = 0x20000, READ_ATTRIBUTES = 0x80, DELETE = 0
 const SPECIAL = 0x5640 | 0x40000 | 0x400000, INVALID = 0xffffffffffffffffn, SYSTEM = "S-1-5-18";
 const fold = (value: string) => value.toUpperCase().toLowerCase().normalize("NFC");
 let terminal: WindowsControllerNativeCleanupError | undefined;
-const fail = (): never => { throw new ScopedCodingFileError("boundary"); };
+function fail(): never { throw new ScopedCodingFileError("boundary"); }
 const poison = (): WindowsControllerNativeCleanupError => { retireWindowsCodingNative(); return terminal ??= new WindowsControllerNativeCleanupError(); };
 const guard = (): void => { if (terminal) throw terminal; };
 const sidShape = (value: string) => typeof value === "string" && value.length <= 184 && /^S-\d+(?:-\d+)+$/.test(value);
@@ -119,10 +119,10 @@ export function bindWindowsControllerNative(native: Pick<typeof Koffi, "sizeof" 
     release(); if (failed) throw problem; return result;
   };
   const sid = (raw: bigint): string => {
-    const out: unknown[] = [null]; let converted: unknown;
-    try { converted = functions.ConvertSidToStringSidW(raw, out); } catch { /* Any returned allocation is still accounted for below. */ }
+    const out: unknown[] = [null]; let converted: unknown, conversionThrew = false;
+    try { converted = functions.ConvertSidToStringSidW(raw, out); } catch { conversionThrew = true; }
     const text = optionalPointer(out[0]); if (text !== null) allocations.add(text);
-    if (text === null) return fail();
+    if (text === null) { if (conversionThrew) throw poison(); return fail(); }
     return managed(() => {
       if (!converted) fail(); const value = native.decode.string16(text); if (!sidShape(value)) fail(); return value;
     }, () => free(text));
@@ -160,10 +160,10 @@ export function bindWindowsControllerNative(native: Pick<typeof Koffi, "sizeof" 
       created: basic.readBigUInt64LE(0).toString(), written: basic.readBigUInt64LE(16).toString(), changed: basic.readBigUInt64LE(24).toString() });
   };
   const acl = (raw: bigint): WindowsControllerAcl => {
-    const owner: unknown[] = [null], dacl: unknown[] = [null], descriptor: unknown[] = [null]; let status: unknown;
-    try { status = functions.GetSecurityInfo(raw, 1, 5, owner, null, dacl, null, descriptor); } catch { /* Any returned descriptor is accounted for before validation. */ }
+    const owner: unknown[] = [null], dacl: unknown[] = [null], descriptor: unknown[] = [null]; let status: unknown, queryThrew = false;
+    try { status = functions.GetSecurityInfo(raw, 1, 5, owner, null, dacl, null, descriptor); } catch { queryThrew = true; }
     const security = optionalPointer(descriptor[0]); if (security !== null) allocations.add(security);
-    if (security === null) return fail();
+    if (security === null) { if (queryThrew) throw poison(); return fail(); }
     return managed(() => {
       if (status !== 0) fail();
       const control = [0], revision = [0], details = Buffer.alloc(12);

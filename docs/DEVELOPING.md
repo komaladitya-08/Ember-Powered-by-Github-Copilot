@@ -2432,6 +2432,26 @@ to recreate or inspect them through another casing. Review-enabled copies are bo
 10 MiB per tree, 4 MiB per file and 10,000 entries. These tests establish no command runtime, descendant-stop proof,
 Windows controller storage policy or production coding availability.
 
+The separate `experimental-windows-controller` workflow checks the trusted SDK control plane on Server 2022 and
+2025. It starts the pinned SDK with a synthetic model and no real credentials, tests private NTFS storage and
+files-only tools, and includes disposable native-tool/plugin-hook positive controls so execution refusals are real
+checks. Run its suite on Windows with:
+
+```bash
+node scripts/run-integration.mjs test/integration/windows-controller-private-native.test.ts --maxWorkers=1
+```
+
+`PrivateControllerRuntime` uses native protected TokenUser/SYSTEM directories on Windows for its cwd, home, SDK state
+and temporary data. Their handles stay pinned during SDK use. Only after awaited SDK exit does a separate controller
+adapter audit and delete SDK-created descendants, with the same exact native identities held throughout cleanup.
+The fixed directories require TokenUser ownership and an exact protected DACL. Descendants permit only TokenUser or
+the actual captured token's default owner (which can differ for an elevated token), with exact TokenUser/SYSTEM
+full-control ACEs and explicit or inherited flags. No owner is injected, no administrator SID is special-cased, and
+no source, host or SDK-descendant ACL is changed to pass cleanup. The copy/artifact native guards are unchanged.
+Unknown prior state, failed SDK shutdown or uncertain native cleanup retains the private owner and blocks further
+admission. Its typed cleanup failure also survives startup before a custom controller receives its runtime, so a
+worker cannot claim safe retirement after that failure. These checks do not enable Windows production coding.
+
 ### 10.4 The accessibility helper (UI Automation)
 
 Ember reads and operates apps through Windows UI Automation, in two processes. Ember starts its accessibility host,

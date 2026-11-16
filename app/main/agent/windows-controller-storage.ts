@@ -106,7 +106,7 @@ export async function allocateWindowsControllerStorage(userData: string, signal?
   await previous;
   const pins: WindowsCodingPin[] = [], fixed = new Map<string, Owned>();
   let commonCreated: WindowsCodingHandle | undefined, root: Owned | undefined, storage: WindowsControllerStorage | undefined;
-  let parentKey: string | undefined, name: string | undefined, existingCommon = false;
+  let parentKey: string | undefined, name: string | undefined;
   try {
     signal?.throwIfAborted();
     if (api.ownerSid !== security.ownerSid) throw unavailable();
@@ -117,7 +117,6 @@ export async function allocateWindowsControllerStorage(userData: string, signal?
       common = { handle: commonCreated, info: api.info(commonCreated) };
     } catch (error) {
       if (commonCreated !== undefined || !(error instanceof ScopedCodingFileError) || error.code !== "exists") throw error;
-      existingCommon = true;
       const pin = api.pin(path.join(userData, "coding-controllers"), "base"); pins.push(pin);
       common = { handle: pin.handle, info: api.info(pin.handle) };
     }
@@ -155,7 +154,6 @@ export async function allocateWindowsControllerStorage(userData: string, signal?
       if (failed) throw retireWindowsCodingNative();
       if (parentKey && name) { active.get(parentKey)?.delete(name); uncertain.delete(uncertaintyKey(parentKey, name)); }
     }
-    if (existingCommon && !root && !(error instanceof Error && error.name === "AbortError")) throw unverified();
     throw error;
   } finally { release(); }
 }
