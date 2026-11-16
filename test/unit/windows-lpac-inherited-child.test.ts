@@ -34,27 +34,31 @@ describe("inherited-child closed setup diagnostics", () => {
   });
 });
 
-const JOB = 10n, ROOT = 20n, CHILD = 30n, ROOT_PID = 400, CHILD_PID = 500;
+const JOB = 10n, ROOT = 20n, CHILD = 30n, AUX = 40n, ROOT_PID = 400, CHILD_PID = 500, AUX_PID = 600;
 const IMAGE = "C:\\private\\tools\\fixture.exe";
 type Call = { name: string; args: unknown[] };
 type Fault = "query-false" | "query-abi" | "query-throw" | "assigned" | "overflow" | "partial" | "pid-zero" | "pid-large" | "duplicate" |
-  "open-null" | "open-zero" | "open-abi" | "open-invalid" | "open-root" | "open-job" | "open-throw" |
+  "open-null" | "open-zero" | "open-abi" | "open-invalid" | "open-root" | "open-job" | "open-throw" | "open-alias" |
   "pid-mismatch" | "pid-throw" | "image-false" | "image-abi" | "image-empty" | "image-overflow" | "image-mismatch" | "image-throw" |
-  "image-extended" | "image-console" | "image-native" | "image-short" | "image-length-abi" |
-  "job-false" | "job-abi" | "job-no" | "job-output-abi" | "job-throw" | "close-false" | "close-abi" | "close-throw";
-function setup(selectedFault?: Fault, lists: number[][] = [[ROOT_PID, CHILD_PID]], lastError: unknown = 5) {
-  let fault = selectedFault, queries = 0, current = true;
+  "image-extended" | "image-console" | "image-native" | "image-short" | "image-length-abi" | "duplicate-candidate" |
+  "job-false" | "job-abi" | "job-no" | "job-output-abi" | "job-throw" | "close-false" | "close-abi" | "close-throw" |
+  "wait-failed" | "wait-abi" | "wait-throw" | "active-after-stop";
+function setup(selectedFault?: Fault, initial: number[][] = [[ROOT_PID, CHILD_PID]], lastError: unknown = 5) {
+  let fault = selectedFault, lists = initial, queries = 0, current = true, stopped = false, rootExited = false;
+  const dead = new Set<number>(), forceAlive = new Set<number>(), images = new Map<number, string>();
   const calls: Call[] = [], buffers: Buffer[] = [], events: string[] = [];
   const fence: InheritedChildFence = { retained: [] };
+  const processHandle = (id: number) => id === CHILD_PID ? CHILD : id === AUX_PID ? AUX : BigInt(id + 10_000);
+  const processId = (handle: unknown) => handle === CHILD ? CHILD_PID : handle === AUX ? AUX_PID : Number(handle) - 10_000;
   const invoke = (name: string, args: unknown[]): unknown => {
     calls.push({ name, args }); events.push(name);
     if (name === "GetLastError") { if (lastError instanceof Error) throw lastError; return lastError; }
     if (name === "QueryInformationJobObject") {
       const bytes = args[2] as Buffer; buffers.push(bytes);
       if (fault === "query-throw") throw new Error("private native query text");
-      if (fault === "query-false") return 0;
-      if (fault === "query-abi") return true;
-      const found = lists[Math.min(queries++, lists.length - 1)];
+      if (fault === "query-false") return 0; if (fault === "query-abi") return true;
+      if (args[1] === 1) { bytes.writeUInt32LE(fault === "active-after-stop" ? 1 : stopped ? 0 : 2, 40); return 1; }
+      const found = stopped ? [] : lists[Math.min(queries++, lists.length - 1)];
       bytes.writeUInt32LE(fault === "assigned" ? found.length + 1 : fault === "overflow" ? 9 : fault === "partial" ? 3 : found.length, 0);
       bytes.writeUInt32LE(fault === "overflow" ? 9 : found.length, 4);
       for (let index = 0; index < Math.min(found.length, 8); index++) bytes.writeBigUInt64LE(
@@ -64,20 +68,26 @@ function setup(selectedFault?: Fault, lists: number[][] = [[ROOT_PID, CHILD_PID]
     if (name === "OpenProcess") {
       if (fault === "open-throw") throw new Error("unknown open completion");
       return fault === "open-null" ? null : fault === "open-zero" ? 0n : fault === "open-abi" ? 30 : fault === "open-invalid" ? 0xffffffffffffffffn :
-        fault === "open-root" ? ROOT : fault === "open-job" ? JOB : CHILD;
+        fault === "open-root" ? ROOT : fault === "open-job" ? JOB : fault === "open-alias" ? CHILD : processHandle(args[2] as number);
+    }
+    if (name === "WaitForSingleObject") {
+      if (fault === "wait-throw") throw new Error("private wait text");
+      if (fault === "wait-failed") return 0xffffffff; if (fault === "wait-abi") return true;
+      if (forceAlive.has(args[0] === ROOT ? ROOT_PID : processId(args[0]))) return 258;
+      return stopped || (args[0] === ROOT ? rootExited : dead.has(processId(args[0]))) ? 0 : 258;
     }
     if (name === "GetProcessId") {
       if (fault === "pid-throw") throw new Error("private native identity text");
-      return fault === "pid-mismatch" ? CHILD_PID + 1 : CHILD_PID;
+      return fault === "pid-mismatch" ? 123 : processId(args[0]);
     }
     if (name === "QueryFullProcessImageNameW") {
       const bytes = args[2] as Buffer, size = args[3] as unknown[]; buffers.push(bytes);
       if (fault === "image-throw") throw new Error("private native path text");
-      if (fault === "image-false") return 0;
-      if (fault === "image-abi") return "success";
+      if (fault === "image-false") return 0; if (fault === "image-abi") return "success";
       const actual = fault === "image-mismatch" ? "C:\\other\\fixture.exe" : fault === "image-extended" ? "\\\\?\\" + IMAGE :
         fault === "image-console" ? "C:\\Windows\\System32\\conhost.exe" : fault === "image-native" ? "\\Device\\HarddiskVolume3\\private\\tools\\fixture.exe" :
-        fault === "image-short" ? "C:\\PRIVAT~1\\tools\\fixture.exe" : IMAGE.toUpperCase();
+        fault === "image-short" ? "C:\\PRIVAT~1\\tools\\fixture.exe" : images.get(processId(args[0])) ??
+        (fault === "duplicate-candidate" || args[0] === CHILD ? IMAGE.toUpperCase() : "C:\\Windows\\System32\\conhost.exe");
       Buffer.from(actual, "utf16le").copy(bytes); size[0] = fault === "image-empty" ? 0 : fault === "image-overflow" ? 32768 : fault === "image-length-abi" ? true : actual.length;
       return 1;
     }
@@ -101,149 +111,171 @@ function setup(selectedFault?: Fault, lists: number[][] = [[ROOT_PID, CHILD_PID]
   const input: InheritedChildAdmission = { job: JOB, rootProcess: ROOT, rootPid: ROOT_PID, image: IMAGE,
     current: vi.fn(() => { events.push("current"); return current; }), verifyToken, grant };
   return { observer, input, verifyToken, grant, load, fence, calls, buffers, events,
-    revoke() { current = false; }, repair() { fault = undefined; } };
+    revoke() { current = false; }, repair() { fault = undefined; }, fault(value: Fault) { fault = value; },
+    lists(value: number[][]) { lists = value; queries = 0; }, dead(id: number) { dead.add(id); },
+    keepAlive(id: number) { forceAlive.add(id); }, releaseAlive(id: number) { forceAlive.delete(id); },
+    image(id: number, value: string) { images.set(id, value); },
+    rootExit(value: number[] = [CHILD_PID, AUX_PID]) { rootExited = true; lists = [value]; queries = 0; },
+    stop() { stopped = true; rootExited = true; },
+    finish() { fault = undefined; stopped = true; rootExited = true; observer.requireStopped(); observer.closeStopped(); },
+  };
 }
-function closed(f: ReturnType<typeof setup>): unknown[] { return f.calls.filter(call => call.name === "CloseHandle").map(call => call.args[0]); }
+const closed = (f: ReturnType<typeof setup>) => f.calls.filter(call => call.name === "CloseHandle").map(call => call.args[0]);
 
-describe("inherited child native admission", () => {
-  it("binds only seven fixed kernel32 functions under the x64 ABI", () => {
-    const f = setup(); expect(f.load).toHaveBeenCalledExactlyOnceWith("kernel32.dll");
-    expect(INHERITED_CHILD_FUNCTIONS).toHaveLength(7);
-    expect(() => bindInheritedChildObserver({ sizeof: () => 4 }, f.load, { retained: [] })).toThrow();
-    expect(() => bindInheritedChildObserver({ sizeof: () => 8 }, () => ({ func: () => 1 }), { retained: [] })).toThrow();
+describe("bounded inherited-child member owner", () => {
+  it("binds only eight fixed query/synchronization/close functions under x64", () => {
+    const f = setup(); expect(f.load).toHaveBeenCalledExactlyOnceWith("kernel32.dll"); expect(INHERITED_CHILD_FUNCTIONS).toHaveLength(8);
+    expect(() => bindInheritedChildObserver({ sizeof: () => 4 }, f.load)).toThrow();
+    expect(() => bindInheritedChildObserver({ sizeof: () => 8 }, () => ({ func: () => 1 }))).toThrow();
   });
-  it.each([
-    { fault: "query-false", operation: 3, native: "QueryInformationJobObject" }, { fault: "open-null", operation: 7, native: "OpenProcess" },
-    { fault: "image-false", operation: 9, native: "QueryFullProcessImageNameW" }, { fault: "job-false", operation: 11, native: "IsProcessInJob" },
-    { fault: "close-false", operation: 16, native: "CloseHandle" },
-  ] as const)("captures immediate bounded native failure metadata without exporting text ($fault)", ({ fault, operation, native }) => {
-    const f = setup(fault); expect(() => f.observer.admit(f.input)).toThrow();
-    expect(f.observer.observation()).toMatchObject({ operation, domain: 2, code: 5 });
-    const errorIndex = f.calls.findIndex(call => call.name === "GetLastError");
-    expect(errorIndex).toBeGreaterThan(0); expect(f.calls[errorIndex - 1].name).toBe(native);
-    expect(f.buffers.every(bytes => bytes.every(value => value === 0)) || f.fence.retained.length === 1).toBe(true);
+  it("bounds complete process lists to eight pointer-width entries and clears buffers", () => {
+    const f = setup(undefined, [[1, 2, 3, 4, 5, 6, 7, 8]]); expect(f.observer.members(JOB)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(f.calls[0].args).toEqual([JOB, 3, expect.any(Buffer), 72, null]); expect(f.buffers.every(b => b.every(v => v === 0))).toBe(true);
   });
-  it("distinguishes an image comparison refusal from a native image-query failure", () => {
-    const f = setup("image-mismatch"); expect(() => f.observer.admit(f.input)).toThrow();
-    expect(f.observer.observation()).toEqual({ operation: 10, domain: 0, code: 0,
-      image: { lengthValid: true, lengthUint32: true, characters: "C:\\other\\fixture.exe".length, shape: 1, basename: 1, shortComponent: false, exact: false, extendedExact: false } });
-    expect(f.calls.some(call => call.name === "GetLastError")).toBe(false);
+  it.each(["query-false", "query-abi", "query-throw", "assigned", "overflow", "partial", "pid-zero", "pid-large", "duplicate"] as const)("refuses incomplete or invalid native process lists (%s)", fault => {
+    const f = setup(fault); expect(() => f.observer.admit(f.input)).toThrow(); expect(f.grant).not.toHaveBeenCalled();
+    expect(closed(f)).toEqual([]); f.finish(); expect(closed(f)).toEqual([]);
   });
-  it.each([
-    { fault: "image-extended", shape: 2, basename: 1, shortComponent: false, extendedExact: true },
-    { fault: "image-console", shape: 1, basename: 2, shortComponent: false, extendedExact: false },
-    { fault: "image-native", shape: 3, basename: 1, shortComponent: false, extendedExact: false },
-    { fault: "image-short", shape: 1, basename: 1, shortComponent: true, extendedExact: false },
-  ] as const)("classifies only closed image spelling facts while keeping mismatch fatal ($fault)", ({ fault, ...facts }) => {
-    const f = setup(fault); expect(() => f.observer.admit(f.input)).toThrow();
-    expect(f.observer.observation()).toMatchObject({ operation: 10, domain: 0, code: 0, image: { ...facts, exact: false, lengthValid: true, lengthUint32: true } });
-    expect(f.grant).not.toHaveBeenCalled(); expect(closed(f)).toEqual([CHILD]);
-    expect(JSON.stringify(f.observer.observation())).not.toMatch(/private|Harddisk|System32|conhost|fixture|C:/i);
+  it("waits with only root and never opens or grants an auxiliary as the intended child", () => {
+    const f = setup(undefined, [[ROOT_PID]]); expect(f.observer.admit(f.input)).toBeNull();
+    f.lists([[ROOT_PID, AUX_PID]]); expect(f.observer.admit(f.input)).toBeNull();
+    expect(f.verifyToken).not.toHaveBeenCalled(); expect(f.grant).not.toHaveBeenCalled(); expect(closed(f)).toEqual([]);
+    f.finish(); expect(closed(f)).toEqual([AUX]);
   });
-  it.each([{ fault: "image-overflow", lengthUint32: true, characters: 32768 }, { fault: "image-length-abi", lengthUint32: false, characters: 0 }] as const)("distinguishes bounded native length from unknown ABI without decoding ($fault)", ({ fault, lengthUint32, characters }) => {
-    const f = setup(fault); expect(() => f.observer.admit(f.input)).toThrow();
-    expect(f.observer.observation()).toMatchObject({ operation: 10, image: { lengthValid: false, lengthUint32, characters, shape: 0, basename: 0, exact: false } });
-    expect(f.grant).not.toHaveBeenCalled();
+  it("selects one exact-image candidate across contained auxiliaries and retains every handle through Stop", () => {
+    const f = setup(undefined, [[ROOT_PID, AUX_PID, CHILD_PID]]); expect(f.observer.admit(f.input)).toBe(CHILD_PID);
+    expect(f.verifyToken).toHaveBeenCalledExactlyOnceWith(CHILD); expect(f.grant).toHaveBeenCalledExactlyOnceWith(CHILD_PID);
+    expect(f.calls.filter(c => c.name === "OpenProcess").map(c => c.args)).toEqual([[0x101000, 0, AUX_PID], [0x101000, 0, CHILD_PID]]);
+    expect(f.calls.filter(c => c.name === "IsProcessInJob").every(c => c.args[1] === JOB)).toBe(true);
+    expect(f.events.indexOf("verifyToken")).toBeLessThan(f.events.indexOf("grant")); expect(closed(f)).toEqual([]);
+    expect(() => f.observer.requireStopped()).toThrow(); expect(() => f.observer.closeStopped()).toThrow(); expect(closed(f)).toEqual([]);
+    f.finish(); expect(closed(f)).toEqual([AUX, CHILD]); f.observer.closeStopped(); expect(closed(f)).toEqual([AUX, CHILD]);
+    expect(f.buffers.every(b => b.every(v => v === 0))).toBe(true);
+  });
+  it("retains a console helper observed before the candidate and reuses its owned handle on later polls", () => {
+    const f = setup(undefined, [[ROOT_PID, AUX_PID]]); expect(f.observer.admit(f.input)).toBeNull();
+    f.lists([[ROOT_PID, AUX_PID, CHILD_PID]]); expect(f.observer.admit(f.input)).toBe(CHILD_PID);
+    expect(f.calls.filter(c => c.name === "OpenProcess")).toHaveLength(2); f.finish(); expect(closed(f)).toEqual([AUX, CHILD]);
+  });
+  it.each([{ found: [] }, { found: [CHILD_PID] }])("requires the exact root in every admission snapshot (%j)", ({ found }) => {
+    const f = setup(undefined, [found]); expect(() => f.observer.admit(f.input)).toThrow(); expect(f.grant).not.toHaveBeenCalled();
+  });
+  it("refuses multiple expected-image candidates even when an auxiliary has a trusted-looking basename", () => {
+    const f = setup("duplicate-candidate", [[ROOT_PID, CHILD_PID, AUX_PID]]); expect(() => f.observer.admit(f.input)).toThrow();
+    expect(f.verifyToken).not.toHaveBeenCalled(); expect(f.grant).not.toHaveBeenCalled(); f.finish(); expect(closed(f)).toEqual([CHILD, AUX]);
+  });
+  it("rechecks candidates after token verification instead of accepting a new duplicate image", () => {
+    const f = setup(undefined, [[ROOT_PID, CHILD_PID, AUX_PID]]); f.input.verifyToken = () => f.image(AUX_PID, IMAGE);
+    expect(() => f.observer.admit(f.input)).toThrow(); expect(f.grant).not.toHaveBeenCalled(); f.finish();
+  });
+  it("waits for stable complete membership, accounts for a newly arrived helper, then grants once", () => {
+    const f = setup(undefined, [[ROOT_PID, CHILD_PID], [ROOT_PID, CHILD_PID, AUX_PID]]);
+    expect(f.observer.admit(f.input)).toBeNull(); expect(f.grant).not.toHaveBeenCalled();
+    expect(f.observer.admit(f.input)).toBe(CHILD_PID); expect(f.grant).toHaveBeenCalledOnce(); f.finish();
+  });
+  it("rejects a previously observed live member missing from the owned job instead of losing its stop obligation", () => {
+    const f = setup(undefined, [[ROOT_PID, AUX_PID]]); expect(f.observer.admit(f.input)).toBeNull();
+    f.lists([[ROOT_PID, CHILD_PID]]); expect(() => f.observer.admit(f.input)).toThrow(); expect(f.grant).not.toHaveBeenCalled(); f.finish();
+  });
+  it("permits an exited helper to leave the snapshot but refuses reuse of its signalled object for a listed PID", () => {
+    const f = setup(undefined, [[ROOT_PID, AUX_PID]]); expect(f.observer.admit(f.input)).toBeNull(); f.dead(AUX_PID);
+    f.lists([[ROOT_PID, CHILD_PID]]); expect(f.observer.admit(f.input)).toBe(CHILD_PID); f.finish();
+    const g = setup(undefined, [[ROOT_PID, AUX_PID]]); expect(g.observer.admit(g.input)).toBeNull(); g.dead(AUX_PID);
+    g.lists([[ROOT_PID, AUX_PID, CHILD_PID]]); expect(() => g.observer.admit(g.input)).toThrow(); expect(g.grant).not.toHaveBeenCalled(); g.finish();
+  });
+  it.each(["open-null", "open-zero"] as const)("captures ordinary OpenProcess refusal without inventing an owner (%s)", fault => {
+    const f = setup(fault); expect(() => f.observer.admit(f.input)).toThrow(); expect(f.observer.observation()).toMatchObject({ operation: 7, domain: 2, code: 5 });
+    expect(f.fence.retained).toEqual([]); f.finish(); expect(closed(f)).toEqual([]);
+  });
+  it.each(["open-abi", "open-invalid", "open-root", "open-job", "open-throw"] as const)("retains unknown acquisition and never closes borrowed handles (%s)", fault => {
+    const f = setup(fault); expect(() => f.observer.admit(f.input)).toThrow(InheritedChildCleanupError); expect(closed(f)).toEqual([]);
+    expect(f.fence.retained).toHaveLength(1); const count = f.calls.length; f.stop(); f.repair();
+    expect(() => f.observer.closeStopped()).toThrow(InheritedChildCleanupError); expect(() => f.observer.members(JOB)).toThrow(); expect(f.calls).toHaveLength(count);
+  });
+  it("rejects a new process handle that aliases another retained member", () => {
+    const f = setup("open-alias", [[ROOT_PID, CHILD_PID, AUX_PID]]); expect(() => f.observer.admit(f.input)).toThrow(InheritedChildCleanupError);
+    expect(f.grant).not.toHaveBeenCalled(); expect(closed(f)).toEqual([]); expect(f.fence.retained).toHaveLength(1);
+  });
+  it.each(["pid-mismatch", "pid-throw", "image-false", "image-abi", "image-empty", "image-overflow", "image-length-abi", "image-throw", "job-false", "job-abi", "job-no", "job-output-abi", "job-throw", "wait-failed", "wait-abi", "wait-throw"] as const)("keeps a known process owned after query refusal and closes it only after verified Stop (%s)", fault => {
+    const f = setup(fault); expect(() => f.observer.admit(f.input)).toThrow(); expect(closed(f)).toEqual([]); expect(f.grant).not.toHaveBeenCalled();
+    f.finish(); expect(closed(f)).toEqual([CHILD]); expect(f.fence.retained).toEqual([]);
+  });
+  it.each(["image-mismatch", "image-extended", "image-console", "image-native", "image-short"] as const)("never gives candidate authority to a mismatched image (%s)", fault => {
+    const f = setup(fault); expect(f.observer.admit(f.input)).toBeNull(); expect(f.verifyToken).not.toHaveBeenCalled(); expect(f.grant).not.toHaveBeenCalled();
+    expect(f.observer.observation().image?.exact).toBe(false); expect(JSON.stringify(f.observer.observation())).not.toMatch(/private|Harddisk|System32|conhost|fixture|C:/i); f.finish();
   });
   it.each([true, -1, 0x100000000, NaN, new Error("private TLS error text")])("keeps unknown native error metadata unclassified (%#)", value => {
     const f = setup("query-false", undefined, value); expect(() => f.observer.admit(f.input)).toThrow();
-    expect(f.observer.observation()).toEqual({ operation: 3, domain: 0, code: 0 });
-    expect(f.fence.retained).toEqual([]);
+    expect(f.observer.observation()).toMatchObject({ operation: 3, domain: 0, code: 0 });
   });
-  it("bounds the complete job PID list to eight pointer-width entries and clears native buffers", () => {
-    const f = setup(undefined, [[1, 2, 3, 4, 5, 6, 7, 8]]); expect(f.observer.members(JOB)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
-    expect(f.calls[0].args).toEqual([JOB, 3, expect.any(Buffer), 72, null]);
-    expect(f.buffers.every(bytes => bytes.every(value => value === 0))).toBe(true); expect(closed(f)).toEqual([]);
+  it("does not grant on stale, failed or asynchronous trusted callbacks", () => {
+    for (const key of ["current", "verifyToken", "grant"] as const) {
+      const f = setup(); f.input[key] = (() => Promise.resolve()) as never; // Deliberately violate the synchronous callback contract.
+      expect(() => f.observer.admit(f.input)).toThrow(); if (key !== "grant") expect(f.grant).not.toHaveBeenCalled(); f.finish();
+    }
+    const f = setup(); f.revoke(); expect(() => f.observer.admit(f.input)).toThrow(); expect(f.calls).toEqual([]);
   });
-  it.each(["query-false", "query-abi", "query-throw", "assigned", "overflow", "partial", "pid-zero", "pid-large", "duplicate"] as const)("refuses an incomplete or invalid native job list (%s)", fault => {
-    const f = setup(fault); expect(() => f.observer.members(JOB)).toThrow("fixed native admission");
-    expect(f.buffers.every(bytes => bytes.every(value => value === 0))).toBe(true); expect(f.fence.failure).toBeUndefined();
-    expect(f.grant).not.toHaveBeenCalled(); expect(closed(f)).toEqual([]);
+  it.each(["current", "verifyToken", "grant"] as const)("retains typed cleanup uncertainty from %s without closing known live handles", key => {
+    const f = setup(); f.input[key] = () => { throw new InheritedChildCleanupError(); };
+    expect(() => f.observer.admit(f.input)).toThrow(InheritedChildCleanupError); expect(f.fence.retained).toHaveLength(1); expect(closed(f)).toEqual([]);
   });
-  it("waits without opening any process or granting when the job contains only its root", () => {
-    const f = setup(undefined, [[ROOT_PID]]); expect(f.observer.admit(f.input)).toBeNull();
-    expect(f.calls.map(call => call.name)).toEqual(["QueryInformationJobObject"]); expect(f.grant).not.toHaveBeenCalled();
-  });
-  it.each([{ found: [] }, { found: [CHILD_PID] }, { found: [ROOT_PID, CHILD_PID, 600] }])("refuses absent root or extra processes before opening a child ($found)", ({ found }) => {
-    const f = setup(undefined, [found]); expect(() => f.observer.admit(f.input)).toThrow();
-    expect(f.calls.every(call => call.name === "QueryInformationJobObject")).toBe(true); expect(f.grant).not.toHaveBeenCalled();
-  });
-  it("grants only after exact child PID, image, private job, synchronous token and final membership checks", () => {
+  it("binds one exact root/job/image tuple and cannot grant twice or adopt another owner's job", () => {
     const f = setup(); expect(f.observer.admit(f.input)).toBe(CHILD_PID);
-    expect(f.calls.find(call => call.name === "OpenProcess")?.args).toEqual([0x1000, 0, CHILD_PID]);
-    expect(f.calls.find(call => call.name === "GetProcessId")?.args).toEqual([CHILD]);
-    expect(f.calls.find(call => call.name === "QueryFullProcessImageNameW")?.args.slice(0, 2)).toEqual([CHILD, 0]);
-    expect(f.calls.find(call => call.name === "IsProcessInJob")?.args.slice(0, 2)).toEqual([CHILD, JOB]);
-    expect(f.verifyToken).toHaveBeenCalledExactlyOnceWith(CHILD); expect(f.grant).toHaveBeenCalledExactlyOnceWith(CHILD_PID);
-    expect(f.events).toEqual(["current", "QueryInformationJobObject", "OpenProcess", "GetProcessId", "QueryFullProcessImageNameW", "IsProcessInJob",
-      "verifyToken", "current", "QueryInformationJobObject", "grant", "CloseHandle"]);
-    expect(closed(f)).toEqual([CHILD]); expect(f.fence.retained).toEqual([]);
-    expect(f.buffers.every(bytes => bytes.every(value => value === 0))).toBe(true);
+    expect(() => f.observer.admit(f.input)).toThrow(); expect(() => f.observer.members(11n)).toThrow(); expect(f.grant).toHaveBeenCalledOnce(); f.finish();
+    const g = setup(undefined, [[ROOT_PID]]); expect(g.observer.admit(g.input)).toBeNull();
+    expect(() => g.observer.admit({ ...g.input, job: 11n })).toThrow(); g.finish();
   });
-  it.each(["open-null", "open-zero"] as const)("treats ordinary failed OpenProcess as refusal without a cleanup owner (%s)", fault => {
-    const f = setup(fault); expect(() => f.observer.admit(f.input)).toThrow("fixed native admission");
-    expect(f.fence.failure).toBeUndefined(); expect(closed(f)).toEqual([]); expect(f.grant).not.toHaveBeenCalled();
-    f.repair(); expect(f.observer.admit(f.input)).toBe(CHILD_PID);
+  it("requires the admitted child to outlive root, includes new auxiliaries and independently witnesses every retained handle stopped", () => {
+    const f = setup(); expect(f.observer.admit(f.input)).toBe(CHILD_PID); f.rootExit(); expect(f.observer.observeDescendants()).toBe(true);
+    expect(f.calls.filter(c => c.name === "OpenProcess")).toHaveLength(2); expect(() => f.observer.requireStopped()).toThrow(); expect(closed(f)).toEqual([]);
+    f.finish(); expect(closed(f)).toEqual([CHILD, AUX]);
+    const waits = f.calls.filter(c => c.name === "WaitForSingleObject"); expect(waits.every(c => c.args[1] === 0)).toBe(true);
+    expect(waits.some(c => c.args[0] === ROOT)).toBe(true); expect(waits.some(c => c.args[0] === AUX)).toBe(true);
   });
-  it.each(["open-abi", "open-invalid", "open-root", "open-job", "open-throw"] as const)("retains unknown open ownership and never closes borrowed handles (%s)", fault => {
-    const f = setup(fault); expect(() => f.observer.admit(f.input)).toThrow(InheritedChildCleanupError);
-    expect(closed(f)).toEqual([]); expect(f.fence.retained).toHaveLength(1); expect(f.grant).not.toHaveBeenCalled();
-    const count = f.calls.length; f.repair(); expect(() => f.observer.members(JOB)).toThrow(f.fence.failure);
-    expect(() => f.observer.admit(f.input)).toThrow(f.fence.failure); expect(f.calls).toHaveLength(count);
-    expect(() => bindInheritedChildObserver({ sizeof: () => 8 }, f.load, f.fence)).toThrow(f.fence.failure);
+  it("does not infer complete Stop from empty process lists when native active accounting is nonzero", () => {
+    const f = setup(); expect(f.observer.admit(f.input)).toBe(CHILD_PID); f.stop(); f.fault("active-after-stop");
+    expect(() => f.observer.closeStopped()).toThrow(); expect(closed(f)).toEqual([]); f.finish();
   });
-  it.each(["pid-mismatch", "pid-throw", "image-false", "image-abi", "image-empty", "image-overflow", "image-mismatch", "image-throw",
-    "job-false", "job-abi", "job-no", "job-output-abi", "job-throw"] as const)("closes its known child once and refuses failed native identity/membership (%s)", fault => {
-    const f = setup(fault); expect(() => f.observer.admit(f.input)).toThrow("fixed native admission");
-    expect(closed(f)).toEqual([CHILD]); expect(f.grant).not.toHaveBeenCalled(); expect(f.verifyToken).not.toHaveBeenCalled();
-    expect(f.fence.failure).toBeUndefined(); expect(f.buffers.every(bytes => bytes.every(value => value === 0))).toBe(true);
+  it("refuses the intended-child survival proof when it exits while a contained auxiliary remains alive", () => {
+    const f = setup(); expect(f.observer.admit(f.input)).toBe(CHILD_PID); f.rootExit();
+    expect(f.observer.observeDescendants()).toBe(true);
+    f.dead(CHILD_PID); f.lists([[AUX_PID]]);
+    expect(f.observer.observeDescendants()).toBe(false); expect(() => f.observer.requireStopped()).toThrow(); expect(closed(f)).toEqual([]);
+    f.finish(); expect(closed(f)).toEqual([CHILD, AUX]);
   });
-  it("refuses asynchronous token verification instead of acknowledging before its result", () => {
-    const f = setup(); f.input.verifyToken = vi.fn(() => Promise.resolve());
-    expect(() => f.observer.admit(f.input)).toThrow(); expect(f.grant).not.toHaveBeenCalled(); expect(closed(f)).toEqual([CHILD]);
+  it.each([ROOT_PID, CHILD_PID, AUX_PID])("requires each retained process object signalled even when native job accounting is empty (%s)", id => {
+    const f = setup(undefined, [[ROOT_PID, CHILD_PID, AUX_PID]]); expect(f.observer.admit(f.input)).toBe(CHILD_PID);
+    f.stop(); f.keepAlive(id); expect(() => f.observer.requireStopped()).toThrow(); expect(() => f.observer.closeStopped()).toThrow(); expect(closed(f)).toEqual([]);
+    f.releaseAlive(id); f.finish(); expect(closed(f)).toEqual([CHILD, AUX]);
   });
-  it("does not grant after a synchronous token refusal or authority revocation during verification", () => {
-    for (const revoke of [false, true]) {
-      const f = setup(); f.input.verifyToken = () => { if (revoke) f.revoke(); else throw new Error("private token detail"); };
-      expect(() => f.observer.admit(f.input)).toThrow("fixed native admission"); expect(f.grant).not.toHaveBeenCalled(); expect(closed(f)).toEqual([CHILD]);
+  it("bounds retained members across their whole lifetime, including exited auxiliaries", () => {
+    const ids = [600, 601, 602, 603, 604, 605, 606], f = setup(undefined, [[ROOT_PID, ...ids]]);
+    expect(f.observer.admit(f.input)).toBeNull(); for (const id of ids) f.dead(id);
+    f.lists([[ROOT_PID, CHILD_PID]]); expect(() => f.observer.admit(f.input)).toThrow(); expect(f.grant).not.toHaveBeenCalled();
+    expect(f.calls.filter(c => c.name === "OpenProcess")).toHaveLength(7); f.finish(); expect(closed(f)).toHaveLength(7);
+  });
+  it("refuses lost authority or changed expected image after the token witness", () => {
+    for (const change of ["currency", "image"] as const) {
+      const f = setup(); f.input.verifyToken = () => { if (change === "currency") f.revoke(); else f.image(CHILD_PID, "C:\\other\\fixture.exe"); };
+      expect(() => f.observer.admit(f.input)).toThrow(); expect(f.grant).not.toHaveBeenCalled(); f.finish();
     }
   });
-  it.each([{ final: [ROOT_PID] }, { final: [ROOT_PID, CHILD_PID + 1] }, { final: [ROOT_PID, CHILD_PID, 600] }])("rechecks the complete original root/child job set before grant ($final)", ({ final }) => {
-    const f = setup(undefined, [[ROOT_PID, CHILD_PID], final]); expect(() => f.observer.admit(f.input)).toThrow();
-    expect(f.verifyToken).toHaveBeenCalledOnce(); expect(f.grant).not.toHaveBeenCalled(); expect(closed(f)).toEqual([CHILD]);
+  it.each([
+    { fault: "query-false", native: "QueryInformationJobObject" }, { fault: "open-null", native: "OpenProcess" },
+    { fault: "image-false", native: "QueryFullProcessImageNameW" }, { fault: "job-false", native: "IsProcessInJob" }, { fault: "wait-failed", native: "WaitForSingleObject" },
+  ] as const)("captures explicit failure metadata immediately before cleanup or another native query ($fault)", ({ fault, native }) => {
+    const f = setup(fault); expect(() => f.observer.admit(f.input)).toThrow(); const index = f.calls.findIndex(c => c.name === "GetLastError");
+    expect(index).toBeGreaterThan(0); expect(f.calls[index - 1].name).toBe(native); expect(f.observer.observation()).toMatchObject({ domain: 2, code: 5 }); f.finish();
   });
-  it("refuses a stale caller before querying the job", () => {
-    const f = setup(); f.revoke(); expect(() => f.observer.admit(f.input)).toThrow();
-    expect(f.calls).toEqual([]); expect(f.grant).not.toHaveBeenCalled();
+  it.each(["close-false", "close-abi", "close-throw"] as const)("attempts each known stopped handle once and fences unknown cleanup permanently (%s)", fault => {
+    const f = setup(undefined, [[ROOT_PID, CHILD_PID, AUX_PID]]); expect(f.observer.admit(f.input)).toBe(CHILD_PID); f.stop(); f.fault(fault);
+    expect(() => f.observer.closeStopped()).toThrow(InheritedChildCleanupError); expect(closed(f)).toEqual([CHILD, AUX]); expect(f.fence.retained).toHaveLength(1);
+    f.repair(); expect(() => f.observer.closeStopped()).toThrow(InheritedChildCleanupError); expect(closed(f)).toEqual([CHILD, AUX]);
   });
-  it("closes a known child after synchronous or asynchronous grant contract failure", () => {
-    const throws = setup(); throws.input.grant = () => { throw new Error("private acknowledgement path"); };
-    expect(() => throws.observer.admit(throws.input)).toThrow("fixed native admission"); expect(closed(throws)).toEqual([CHILD]);
-    const asynchronous = setup(); asynchronous.input.grant = () => Promise.resolve();
-    expect(() => asynchronous.observer.admit(asynchronous.input)).toThrow(); expect(closed(asynchronous)).toEqual([CHILD]);
-  });
-  it.each(["close-false", "close-abi", "close-throw"] as const)("fences uncertain close after exactly one attempt and retains its owner (%s)", fault => {
-    const f = setup(fault); expect(() => f.observer.admit(f.input)).toThrow(InheritedChildCleanupError);
-    expect(closed(f)).toEqual([CHILD]); expect(f.grant).toHaveBeenCalledOnce(); expect(f.fence.retained).toHaveLength(1);
-    const count = f.calls.length; f.repair(); expect(() => f.observer.admit(f.input)).toThrow(f.fence.failure);
-    expect(f.calls).toHaveLength(count); expect(closed(f)).toEqual([CHILD]);
-  });
-  it("attempts known child cleanup even when an earlier token check already failed", () => {
-    const f = setup("close-false"); f.input.verifyToken = () => { throw new Error("private token"); };
-    expect(() => f.observer.admit(f.input)).toThrow(InheritedChildCleanupError); expect(closed(f)).toEqual([CHILD]); expect(f.grant).not.toHaveBeenCalled();
-  });
-  it.each(["current", "verifyToken", "grant"] as const)("retains typed cleanup uncertainty from the trusted %s callback", key => {
-    const f = setup(), uncertain = new InheritedChildCleanupError();
-    f.input[key] = () => { throw uncertain; };
-    expect(() => f.observer.admit(f.input)).toThrow(InheritedChildCleanupError);
-    expect(f.fence.retained).toHaveLength(1); expect(f.fence.failure).toBeInstanceOf(InheritedChildCleanupError);
-    expect(closed(f)).toEqual(key === "current" ? [] : [CHILD]);
-    const count = f.calls.length; expect(() => f.observer.admit(f.input)).toThrow(f.fence.failure); expect(f.calls).toHaveLength(count);
-  });
-  it("rejects invalid borrowed handle/PID/image contracts without acquiring any owner", () => {
+  it("rejects invalid borrowed contracts before native acquisition", () => {
     const f = setup();
-    for (const altered of [{ job: 0n }, { rootProcess: JOB }, { rootPid: 0 }, { rootPid: 0x100000000 }, { image: "\\\\server\\share\\fixture.exe" }, { image: "C:\\private\nfixture.exe" }])
-      expect(() => f.observer.admit({ ...f.input, ...altered })).toThrow();
+    for (const changed of [{ job: 0n }, { rootProcess: JOB }, { rootPid: 0 }, { rootPid: 0x100000000 }, { image: "\\\\server\\share\\fixture.exe" }, { image: "C:\\private\nfixture.exe" }])
+      expect(() => f.observer.admit({ ...f.input, ...changed })).toThrow();
     expect(f.calls).toEqual([]); expect(f.grant).not.toHaveBeenCalled();
   });
 });

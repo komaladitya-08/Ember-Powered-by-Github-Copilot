@@ -31,7 +31,7 @@ function boundedRead(file: string, maximum: number): Buffer | null {
       after.ctimeMs !== opened.ctimeMs || observed.ino !== opened.ino || observed.dev !== opened.dev || !observed.isFile() || observed.isSymbolicLink() || observed.nlink !== 1) throw fixedFailure();
     result = bytes.subarray(0, offset);
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") failed = true; }
-  if (fd !== undefined) try { fs.closeSync(fd); } catch { result?.fill(0); throw new InheritedChildCleanupError(); }
+  if (fd !== undefined) try { fs.closeSync(fd); } catch { result?.fill(0); retainedOwners.push({ descriptor: fd }); throw new InheritedChildCleanupError(); }
   if (failed) { result?.fill(0); throw fixedFailure(); } return result ?? null;
 }
 function reportWords(file: string, count: number): number[] | null {
@@ -47,7 +47,7 @@ function writeAdmission(file: string, child: number): void {
     fd = fs.openSync(pending, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | (fs.constants.O_NOFOLLOW ?? 0), 0o600);
     if (fs.writeSync(fd, bytes, 0, bytes.length, 0) !== bytes.length) throw fixedFailure(); fs.fsyncSync(fd);
   } catch { failed = true; }
-  if (fd !== undefined) try { fs.closeSync(fd); } catch { bytes.fill(0); throw new InheritedChildCleanupError(); }
+  if (fd !== undefined) try { fs.closeSync(fd); } catch { bytes.fill(0); retainedOwners.push({ descriptor: fd }); throw new InheritedChildCleanupError(); }
   bytes.fill(0); if (failed) throw fixedFailure();
   // Publish the closed complete control message; the child never observes a partially written acknowledgement.
   try { fs.lstatSync(file); throw fixedFailure(); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw fixedFailure(); }
@@ -142,7 +142,7 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
     }
     let unsafe = false, stopped = false, failed = false, child: number | null = null, descendantRemained = false, hostOperation = 0;
     let imagePin: ReturnType<ReturnType<typeof nativeChecks>["pin"]> | undefined;
-    let outcome: { mode: "explicit" | "inherited"; rootExit: number; report: number[] | null; failure: number[] | null; jobStopped: true; admitted: boolean; descendantRemained: boolean; profilePaths: boolean } | undefined;
+    let outcome: { mode: "explicit" | "inherited"; rootExit: number; report: number[] | null; failure: number[] | null; jobStopped: true; membersStopped: true; admitted: boolean; descendantRemained: boolean; profilePaths: boolean } | undefined;
     const previous = processEnvMarker();
     try {
       hostOperation = 1;
@@ -174,15 +174,25 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
       await fixture.waitRootExited(15_000);
       if (variant === "inherited") {
         hostOperation = 6;
-        const state = api.jobState(job), members = observer.members(job);
-        descendantRemained = state.active === 1 && state.listed === 1 && members.length === 1 && members[0] === child;
-        if (!descendantRemained) throw fixedFailure();
+        const deadline = performance.now() + 15_000;
+        let observed = false;
+        while (!observed) {
+          imagePin.unchanged(); observed = observer.observeDescendants();
+          if (!observed) {
+            if (performance.now() >= deadline) throw fixedFailure();
+            await new Promise<void>(resolve => setTimeout(resolve, 10));
+          }
+        }
+        const state = api.jobState(job);
+        if (state.active !== state.listed || state.active < 1 || state.active > 8) throw fixedFailure();
         await expect(fixture.waitStopped(100)).rejects.toThrow("descendants");
+        imagePin.unchanged(); descendantRemained = observer.observeDescendants();
+        if (!descendantRemained) throw fixedFailure();
       }
     } catch (error) { failed = true; if (error instanceof InheritedChildCleanupError || error instanceof WindowsNodeProofCleanupError) unsafe = true; }
     finally {
       restoreEnvMarker(previous);
-      try { const lease = await fixture.stop(15_000); lease.requireStopped(); stopped = true; } catch { unsafe = true; }
+      try { const lease = await fixture.stop(15_000); lease.requireStopped(); observer.requireStopped(); stopped = true; } catch { unsafe = true; }
       if (stopped && !unsafe) try {
         imagePin?.unchanged();
         const report = reportWords(path.join(fixture.paths.state, "report.bin"), 12), diagnostic = reportWords(path.join(fixture.paths.state, "failure.bin"), 25);
@@ -194,8 +204,9 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
             try { profilePaths &&= !!bytes && bytes.toString("utf16le").toLowerCase() === expected.toLowerCase(); } finally { bytes?.fill(0); }
           }
         }
-        outcome = { mode: variant, rootExit: fixture.exitCode(), report, failure: diagnostic, jobStopped: true, admitted: child !== null, descendantRemained, profilePaths };
+        outcome = { mode: variant, rootExit: fixture.exitCode(), report, failure: diagnostic, jobStopped: true, membersStopped: true, admitted: child !== null, descendantRemained, profilePaths };
       } catch (error) { failed = true; if (error instanceof InheritedChildCleanupError) unsafe = true; }
+      if (!unsafe) try { observer.closeStopped(); } catch { unsafe = true; }
       if (!unsafe && imagePin) try { imagePin.unchanged(); imagePin.close(); imagePin = undefined; } catch { unsafe = true; }
       if (!unsafe) try { await fixture.close(); } catch { unsafe = true; }
       if (unsafe) { safeToRemove = false; retainedOwners.push({ fixture, profile, job, process, observer, parent, imagePin, native }); }
@@ -210,16 +221,19 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
     return outcome;
   }
   it("preserves the separately compiled original explicit-attribute denial as an observed control", async () => {
-    const result = await run("explicit"); expect(result.rootExit).toBe(18); expect(result.report).toBeNull();
+    const result = await run("explicit"); expect(result.rootExit).toBe(18); expect(result.report === null).toBe(true);
     expect(result.failure?.slice(0, 2)).toEqual([18, 5]); expect(result.failure?.[24]).toBe(0xc0000022);
-    expect(result.failure?.slice(2, 14)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0]);
+    expect(result.failure?.slice(2, 11)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1]);
+    expect(result.failure?.[11] === 0).toBe(true); expect(result.failure?.slice(12, 14)).toEqual([1, 0]);
     console.info("Stopped explicit child control", JSON.stringify({ mode: "explicit", rootExit: 18, stage: 18, error: 5, childNtStatus: 0xc0000022, jobStopped: true }));
   }, 45_000);
   it("admits only a suspended exact-package inherited child in the private job and observes it outlive the root before Stop", async () => {
-    const result = await run("inherited"); expect(result.rootExit).toBe(0); expect(result.failure).toBeNull();
-    expect(result.report?.slice(0, 9)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1]); expect(result.report?.[9]).toBeGreaterThan(0);
-    expect(result.report?.slice(10)).toEqual([1, 1]); expect(result).toMatchObject({ admitted: true, descendantRemained: true, profilePaths: true, jobStopped: true });
-    console.info("Stopped inherited child result", JSON.stringify({ mode: "inherited", rootExit: 0, jobStopped: true, admitted: true, descendantRemained: true, allChecks: true, profilePaths: true }));
+    const result = await run("inherited"); expect(result.rootExit).toBe(0); expect(result.failure === null).toBe(true);
+    expect(result.report?.slice(0, 9)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1]); expect((result.report?.[9] ?? 0) > 0).toBe(true);
+    expect(result.report?.slice(10)).toEqual([1, 1]);
+    expect({ admitted: result.admitted, descendantRemained: result.descendantRemained, profilePaths: result.profilePaths,
+      jobStopped: result.jobStopped, membersStopped: result.membersStopped }).toEqual({ admitted: true, descendantRemained: true, profilePaths: true, jobStopped: true, membersStopped: true });
+    console.info("Stopped inherited child result", JSON.stringify({ mode: "inherited", rootExit: 0, jobStopped: true, membersStopped: true, admitted: true, descendantRemained: true, allChecks: true, profilePaths: true }));
   }, 45_000);
 });
 

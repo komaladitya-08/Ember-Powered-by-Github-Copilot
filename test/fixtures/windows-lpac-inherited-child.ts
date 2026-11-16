@@ -43,6 +43,7 @@ export const INHERITED_CHILD_FUNCTIONS = [
   "int __stdcall QueryFullProcessImageNameW(void *process, uint32_t flags, void *image, _Inout_ uint32_t *size)",
   "int __stdcall IsProcessInJob(void *process, void *job, _Out_ int *member)",
   "int __stdcall QueryInformationJobObject(void *job, int kind, void *information, uint32_t size, void *returned)",
+  "uint32_t __stdcall WaitForSingleObject(void *handle, uint32_t milliseconds)",
   "int __stdcall CloseHandle(void *handle)",
 ] as const;
 const handle = (value: unknown): value is WindowsHandle => typeof value === "bigint" && value > 0n && value < 0x8000000000000000n;
@@ -70,8 +71,21 @@ export function bindInheritedChildObserver(koffi: Pick<typeof Koffi, "sizeof">, 
       fn[/\b(\w+)\s*\(/.exec(prototype)![1]] = value as NativeFunction;
     }
   } catch { throw failure(); }
-  let operation = 0, domain = 0, code = 0;
+  let operation = 0, domain = 0, code = 0, closed = false, admittedPid: number | null = null;
+  type Member = { handle: WindowsHandle; pid: number; expected: boolean; closeAttempted: boolean };
+  const owned = new Map<number, Member>();
+  let binding: Pick<InheritedChildAdmission, "job" | "rootProcess" | "rootPid" | "image"> | undefined;
   let imageObservation: { lengthValid: boolean; lengthUint32: boolean; characters: number; shape: number; basename: number; shortComponent: boolean; exact: boolean; extendedExact: boolean } | undefined;
+  type Observation = { operation: number; domain: number; code: number; tracked: number; candidates: number; image?: typeof imageObservation };
+  let refused: Observation | undefined;
+  const snapshot = (): Observation => ({ operation, domain, code, tracked: owned.size, candidates: [...owned.values()].filter(value => value.expected).length,
+    ...(imageObservation ? { image: { ...imageObservation } } : {}) });
+  const capture = () => { refused ??= snapshot(); };
+  const terminal = (extra?: unknown, diagnostic?: Observation): never => {
+    refused = diagnostic ?? snapshot();
+    if (!fence.failure) { fence.failure = new InheritedChildCleanupError(); fence.retained.push({ owned, binding, fn, extra }); }
+    throw fence.failure;
+  };
   const at = (value: number) => { operation = value; domain = 0; code = 0; };
   const nativeRefusal = () => {
     // Capture only an explicit native FALSE/NULL's immediate error, before any later close/query changes TLS.
@@ -79,9 +93,9 @@ export function bindInheritedChildObserver(koffi: Pick<typeof Koffi, "sizeof">, 
     catch { /* Unknown native/ABI error metadata remains unclassified. */ }
     return failure();
   };
-  const usable = () => { if (fence.failure) throw fence.failure; };
+  const usable = () => { if (fence.failure) throw fence.failure; if (closed) throw failure(); };
   const members = (job: WindowsHandle): number[] => {
-    usable(); if (!handle(job)) throw failure();
+    usable(); if (!handle(job) || (binding && job !== binding.job)) throw failure();
     const bytes = Buffer.alloc(8 + MAX_PIDS * 8);
     try {
       at(3);
@@ -98,71 +112,122 @@ export function bindInheritedChildObserver(koffi: Pick<typeof Koffi, "sizeof">, 
         result.push(Number(value));
       }
       return result;
-    } catch { throw failure(); } finally { bytes.fill(0); }
+    } catch { capture(); throw failure(); } finally { bytes.fill(0); }
   };
-  return { members, observation: () => ({ operation, domain, code, ...(imageObservation ? { image: { ...imageObservation } } : {}) }), admit(input: InheritedChildAdmission): number | null {
-    usable(); at(1); imageObservation = undefined;
-    if (!input || !handle(input.job) || !handle(input.rootProcess) || input.rootProcess === input.job || !pid(input.rootPid) || typeof input.image !== "string" || !/^[A-Za-z]:\\/.test(input.image) || /[\p{Cc}\p{Cf}]/u.test(input.image) ||
-      typeof input.current !== "function" || typeof input.verifyToken !== "function" || typeof input.grant !== "function") throw failure();
-    let process: WindowsHandle | undefined, uncertain = false, failed = false, admitted: number | null = null;
-    const buffers: Buffer[] = [];
-    try {
-      at(2);
-      if (input.current() !== true) throw failure();
-      const found = members(input.job);
-      at(6);
-      if (!found.includes(input.rootPid) || found.length < 1 || found.length > 2) throw failure();
-      if (found.length === 1) return null;
-      const child = found.find(value => value !== input.rootPid)!;
+  const exited = (process: WindowsHandle): boolean => {
+    at(17); const value = fn.WaitForSingleObject(process, 0);
+    if (value === 0) return true; if (value === 258) return false;
+    throw value === 0xffffffff ? nativeRefusal() : failure();
+  };
+  const inspect = (selected: number): Member => {
+    if (!binding || selected === binding.rootPid) throw failure();
+    let value = owned.get(selected);
+    if (!value) {
+      at(7); if (owned.size >= MAX_PIDS - 1) throw failure();
       let opened: unknown;
-      at(7);
-      try { opened = fn.OpenProcess(0x1000, 0, child); } catch { uncertain = true; throw failure(); }
+      try { opened = fn.OpenProcess(0x101000, 0, selected); } catch (error) { return terminal(error); }
       if (opened === null || opened === 0n) throw nativeRefusal();
-      if (!handle(opened) || opened === input.job || opened === input.rootProcess) { uncertain = true; throw failure(); }
-      process = opened;
-      at(8); const observedPid = fn.GetProcessId(process);
-      if (observedPid !== child) throw observedPid === 0 ? nativeRefusal() : failure();
-      const image = Buffer.alloc(65536), length: unknown[] = [32768]; buffers.push(image);
+      if (!handle(opened) || opened === binding.job || opened === binding.rootProcess || [...owned.values()].some(item => item.handle === opened)) return terminal(opened);
+      value = { handle: opened, pid: selected, expected: false, closeAttempted: false };
+      owned.set(selected, value); // Own the known handle before any subsequent query can fail.
+    }
+    if (exited(value.handle)) throw failure(); // Never reuse a signalled process object for a PID seen again.
+    at(8); const observedPid = fn.GetProcessId(value.handle);
+    if (observedPid !== selected) throw observedPid === 0 ? nativeRefusal() : failure();
+    const image = Buffer.alloc(65536), length: unknown[] = [32768];
+    try {
       at(9);
-      const named = fn.QueryFullProcessImageNameW(process, 0, image, length);
+      const named = fn.QueryFullProcessImageNameW(value.handle, 0, image, length);
       if (!bool(named)) throw failure(); if (named === 0) throw nativeRefusal();
       at(10);
       const lengthValid = pid(length[0]) && length[0] <= 32767;
       const observedImage = lengthValid ? image.toString("utf16le", 0, (length[0] as number) * 2).toLowerCase() : "";
-      const basename = observedImage.slice(observedImage.lastIndexOf("\\") + 1), expectedImage = input.image.toLowerCase();
+      const basename = observedImage.slice(observedImage.lastIndexOf("\\") + 1), expectedImage = binding.image.toLowerCase();
       const lengthUint32 = typeof length[0] === "number" && Number.isInteger(length[0]) && length[0] >= 0 && length[0] <= 0xffffffff;
       imageObservation = { lengthValid, lengthUint32, characters: lengthUint32 ? length[0] as number : 0,
         shape: /^[a-z]:\\/.test(observedImage) ? 1 : /^\\\\\?\\[a-z]:\\/.test(observedImage) ? 2 : observedImage.startsWith("\\device\\") ? 3 : observedImage.startsWith("\\\\") ? 4 : 0,
         basename: basename === "fixture.exe" ? 1 : basename === "conhost.exe" ? 2 : 0,
         shortComponent: /(?:^|\\)[^\\]*~\d+(?:\\|$)/.test(observedImage),
         exact: observedImage === expectedImage, extendedExact: observedImage.startsWith("\\\\?\\") && observedImage.slice(4) === expectedImage };
-      if (!lengthValid || !imageObservation.exact) throw failure();
+      if (!lengthValid) throw failure();
+      value.expected = imageObservation.exact;
+      // A mismatched spelling never becomes a candidate. Auxiliary names confer no authority.
       at(11);
-      const member: unknown[] = [0], contained = fn.IsProcessInJob(process, input.job, member);
+      const member: unknown[] = [0], contained = fn.IsProcessInJob(value.handle, binding.job, member);
       if (!bool(contained)) throw failure(); if (contained === 0) throw nativeRefusal();
       if (!bool(member[0]) || member[0] === 0) throw failure();
-      at(12); if (input.verifyToken(process) !== undefined) throw failure();
-      at(13); if (input.current() !== true) throw failure();
-      const final = members(input.job);
-      at(14);
-      if (final.length !== 2 || !final.includes(input.rootPid) || !final.includes(child)) throw failure();
-      at(15);
-      if (input.grant(child) !== undefined) throw failure();
-      admitted = child;
-    } catch (error) { failed = true; if (error instanceof InheritedChildCleanupError) uncertain = true; }
-    finally {
-      if (process !== undefined) try {
-        const closed = fn.CloseHandle(process);
-        if (!bool(closed) || closed === 0) { at(16); if (closed === 0) nativeRefusal(); uncertain = true; }
-      } catch { at(16); uncertain = true; }
-      if (uncertain) {
-        fence.failure ??= new InheritedChildCleanupError(); fence.retained.push({ process, buffers, input, fn });
-      } else for (const buffer of buffers) buffer.fill(0);
-    }
-    if (fence.failure) throw fence.failure;
-    if (failed) throw failure();
-    return admitted;
-  } };
+      return value;
+    } finally { image.fill(0); }
+  };
+  const sameSet = (a: number[], b: number[]) => a.length === b.length && a.every(value => b.includes(value));
+  const noEscapedMembers = (found: number[]) => { for (const value of owned.values()) if (!found.includes(value.pid) && !exited(value.handle)) throw failure(); };
+  const requireStopped = () => {
+    usable(); if (!binding) { if (owned.size) throw failure(); return; }
+    const accounting = Buffer.alloc(48);
+    try {
+      at(18); const ok = fn.QueryInformationJobObject(binding.job, 1, accounting, accounting.length, null);
+      if (!bool(ok)) throw failure(); if (ok === 0) throw nativeRefusal();
+      if (accounting.readUInt32LE(40) !== 0 || members(binding.job).length !== 0 || !exited(binding.rootProcess)) throw failure();
+      for (const value of owned.values()) if (!exited(value.handle)) throw failure();
+    } catch { capture(); throw failure(); } finally { accounting.fill(0); }
+  };
+  return {
+    members, requireStopped,
+    observation: () => { const value = refused ?? snapshot(); return { ...value, ...(value.image ? { image: { ...value.image } } : {}) }; },
+    admit(input: InheritedChildAdmission): number | null {
+      usable(); at(1); imageObservation = undefined;
+      try {
+        if (admittedPid !== null || !input || !handle(input.job) || !handle(input.rootProcess) || input.rootProcess === input.job || !pid(input.rootPid) || typeof input.image !== "string" || !/^[A-Za-z]:\\/.test(input.image) || /[\p{Cc}\p{Cf}]/u.test(input.image) ||
+          typeof input.current !== "function" || typeof input.verifyToken !== "function" || typeof input.grant !== "function") throw failure();
+        if (binding && (input.job !== binding.job || input.rootProcess !== binding.rootProcess || input.rootPid !== binding.rootPid || input.image !== binding.image)) throw failure();
+        binding ??= { job: input.job, rootProcess: input.rootProcess, rootPid: input.rootPid, image: input.image };
+        at(2); if (input.current() !== true) throw failure();
+        const found = members(input.job); at(6);
+        if (!found.includes(input.rootPid)) throw failure();
+        noEscapedMembers(found);
+        const selected = found.filter(value => value !== input.rootPid).map(inspect), candidates = selected.filter(value => value.expected);
+        at(19); if (candidates.length > 1) throw failure();
+        if (candidates.length === 0) return null;
+        const candidate = candidates[0];
+        if (exited(candidate.handle)) throw failure();
+        at(12); if (input.verifyToken(candidate.handle) !== undefined) throw failure();
+        at(13); if (input.current() !== true) throw failure();
+        const final = members(input.job); at(14);
+        noEscapedMembers(final);
+        if (!sameSet(found, final)) return null; // Retain the entire snapshot; another bounded poll must account for new members.
+        for (const value of selected) inspect(value.pid);
+        at(19); if (selected.filter(value => value.expected).length !== 1 || !candidate.expected) throw failure();
+        at(14); if (!sameSet(found, members(input.job))) return null;
+        at(13); if (input.current() !== true || exited(candidate.handle)) throw failure();
+        at(15); if (input.grant(candidate.pid) !== undefined) throw failure();
+        admittedPid = candidate.pid; return admittedPid;
+      } catch (error) { capture(); if (error instanceof InheritedChildCleanupError) terminal(error); throw failure(); }
+    },
+    observeDescendants(): boolean {
+      usable();
+      try {
+        if (!binding || admittedPid === null || !exited(binding.rootProcess)) throw failure();
+        const found = members(binding.job);
+        if (found.includes(binding.rootPid)) return false;
+        noEscapedMembers(found);
+        const selected = found.map(inspect), candidates = selected.filter(value => value.expected);
+        at(19); if (candidates.length > 1) throw failure();
+        if (candidates.length !== 1 || candidates[0].pid !== admittedPid || exited(candidates[0].handle)) return false;
+        return sameSet(found, members(binding.job));
+      } catch (error) { capture(); if (error instanceof InheritedChildCleanupError) terminal(error); throw failure(); }
+    },
+    closeStopped(): void {
+      if (closed) return; usable(); requireStopped();
+      let uncertain = false, diagnostic: Observation | undefined;
+      for (const value of owned.values()) {
+        at(16); value.closeAttempted = true;
+        try { const result = fn.CloseHandle(value.handle); if (!bool(result) || result === 0) { if (result === 0) nativeRefusal(); uncertain = true; diagnostic ??= snapshot(); } }
+        catch { uncertain = true; diagnostic ??= snapshot(); }
+      }
+      if (uncertain) terminal(undefined, diagnostic);
+      closed = true;
+    },
+  };
 }
 export function loadInheritedChildObserver(): ReturnType<typeof bindInheritedChildObserver> {
   if (process.platform !== "win32" || process.arch !== "x64") throw failure();

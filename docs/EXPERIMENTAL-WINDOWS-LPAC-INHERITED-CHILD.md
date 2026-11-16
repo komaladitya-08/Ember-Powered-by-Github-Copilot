@@ -25,15 +25,27 @@ To reuse that existing test-only pin implementation, `nativeChecks` is exported 
 its implementation is unchanged. The original C fixture and original acceptance test remain byte-unchanged.
 
 Before the first child instruction, the LPAC root still requires its original exact-package, AppContainer,
-zero-capability and own-package-versus-AAP access witnesses. The host discovers the one child using its owned private
-job's native process list, verifies the exact PID/image and same fresh LPAC token, and checks `IsProcessInJob` against
-that exact job. It writes only an eight-byte magic/PID admission acknowledgement. The fixture bounds, verifies and
+zero-capability and own-package-versus-AAP access witnesses. The host enumerates its complete private-job list,
+bounded to eight processes including the root, and retains query/synchronize handles for every observed member.
+It selects exactly one image matching the still-pinned staged fixture path, verifies its exact PID and same fresh
+LPAC token, and checks every member's `IsProcessInJob` against that exact job. New members require another bounded
+poll and a stable complete set before admission. A disappearing live member, reused signalled PID, duplicate candidate,
+unknown acquisition or invalid membership refuses admission. It writes only an eight-byte magic/PID admission acknowledgement
+for the intended child. The fixture bounds, verifies and
 closes that ordinary no-reparse file before `ResumeThread`. No result report is read for admission.
+
+Auxiliary members receive no acknowledgement or resume authority. Their names, including `conhost.exe`, confer no
+trust. They are accounted contained writers, not evidence of generic descendant token isolation. The observer retains
+at most seven member handles plus the borrowed root across the entire fixture lifetime, including exited members.
 
 Success still requires all original twelve report checks, including the denied breakaway attempt, original host
 process denials, copied-image read, workspace write and redirected profile temporary-file write. The admitted child
-must outlive the root inside the same private job. Root exit cannot release a result; Stop must observe empty native
-job accounting and process list. Result/failure/path reports are read only after that stopped receipt, and only fixed
+must outlive the root inside the same private job. Root exit cannot release a result.
+The intended child's liveness and complete stable membership are checked again after the 100ms job-not-stopped
+observation; an auxiliary remaining alive cannot supply that child-survival proof. Stop must observe empty native
+job accounting and process list, and independently observe the borrowed root and every retained member handle signalled.
+Result/failure/path reports are read only after that stopped receipt. Each retained member closes exactly once before
+the staged-image pin and fixture owner close. Only fixed
 numeric/boolean facts leave the fixture after verified cleanup. Unknown setup, token-query cleanup, process stop or
 handle close retains the fixture rather than triggering recursive cleanup.
 
@@ -66,8 +78,10 @@ remain private. These setup receipts do not claim cleanup or successful native l
 On a stopped, cleaned-up inherited-case refusal, the host also reports its fixed operation (1 staged pin/canary,
 2 root launch, 3 root/deadline observation, 4 child admission, 5 root-exit observation, 6 remaining descendant check).
 The observer operation is 1 input contract, 2 initial currency, 3 job-list query, 4 complete header, 5 bounded PID
-decoding, 6 root/child set, 7 child open, 8 exact PID, 9 image query, 10 image comparison, 11 exact private-job
+decoding, 6 root-containing set, 7 member open, 8 exact PID, 9 image query, 10 image comparison, 11 exact private-job
 membership, 12 token witness, 13 final currency, 14 final process set, 15 acknowledgement and 16 handle close.
+Operation 17 is native process signalling, 18 active-job accounting and 19 unique candidate selection. `tracked` and
+`candidates` contain only bounded counts. The first refusal snapshot survives later Stop/cleanup observations.
 Only explicit native FALSE/NULL captures immediate `GetLastError`; malformed ABI/error metadata stays domain 0.
 The snapshot contains no PID, image, token, raw native output or exception text. It adds no admission fallback.
 After a successful image-name query, `image` reports only returned-length validity/uint32 shape and count,
@@ -81,3 +95,8 @@ passed 82 portable tests and the original explicit-attribute denial control on e
 cases stopped cleanly after a host-side admission refusal, with no C result/failure report. That outcome establishes
 the negative control and cleanup, but supplies no successful inherited-child proof; the operation receipt above
 exists to identify that refusal before changing any admission or creation rule.
+At `7e1cbb5ad698ad9e4387df2056dc8b83dbd1a8ec`, [run 43821023494](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43821023494)
+passed 99 portable tests and both original controls. Both refused the first extra job member at image comparison;
+its closed basename class identified the Windows console helper. The bounded multi-member owner above preserves
+the actual launch flags and intended-child attestations while accounting for that helper. Native success for this
+owner remains pending until its exact workflow revision completes.
