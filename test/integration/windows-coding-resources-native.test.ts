@@ -56,7 +56,7 @@ describe.skipIf(process.platform !== "win32" && !required)("native Windows proje
 
   it("edits a fresh copy, publishes its exact stopped review, exports and forgets, then removes its fresh common root", async () => {
     const resource = await open();
-    expect(resource.availability()).toMatchObject({ available: true, mode: "files-only", canContinue: false });
+    expect(resource.availability()).toMatchObject({ available: true, mode: "files-only", canContinue: true });
     expect(resource.availability()).not.toHaveProperty("nodePath");
     expect(resource.reviewBase).toMatch(/^[A-Za-z]:\\/); await bind(resource);
     const spec = task(resource), signal = new AbortController();
