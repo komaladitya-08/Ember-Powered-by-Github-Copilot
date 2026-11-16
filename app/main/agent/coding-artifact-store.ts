@@ -47,8 +47,12 @@ export interface CodingArtifactStore {
   /** Windows requires a minted producer token. Linux preserves its existing path-adoption boundary. */
   claim(input: CodingArtifactInput, check: () => void): Promise<CodingArtifactReceipt>;
   verify(receipt: CodingArtifactReceipt, check: () => void): Promise<void>;
+  /** Host-only bytes from one exact claimed file. Bounds are checked before allocation; the caller owns successful bytes. */
+  read(receipt: CodingArtifactReceipt, name: CodingArtifactName, maximumBytes: number, check: () => void): Promise<Buffer>;
   /** With expected, attest only that this exact intake capability belongs to source; never recapture a rebound path. */
   sourceBoundary(source: string, check: () => void, expected?: CodingArtifactSourceRef): Promise<CodingArtifactSourceRef | null>;
+  /** Both references must belong to this store and the same still-current native source. Revocation and cleanup reject. */
+  sameSource(original: CodingArtifactSourceRef | null, fresh: CodingArtifactSourceRef | null, check: () => void): Promise<boolean>;
   export(receipt: CodingArtifactReceipt, source: CodingArtifactSourceRef | null, destination: string, check: () => void): Promise<CodingArtifactExportResult>;
   discard(input: CodingArtifactInput): Promise<void>;
   /** Removes unretained claimed artifacts and failed exports; live producer tokens remain producer-owned. */

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { LinuxCodingArtifactStore } from "../../app/main/agent/linux-coding-artifact-store";
-import { CodingArtifactCleanupError, CodingResultRegistryError, type CodingArtifactRef } from "../../app/main/agent/coding-artifact-store";
+import { CodingArtifactCleanupError, CodingResultRegistryError, CODING_ARTIFACT_MAX_BYTES, type CodingArtifactRef, type CodingArtifactSourceRef, type CodingArtifactName } from "../../app/main/agent/coding-artifact-store";
 import { CodingResultRegistry, type CodingResultRegistration } from "../../app/main/agent/coding-result-registry";
 import { createCodingReviewExport } from "../../app/main/agent/coding-result-export";
 
@@ -203,6 +203,119 @@ describe.skipIf(process.platform !== "linux")("Linux review artifact ownership",
     expect(injected).toBe(true); expect(failure).toBeInstanceOf(CodingArtifactCleanupError);
     await expect(store.cleanup(new Set())).rejects.toBe(failure);
     vi.restoreAllMocks(); await expect(store.close()).rejects.toBe(failure); expect(await fs.readdir(base)).toEqual([]);
+    await expect(store.close()).rejects.toBe(failure);
+  });
+
+  it("reads complete binary review bytes only through the exact claimed receipt", async () => {
+    const provided = files(); provided["review.json"] = Buffer.from([0, 255, 13, 10, 128, 42]);
+    const input = await store.write(provided, check), receipt = await store.claim(input, check);
+    const bytes = await store.read(receipt, "review.json", provided["review.json"].length, check);
+    expect(bytes).toEqual(provided["review.json"]); bytes.fill(0);
+    expect(await store.read(receipt, "review.json", provided["review.json"].length, check)).toEqual(provided["review.json"]);
+    await expect(store.read({ ...receipt }, "review.json", 64, check)).rejects.toMatchObject({ code: "artifact" });
+    await store.cleanup(new Set()); await expect(store.read(receipt, "review.json", 64, check)).rejects.toMatchObject({ code: "artifact" });
+  });
+
+  it("refuses invalid read names and bounds before allocating or opening the selected file", async () => {
+    const input = await store.write(files(), check), receipt = await store.claim(input, check), open = vi.spyOn(fs, "open"), allocate = vi.spyOn(Buffer, "alloc");
+    for (const maximum of [-1, NaN, 0.5, CODING_ARTIFACT_MAX_BYTES + 1]) await expect(store.read(receipt, "review.json", maximum, check)).rejects.toMatchObject({ code: "invalid" });
+    await expect(store.read(receipt, "../review.json" as CodingArtifactName, 64, check)).rejects.toMatchObject({ code: "invalid" });
+    await expect(store.read(receipt, "review.json", files()["review.json"].length - 1, check)).rejects.toMatchObject({ code: "limit" });
+    expect(allocate).not.toHaveBeenCalled(); expect(open).not.toHaveBeenCalled();
+  });
+
+  it("checks both reviewed artifacts even when the host reads only review metadata", async () => {
+    const input = await store.write(files(), check), receipt = await store.claim(input, check);
+    await fs.writeFile(path.join(input.directory, "changes.patch"), "tampered patch\n");
+    await expect(store.read(receipt, "review.json", 64, check)).rejects.toMatchObject({ code: "artifact" });
+  });
+
+  it("zeroes completed read bytes when a one-shot authority revocation occurs at EOF", async () => {
+    const provided = files(); provided["review.json"] = Buffer.from("private reviewed bytes\n".repeat(17));
+    const input = await store.write(provided, check), receipt = await store.claim(input, check), realOpen = fs.open.bind(fs), alloc = Buffer.alloc.bind(Buffer);
+    let selectedReads = 0, output: Buffer | undefined, active = true, sawCompleteBytes = false;
+    vi.spyOn(Buffer, "alloc").mockImplementation((...args: Parameters<typeof Buffer.alloc>) => {
+      const bytes = alloc(...args); if (args[0] === provided["review.json"].length) output = bytes; return bytes;
+    });
+    vi.spyOn(fs, "open").mockImplementation((async (...args: Parameters<typeof fs.open>) => {
+      const file = await realOpen(...args);
+      if (String(args[0]).endsWith("/review.json") && ++selectedReads === 2) {
+        const read = file.read.bind(file);
+        vi.spyOn(file, "read").mockImplementation((async (...reading: Parameters<typeof file.read>) => {
+          const result = await read(...reading);
+          if (!result.bytesRead) { sawCompleteBytes = output?.equals(provided["review.json"]) === true; active = false; }
+          return result;
+        }) as typeof file.read);
+      }
+      return file;
+    }) as typeof fs.open);
+    await expect(store.read(receipt, "review.json", provided["review.json"].length, () => { if (!active) { active = true; throw new Error("one-shot revocation"); } })).rejects.toMatchObject({ code: "stale" });
+    expect(sawCompleteBytes).toBe(true); expect(output).toBeDefined(); expect(output!.every(byte => byte === 0)).toBe(true);
+  });
+
+  it("zeroes completed read bytes and poisons later admissions when the selected handle close is uncertain", async () => {
+    const provided = files(); provided["review.json"] = Buffer.from("completed private review\n".repeat(19));
+    const input = await store.write(provided, check), receipt = await store.claim(input, check), realOpen = fs.open.bind(fs), alloc = Buffer.alloc.bind(Buffer);
+    let selectedReads = 0, output: Buffer | undefined;
+    vi.spyOn(Buffer, "alloc").mockImplementation((...args: Parameters<typeof Buffer.alloc>) => {
+      const bytes = alloc(...args); if (args[0] === provided["review.json"].length) output = bytes; return bytes;
+    });
+    vi.spyOn(fs, "open").mockImplementation((async (...args: Parameters<typeof fs.open>) => {
+      const file = await realOpen(...args);
+      if (String(args[0]).endsWith("/review.json") && ++selectedReads === 2) {
+        const close = file.close.bind(file);
+        vi.spyOn(file, "close").mockImplementationOnce(async () => { await close(); throw new Error("completion unavailable"); });
+      }
+      return file;
+    }) as typeof fs.open);
+    const failure = await store.read(receipt, "review.json", provided["review.json"].length, check).catch(error => error);
+    expect(failure).toBeInstanceOf(CodingArtifactCleanupError); expect(output).toBeDefined(); expect(output!.every(byte => byte === 0)).toBe(true);
+    await expect(store.read(receipt, "review.json", provided["review.json"].length, check)).rejects.toBe(failure);
+  });
+
+  it("attests two genuine source captures only while their original native source remains current", async () => {
+    const original = await store.sourceBoundary(source, check), fresh = await store.sourceBoundary(source, check);
+    expect(original).not.toBe(fresh); expect(await store.sameSource(original, fresh, check)).toBe(true);
+    expect(await store.sameSource(original, Object.freeze({}) as CodingArtifactSourceRef, check)).toBe(false);
+    expect(await store.sameSource(original, null, check)).toBe(false);
+    const otherBase = path.join(root, "other"); await fs.mkdir(otherBase, { mode: 0o700 }); const other = await LinuxCodingArtifactStore.create(otherBase);
+    try { expect(await store.sameSource(original, await other.sourceBoundary(source, check), check)).toBe(false); }
+    finally { await other.close(); }
+    const moved = path.join(root, "moved-original"); await fs.rename(source, moved); await fs.mkdir(source, { mode: 0o700 });
+    const replacement = await store.sourceBoundary(source, check);
+    expect(await store.sameSource(original, replacement, check)).toBe(false); expect(await store.sameSource(original, fresh, check)).toBe(false);
+    expect(await fs.readFile(path.join(moved, "source.txt"), "utf8")).toBe("untouched\n");
+  });
+
+  it("propagates a one-shot revoked source comparison and closes its pinned source", async () => {
+    const original = await store.sourceBoundary(source, check), fresh = await store.sourceBoundary(source, check), realOpen = fs.open.bind(fs);
+    let opened = false, closed = false, revoke = false;
+    vi.spyOn(fs, "open").mockImplementation((async (...args: Parameters<typeof fs.open>) => {
+      const file = await realOpen(...args);
+      if (!opened && String(args[0]).endsWith("/source")) {
+        opened = true; revoke = true; const close = file.close.bind(file);
+        vi.spyOn(file, "close").mockImplementationOnce(async () => { await close(); closed = true; });
+      }
+      return file;
+    }) as typeof fs.open);
+    await expect(store.sameSource(original, fresh, () => { if (revoke) { revoke = false; throw new Error("one-shot revoke"); } })).rejects.toMatchObject({ code: "stale" });
+    expect(opened).toBe(true); expect(closed).toBe(true);
+  });
+
+  it("retains unknown source-handle close as a terminal attestation failure", async () => {
+    const original = await store.sourceBoundary(source, check), fresh = await store.sourceBoundary(source, check), realOpen = fs.open.bind(fs);
+    let injected = false;
+    vi.spyOn(fs, "open").mockImplementation((async (...args: Parameters<typeof fs.open>) => {
+      const file = await realOpen(...args);
+      if (!injected && String(args[0]).endsWith("/source")) {
+        injected = true; const close = file.close.bind(file);
+        vi.spyOn(file, "close").mockImplementationOnce(async () => { await close(); throw new Error("completion unavailable"); });
+      }
+      return file;
+    }) as typeof fs.open);
+    const failure = await store.sameSource(original, fresh, check).catch(error => error);
+    expect(failure).toBeInstanceOf(CodingArtifactCleanupError);
+    await expect(store.sameSource(original, fresh, check)).rejects.toBe(failure);
     await expect(store.close()).rejects.toBe(failure);
   });
 });

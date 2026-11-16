@@ -99,6 +99,78 @@ it("mints one-time producer references and verifies exact receipt object identit
   await f.store.cleanup(new Set()); expect(f.store.size).toBe(0); await f.store.close(); expect(f.handles.size).toBe(0);
 });
 
+it("reads complete bounded bytes only through the original claimed receipt", async () => {
+  const f = await setup(), output = await f.store.write(f.files, f.check), receipt = await f.store.claim(output, f.check);
+  const read = await f.store.read(receipt, "review.json", f.files["review.json"].length, f.check);
+  expect(read).toEqual(f.files["review.json"]); read.fill(0);
+  expect(await f.store.read(receipt, "review.json", 64 * 1024 * 1024, f.check)).toEqual(f.files["review.json"]);
+  await expect(f.store.read({ ...receipt }, "review.json", 64, f.check)).rejects.toMatchObject({ code: "invalid" });
+  await expect(f.store.read(receipt, "../review.json" as "review.json", 64, f.check)).rejects.toMatchObject({ code: "invalid" });
+  await f.store.cleanup(new Set()); await expect(f.store.read(receipt, "review.json", 64, f.check)).rejects.toMatchObject({ code: "invalid" });
+  await f.store.close(); expect(f.handles.size).toBe(0);
+});
+
+it("rejects invalid or insufficient read budgets before allocating any artifact payload", async () => {
+  const f = await setup(), output = await f.store.write(f.files, f.check), receipt = await f.store.claim(output, f.check);
+  const allocating = vi.spyOn(Buffer, "alloc");
+  for (const budget of [-1, NaN, Infinity, 0.5, 64 * 1024 * 1024 + 1]) await expect(f.store.read(receipt, "review.json", budget, f.check)).rejects.toMatchObject({ code: "invalid" });
+  await expect(f.store.read(receipt, "review.json", f.files["review.json"].length - 1, f.check)).rejects.toMatchObject({ code: "limit" });
+  expect(allocating).not.toHaveBeenCalled(); allocating.mockRestore(); await f.store.close(); expect(f.handles.size).toBe(0);
+});
+
+it("attests both exact artifact hashes before returning either requested file", async () => {
+  const f = await setup(), output = await f.store.write(f.files, f.check), receipt = await f.store.claim(output, f.check);
+  const file = f.nodes.get(path.join(f.createdRoots[0], "review.json").toLowerCase())!; file.bytes[0] ^= 1;
+  await expect(f.store.read(receipt, "changes.patch", 64, f.check)).rejects.toMatchObject({ code: "artifact" });
+  file.bytes[0] ^= 1; await f.store.verify(receipt, f.check); await f.store.close(); expect(f.handles.size).toBe(0);
+});
+
+it("zeroes the selected result when authority is revoked during its final artifact recheck", async () => {
+  const f = await setup(), output = await f.store.write(f.files, f.check), receipt = await f.store.claim(output, f.check);
+  const allocations: Buffer[] = [], alloc = Buffer.alloc.bind(Buffer); let current = true, reviews = 0;
+  vi.spyOn(Buffer, "alloc").mockImplementation(((...args: Parameters<typeof Buffer.alloc>) => {
+    const result = alloc(...args); allocations.push(result); return result;
+  }) as typeof Buffer.alloc);
+  const eof = (row: { info: WindowsCodingInfo }) => {
+    if (row.info.finalPath.endsWith("\\review.json") && ++reviews === 2) f.onRead(() => { current = false; });
+    else f.onReaderEof(eof);
+  };
+  f.onReaderEof(eof);
+  await expect(f.store.read(receipt, "review.json", 64, () => { if (!current) throw new Error("one owned request retired"); })).rejects.toMatchObject({ code: "stale" });
+  expect(reviews).toBe(2); expect(allocations.length).toBeGreaterThan(2);
+  expect(allocations.every(bytes => bytes.every(byte => byte === 0))).toBe(true);
+  vi.restoreAllMocks(); await f.store.close(); expect(f.handles.size).toBe(0);
+});
+
+it("matches only current source capabilities from the same store and original native identity", async () => {
+  const f = await setup(), original = await f.store.sourceBoundary("C:\\project", f.check), fresh = await f.store.sourceBoundary("C:\\project", f.check);
+  expect(original).not.toBeNull(); expect(fresh).not.toBeNull(); expect(await f.store.sameSource(original, fresh, f.check)).toBe(true);
+  expect(await f.store.sameSource(original, null, f.check)).toBe(false);
+  expect(await f.store.sameSource(original, Object.freeze({}) as NonNullable<typeof fresh>, f.check)).toBe(false);
+  const { WindowsCodingArtifactStore } = await import("../../app/main/agent/windows-coding-artifact-store");
+  const other = await WindowsCodingArtifactStore.create({ privateBase: "C:\\other", protectedPaths: ["C:\\protected"] });
+  const foreign = await other.sourceBoundary("C:\\project", f.check); expect(await f.store.sameSource(original, foreign, f.check)).toBe(false);
+  await other.close(); f.replaceSource();
+  const replacement = await f.store.sourceBoundary("C:\\project", f.check);
+  expect(await f.store.sameSource(original, replacement, f.check)).toBe(false);
+  expect(await f.store.sameSource(original, fresh, f.check)).toBe(false);
+  await f.store.close(); expect(f.handles.size).toBe(0);
+});
+
+it("propagates a one-shot source authority failure instead of converting it to an unmatched source", async () => {
+  const f = await setup(), original = await f.store.sourceBoundary("C:\\project", f.check), fresh = await f.store.sourceBoundary("C:\\project", f.check);
+  let checks = 0;
+  await expect(f.store.sameSource(original, fresh, () => { if (++checks === 2) throw new Error("retired once"); })).rejects.toMatchObject({ code: "stale" });
+  expect(await f.store.sameSource(original, fresh, f.check)).toBe(true); await f.store.close(); expect(f.handles.size).toBe(0);
+});
+
+it("keeps unknown source-pin close completion terminal for every later admission", async () => {
+  const f = await setup(), original = await f.store.sourceBoundary("C:\\project", f.check), fresh = await f.store.sourceBoundary("C:\\project", f.check);
+  f.failClose(); const failure = await f.store.sameSource(original, fresh, f.check).catch(error => error);
+  expect(failure).toMatchObject({ code: "coding-artifact-cleanup-unverified" });
+  await expect(f.store.sameSource(null, null, f.check)).rejects.toBe(failure); await expect(f.store.close()).rejects.toBe(failure);
+});
+
 it("keeps producer ownership through unrelated cleanup and rejects forged-directory discard", async () => {
   const f = await setup(), output = await f.store.write(f.files, f.check);
   await f.store.cleanup(new Set()); expect(f.store.size).toBe(1);

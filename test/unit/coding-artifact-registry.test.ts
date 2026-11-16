@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
 import { CodingResultRegistry, CodingArtifactCleanupError, CodingResultRegistryError, type CodingResultRegistration } from "../../app/main/agent/coding-result-registry";
 import { createCodingReviewExport } from "../../app/main/agent/coding-result-export";
-import type { CodingArtifactStore, CodingArtifactRef, CodingArtifactReceipt, CodingArtifactInput, CodingArtifactFiles, CodingArtifactSourceRef } from "../../app/main/agent/coding-artifact-store";
+import type { CodingArtifactStore, CodingArtifactRef, CodingArtifactReceipt, CodingArtifactInput, CodingArtifactFiles, CodingArtifactSourceRef, CodingArtifactName } from "../../app/main/agent/coding-artifact-store";
 
 const A = "a".repeat(64), B = "b".repeat(64);
 const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
@@ -35,6 +35,12 @@ class ContractStore implements CodingArtifactStore {
     check(); await this.verifyWait?.(); check();
     if (this.terminal) throw new CodingArtifactCleanupError();
     if (this.records.get(receipt.ref)?.receipt !== receipt) throw new CodingResultRegistryError("artifact");
+  }
+  async read(receipt: CodingArtifactReceipt, _name: CodingArtifactName, _maximumBytes: number, check: () => void): Promise<Buffer> {
+    await this.verify(receipt, check); throw new CodingResultRegistryError("unsupported");
+  }
+  async sameSource(original: CodingArtifactSourceRef | null, fresh: CodingArtifactSourceRef | null, check: () => void) {
+    check(); return !!original && original === fresh;
   }
   async sourceBoundary(_source: string, check: () => void, expected?: CodingArtifactSourceRef) {
     check(); if (this.sourceFailure) throw this.sourceFailure;

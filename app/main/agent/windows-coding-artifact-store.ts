@@ -142,12 +142,20 @@ export class WindowsCodingArtifactStore implements CodingArtifactStore {
       if (!windowsCodingSame(entry.info!, this.#api.info(entry.handle)) || entry.info!.kind !== "file" || entry.info!.links !== 1 || entry.info!.size > CODING_ARTIFACT_MAX_BYTES) throw new CodingResultRegistryError("artifact");
     };
     verify(); const bytes = Buffer.alloc(entry.info.size);
-    for (let offset = 0; offset < bytes.length;) {
-      verify(); const chunk = this.#api.read(entry.handle, offset, Math.min(64 * 1024, bytes.length - offset));
-      if (!chunk.length || chunk.length > bytes.length - offset) throw new CodingResultRegistryError("artifact");
-      chunk.copy(bytes, offset); offset += chunk.length; await windowsCodingYield(); verify();
-    }
-    if (this.#api.read(entry.handle, bytes.length, 1).length || digest(bytes) !== entry.sha256) throw new CodingResultRegistryError("artifact"); verify(); return bytes;
+    try {
+      for (let offset = 0; offset < bytes.length;) {
+        verify(); const chunk = this.#api.read(entry.handle, offset, Math.min(64 * 1024, bytes.length - offset));
+        try {
+          if (!chunk.length || chunk.length > bytes.length - offset) throw new CodingResultRegistryError("artifact");
+          chunk.copy(bytes, offset); offset += chunk.length;
+        } finally { chunk.fill(0); }
+        await windowsCodingYield(); verify();
+      }
+      const eof = this.#api.read(entry.handle, bytes.length, 1);
+      try { if (eof.length || digest(bytes) !== entry.sha256) throw new CodingResultRegistryError("artifact"); }
+      finally { eof.fill(0); }
+      verify(); return bytes;
+    } catch (error) { bytes.fill(0); throw error; }
   }
   async #settleTransfer(record: Artifact, name: CodingArtifactName, check: () => void, cleanup = false): Promise<void> {
     const entry = record.files[name];
@@ -170,7 +178,7 @@ export class WindowsCodingArtifactStore implements CodingArtifactStore {
     if (listed.map(entry => entry.name).sort().join("\0") !== CODING_ARTIFACT_NAMES.join("\0")) throw new CodingResultRegistryError("artifact");
     for (const name of CODING_ARTIFACT_NAMES) {
       const entry = record.files[name]; if (!entry?.info || listed.find(item => item.name === name)?.id !== entry.info.id) throw new CodingResultRegistryError("artifact");
-      await this.#read(record, name, check); this.#admit(check);
+      const bytes = await this.#read(record, name, check); bytes.fill(0); this.#admit(check);
     }
     if (!windowsCodingSame(before, this.#api.info(record.root.handle))) throw new CodingResultRegistryError("artifact"); this.#admit(check);
   }
@@ -235,6 +243,62 @@ export class WindowsCodingArtifactStore implements CodingArtifactStore {
   }
   verify(receipt: CodingArtifactReceipt, check: () => void): Promise<void> {
     return this.#queue(async () => { try { this.#admit(check); await this.#verify(this.#receiptRecord(receipt), check); } catch (error) { throw this.#safe(error); } });
+  }
+  #continuationCheck(check: () => void): () => void {
+    if (typeof check !== "function") throw new CodingResultRegistryError("invalid");
+    return () => {
+      try { check(); }
+      catch (error) {
+        if (error instanceof WindowsCodingCleanupError || error instanceof CodingArtifactCleanupError) throw error;
+        throw new CodingResultRegistryError("stale");
+      }
+    };
+  }
+  read(receipt: CodingArtifactReceipt, name: CodingArtifactName, maximumBytes: number, check: () => void): Promise<Buffer> {
+    return this.#queue(async () => {
+      let bytes: Buffer | undefined;
+      try {
+        check = this.#continuationCheck(check); this.#admit(check);
+        if (!CODING_ARTIFACT_NAMES.includes(name) || !Number.isSafeInteger(maximumBytes) || maximumBytes < 0 || maximumBytes > CODING_ARTIFACT_MAX_BYTES) throw new CodingResultRegistryError("invalid");
+        const record = this.#receiptRecord(receipt);
+        if (receipt.files[name].bytes > maximumBytes) throw new CodingResultRegistryError("limit");
+        await this.#verify(record, check); this.#admit(check);
+        bytes = await this.#read(record, name, check); this.#admit(check);
+        if (bytes.length !== receipt.files[name].bytes || bytes.length > maximumBytes) throw new CodingResultRegistryError("artifact");
+        await this.#verify(record, check); this.#admit(check); return bytes;
+      } catch (error) { bytes?.fill(0); throw this.#safe(error); }
+    });
+  }
+  sameSource(original: CodingArtifactSourceRef | null, fresh: CodingArtifactSourceRef | null, check: () => void): Promise<boolean> {
+    return this.#queue(async () => {
+      let pin: WindowsCodingPin | undefined;
+      try {
+        check = this.#continuationCheck(check); this.#admit(check);
+        const previous = original && this.#sources.get(original), next = fresh && this.#sources.get(fresh);
+        if (!previous || !next || previous.path !== next.path || !windowsCodingSame(previous.info, next.info, false)) return false;
+        try { pin = this.#pin(previous.path, "read"); }
+        catch (error) {
+          if (error instanceof WindowsCodingCleanupError || error instanceof CodingArtifactCleanupError) throw error;
+          this.#admit(check); return false;
+        }
+        const matches = () => {
+          try {
+            const current = this.#api.info(pin!.handle);
+            return windowsCodingSame(previous.info, current, false) && windowsCodingSame(next.info, current, false);
+          } catch (error) {
+            if (error instanceof WindowsCodingCleanupError || error instanceof CodingArtifactCleanupError) throw error;
+            return false;
+          }
+        };
+        this.#admit(check); if (!matches()) return false;
+        await windowsCodingYield(); this.#admit(check); if (!matches()) return false;
+        // Source pins prevent namespace replacement while held. No callback or await separates this
+        // final source/current check from verified release and the store's terminal/base fence.
+        const released = pin; pin = undefined; this.#closePin(released);
+        this.#admit(() => undefined); return true;
+      } catch (error) { throw this.#safe(error); }
+      finally { if (pin) this.#closePin(pin); }
+    });
   }
   sourceBoundary(source: string, check: () => void, expected?: CodingArtifactSourceRef): Promise<CodingArtifactSourceRef | null> {
     return this.#queue(async () => {
