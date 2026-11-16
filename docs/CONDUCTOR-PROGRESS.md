@@ -226,9 +226,15 @@ The [Windows acceptance checklist](WINDOWS-CONDUCTOR-ACCEPTANCE.md) exercises th
 UI Automation, foreground focus, cursor takeover, global Stop, mixed display scales, keyboard layouts, real microphone
 and speaker interruption, lock/recovery and account changes. Record exact commits and observed app outcomes.
 
-The laptop can validate desktop sessions now. It is not the only remaining dependency and cannot by itself resolve
-the coding isolation, persistent recovery and orchestration work above. Main should remain unmerged until those
-requirements and relevant native acceptance are satisfied.
+The laptop can validate desktop sessions now. The Windows milestone combines the implemented project/session
+board, bounded coordination, explicit checkpoints and review/continuation with a usable isolated command/test
+backend for a declared supported toolchain, live-provider verification and the relevant native acceptance checks.
+Hosted Windows can advance the command backend before laptop access. Main should remain unmerged while that
+backend, the existing failing CI case and the live/native acceptance checks remain unresolved.
+
+Automatic checkpoints, general dependency graphs, future wakeups, automatic source writeback and macOS coding
+are separate extensions. They do not add requirements to this Windows milestone; the implemented limits must
+remain explicit in the product and acceptance results.
 
 ## Verification
 
