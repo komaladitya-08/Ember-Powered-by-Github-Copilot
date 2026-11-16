@@ -11,7 +11,8 @@ export type WindowsNodeFatalOutput =
 export const WINDOWS_NODE_FATAL_REFUSALS = Object.freeze(["input", "release", "encoding", "newline", "header", "public-source", "line"] as const);
 export type WindowsNodeFatalInspection = {
   output: WindowsNodeFatalOutput;
-  refusal?: { stage: (typeof WINDOWS_NODE_FATAL_REFUSALS)[number]; representation?: "utf16le-ascii" | "utf16be-ascii" | "other" };
+  refusal?: { stage: (typeof WINDOWS_NODE_FATAL_REFUSALS)[number]; representation?: "utf16le-ascii" | "utf16be-ascii" | "other";
+    newlines?: { crlf: number; doubledCrlf: number; bareCr: number; lf: number } };
 };
 
 type FilesByDirectory = Readonly<Record<string, readonly string[]>>;
@@ -66,7 +67,18 @@ export function inspectWindowsNodeFatalOutput(bytes: Buffer, version: string): W
   }
   const text = bytes.toString("utf8");
   const normalized = text.replaceAll("\r\n", "\n");
-  if (normalized.includes("\r")) return refuse("newline");
+  if (normalized.includes("\r")) {
+    // Fixed structural counts distinguish actual double translation from bare/mixed CR. No text is accepted.
+    const newlines = { crlf: 0, doubledCrlf: 0, bareCr: 0, lf: 0 };
+    for (let index = 0; index < bytes.length; index++) {
+      if (bytes[index] === 13) {
+        if (bytes[index + 1] === 13 && bytes[index + 2] === 10) { newlines.doubledCrlf++; index += 2; }
+        else if (bytes[index + 1] === 10) { newlines.crlf++; index++; }
+        else newlines.bareCr++;
+      } else if (bytes[index] === 10) newlines.lf++;
+    }
+    return { output: fixed("unreadable"), refusal: { stage: "newline", newlines } };
+  }
   const headers = normalized.split("\n").filter(line => line.startsWith("# Fatal error in "));
   if (!headers.length) return { output: fixed("no-location") };
   if (headers.length !== 1) return { output: fixed("ambiguous") };
