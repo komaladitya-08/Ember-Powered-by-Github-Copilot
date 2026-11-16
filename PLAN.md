@@ -4889,3 +4889,10 @@ in 16.393/15.970 seconds with the normal OS sandbox, sender guards and unforced 
 `canContinue: true`; its exact-head native matrix above is green while ordinary CI is blocked by the known Windows LPAC child-launch case.
 Command-runtime software blockers, live-provider verification and Windows 10/11 laptop acceptance
 remain separate requirements. No main merge or release is authorised by these candidate proofs.
+
+**Named session review navigation (2026-11-16).** A finished coding session can open its exact retained result with
+**Review changes**, reusing the current review panel and its export/continuation controls. Renderer-only matching
+uses task/project IDs and the result's captured source identity, never a session title or the project's later folder.
+Refresh, replacement, Forget and account/project retirement invalidate stale navigation; Close returns focus to the
+current session action. Portable mapping and actual Chromium journeys cover this navigation without starting work,
+writing source files or changing coding availability.

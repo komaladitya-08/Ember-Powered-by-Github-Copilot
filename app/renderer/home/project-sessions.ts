@@ -1,10 +1,11 @@
 /** The conductor's project board. Names and model results are always plain text. */
 import type { ProjectSession, ProjectSessionsState } from "../../shared/project-sessions";
 import { STATUS_WORDS } from "../../shared/activity";
-import { ipcErrorText } from "./copy";
+import { ipcErrorText, sessionReviewWords } from "./copy";
 import { projectRecoveryDraft } from "../../shared/project-recovery";
+import type { ProjectSessionReviews } from "./session-reviews";
 
-export function mountProjectSessions(): void {
+export function mountProjectSessions(codingReviews?: ProjectSessionReviews): void {
   const root = document.querySelector<HTMLElement>("#project-sessions")!;
   const find = <T extends HTMLElement>(id: string) => root.querySelector<T>(`#project-sessions-${id}`)!;
   const create = find<HTMLFormElement>("create");
@@ -100,7 +101,12 @@ export function mountProjectSessions(): void {
     }
     updateReview();
     // Keep focused session controls in place unless their actual state changes.
-    const signature = JSON.stringify([project?.id, project?.sessions, project?.sequences, pending]);
+    const sessionReviews = project?.sessions.map(session => codingReviews?.forSession(project.id, session) ?? null) ?? [];
+    for (const control of list.querySelectorAll<HTMLButtonElement>("[data-session-review]")) {
+      const index = project?.sessions.findIndex(session => session.id === control.dataset.sessionReview) ?? -1;
+      control.disabled = !connected || pending || !sessionReviews[index] || sessionReviews[index]!.disabled;
+    }
+    const signature = JSON.stringify([project?.id, project?.sessions, project?.sequences, pending, sessionReviews.map(action => action?.key)]);
     if (signature === drawn) return;
     drawn = signature;
     const focused = list.contains(document.activeElement) && document.activeElement instanceof HTMLElement
@@ -170,7 +176,7 @@ export function mountProjectSessions(): void {
       list.append(item);
       return;
     }
-    for (const session of project.sessions) {
+    for (const [index, session] of project.sessions.entries()) {
       const item = document.createElement("li");
       const heading = document.createElement("h4");
       heading.textContent = session.title;
@@ -186,6 +192,28 @@ export function mountProjectSessions(): void {
       const controls = document.createElement("div");
       controls.className = "agent-actions";
       controls.append(button("Task activity", () => document.getElementById("p-tasks")?.click()));
+      const codingReview = sessionReviews[index];
+      if (codingReview) {
+        const words = sessionReviewWords(session.title);
+        const openReview = button(words.button, () => {
+          if (openReview.disabled) return;
+          const currentProject = active(), currentSession = currentProject?.sessions.find(current => current.id === session.id && current.taskId === session.taskId);
+          const currentReview = currentProject && currentSession ? codingReviews?.forSession(currentProject.id, currentSession) : null;
+          if (currentReview?.key !== codingReview.key || currentReview.disabled) return;
+          const resolveOrigin = () => {
+            const selected = active(), live = selected?.sessions.find(current => current.id === session.id && current.taskId === session.taskId);
+            const action = selected?.id === project.id && live ? codingReviews?.forSession(selected.id, live) : null;
+            return action?.key === codingReview.key
+              ? [...list.querySelectorAll<HTMLButtonElement>("[data-session-review]")].find(button => button.dataset.sessionReview === session.id) ?? null : null;
+          };
+          currentReview.open(openReview, resolveOrigin);
+        });
+        openReview.disabled = !connected || pending || codingReview.disabled;
+        openReview.setAttribute("aria-label", words.label);
+        openReview.dataset.sessionControl = `review:${session.id}`;
+        openReview.dataset.sessionReview = session.id;
+        controls.append(openReview);
+      }
       if (ongoing(session)) {
         const stop = button("Stop session", () => {
           const owner = accountEpoch;
@@ -338,6 +366,7 @@ export function mountProjectSessions(): void {
     render();
     void refresh();
   });
+  codingReviews?.onChange(render);
   render();
   void refresh();
 }

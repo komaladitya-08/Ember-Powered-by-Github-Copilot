@@ -1,9 +1,10 @@
 /** Coding folders belong to a selected project. Reviewing or exporting a result never executes a task. */
 import { CODING_REVIEW_PATCH_LIMIT, type CodingResultReview, type CodingResultSummary, type ProjectCodingWorkspaceState } from "../../shared/project-coding";
 import { STATUS_WORDS } from "../../shared/activity";
-import { ipcErrorText } from "./copy";
+import { ipcErrorText, sessionReviewChanged } from "./copy";
+import { codingSessionReview, sameCodingSessionReview, type CodingSessionReviewIdentity, type ProjectSessionReviews } from "./session-reviews";
 
-export function mountProjectCoding(): void {
+export function mountProjectCoding(): ProjectSessionReviews {
   const root = document.getElementById("project-coding")!;
   const legacyWorkspace = document.getElementById("coding-workspace");
   if (legacyWorkspace) legacyWorkspace.hidden = true;
@@ -40,6 +41,12 @@ export function mountProjectCoding(): void {
   let initialEpoch = 0;
   let reviewEpoch = 0;
   let actionEpoch = 0;
+  let pendingSessionRead: { owner: number; project: string; action: number } | null = null;
+  let reviewOrigin: HTMLButtonElement | null = null;
+  let openedSessionIdentity: CodingSessionReviewIdentity | null = null;
+  let resultsCurrent = false;
+  const reviewListeners = new Set<() => void>();
+  let releaseSessionFocus: (() => void) | null = null;
   const forgotten = new Set<string>();
   let drawn = "";
 
@@ -51,7 +58,7 @@ export function mountProjectCoding(): void {
   };
   const counts = (result: CodingResultSummary) => `${result.files} changed ${result.files === 1 ? "file" : "files"} · ${result.conflicts} ${result.conflicts === 1 ? "conflict" : "conflicts"} · Checks: ${result.checks.ran} run, ${result.checks.passed} passed, ${result.checks.failed} failed`;
   const clearContinuation = () => { continueForm.hidden = true; continueRequest.value = ""; continueReview.setAttribute("aria-expanded", "false"); };
-  const clearReview = () => { reviewEpoch++; opened = null; clearContinuation(); review.hidden = true; reviewTitle.textContent = ""; patch.textContent = ""; changes.replaceChildren(); limitations.replaceChildren(); reviewSummary.textContent = ""; reviewSource.textContent = ""; previewMessage.textContent = ""; };
+  const clearReview = () => { releaseSessionFocus?.(); reviewEpoch++; opened = null; reviewOrigin = null; openedSessionIdentity = null; clearContinuation(); review.hidden = true; reviewTitle.textContent = ""; patch.textContent = ""; changes.replaceChildren(); limitations.replaceChildren(); reviewSummary.textContent = ""; reviewSource.textContent = ""; previewMessage.textContent = ""; };
   const current = (owner: number, id: string) => generation === owner && projectId === id;
   const continuationAvailable = () => ready && !!opened && opened.projectId === projectId && workspace?.projectId === projectId && workspace.available && workspace.canContinue !== false && workspace.folder?.valid === true;
   const validContinuationRequest = () => !!continueRequest.value.trim() && continueRequest.value.length <= 2000;
@@ -96,24 +103,29 @@ export function mountProjectCoding(): void {
       if (focused) [...results.querySelectorAll<HTMLButtonElement>("[data-result-control]")].find(button => button.dataset.resultControl === focused)?.focus({ preventScroll: true });
     }
     controls();
+    for (const listener of reviewListeners) listener();
   };
-  const load = async () => {
-    if (!projectId || !ready || pending) return;
+  const load = async (sessionRead?: NonNullable<typeof pendingSessionRead>): Promise<boolean> => {
+    const ownsPending = !!sessionRead && pendingSessionRead === sessionRead && current(sessionRead.owner, sessionRead.project) && actionEpoch === sessionRead.action;
+    if (!projectId || !ready || pending && !ownsPending) return false;
     const id = projectId, owner = generation, ticket = ++readEpoch;
+    resultsCurrent = false; render();
     const replies = await Promise.allSettled([window.ember.projectCodingWorkspaceState(id), window.ember.codingResultsState(id)]);
-    if (!current(owner, id) || ticket !== readEpoch) return;
+    if (!current(owner, id) || ticket !== readEpoch || sessionRead && (!ownsPending || pendingSessionRead !== sessionRead || actionEpoch !== sessionRead.action)) return false;
     if (replies[0].status === "fulfilled" && replies[0].value.projectId === id) workspace = replies[0].value;
     if (replies[1].status === "fulfilled") {
+      resultsCurrent = true;
       summaries = replies[1].value.filter(result => result.projectId === id && !forgotten.has(result.id));
-      if (opened && !summaries.some(result => result.id === opened!.id)) clearReview();
+      if (opened && (!summaries.some(result => result.id === opened!.id) || openedSessionIdentity && !sessionIdentityCurrent(openedSessionIdentity))) clearReview();
     }
     if (replies.some(reply => reply.status === "rejected")) status.textContent = "Couldn't refresh coding work. Reopen Projects to try again.";
     render();
+    return replies[1].status === "fulfilled";
   };
   const selectProject = (id: string | null) => {
     if (projectId === id) return;
     generation++; readEpoch++; initialEpoch++; actionEpoch++; forgotten.clear();
-    projectId = id; workspace = null; summaries = []; pending = false; drawn = "";
+    projectId = id; workspace = null; summaries = []; resultsCurrent = false; pending = false; drawn = "";
     status.textContent = ""; clearReview(); render();
     void load();
   };
@@ -130,16 +142,41 @@ export function mountProjectCoding(): void {
     } catch (error) { if (current(owner, id) && action === actionEpoch) status.textContent = ipcErrorText(error); }
     finally { if (current(owner, id) && action === actionEpoch) { pending = false; render(); } }
   };
-  const openResult = async (id: string) => {
+  const sessionIdentityCurrent = (identity: CodingSessionReviewIdentity) => {
+    const currentIdentity = codingSessionReview(identity.projectId, { kind: "coding", taskId: identity.taskId, status: "done" }, summaries);
+    return !!currentIdentity && sameCodingSessionReview(identity, currentIdentity) && !forgotten.has(identity.id);
+  };
+  const openResult = async (id: string, session?: { identity: CodingSessionReviewIdentity; origin: HTMLButtonElement; resolveOrigin: () => HTMLButtonElement | null }) => {
     if (!projectId || pending || !ready) return;
+    if (session && (!resultsCurrent || !session.resolveOrigin() || !sessionIdentityCurrent(session.identity))) return;
+    if (session) clearReview();
     const project = projectId, owner = generation, focused = document.activeElement, ticket = ++reviewEpoch, action = ++actionEpoch;
+    const sessionRead = session ? { owner, project, action } : undefined;
+    if (sessionRead) pendingSessionRead = sessionRead;
+    let focusReview = false, focusIntent = !!session && focused === session.origin;
+    const logicalOrigin = (target: EventTarget | null) => target instanceof Node && !!session?.resolveOrigin()?.contains(target);
+    const movedFocus = (event: FocusEvent) => { if (event.target !== document.body && !logicalOrigin(event.target)) focusIntent = false; };
+    const movedPointer = (event: PointerEvent) => { if (!logicalOrigin(event.target)) focusIntent = false; };
+    const releaseFocus = () => {
+      document.removeEventListener("focusin", movedFocus, true); document.removeEventListener("pointerdown", movedPointer, true);
+      if (releaseSessionFocus === releaseFocus) releaseSessionFocus = null;
+    };
+    if (session) { document.addEventListener("focusin", movedFocus, true); document.addEventListener("pointerdown", movedPointer, true); releaseSessionFocus = releaseFocus; }
     status.textContent = "Loading this coding review…";
     readEpoch++; pending = true; render();
     try {
       const result = await window.ember.codingResultReview(id);
       if (!current(owner, project) || action !== actionEpoch || ticket !== reviewEpoch || forgotten.has(id) || result.projectId !== project || result.id !== id) return;
+      // A notification alone does not change a result's identity. Observe the current tuple after the review reply.
+      const fresh = !sessionRead || await load(sessionRead);
+      if (!current(owner, project) || action !== actionEpoch || ticket !== reviewEpoch || forgotten.has(id) || result.projectId !== project || result.id !== id) return;
+      if (session && (!fresh || !session.resolveOrigin() || !sessionIdentityCurrent(session.identity) || !sameCodingSessionReview(session.identity, result))) {
+        clearReview(); status.textContent = sessionReviewChanged(); return;
+      }
       clearContinuation();
       opened = result;
+      reviewOrigin = session?.origin ?? null;
+      openedSessionIdentity = session?.identity ?? null;
       reviewTitle.textContent = result.title;
       reviewSummary.textContent = `${STATUS_WORDS[result.status]} · ${counts(result)}`;
       reviewSource.textContent = `From ${result.sourcePath}`;
@@ -161,13 +198,22 @@ export function mountProjectCoding(): void {
       previewMessage.textContent = result.previewMessage || (result.textPatch ? "Text patch preview. Export a review to keep this result." : "A text patch isn't available for this result. Review the changed paths and limitations.");
       review.hidden = false;
       status.textContent = "Review ready. Export it to keep a copy.";
-      if (document.activeElement === focused && results.contains(focused)) reviewTitle.focus({ preventScroll: true });
+      focusReview = session ? focusIntent : document.activeElement === focused && results.contains(focused);
     } catch (error) { if (current(owner, project) && action === actionEpoch) status.textContent = ipcErrorText(error); }
-    finally { if (current(owner, project) && action === actionEpoch) { pending = false; render(); } }
+    finally {
+      releaseFocus();
+      if (pendingSessionRead === sessionRead) pendingSessionRead = null;
+      if (current(owner, project) && action === actionEpoch) {
+        pending = false; render();
+        if (focusReview && opened?.id === id && !review.hidden) reviewTitle.focus({ preventScroll: session === undefined });
+        if (session && !resultsCurrent) void load();
+      }
+    }
   };
   const forgetResult = async (id: string) => {
     if (!projectId || !ready || forgotten.has(id) || !summaries.some(result => result.id === id)) return;
     const project = projectId, owner = generation, action = ++actionEpoch;
+    releaseSessionFocus?.();
     const focused = document.activeElement instanceof HTMLElement && document.activeElement.dataset.forgetResult === id;
     readEpoch++; forgotten.add(id); summaries = summaries.filter(result => result.id !== id);
     if (opened?.id === id) clearReview();
@@ -182,8 +228,11 @@ export function mountProjectCoding(): void {
   choose.addEventListener("click", () => { if (!choose.disabled) void folderAction("choose"); });
   forget.addEventListener("click", () => { if (!forget.disabled) void folderAction("forget"); });
   closeReview.addEventListener("click", () => {
-    const id = opened?.id; clearReview(); status.textContent = ""; controls();
-    [...results.querySelectorAll<HTMLButtonElement>("[data-result-control]")].find(button => button.dataset.resultControl === id)?.focus({ preventScroll: true });
+    const id = opened?.id, control = reviewOrigin?.dataset.sessionControl;
+    const origin = openedSessionIdentity && sessionIdentityCurrent(openedSessionIdentity)
+      ? [...document.querySelectorAll<HTMLButtonElement>("#project-sessions [data-session-control]")].find(button => button.dataset.sessionControl === control && !button.disabled) : null;
+    clearReview(); status.textContent = ""; controls();
+    (origin ?? [...results.querySelectorAll<HTMLButtonElement>("[data-result-control]")].find(button => button.dataset.resultControl === id))?.focus({ preventScroll: true });
   });
   continueReview.addEventListener("click", () => {
     if (continueReview.disabled || !opened) return;
@@ -234,9 +283,26 @@ export function mountProjectCoding(): void {
   window.ember.onAgentStatus(next => { statusEpoch++; agentState(next.phase); });
   const statusTicket = statusEpoch;
   void window.ember.agentStatus().then(next => { if (statusTicket === statusEpoch) agentState(next?.phase); }).catch(() => undefined);
-  window.ember.onTasks(() => { void load(); });
-  window.ember.onConversation(() => { void load(); });
+  const refreshResults = () => { resultsCurrent = false; render(); void load(); };
+  window.ember.onTasks(refreshResults);
+  window.ember.onConversation(refreshResults);
   const initialTicket = initialEpoch;
   void window.ember.projectSessionsState().then(state => { if (initialTicket === initialEpoch) selectProject(state.selectedProjectId); }).catch(() => undefined);
   render();
+  return {
+    forSession: (project, session) => {
+      if (!ready || project !== projectId) return null;
+      const identity = codingSessionReview(project, session, summaries);
+      if (!identity || forgotten.has(identity.id)) return null;
+      const owner = generation;
+      return {
+        key: JSON.stringify(identity), disabled: pending || !resultsCurrent,
+        open: (origin, resolveOrigin) => {
+          if (!origin.isConnected || !resultsCurrent || !current(owner, project) || !sessionIdentityCurrent(identity)) return;
+          void openResult(identity.id, { identity, origin, resolveOrigin });
+        },
+      };
+    },
+    onChange: listener => { reviewListeners.add(listener); },
+  };
 }

@@ -351,6 +351,11 @@ Ember is two places at once, each for one kind of work.
 
 ## Home: conversation, projects and settings
 
+Completed coding session cards offer a quiet **Review changes** action when their exact task has one retained
+review in the selected project. It reveals the existing coding review heading, with focus returned to the named session
+on Close; navigating elsewhere while it loads keeps that navigation's focus. Missing, ambiguous or forgotten results
+have no action. The session name stays its label even when the worker's review title differs.
+
 Home is an opaque content window in the manner of macOS System Settings: a sidebar of panes with coloured symbol
 tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page that opened on the character picker).
 - **The sidebar.** **Search settings** sits at its top: typing narrows the links to the panes that hold the words
