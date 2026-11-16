@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { selectWindowsNodeApplicationError, selectWindowsNodeEventTrace, windowsNodeEventProcessFailure, WINDOWS_NODE_EVENT_LIMIT } from "../fixtures/windows-node-lpac-events";
+import { selectWindowsNodeApplicationError, selectWindowsNodeEventTrace, windowsNodeEventProcessFailure, windowsNodeEventWindow, WINDOWS_NODE_EVENT_LIMIT, WINDOWS_NODE_EVENT_OBSERVER_MS } from "../fixtures/windows-node-lpac-events";
 
 const expected = { pid: 0x1234, image: "C:\\fresh\\tools\\node.exe", startedAt: Date.parse("2026-11-16T00:00:00Z"), endedAt: Date.parse("2026-11-16T00:00:20Z") };
 const genuine = () => ({ provider: "Application Error", providerGuid: "{a0e9b465-b939-57d7-b27d-95d8e925ff57}", channel: "Application", id: 1000,
@@ -93,7 +93,7 @@ it("distinguishes completion of the direct encoding constructor from completion 
 it.each([
   [{ type: "stage", stage: "private-path", elapsedMs: 0 }],
   [{ type: "stage", stage: "script-start", elapsedMs: -1 }],
-  [{ type: "stage", stage: "script-start", elapsedMs: 8001 }],
+  [{ type: "stage", stage: "script-start", elapsedMs: WINDOWS_NODE_EVENT_OBSERVER_MS + 1 }],
   [{ type: "stage", stage: "script-start", elapsedMs: 0.5 }],
   [{ type: "stage", stage: "script-start", elapsedMs: 0, private: "secret" }],
   [{ type: "stage", stage: "encoding-ready", elapsedMs: 0 }],
@@ -109,4 +109,30 @@ it("caps lines/bytes and requires complete progress before accepting found/absen
   expect(selectWindowsNodeEventTrace(progress() + output([]) + "\n" + output([]) + "\n", expected)).toMatchObject({ reason: "bounds" });
   expect(windowsNodeEventProcessFailure({ code: "ENOBUFS", stdout: " ".repeat(65537) }, expected)).toMatchObject({ reason: "bounds", stage: "process-start" });
   expect(windowsNodeEventProcessFailure({ code: "ETIMEDOUT", stdout: "unparsed raw secret\n" }, expected)).toMatchObject({ reason: "timeout", stage: "process-start" });
+});
+
+it("accepts host-observer stages within the 30s verifier budget and rejects later timings", () => {
+  const line = (elapsedMs: number) => JSON.stringify({ type: "stage", stage: "script-start", elapsedMs }) + "\n";
+  expect(WINDOWS_NODE_EVENT_OBSERVER_MS).toBe(30_000);
+  expect(windowsNodeEventProcessFailure({ code: "ETIMEDOUT", stdout: line(29_999) }, expected)).toMatchObject({ reason: "timeout", elapsedMs: 29_999 });
+  expect(selectWindowsNodeEventTrace(line(30_001), expected, "event-api")).toMatchObject({ reason: "parse", stage: "process-start" });
+});
+
+it("uses a fresh post-query clock so a record published during module loading can match", () => {
+  const identity = { pid: expected.pid, image: expected.image, startedAt: expected.startedAt + 1000 };
+  const beforeLoading = windowsNodeEventWindow(identity, expected.startedAt + 2000)!;
+  const afterQuery = windowsNodeEventWindow(identity, expected.startedAt + 31_000)!;
+  const delayed = output([{ ...genuine(), time: "2026-11-16T00:00:15Z" }]);
+  expect(selectWindowsNodeApplicationError(delayed, beforeLoading)).toEqual({ status: "absent" });
+  expect(selectWindowsNodeApplicationError(delayed, afterQuery).status).toBe("found");
+  expect(afterQuery.endedAt).toBe(expected.startedAt + 31_000); expect(afterQuery.endedAt).toBeLessThanOrEqual(afterQuery.startedAt + 60_000);
+});
+
+it("never issues a future or expired observer window", () => {
+  const identity = { pid: expected.pid, image: expected.image, startedAt: expected.startedAt + 1000 };
+  expect(windowsNodeEventWindow(identity, identity.startedAt - 1)).toBeNull();
+  expect(windowsNodeEventWindow(identity, expected.startedAt + 60_001)).toBeNull();
+  expect(windowsNodeEventWindow({ ...identity, startedAt: NaN }, expected.endedAt)).toBeNull();
+  const atLimit = windowsNodeEventWindow(identity, expected.startedAt + 60_000)!;
+  expect(atLimit.endedAt).toBe(atLimit.startedAt + 60_000);
 });

@@ -1,5 +1,5 @@
 # Test-only Application Error query for one host-selected, stopped Node process. Emits no raw event/XML/message.
-param([uint32]$ExpectedProcessId, [string]$ExpectedImage, [string]$StartUtc, [string]$EndUtc)
+param([uint32]$ExpectedProcessId, [string]$ExpectedImage, [string]$StartUtc)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $WarningPreference = 'SilentlyContinue'
@@ -38,9 +38,9 @@ function Read-SafeXml([string]$Text) {
 }
 try {
   $start = [DateTime]::ParseExact($StartUtc, 'yyyy-MM-ddTHH:mm:ss.fffZ', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal).ToUniversalTime()
-  $end = [DateTime]::ParseExact($EndUtc, 'yyyy-MM-ddTHH:mm:ss.fffZ', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal).ToUniversalTime()
+  $now = [DateTime]::UtcNow
   if ($ExpectedProcessId -eq 0 -or !$ExpectedImage -or $ExpectedImage.Length -gt 4096 -or $ExpectedImage -notmatch '^[A-Za-z]:\\' -or
-      [IO.Path]::GetFileName($ExpectedImage) -ine 'node.exe' -or $end -lt $start -or ($end - $start).TotalSeconds -gt 60) { Emit-Unavailable 'bounds'; exit 0 }
+      [IO.Path]::GetFileName($ExpectedImage) -ine 'node.exe' -or $now -lt $start -or ($now - $start).TotalSeconds -gt 60) { Emit-Unavailable 'bounds'; exit 0 }
   Emit-Stage 'inputs-ready'
   $module = Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Diagnostics\Microsoft.PowerShell.Diagnostics.psd1'
   Import-Module -Name $module -ErrorAction Stop
@@ -61,6 +61,10 @@ try {
   if (!$knownSchema) { Emit-Unavailable 'event-schema'; exit 0 }
   Emit-Stage 'schema-ready'
   try {
+    # Module/provider loading can take time. End the query at the actual current time, never at a future endpoint.
+    $end = [DateTime]::UtcNow
+    if ($end -lt $start) { Emit-Unavailable 'bounds'; exit 0 }
+    if ($end -gt $start.AddSeconds(60)) { $end = $start.AddSeconds(60) }
     $events = @(Microsoft.PowerShell.Diagnostics\Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'Application Error'; Id = 1000; StartTime = $start; EndTime = $end } -MaxEvents 33 -ErrorAction Stop)
   } catch {
     if ($_.FullyQualifiedErrorId -notmatch '^NoMatchingEventsFound,') { Emit-Unavailable 'event-api'; exit 0 }

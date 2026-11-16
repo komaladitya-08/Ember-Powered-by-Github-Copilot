@@ -4,11 +4,13 @@ import path from "node:path";
 import { z } from "zod";
 
 export const WINDOWS_NODE_EVENT_LIMIT = 32;
+/** Trusted-host diagnostics only, matching the existing host-side Authenticode verifier. */
+export const WINDOWS_NODE_EVENT_OBSERVER_MS = 30_000;
 const MAX_BYTES = 64 * 1024;
 const providerGuid = "a0e9b465-b939-57d7-b27d-95d8e925ff57";
 const reason = z.enum(["event-api", "event-schema", "record-limit", "parse", "bounds", "ambiguous"]);
 const stages = ["script-start", "encoding-object-created", "encoding-ready", "inputs-ready", "module-ready", "provider-ready", "schema-ready", "query-ready", "selection-ready", "result-ready"] as const;
-const stageRecord = z.object({ type: z.literal("stage"), stage: z.enum(stages), elapsedMs: z.number().int().min(0).max(8000) }).strict();
+const stageRecord = z.object({ type: z.literal("stage"), stage: z.enum(stages), elapsedMs: z.number().int().min(0).max(WINDOWS_NODE_EVENT_OBSERVER_MS) }).strict();
 type StageRecord = Pick<z.infer<typeof stageRecord>, "stage" | "elapsedMs">;
 type EventResult = { status: "found"; code: string; module: string; offset: string } | { status: "absent" } | { status: "unavailable"; reason: z.infer<typeof reason> | "timeout" };
 export type WindowsNodeEventDiagnostic = EventResult & { stage?: typeof stages[number] | "process-start"; elapsedMs?: number | null; stages?: StageRecord[] };
@@ -27,6 +29,13 @@ function validWindow(expected: EventWindow): boolean {
     !/[:<>"|?*]/.test(expected.image.slice(3)) && !expected.image.split("\\").some(part => part === "." || part === ".." || /[. ]$/.test(part)) &&
     Number.isSafeInteger(expected.startedAt) && Number.isSafeInteger(expected.endedAt) && expected.startedAt > 0 &&
     expected.endedAt >= expected.startedAt && expected.endedAt - expected.startedAt <= 60_000;
+}
+/** Fresh parent-clock endpoint: no future range and no stale identity beyond the fixed recent window. */
+export function windowsNodeEventWindow(identity: WindowsNodeEventIdentity, observedAt: number): EventWindow | null {
+  const startedAt = identity.startedAt - 1000;
+  if (!Number.isSafeInteger(observedAt) || !Number.isSafeInteger(startedAt) || observedAt < identity.startedAt || observedAt - startedAt > 60_000) return null;
+  const expected = { ...identity, startedAt, endedAt: Math.min(observedAt, startedAt + 60_000) };
+  return validWindow(expected) ? expected : null;
 }
 /** Revalidate captured query output before any diagnostic is printed. Unknown or malformed data never becomes text. */
 export function selectWindowsNodeApplicationError(output: unknown, expected: EventWindow): WindowsNodeEventDiagnostic {
@@ -95,16 +104,21 @@ export function windowsNodeEventProcessFailure(error: unknown, expected: EventWi
 
 /** Availability is diagnostic only. Caller obtains identity only after exact root exit plus private job-zero proof. */
 export function observeWindowsNodeApplicationError(identity: WindowsNodeEventIdentity, windows: string, state: string): WindowsNodeEventDiagnostic {
-  const expected = { ...identity, startedAt: identity.startedAt - 1000, endedAt: Date.now() };
-  if (!validWindow(expected) || process.platform !== "win32") return { status: "unavailable", reason: "bounds" };
+  const initial = windowsNodeEventWindow(identity, Date.now());
+  if (!initial || process.platform !== "win32") return { status: "unavailable", reason: "bounds" };
   const system = path.join(windows, "System32"), powershell = path.join(system, "WindowsPowerShell", "v1.0");
+  const currentWindow = () => windowsNodeEventWindow(identity, Date.now());
   try {
     const output = execFileSync(path.join(powershell, "powershell.exe"), ["-NoLogo", "-NoProfile", "-NonInteractive", "-File",
-      path.resolve("test", "fixtures", "windows-node-lpac-events.ps1"), "-ExpectedProcessId", String(expected.pid), "-ExpectedImage", expected.image,
-      "-StartUtc", new Date(expected.startedAt).toISOString(), "-EndUtc", new Date(expected.endedAt).toISOString()], {
+      path.resolve("test", "fixtures", "windows-node-lpac-events.ps1"), "-ExpectedProcessId", String(initial.pid), "-ExpectedImage", initial.image,
+      "-StartUtc", new Date(initial.startedAt).toISOString()], {
       env: { SystemRoot: windows, WINDIR: windows, PATH: system, PSModulePath: path.join(powershell, "Modules"), TEMP: state, TMP: state },
-      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true, timeout: 8000, maxBuffer: MAX_BYTES,
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true, timeout: WINDOWS_NODE_EVENT_OBSERVER_MS, maxBuffer: MAX_BYTES,
     });
-    return selectWindowsNodeEventTrace(output, expected);
-  } catch (error) { return windowsNodeEventProcessFailure(error, expected); }
+    const expected = currentWindow();
+    return expected ? selectWindowsNodeEventTrace(output, expected) : { status: "unavailable", reason: "bounds" };
+  } catch (error) {
+    const expected = currentWindow();
+    return expected ? windowsNodeEventProcessFailure(error, expected) : { status: "unavailable", reason: "bounds" };
+  }
 }
