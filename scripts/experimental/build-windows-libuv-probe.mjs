@@ -29,6 +29,8 @@ const ordinary = value => {
     throw new Error("The fixed build requires ordinary local host toolchain paths.");
   return value;
 };
+/** Typed CMake definitions use forward slashes; native backslashes can be re-parsed as CMake escapes. */
+export const windowsLibuvCmakePath = value => ordinary(value).replaceAll("\\", "/");
 const same = (before, after) => JSON.stringify(before) === JSON.stringify(after);
 /** No ambient compiler flags, toolchain selectors, Python hooks, user props, credentials or SDK variables. */
 export function windowsLibuvBuildEnvironment(base, directories) {
@@ -85,9 +87,9 @@ export async function buildWindowsLibuvProbe({ archivePath, destination, pythonP
     const sourceDirectory = variant === "stock" ? sources.stockDir : sources.offlineDir;
     await validateSourceTree(sourceDirectory, variant);
     const buildDirectory = ordinary(path.join(destination, `build-${variant}`));
-    run(cmake, ["-S", cmakeProject, "-B", buildDirectory, "-G", buildPin.generator, "-A", buildPin.platform, "-T", buildPin.toolset,
-      `-DCMAKE_GENERATOR_INSTANCE=${installation}`, `-DCMAKE_SYSTEM_VERSION=${buildPin.sdk}`, `-DCMAKE_MSVC_RUNTIME_LIBRARY=${buildPin.runtimeLibrary}`,
-      `-DEMBER_PROBE_MODE=${variant}`, `-DEMBER_UV_SOURCE=${sourceDirectory}`, `-DEMBER_PROBE_C=${cProgram}`], 90_000);
+    run(cmake, ["-S", windowsLibuvCmakePath(cmakeProject), "-B", windowsLibuvCmakePath(buildDirectory), "-G", buildPin.generator, "-A", buildPin.platform, "-T", buildPin.toolset,
+      `-DCMAKE_GENERATOR_INSTANCE:PATH=${windowsLibuvCmakePath(installation)}`, `-DCMAKE_SYSTEM_VERSION=${buildPin.sdk}`, `-DCMAKE_MSVC_RUNTIME_LIBRARY=${buildPin.runtimeLibrary}`,
+      `-DEMBER_PROBE_MODE=${variant}`, `-DEMBER_UV_SOURCE:PATH=${windowsLibuvCmakePath(sourceDirectory)}`, `-DEMBER_PROBE_C:FILEPATH=${windowsLibuvCmakePath(cProgram)}`], 90_000);
     const metadataPath = path.join(buildDirectory, "CMakeFiles", buildPin.cmakeVersion, "CMakeCCompiler.cmake");
     const metadata = fs.readFileSync(metadataPath, "utf8");
     if (metadata.length > 64 * 1024) throw new Error("The selected compiler metadata is not bounded.");

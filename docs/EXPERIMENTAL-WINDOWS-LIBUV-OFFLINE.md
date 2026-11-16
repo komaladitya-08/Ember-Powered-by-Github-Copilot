@@ -3,6 +3,12 @@
 This is a separate trusted C program, not Node, a project-code runner or a general offline-runtime boundary.
 Native Windows compilation and results are pending. It does not enable any Windows coding gate.
 
+The first [Server 2022/2025 run](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43804801904)
+at `28ecd028` passed 315 contracts per job (one symlink-privilege case skipped), verified/extracted the exact source
+and selected the pinned toolchain. Both jobs stopped during stock CMake configuration because a native backslash
+path supplied through `-D` was parsed as a CMake escape. Typed PATH/FILEPATH definitions now receive forward slashes
+after the original strict local-path validation. Neither C program was compiled or launched in that run.
+
 The official Node experiment identified `WSAStartup / 10107` on both pinned versions and both Windows Server images,
 with successful ordinary-host controls. See [the bounded native receipts](WINDOWS-NODE-LPAC-PROOF.md).
 The immediate question is whether a few useful local libuv operations can run in the same capability-free LPAC

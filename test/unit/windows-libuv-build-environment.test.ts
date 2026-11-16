@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 // @ts-expect-error -- fixed trusted-host JavaScript build environment
-import { windowsLibuvBuildEnvironment } from "../../scripts/experimental/build-windows-libuv-probe.mjs";
+import { windowsLibuvBuildEnvironment, windowsLibuvCmakePath } from "../../scripts/experimental/build-windows-libuv-probe.mjs";
 
 const directories = { temporary: "D:\\fresh\\temporary", profile: "D:\\fresh\\profile", local: "D:\\fresh\\profile\\Local", roaming: "D:\\fresh\\profile\\Roaming" };
 it("keeps only explicit host metadata and fresh build locations, excluding every ambient compiler selector or secret", () => {
@@ -15,4 +15,10 @@ it("keeps only explicit host metadata and fresh build locations, excluding every
 it("refuses conflicting Windows environment aliases and nonlocal build profiles", () => {
   expect(() => windowsLibuvBuildEnvironment({ SystemRoot: "C:\\Windows", SYSTEMROOT: "D:\\other" }, directories)).toThrow();
   expect(() => windowsLibuvBuildEnvironment({ SystemRoot: "C:\\Windows" }, { ...directories, profile: "\\\\server\\share" })).toThrow();
+});
+it("passes the observed backslash-a checkout spelling safely to typed CMake path definitions", () => {
+  expect(windowsLibuvCmakePath("D:\\a\\Ember Project\\test\\fixtures\\probe.c")).toBe("D:/a/Ember Project/test/fixtures/probe.c");
+  for (const value of ["\\\\server\\share\\probe.c", "D:\\a\\..\\probe.c", "D:\\a\\probe;other.c", "D:\\a\\probe\n.c"]) {
+    expect(() => windowsLibuvCmakePath(value)).toThrow("ordinary local host toolchain paths");
+  }
 });
