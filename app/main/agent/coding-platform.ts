@@ -60,14 +60,20 @@ export interface CodingWorkspaceReview {
   /** Host-only producer capability for stores which prohibit adopting arbitrary directory paths. Never IPC. */
   artifact?: CodingArtifactRef;
 }
-/** Each backend must supply its real stopped-writer proof before files, results or another command are admitted. */
-export interface CodingCommandWorkspace extends IsolatedCodingCommandPort, ScopedCodingWorkspace {
-  readonly nodeAvailable: boolean;
+/** A copied-file lifecycle has no command authority. The seal is called only after awaited controller/file closure. */
+export interface CodingReviewWorkspace extends ScopedCodingWorkspace {
+  readonly executionRoot: string;
+  stop(): Promise<void>;
   exportReview(exportBase: string): Promise<CodingWorkspaceReview>;
   close(): Promise<void>;
+  sealForReview?(): Promise<void>;
+}
+/** Each command backend must additionally supply its real stopped-writer proof. */
+export interface CodingCommandWorkspace extends IsolatedCodingCommandPort, CodingReviewWorkspace {
+  readonly nodeAvailable: boolean;
 }
 /** Optional host-selected adapter; absence preserves the existing Linux implementation and facts. */
 export interface CodingPlatformAdapter {
   facts(workspace: CodingCommandWorkspace, hostFacts: RunnerFacts): RunnerFacts;
-  files(workspace: CodingCommandWorkspace, signal: AbortSignal): Promise<CodingFileBroker>;
+  files(workspace: CodingReviewWorkspace, signal: AbortSignal): Promise<CodingFileBroker>;
 }

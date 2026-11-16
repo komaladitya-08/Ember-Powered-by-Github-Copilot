@@ -5,7 +5,7 @@ import type { CommandService, RunnerFacts, ShellId } from "../commands/types";
 import { runCommandTool, type CommandFlowContext, type CommandConsentSource, type CommandTargetGuard } from "../commands/flow";
 import { CustomCodingController, CodingControllerCleanupError, type CodingControllerResult, type CustomCodingControllerOptions } from "./custom-coding-controller";
 import { ScopedCodingFiles } from "./scoped-coding-files";
-import type { CodingCommandWorkspace, CodingWorkspaceReview, CodingPlatformAdapter, CodingFileBroker } from "./coding-platform";
+import type { CodingCommandWorkspace, CodingReviewWorkspace, CodingWorkspaceReview, CodingPlatformAdapter, CodingFileBroker } from "./coding-platform";
 import { IsolatedCodingCommandRunner } from "./isolated-coding-command-runner";
 import type { PrivateControllerRuntimeInput } from "./private-controller-runtime";
 import type { TaskSpec, WorkerResult } from "./worker";
@@ -17,8 +17,6 @@ interface ScopedCodingWorkerBaseOptions {
   runtime: PrivateControllerRuntimeInput;
   model?: string | null;
   provider?: ProviderConfig;
-  /** Host-selected source, private paths and owner binding. No model-supplied path reaches this factory. */
-  createWorkspace(signal: AbortSignal, admit: () => boolean): Promise<CodingCommandWorkspace>;
   current(): boolean;
   reviewBase: string;
   /** The registry owns a separate captured account/project capability, including rejection and artifact cleanup. */
@@ -31,6 +29,8 @@ interface ScopedCodingWorkerBaseOptions {
 }
 export interface ScopedCodingWorkerOptions extends ScopedCodingWorkerBaseOptions {
   mode?: "commands";
+  /** Host-selected source, private paths and owner binding. No model-supplied path reaches this factory. */
+  createWorkspace(signal: AbortSignal, admit: () => boolean): Promise<CodingCommandWorkspace>;
   /** Host-selected platform implementation; omission keeps the existing Linux backend/file facts. */
   platform?: CodingPlatformAdapter;
   commandService: CommandService;
@@ -39,6 +39,7 @@ export interface ScopedCodingWorkerOptions extends ScopedCodingWorkerBaseOptions
 }
 export interface FileOnlyScopedCodingWorkerOptions extends ScopedCodingWorkerBaseOptions {
   mode: "files-only";
+  createWorkspace(signal: AbortSignal, admit: () => boolean): Promise<CodingReviewWorkspace>;
   platform: Pick<CodingPlatformAdapter, "files">;
   commandService?: never;
   commandContext?: never;
@@ -60,7 +61,7 @@ function isolatedService(source: CommandService, runner: IsolatedCodingCommandRu
 
 export class ScopedCodingWorker {
   private readonly lifetime = new AbortController();
-  private workspace: CodingCommandWorkspace | null = null;
+  private workspace: CodingReviewWorkspace | null = null;
   private controller: CustomCodingController | null = null;
   private runner: IsolatedCodingCommandRunner | null = null;
   private files: CodingFileBroker | null = null;
@@ -133,12 +134,15 @@ export class ScopedCodingWorker {
       if (this.o.mode === "files-only" && (this.o.commandService !== undefined || this.o.commandContext !== undefined || typeof this.o.platform?.files !== "function")) throw new Error("The coding capability is invalid.");
       // Capture execution authority before startup can wait. A later caller mutation cannot upgrade this task.
       const commands = this.o.mode === "files-only" ? null : { service: this.o.commandService, context: this.o.commandContext,
-        facts: this.o.platform?.facts.bind(this.o.platform) };
+        facts: this.o.platform?.facts.bind(this.o.platform), createWorkspace: this.o.createWorkspace.bind(this.o) };
       const files = this.o.platform?.files.bind(this.o.platform);
+      const createWorkspace = this.o.createWorkspace.bind(this.o);
       this.watch = setInterval(() => { if (!this.current() && !this.lifetime.signal.aborted) this.invalidate(); }, 100);
       this.watch.unref?.();
       await this.o.beforeStart(); this.requireCurrent();
-      this.workspace = await this.o.createWorkspace(this.lifetime.signal, this.current);
+      let commandWorkspace: CodingCommandWorkspace | null = null;
+      this.workspace = commands === null ? await createWorkspace(this.lifetime.signal, this.current)
+        : commandWorkspace = await commands.createWorkspace(this.lifetime.signal, this.current);
       if (!this.current()) { this.stop(); this.requireCurrent(); }
       const controller = { runtime: this.o.runtime, ...(this.o.model ? { model: this.o.model } : {}),
         ...(this.o.provider ? { provider: this.o.provider } : {}),
@@ -153,12 +157,13 @@ export class ScopedCodingWorker {
       };
       if (commands === null) this.controller = await CustomCodingController.start({ ...controller, mode: "files-only" });
       else {
+        if (!commandWorkspace) throw new Error("The coding command workspace is unavailable.");
         const original = commands.service;
         if (original.binding.id !== "local" || original.binding.kind !== "local") throw new Error("Coding requires the local command service.");
         const hostFacts = await original.runner.facts(); this.requireCurrent();
-        const facts: RunnerFacts = commands.facts?.(this.workspace, hostFacts) ?? { ...hostFacts, os: "linux", home: "/state", shells: ["bash"], shellPaths: { bash: "/usr/bin/bash" }, script: null, pty: false, extraPath: [] };
+        const facts: RunnerFacts = commands.facts?.(commandWorkspace, hostFacts) ?? { ...hostFacts, os: "linux", home: "/state", shells: ["bash"], shellPaths: { bash: "/usr/bin/bash" }, script: null, pty: false, extraPath: [] };
         if (!facts.shells.length || facts.shells.some(shell => !["bash", "sh", "zsh", "powershell"].includes(shell))) throw new Error("The coding platform has no supported command shell.");
-        this.runner = new IsolatedCodingCommandRunner({ workspace: this.workspace, facts, signal: this.lifetime.signal,
+        this.runner = new IsolatedCodingCommandRunner({ workspace: commandWorkspace, facts, signal: this.lifetime.signal,
           current: this.current, inspect: (paths, cwd) => this.files ? this.files.inspect(paths, cwd) : Promise.resolve(paths.map(() => ({ exists: null, real: null }))) });
         const service = isolatedService(original, this.runner, facts.shells), context = commands.context(service, this.lifetime.signal);
         context.state.cwd = this.workspace.executionRoot;
@@ -199,8 +204,10 @@ export class ScopedCodingWorker {
       try { await this.files?.close(); } catch { this.cleanupFailed = true; stopped = false; }
       try { await this.runner?.stopAll("quit"); await this.workspace?.stop(); await Promise.all(this.stopProofs); }
       catch { this.cleanupFailed = true; stopped = false; }
-      if (this.workspace && stopped) {
+      if (this.workspace && stopped && !this.cleanupFailed) {
         try {
+          // This host-only seal cannot be inferred from a model result, idle event or Stop request.
+          await this.workspace.sealForReview?.();
           const output = await this.workspace.exportReview(this.o.reviewBase);
           const exits = this.runner?.exitsAfter(0).filter(item => item.exit.ended === "exit" && typeof item.exit.code === "number" && !item.exit.outputCut && !item.exit.endLost) ?? [];
           const checks = { ran: exits.length, passed: exits.filter(item => item.exit.code === 0).length, failed: exits.filter(item => item.exit.code !== 0).length };
