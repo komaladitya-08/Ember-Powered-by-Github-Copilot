@@ -1,6 +1,6 @@
 /** CommandRunner bridge: the existing command flow owns policy; this bridge owns an isolated run's observations. */
 import { createHash } from "node:crypto";
-import type { CommandRunner, GitFacts, PathFact, RunnerFacts, RunningCommand, RunExit, RunSpec } from "../commands/types";
+import type { CommandRunner, GitFacts, PathFact, RunnerFacts, RunningCommand, RunExit, RunSpec, ShellId } from "../commands/types";
 
 export interface ObservedCodingCommand {
   observed: true;
@@ -13,7 +13,8 @@ export interface ObservedCodingCommand {
 
 export interface IsolatedCodingCommandPort {
   readonly executionRoot: string;
-  run(command: string, cwd: string, output: (bytes: Uint8Array, stream: "stdout" | "stderr") => void, signal: AbortSignal): Promise<ObservedCodingCommand>;
+  /** The backend must execute this exact policy-selected grammar or refuse before admitting work. */
+  run(command: string, cwd: string, output: (bytes: Uint8Array, stream: "stdout" | "stderr") => void, signal: AbortSignal, shell: ShellId): Promise<ObservedCodingCommand>;
   /** Revokes queued work and resolves only after the backend's real stopped-writer check. */
   stop(): Promise<void>;
 }
@@ -131,7 +132,7 @@ export class IsolatedCodingCommandRunner implements CommandRunner {
           buffered += chunk.byteLength;
           chunks.push(chunk);
           for (const listener of listeners) listener(Uint8Array.from(chunk));
-        }, local.signal);
+        }, local.signal, spec.shell);
         if (result.observed !== true) throw new Error("Unverified command shutdown");
         if (result.timedOut) why ??= "timeout";
         if (result.outputLimited) { cut = true; why ??= "output"; }

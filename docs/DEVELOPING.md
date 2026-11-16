@@ -129,6 +129,11 @@ The Host also supplies the selected mode as trusted conductor metadata: a file-o
 private-copy edits/review and unavailable commands/tests, while omitted or command mode preserves the existing
 description. No model tool argument selects or upgrades that mode.
 
+The isolated command port receives the exact shell captured in the policy-stamped request alongside its command
+bytes and working directory. Each backend must execute that grammar or reject it before admitting work. The Linux
+workspace advertises and accepts only Bash; a missing or different shell cannot fall back to Bash. This contract
+does not enable Windows command execution, which remains unavailable in the file-only backend.
+
 `npm test -- test/unit/scoped-coding-host.test.ts --maxWorkers=1` checks both Host paths and their captured request
 authority. `npm run test:integration -- test/integration/scoped-coding-host-file-only.test.ts` exercises the real
 conductor and custom SDK file controller on disposable Linux fixtures without a local command service; it does not
