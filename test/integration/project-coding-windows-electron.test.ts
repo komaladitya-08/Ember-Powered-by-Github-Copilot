@@ -103,9 +103,13 @@ it.skipIf(!available && !required)("edits copied Windows projects through real E
     expect(await home.evaluate(() => window.ember.getStatus().then(status => status.settings.commands.local?.on))).toBe(false);
     const local = (await home.evaluate(() => window.emberTargets!.list())).find(target => target.id === "local");
     expect(local).toBeDefined(); expect(local!.can).not.toMatch(/\b(?:and commands|commands only)\b/i);
-    const sandboxed = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().filter(window => window.webContents.getURL().includes("/renderer/home/index.html"))
-      .every(window => { const prefs = window.webContents.getWebPreferences(); return prefs.sandbox === true && prefs.contextIsolation === true && prefs.nodeIntegration === false; }));
-    expect(sandboxed).toBe(true);
+    // Windows reports OS sandbox state in real app metrics; bind it to Home's actual renderer PID.
+    await expect.poll(() => app!.evaluate(({ BrowserWindow, app: electronApp }) => {
+      const homes = BrowserWindow.getAllWindows().filter(window => window.webContents.getURL().includes("/renderer/home/index.html"));
+      const metrics = electronApp.getAppMetrics();
+      return homes.length > 0 && homes.every(window => metrics.find(metric => metric.pid === window.webContents.getOSProcessId())?.sandboxed === true);
+    }), { timeout: 15_000 }).toBe(true);
+    expect(await home.evaluate(() => ({ process: typeof process, require: typeof require }))).toEqual({ process: "undefined", require: "undefined" });
     await home.locator('a[href="#project-h"]').click();
     expect(await home.locator("#coding-workspace").isHidden()).toBe(true);
     await home.locator("#project-sessions-name").fill("Native Windows copied edits");
