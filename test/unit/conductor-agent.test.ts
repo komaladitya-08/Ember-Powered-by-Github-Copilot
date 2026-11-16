@@ -35,6 +35,26 @@ describe("start_task's goal (review #149)", () => {
 });
 
 describe("conductor project coordination", () => {
+  it("accepts bounded coding session names only as project metadata and preserves unnamed callback arguments", async () => {
+    const settings = new SettingsStore(path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-coding-session-tools-")), "settings.json"));
+    settings.load();
+    const calls: unknown[][] = [];
+    const coding = (...args: unknown[]) => { calls.push(args); return "Started"; };
+    const projects = { create: () => "created", select: () => "selected", list: () => "projects" };
+    const tools = conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, undefined, undefined, coding, undefined, projects);
+    const start = tools.find(tool => tool.name === "start_coding")!;
+    const call = (raw: unknown) => start.handler!(raw, { sessionId: "test", toolCallId: "coding", toolName: "start_coding", arguments: raw });
+    expect(await call({ goal: "Inspect parser", sessionName: "  Implementation  " })).toBe("Started");
+    expect(await call({ goal: "Review parser" })).toBe("Started");
+    expect(await call({ goal: "Test parser", sessionName: "x".repeat(80) })).toBe("Started");
+    for (const sessionName of ["", "   ", "x".repeat(81), "Injected\nlabel", "Hidden\u200blabel"]) {
+      expect(await call({ goal: "Inspect parser", sessionName })).toMatch(/^Invalid arguments for start_coding/);
+    }
+    expect(calls).toEqual([["Inspect parser", "Implementation"], ["Review parser"], ["Test parser", "x".repeat(80)]]);
+    const withoutProjects = conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, undefined, undefined, coding).find(tool => tool.name === "start_coding")!;
+    expect(Object.keys((withoutProjects.parameters as { shape: object }).shape)).toEqual(["goal"]);
+  });
+
   it("offers metadata tools only when wired and keeps task/session naming separate from permissions", async () => {
     const settings = new SettingsStore(path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-project-tools-")), "settings.json"));
     settings.load();

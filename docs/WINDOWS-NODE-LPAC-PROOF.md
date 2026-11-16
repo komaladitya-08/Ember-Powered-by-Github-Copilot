@@ -29,6 +29,29 @@ At probe commit `4242fae1ac9e3cfa9908a1a069a5e0a60d8620d4`, [run 43794602957](ht
 
 Setup failures now carry a branded, frozen receipt from a closed stage list. A genuine native FALSE result may add only its allowlisted operation and immediately captured unsigned Win32 error; a nonzero `NtQueryObject` status uses that returned unsigned NTSTATUS. Predicate failures carry only their stage and never sample stale `GetLastError`. The integration emits one such receipt per mode run before propagating the failure. Cleanup uncertainty still takes priority and retains the existing fences; there is no access-right or deadline change.
 
+At `55429f71`, [Node 22 / Server 2022](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43795576062/job/133063526206)
+passed all 196 contracts and reported `writer-rights / NtQueryObject / 0xc0000004` (`STATUS_INFO_LENGTH_MISMATCH`).
+The helper supplied a 64-byte buffer for the fixed `ObjectBasicInformation` class. Microsoft's documented
+[`PUBLIC_OBJECT_BASIC_INFORMATION`](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntqueryobject)
+contains four 32-bit fields and ten reserved 32-bit fields: 56 bytes. The helper now supplies and requires that exact
+size. Contract bindings reproduce the size mismatch and refuse short or oversized successful receipts. Rights masks,
+token, ACLs and deadlines are unchanged; native confirmation of the repair and two-handle startup remains pending.
+
+The first Node 22 / Server 2022 job at `47cc11cb` ([run 43795955193](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43795955193/job/133064705549))
+passed 198 contracts and advanced from the failed native status to the `writer-rights` predicate. It still created
+no I/O host process. For a successful rights query only, setup may now report a fixed failure detail and one unsigned
+numeric value: returned structure bytes, missing required access, or unexpected granted access. These values contain
+no handle, path or process identity. No stale Win32 error is sampled, and the original refusal still propagates.
+
+At `1adaab9a`, [run 43796488488](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43796488488)
+passed all 200 contracts on each of the four combinations. All four successful writer-rights queries returned
+`0x100082` before any two-handle host was created. That is the requested `FILE_WRITE_DATA` plus `FILE_READ_ATTRIBUTES`
+and `SYNCHRONIZE`. Microsoft defines [attribute reading separately from file-data reading](https://learn.microsoft.com/en-us/windows/win32/fileio/file-access-rights-constants).
+The diagnostic now permits that exact additional metadata/wait subset while still requiring payload-write access;
+it refuses payload-read, delete, append, execute, attribute-write and security-descriptor modification rights.
+`CreateFileW` still requests only `0x2`; no ACL, inherited-handle list, token or deadline changes. Native validation
+of this predicate repair and the subsequent host/LPAC launches remains pending.
+
 No result or copied content is read by the host until the real root handle has exited and both private job counters are zero. Unverified shutdown retains its scratch and pins. No ACL, AppContainer, network, PowerShell, CLR or registry compatibility fallback is permitted. PowerShell runs only as a trusted host-side signature or event observer, outside the LPAC job; Node is the executable under test inside that job.
 
 The dedicated workflow is `experimental-windows-node-lpac.yml`; it explicitly sets `EMBER_LPAC_NODE_PROOF=1` and the exact asset/version inputs, so its configured Windows jobs must execute or fail. Unconfigured general integration runs skip this separate diagnostic.

@@ -11,7 +11,7 @@ function setup(initialFault = "") {
   const readBuffers: Buffer[] = [];
   let exclusiveHandle: bigint | undefined;
   const addresses = new Map<Buffer, bigint>();
-  const control = { fault: initialFault, output: Buffer.alloc(0), metadata: "", mutateOnRead: false, lastError: 122 as unknown, cleanupLastError: undefined as unknown, failCleanup: false };
+  const control = { fault: initialFault, output: Buffer.alloc(0), metadata: "", mutateOnRead: false, lastError: 122 as unknown, cleanupLastError: undefined as unknown, failCleanup: false, writerAccess: 2 };
   const fence = { retained: [] as unknown[], failure: undefined as Error | undefined };
   const address = (buffer: Buffer) => { let pointer = addresses.get(buffer); if (!pointer) { pointer = BigInt(0x10000 + addresses.size * 0x10000); addresses.set(buffer, pointer); } return pointer; };
   const native = { sizeof: () => 8, address } as unknown as Parameters<typeof bindWindowsNodeIo>[0];
@@ -70,13 +70,15 @@ function setup(initialFault = "") {
         if (fault === "rights status" && args[1] === 0) return -1073741790;
         const buffer = args[2] as Buffer;
         if (args[1] === 0) {
-          let access = args[0] === exclusiveHandle ? 0x81 : args[0] === 10n ? 2 : args[0] === 11n ? 0x81 : 0x120089;
+          // The native ABI requires the exact PUBLIC_OBJECT_BASIC_INFORMATION size.
+          if (buffer.length !== 56 || args[3] !== 56) return -1073741820; // STATUS_INFO_LENGTH_MISMATCH
+          let access = args[0] === exclusiveHandle ? 0x81 : args[0] === 10n ? control.writerAccess : args[0] === 11n ? 0x81 : 0x120089;
           if (fault === "exclusive writable" && args[0] === exclusiveHandle) access |= 2;
           if (fault === "readable writer" && args[0] === 10n) access |= 1;
           if (fault === "writable pin" && args[0] === 11n) access |= 2;
           if (fault === "deletable writer" && args[0] === 10n) access |= 0x10000;
           if (fault === "executable writer" && args[0] === 10n) access |= 0x20;
-          buffer.writeUInt32LE(access, 4); (args[4] as number[])[0] = 56; return 0;
+          buffer.writeUInt32LE(access, 4); (args[4] as number[])[0] = fault === "short basic information" ? 8 : fault === "oversized basic information" ? 64 : 56; return 0;
         }
         const name = Buffer.from(fault === "wrong NUL name" ? "\\Device\\Other" : "\\Device\\Null", "utf16le");
         buffer.writeUInt16LE(name.length, 0); buffer.writeUInt16LE(name.length, 2);
@@ -153,7 +155,7 @@ it.each([
 
 it.each([
   ["wrong ID", "output-identity"], ["wrong NUL name", "null-name"], ["nonEOF stdin", "null-eof"],
-  ["inheritable pin", "pin-inheritance"], ["readable writer", "writer-rights"], ["disk stdin", "null-type"],
+  ["inheritable pin", "pin-inheritance"], ["disk stdin", "null-type"],
 ])("reports only a stage for a failed predicate without sampling stale LastError: %s", (fault, stage) => {
   const s = setup(fault); s.control.lastError = 0xdeadbeef;
   let error: unknown; try { s.bind(); } catch (caught) { error = caught; }
@@ -166,6 +168,54 @@ it("uses the actual unsigned NTSTATUS rather than Win32 LastError for a failed o
   let error: unknown; try { s.bind(); } catch (caught) { error = caught; }
   expect(windowsNodeIoSetupReceipt(error)).toEqual({ stage: "writer-rights", operation: "NtQueryObject", code: 0xc0000022 });
   expect(s.calls.some(call => call.name === "GetLastError")).toBe(false);
+});
+
+it.each(["short basic information", "oversized basic information"])("rejects a successful rights query with a mismatched ABI receipt: %s", fault => {
+  const s = setup(fault);
+  let error: unknown; try { s.bind(); } catch (caught) { error = caught; }
+  expect(windowsNodeIoSetupReceipt(error)).toEqual({ stage: "writer-rights", operation: "NtQueryObject", detail: "returned-size", value: fault === "short basic information" ? 8 : 64 });
+  expect(s.calls.some(call => call.name === "GetLastError")).toBe(false);
+  expect(closedHandles(s.calls)).toEqual([10n, 12n, 11n]);
+});
+
+it.each([["readable writer", 3], ["deletable writer", 0x10002], ["executable writer", 0x22]])("reports only the granted numeric access for a successful rights query refusing %s", (fault, access) => {
+  const s = setup(fault as string); s.control.lastError = "stale private exception";
+  let error: unknown; try { s.bind(); } catch (caught) { error = caught; }
+  const receipt = windowsNodeIoSetupReceipt(error);
+  expect(receipt).toEqual({ stage: "writer-rights", operation: "NtQueryObject", detail: "unexpected-rights", value: access });
+  expect(Object.isFrozen(receipt)).toBe(true);
+  expect(s.calls.some(call => call.name === "GetLastError")).toBe(false);
+  expect(JSON.stringify(receipt)).not.toMatch(/stale|private|C:|S-1-|handle|credential/);
+});
+
+it.each([2, 0x82, 0x100002, 0x100082])("permits payload-write plus only observed metadata/wait additions: %s", access => {
+  const s = setup(); s.control.writerAccess = access;
+  const owner = s.bind();
+  owner.createHost(program, command, cwd, env); owner.acceptHostControl(); owner.createLpac(profile, program, command, cwd, env);
+  expect(owner.readAfterStopped(() => {})).toEqual(Buffer.alloc(0)); owner.close();
+  const file = s.calls.find(call => call.name === "CreateFileW")!;
+  expect(file.args[1]).toBe(2); // The request remains payload-write only; the observed grant is verified separately.
+  expect(closedHandles(s.calls)).toEqual([10n, 12n, 11n, 13n]);
+});
+
+it.each([
+  ["payload read", 0x1], ["append", 0x4], ["extended attributes read", 0x8], ["extended attributes write", 0x10],
+  ["execute", 0x20], ["delete child", 0x40], ["attributes write", 0x100], ["delete", 0x10000],
+  ["security descriptor read", 0x20000], ["DACL write", 0x40000], ["owner write", 0x80000],
+  ["system security", 0x1000000], ["maximum allowed", 0x2000000],
+])("rejects %s even alongside the real native writer grant", (_name, extra) => {
+  const s = setup(); s.control.writerAccess = 0x100082 | (extra as number);
+  let error: unknown; try { s.bind(); } catch (caught) { error = caught; }
+  expect(windowsNodeIoSetupReceipt(error)).toEqual({ stage: "writer-rights", operation: "NtQueryObject", detail: "unexpected-rights", value: s.control.writerAccess });
+  expect(s.calls.some(call => call.name === "CreateProcessW" || call.name === "GetLastError")).toBe(false);
+  expect(closedHandles(s.calls)).toEqual([10n, 12n, 11n]);
+});
+
+it("requires actual payload-write access even when native metadata and wait rights are present", () => {
+  const s = setup(); s.control.writerAccess = 0x100080;
+  let error: unknown; try { s.bind(); } catch (caught) { error = caught; }
+  expect(windowsNodeIoSetupReceipt(error)).toEqual({ stage: "writer-rights", operation: "NtQueryObject", detail: "missing-required-rights", value: 0x100080 });
+  expect(s.calls.some(call => call.name === "CreateProcessW")).toBe(false);
 });
 
 it.each([NaN, -1, 0x100000000, "private native error", undefined])("discards a malformed native error value: %s", value => {
