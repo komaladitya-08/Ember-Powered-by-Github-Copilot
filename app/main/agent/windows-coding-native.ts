@@ -320,7 +320,7 @@ export function bindWindowsCodingNative(native: Pick<typeof Koffi, "sizeof" | "a
     if (selected.kind !== "directory" || (mode === "copy" && selected.capability !== "copy")) fail("boundary");
     const mutable = mode === "copy";
     const access = mutable ? (kind === "directory" ? COPY_DIRECTORY : READ | DELETE) : kind === "directory" ? DIRECTORY_READ : READ;
-    return openRaw(parent, name, kind, access, kind === "directory" ? (mutable ? 7 : 3) : 1, false, null, mutable ? "copy" : "read", mutable ? selected.root : undefined);
+    return openRaw(parent, name, kind, access, kind === "directory" ? (mutable ? 7 : 3) : (mutable ? 5 : 1), false, null, mutable ? "copy" : "read", mutable ? selected.root : undefined);
   };
   /** Observed by-ID disposition returned INVALID_PARAMETER; reopen only the recorded component under its live parent. */
   const openNamedDirectoryDeletion = (original: bigint): bigint => {

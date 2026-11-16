@@ -153,6 +153,34 @@ describe.skipIf(process.platform !== "win32")("native Windows private coding-cop
     expect((await broker.readText("README.md")).text).toBe("replacement\n");
   });
 
+  it("requires external readers to share deletion and keeps the exact shared old target readable through replacement", async () => {
+    const workspace = await copy();
+    await workspace.withTree(async tree => {
+      const target = tree.api.create(tree.root, "share-control.ts", "file");
+      try { tree.api.write(target, Buffer.from("old target\n")); tree.api.flush(target); } finally { tree.api.close(target); }
+      const temporary = tree.api.create(tree.root, ".share-control.tmp", "file");
+      let unshared: bigint | undefined, old: bigint | undefined;
+      try {
+        tree.api.write(temporary, Buffer.from("new target\n")); tree.api.flush(temporary);
+        unshared = tree.api.open(tree.root, "share-control.ts", "file", "source");
+        const identity = tree.api.info(unshared);
+        expect(() => tree.api.replace(temporary, tree.root, "share-control.ts", true)).toThrowError(expect.objectContaining({ code: "conflict" }));
+        expect(tree.api.read(unshared, 0, 128).toString()).toBe("old target\n");
+        tree.api.close(unshared); unshared = undefined;
+        old = tree.api.open(tree.root, "share-control.ts", "file", "copy"); expect(tree.api.info(old).id).toBe(identity.id);
+        let writer: number | undefined;
+        try { expect(() => { writer = fs.openSync(path.join(workspace.directory, "share-control.ts"), "r+"); }).toThrow(); }
+        finally { if (writer !== undefined) fs.closeSync(writer); }
+        tree.api.replace(temporary, tree.root, "share-control.ts", true);
+        expect(tree.api.read(old, 0, 128).toString()).toBe("old target\n"); expect(tree.api.read(temporary, 0, 128).toString()).toBe("new target\n");
+      } finally {
+        if (unshared !== undefined) tree.api.close(unshared); if (old !== undefined) tree.api.close(old);
+        tree.api.close(temporary); // The copy owner audits and removes either remaining name during normal cleanup.
+      }
+    });
+    expect(fs.readFileSync(path.join(source, "src", "app.ts"), "utf8")).toBe(ORIGINAL);
+  });
+
   it("refuses real hardlinks, junction escapes and protected-root aliases without reading or writing protected bodies", async () => {
     fs.linkSync(path.join(protectedRoot, "auth.txt"), path.join(source, "linked.ts"));
     await expect(copy()).rejects.toBeInstanceOf(ScopedCodingFileError); fs.unlinkSync(path.join(source, "linked.ts"));

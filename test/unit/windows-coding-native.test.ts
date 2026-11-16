@@ -223,3 +223,14 @@ it("rejects an expired traversal parent before any named reopen or deletion fall
   expect(fake.opened).toHaveLength(opened); expect(fake.byId).toHaveLength(byId); expect(fake.rolledBack).toEqual([]);
   api.close(child); api.close(root); for (const handle of base.handles.slice().reverse()) api.close(handle); expect(fake.live()).toEqual([]);
 });
+
+it("allows delete sharing only for held copy leaves, preserving source and fresh-temp sharing and denying shared writes", async () => {
+  vi.resetModules(); const module = await import("../../app/main/agent/windows-coding-native"), fake = failedCreationNative({});
+  const api = module.bindWindowsCodingNative(fake.native, fake.load), base = api.pin("C:\\", "base"), root = api.create(base.handle, "fresh-copy", "directory");
+  const fresh = api.create(root, "target.ts", "file"); expect(fake.opened.at(-1)).toMatchObject({ access: 0x1f01ff, share: 3, fresh: true }); api.close(fresh);
+  const source = api.open(root, "target.ts", "file", "source"); expect(fake.opened.at(-1)).toMatchObject({ access: 0x120089, share: 1, fresh: false }); api.close(source);
+  const copy = api.open(root, "target.ts", "file", "copy"); expect(fake.opened.at(-1)).toMatchObject({ access: 0x130089, share: 5, fresh: false });
+  expect(fake.opened.at(-1)!.share & 2).toBe(0); expect(() => api.write(copy, Buffer.from("must not write"))).toThrow();
+  api.remove(copy); api.close(copy); api.remove(root); api.close(root); for (const handle of base.handles.slice().reverse()) api.close(handle);
+  expect(fake.live()).toEqual([]);
+});
