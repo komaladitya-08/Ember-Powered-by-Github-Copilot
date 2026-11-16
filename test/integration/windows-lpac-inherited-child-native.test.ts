@@ -140,24 +140,28 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
         ...(preparationFailure ?? { operation: 0, ...inheritedChildNumericFailure(error) }), launchAttempted: false }));
       throw fixedFailure();
     }
-    let unsafe = false, stopped = false, failed = false, child: number | null = null, descendantRemained = false;
+    let unsafe = false, stopped = false, failed = false, child: number | null = null, descendantRemained = false, hostOperation = 0;
     let imagePin: ReturnType<ReturnType<typeof nativeChecks>["pin"]> | undefined;
     let outcome: { mode: "explicit" | "inherited"; rootExit: number; report: number[] | null; failure: number[] | null; jobStopped: true; admitted: boolean; descendantRemained: boolean; profilePaths: boolean } | undefined;
     const previous = processEnvMarker();
     try {
+      hostOperation = 1;
       imagePin = native.pin(fixture.paths.program, 16 * 1024 * 1024);
       const staged = boundedRead(fixture.paths.program, 16 * 1024 * 1024); if (!staged) throw fixedFailure();
       try { if (digest(staged) !== digest(executable)) throw fixedFailure(); imagePin.unchanged(); } finally { staged.fill(0); }
       api.writeNewFile(path.join(fixture.paths.root, "all-app-packages.txt"), Buffer.from("disposable LPAC canary"),
         `D:P(A;;FA;;;${api.ownerSid()})(A;;FA;;;SY)(A;;FR;;;AC)S:(ML;;NW;;;ME)`);
       expect(fs.readFileSync(path.join(fixture.paths.root, "all-app-packages.txt"), "utf8")).toBe("disposable LPAC canary");
+      hostOperation = 2;
       await fixture.launch([String(globalThis.process.pid)]);
       if (!process || !job || !profile) throw fixedFailure();
       if (variant === "inherited") {
         const deadline = performance.now() + 10_000;
         while (child === null) {
+          hostOperation = 3;
           if (api.exited(process.process) || performance.now() >= deadline) throw fixedFailure();
           const exactProcess = process, exactJob = job, exactProfile = profile;
+          hostOperation = 4;
           child = observer.admit({ job: exactJob, rootProcess: exactProcess.process, rootPid: exactProcess.pid, image: fixture.paths.program,
             current: () => { imagePin!.unchanged(); return !api.exited(exactProcess.process); }, verifyToken: value => {
               try { api.verifyToken(exactProfile, value); } catch { unsafe = true; throw fixedFailure(); }
@@ -166,8 +170,10 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
           if (child === null) await new Promise<void>(resolve => setTimeout(resolve, 10));
         }
       }
+      hostOperation = 5;
       await fixture.waitRootExited(15_000);
       if (variant === "inherited") {
+        hostOperation = 6;
         const state = api.jobState(job), members = observer.members(job);
         descendantRemained = state.active === 1 && state.listed === 1 && members.length === 1 && members[0] === child;
         if (!descendantRemained) throw fixedFailure();
@@ -198,7 +204,7 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
     if (!outcome) throw fixedFailure();
     if (failed) {
       console.info("Stopped inherited-child refusal", JSON.stringify({ mode: variant, rootExit: outcome.rootExit, jobStopped: true, stage: outcome.failure?.[0] ?? null,
-        error: outcome.failure?.[1] ?? null, childNtStatus: outcome.failure?.[24] ?? null }));
+        error: outcome.failure?.[1] ?? null, childNtStatus: outcome.failure?.[24] ?? null, hostOperation, observer: observer.observation() }));
       throw fixedFailure();
     }
     return outcome;

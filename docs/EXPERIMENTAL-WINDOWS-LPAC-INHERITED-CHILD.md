@@ -62,3 +62,17 @@ Preparation operation 1 is volume type, 2 ancestor pin, 3 profile creation, 4 ow
 Domain 0 is unknown, 1 is the fixed Node errno ordinal (EACCES, EPERM, ENOENT, EEXIST, ENOTDIR, ELOOP, ETIMEDOUT,
 ENOBUFS), 2 is Win32, 3 HRESULT, 4 compiler C and 5 linker LNK. Original messages, paths, compiler output and identities
 remain private. These setup receipts do not claim cleanup or successful native launch.
+
+On a stopped, cleaned-up inherited-case refusal, the host also reports its fixed operation (1 staged pin/canary,
+2 root launch, 3 root/deadline observation, 4 child admission, 5 root-exit observation, 6 remaining descendant check).
+The observer operation is 1 input contract, 2 initial currency, 3 job-list query, 4 complete header, 5 bounded PID
+decoding, 6 root/child set, 7 child open, 8 exact PID, 9 image query, 10 image comparison, 11 exact private-job
+membership, 12 token witness, 13 final currency, 14 final process set, 15 acknowledgement and 16 handle close.
+Only explicit native FALSE/NULL captures immediate `GetLastError`; malformed ABI/error metadata stays domain 0.
+The snapshot contains no PID, image, token, raw native output or exception text. It adds no admission fallback.
+
+At `5dff8e203462e6f3f65ffcfc461cbc4013142f39`, [run 43819235798](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43819235798)
+passed 82 portable tests and the original explicit-attribute denial control on each Server image. Both inherited
+cases stopped cleanly after a host-side admission refusal, with no C result/failure report. That outcome establishes
+the negative control and cleanup, but supplies no successful inherited-child proof; the operation receipt above
+exists to identify that refusal before changing any admission or creation rule.

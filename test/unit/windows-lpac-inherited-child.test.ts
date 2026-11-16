@@ -41,12 +41,13 @@ type Fault = "query-false" | "query-abi" | "query-throw" | "assigned" | "overflo
   "open-null" | "open-zero" | "open-abi" | "open-invalid" | "open-root" | "open-job" | "open-throw" |
   "pid-mismatch" | "pid-throw" | "image-false" | "image-abi" | "image-empty" | "image-overflow" | "image-mismatch" | "image-throw" |
   "job-false" | "job-abi" | "job-no" | "job-output-abi" | "job-throw" | "close-false" | "close-abi" | "close-throw";
-function setup(selectedFault?: Fault, lists: number[][] = [[ROOT_PID, CHILD_PID]]) {
+function setup(selectedFault?: Fault, lists: number[][] = [[ROOT_PID, CHILD_PID]], lastError: unknown = 5) {
   let fault = selectedFault, queries = 0, current = true;
   const calls: Call[] = [], buffers: Buffer[] = [], events: string[] = [];
   const fence: InheritedChildFence = { retained: [] };
   const invoke = (name: string, args: unknown[]): unknown => {
     calls.push({ name, args }); events.push(name);
+    if (name === "GetLastError") { if (lastError instanceof Error) throw lastError; return lastError; }
     if (name === "QueryInformationJobObject") {
       const bytes = args[2] as Buffer; buffers.push(bytes);
       if (fault === "query-throw") throw new Error("private native query text");
@@ -102,11 +103,32 @@ function setup(selectedFault?: Fault, lists: number[][] = [[ROOT_PID, CHILD_PID]
 function closed(f: ReturnType<typeof setup>): unknown[] { return f.calls.filter(call => call.name === "CloseHandle").map(call => call.args[0]); }
 
 describe("inherited child native admission", () => {
-  it("binds only six fixed kernel32 functions under the x64 ABI", () => {
+  it("binds only seven fixed kernel32 functions under the x64 ABI", () => {
     const f = setup(); expect(f.load).toHaveBeenCalledExactlyOnceWith("kernel32.dll");
-    expect(INHERITED_CHILD_FUNCTIONS).toHaveLength(6);
+    expect(INHERITED_CHILD_FUNCTIONS).toHaveLength(7);
     expect(() => bindInheritedChildObserver({ sizeof: () => 4 }, f.load, { retained: [] })).toThrow();
     expect(() => bindInheritedChildObserver({ sizeof: () => 8 }, () => ({ func: () => 1 }), { retained: [] })).toThrow();
+  });
+  it.each([
+    { fault: "query-false", operation: 3, native: "QueryInformationJobObject" }, { fault: "open-null", operation: 7, native: "OpenProcess" },
+    { fault: "image-false", operation: 9, native: "QueryFullProcessImageNameW" }, { fault: "job-false", operation: 11, native: "IsProcessInJob" },
+    { fault: "close-false", operation: 16, native: "CloseHandle" },
+  ] as const)("captures immediate bounded native failure metadata without exporting text ($fault)", ({ fault, operation, native }) => {
+    const f = setup(fault); expect(() => f.observer.admit(f.input)).toThrow();
+    expect(f.observer.observation()).toEqual({ operation, domain: 2, code: 5 });
+    const errorIndex = f.calls.findIndex(call => call.name === "GetLastError");
+    expect(errorIndex).toBeGreaterThan(0); expect(f.calls[errorIndex - 1].name).toBe(native);
+    expect(f.buffers.every(bytes => bytes.every(value => value === 0)) || f.fence.retained.length === 1).toBe(true);
+  });
+  it("distinguishes an image comparison refusal from a native image-query failure", () => {
+    const f = setup("image-mismatch"); expect(() => f.observer.admit(f.input)).toThrow();
+    expect(f.observer.observation()).toEqual({ operation: 10, domain: 0, code: 0 });
+    expect(f.calls.some(call => call.name === "GetLastError")).toBe(false);
+  });
+  it.each([true, -1, 0x100000000, NaN, new Error("private TLS error text")])("keeps unknown native error metadata unclassified (%#)", value => {
+    const f = setup("query-false", undefined, value); expect(() => f.observer.admit(f.input)).toThrow();
+    expect(f.observer.observation()).toEqual({ operation: 3, domain: 0, code: 0 });
+    expect(f.fence.retained).toEqual([]);
   });
   it("bounds the complete job PID list to eight pointer-width entries and clears native buffers", () => {
     const f = setup(undefined, [[1, 2, 3, 4, 5, 6, 7, 8]]); expect(f.observer.members(JOB)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);

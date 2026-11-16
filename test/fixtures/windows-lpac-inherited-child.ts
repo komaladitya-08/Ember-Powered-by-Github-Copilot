@@ -37,6 +37,7 @@ export class InheritedChildCleanupError extends Error {
 export interface InheritedChildFence { failure?: InheritedChildCleanupError; retained: unknown[] }
 const processFence: InheritedChildFence = { retained: [] };
 export const INHERITED_CHILD_FUNCTIONS = [
+  "uint32_t __stdcall GetLastError()",
   "void * __stdcall OpenProcess(uint32_t access, int inherit, uint32_t pid)",
   "uint32_t __stdcall GetProcessId(void *process)",
   "int __stdcall QueryFullProcessImageNameW(void *process, uint32_t flags, void *image, _Inout_ uint32_t *size)",
@@ -69,15 +70,26 @@ export function bindInheritedChildObserver(koffi: Pick<typeof Koffi, "sizeof">, 
       fn[/\b(\w+)\s*\(/.exec(prototype)![1]] = value as NativeFunction;
     }
   } catch { throw failure(); }
+  let operation = 0, domain = 0, code = 0;
+  const at = (value: number) => { operation = value; domain = 0; code = 0; };
+  const nativeRefusal = () => {
+    // Capture only an explicit native FALSE/NULL's immediate error, before any later close/query changes TLS.
+    try { const value = fn.GetLastError(); if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 0xffffffff) { domain = 2; code = value; } }
+    catch { /* Unknown native/ABI error metadata remains unclassified. */ }
+    return failure();
+  };
   const usable = () => { if (fence.failure) throw fence.failure; };
   const members = (job: WindowsHandle): number[] => {
     usable(); if (!handle(job)) throw failure();
     const bytes = Buffer.alloc(8 + MAX_PIDS * 8);
     try {
+      at(3);
       const ok = fn.QueryInformationJobObject(job, 3, bytes, bytes.length, null);
-      if (!bool(ok) || ok === 0) throw failure();
+      if (!bool(ok)) throw failure(); if (ok === 0) throw nativeRefusal();
+      at(4);
       const assigned = bytes.readUInt32LE(0), listed = bytes.readUInt32LE(4);
       if (assigned !== listed || listed > MAX_PIDS) throw failure();
+      at(5);
       const result: number[] = [];
       for (let index = 0; index < listed; index++) {
         const value = bytes.readBigUInt64LE(8 + index * 8);
@@ -87,37 +99,52 @@ export function bindInheritedChildObserver(koffi: Pick<typeof Koffi, "sizeof">, 
       return result;
     } catch { throw failure(); } finally { bytes.fill(0); }
   };
-  return { members, admit(input: InheritedChildAdmission): number | null {
-    usable();
+  return { members, observation: () => ({ operation, domain, code }), admit(input: InheritedChildAdmission): number | null {
+    usable(); at(1);
     if (!input || !handle(input.job) || !handle(input.rootProcess) || input.rootProcess === input.job || !pid(input.rootPid) || typeof input.image !== "string" || !/^[A-Za-z]:\\/.test(input.image) || /[\p{Cc}\p{Cf}]/u.test(input.image) ||
       typeof input.current !== "function" || typeof input.verifyToken !== "function" || typeof input.grant !== "function") throw failure();
     let process: WindowsHandle | undefined, uncertain = false, failed = false, admitted: number | null = null;
     const buffers: Buffer[] = [];
     try {
+      at(2);
       if (input.current() !== true) throw failure();
       const found = members(input.job);
+      at(6);
       if (!found.includes(input.rootPid) || found.length < 1 || found.length > 2) throw failure();
       if (found.length === 1) return null;
       const child = found.find(value => value !== input.rootPid)!;
       let opened: unknown;
+      at(7);
       try { opened = fn.OpenProcess(0x1000, 0, child); } catch { uncertain = true; throw failure(); }
-      if (opened === null || opened === 0n) throw failure();
+      if (opened === null || opened === 0n) throw nativeRefusal();
       if (!handle(opened) || opened === input.job || opened === input.rootProcess) { uncertain = true; throw failure(); }
       process = opened;
-      if (fn.GetProcessId(process) !== child) throw failure();
+      at(8); const observedPid = fn.GetProcessId(process);
+      if (observedPid !== child) throw observedPid === 0 ? nativeRefusal() : failure();
       const image = Buffer.alloc(65536), length: unknown[] = [32768]; buffers.push(image);
+      at(9);
       const named = fn.QueryFullProcessImageNameW(process, 0, image, length);
-      if (!bool(named) || named === 0 || !pid(length[0]) || length[0] > 32767 || image.toString("utf16le", 0, length[0] * 2).toLowerCase() !== input.image.toLowerCase()) throw failure();
+      if (!bool(named)) throw failure(); if (named === 0) throw nativeRefusal();
+      at(10);
+      if (!pid(length[0]) || length[0] > 32767 || image.toString("utf16le", 0, length[0] * 2).toLowerCase() !== input.image.toLowerCase()) throw failure();
+      at(11);
       const member: unknown[] = [0], contained = fn.IsProcessInJob(process, input.job, member);
-      if (!bool(contained) || contained === 0 || !bool(member[0]) || member[0] === 0) throw failure();
-      if (input.verifyToken(process) !== undefined || input.current() !== true) throw failure();
+      if (!bool(contained)) throw failure(); if (contained === 0) throw nativeRefusal();
+      if (!bool(member[0]) || member[0] === 0) throw failure();
+      at(12); if (input.verifyToken(process) !== undefined) throw failure();
+      at(13); if (input.current() !== true) throw failure();
       const final = members(input.job);
+      at(14);
       if (final.length !== 2 || !final.includes(input.rootPid) || !final.includes(child)) throw failure();
+      at(15);
       if (input.grant(child) !== undefined) throw failure();
       admitted = child;
     } catch (error) { failed = true; if (error instanceof InheritedChildCleanupError) uncertain = true; }
     finally {
-      if (process !== undefined) try { const closed = fn.CloseHandle(process); if (!bool(closed) || closed === 0) uncertain = true; } catch { uncertain = true; }
+      if (process !== undefined) try {
+        const closed = fn.CloseHandle(process);
+        if (!bool(closed) || closed === 0) { at(16); if (closed === 0) nativeRefusal(); uncertain = true; }
+      } catch { at(16); uncertain = true; }
       if (uncertain) {
         fence.failure ??= new InheritedChildCleanupError(); fence.retained.push({ process, buffers, input, fn });
       } else for (const buffer of buffers) buffer.fill(0);
