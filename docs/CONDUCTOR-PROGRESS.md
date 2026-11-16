@@ -74,6 +74,12 @@ remain connection-scoped and are invalidated on account/provider changes, Forget
 folder is never written; exports contain all captured baseline/proposed files, including unchanged files. Consent 14
 describes those data flows and retention. The legacy native-SDK coding gate stays false.
 
+The Linux resource owner captures the original source's native identity before creating its coding copy and carries
+that opaque receipt into the shared result registry. Moving or replacing that source before publication keeps the
+review preview but refuses export, including export into the moved original. An unavailable intake receipt is never
+recaptured from a replacement path. Source capture is drained before store close, and unverified storage cleanup
+keeps coding unavailable after an ordinary Forget retry.
+
 The conductor can give coding sessions the same bounded display names as desktop sessions. A name changes only the
 project board label; the task goal, original permission words, captured project and folder remain separate. Offered
 coding tools still check live availability before starting, and mixed handoff guidance appears only when that tool exists.

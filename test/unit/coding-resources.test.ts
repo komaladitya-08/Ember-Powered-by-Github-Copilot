@@ -7,6 +7,8 @@ import { randomUUID } from "node:crypto";
 import type { IsolatedCommandWorkspaceInput, IsolatedCommandWorkspace, IsolatedCommandReview } from "../../app/main/agent/isolated-command-workspace";
 import { createCodingReviewExport, type CodingExportTree } from "../../app/main/agent/coding-result-export";
 import { CodingResultRegistry } from "../../app/main/agent/coding-result-registry";
+import { CodingArtifactCleanupError } from "../../app/main/agent/coding-artifact-store";
+import { LinuxCodingArtifactStore } from "../../app/main/agent/linux-coding-artifact-store";
 import { ProjectCodingWorkspaces } from "../../app/main/agent/project-coding-workspaces";
 import { projectCommandFolder } from "../../app/main/agent/project";
 import type { TaskSpec } from "../../app/main/agent/worker";
@@ -183,6 +185,94 @@ resourceIt("keeps published partial results bound to the old source while Stop a
   expect(result).toMatchObject({ sourcePath: source, status: "stopped", checks: { ran: 1, passed: 0, failed: 1 } });
   expect((await value.results()).state(P)).toHaveLength(1);
   await workspace.close(); expect(backends[0].close).toHaveBeenCalledTimes(1);
+});
+
+resourceIt("exports a stopped review using the source boundary captured before its coding copy", async () => {
+  const value = await open(); await ready(value); await bind(value);
+  const task = spec(value), signal = new AbortController(), workspace = await value.createWorkspace(task, signal.signal, () => true);
+  signal.abort(); await workspace.stop();
+  const output = await workspace.exportReview(value.reviewBase), result = await value.publish(task, output, "stopped", { ran: 0, passed: 0, failed: 0 });
+  const destination = path.join(temp, "exports"); await fs.mkdir(destination, { mode: 0o700 });
+  const exported = await (await value.results()).export(result.id, destination, () => true);
+  expect(exported.ok).toBe(true);
+  expect(await fs.readFile(path.join(exported.directory!, "changes.patch"), "utf8")).toContain("changed");
+  expect(await fs.readFile(path.join(source, "app.ts"), "utf8")).toBe("original\n");
+  await workspace.close();
+});
+
+resourceIt("keeps the preview but refuses exports after the intake source is moved and its old path is replaced", async () => {
+  const value = await open(); await ready(value); await bind(value);
+  const task = spec(value), workspace = await value.createWorkspace(task, new AbortController().signal, () => true);
+  const moved = path.join(temp, "moved-original"), outside = path.join(temp, "exports");
+  await fs.rename(source, moved); await fs.mkdir(source, { mode: 0o700 });
+  await fs.writeFile(path.join(source, "replacement.ts"), "replacement\n"); await fs.mkdir(outside, { mode: 0o700 });
+  const output = await workspace.exportReview(value.reviewBase), result = await value.publish(task, output, "done", { ran: 1, passed: 1, failed: 0 });
+  const results = await value.results(); expect(await results.review(result.id)).not.toBeNull();
+  for (const destination of [moved, outside, source]) expect((await results.export(result.id, destination, () => true)).ok).toBe(false);
+  expect(await fs.readdir(moved)).toEqual(["app.ts"]); expect(await fs.readdir(outside)).toEqual([]);
+  expect(await fs.readdir(source)).toEqual(["replacement.ts"]);
+  expect(await fs.readFile(path.join(moved, "app.ts"), "utf8")).toBe("original\n");
+  await workspace.close();
+});
+
+resourceIt("retains a stopped preview when the intake source disappears without recapturing it at publication", async () => {
+  const value = await open(); await ready(value); await bind(value);
+  const task = spec(value), workspace = await value.createWorkspace(task, new AbortController().signal, () => true);
+  await fs.rm(source, { recursive: true });
+  const output = await workspace.exportReview(value.reviewBase), result = await value.publish(task, output, "stopped", { ran: 0, passed: 0, failed: 0 });
+  const destination = path.join(temp, "exports"); await fs.mkdir(destination, { mode: 0o700 });
+  const results = await value.results(); expect(await results.review(result.id)).not.toBeNull();
+  expect((await results.export(result.id, destination, () => true)).ok).toBe(false); expect(await fs.readdir(destination)).toEqual([]);
+  await workspace.close();
+});
+
+resourceIt("never recaptures an unavailable intake boundary when publishing an otherwise valid review", async () => {
+  vi.spyOn(LinuxCodingArtifactStore.prototype, "sourceBoundary").mockResolvedValueOnce(null);
+  const value = await open(); await ready(value); await bind(value);
+  const task = spec(value), workspace = await value.createWorkspace(task, new AbortController().signal, () => true);
+  const output = await workspace.exportReview(value.reviewBase), result = await value.publish(task, output, "done", { ran: 0, passed: 0, failed: 0 });
+  const destination = path.join(temp, "exports"); await fs.mkdir(destination, { mode: 0o700 });
+  const results = await value.results(); expect(await results.review(result.id)).not.toBeNull();
+  expect((await results.export(result.id, destination, () => true)).ok).toBe(false); expect(await fs.readdir(destination)).toEqual([]);
+  await workspace.close();
+});
+
+resourceIt("drains a pending intake boundary before closing its store without admitting the cancelled backend", async () => {
+  const value = await open(); await ready(value); await bind(value);
+  const entered = deferred<void>(), release = deferred<void>(), original = LinuxCodingArtifactStore.prototype.sourceBoundary;
+  vi.spyOn(LinuxCodingArtifactStore.prototype, "sourceBoundary").mockImplementationOnce(async function (this: LinuxCodingArtifactStore, ...args) {
+    entered.resolve(); await release.promise; return original.apply(this, args);
+  });
+  const closingStore = vi.spyOn(LinuxCodingArtifactStore.prototype, "close");
+  const creating = value.createWorkspace(spec(value), new AbortController().signal, () => true).catch(error => error); await entered.promise;
+  let closed = false; const closing = value.close().then(() => { closed = true; }); await Promise.resolve();
+  expect(closed).toBe(false); expect(closingStore).not.toHaveBeenCalled();
+  release.resolve(); expect(await creating).toBeInstanceOf(Error); await closing;
+  expect(sim.create).not.toHaveBeenCalled(); expect(closingStore).toHaveBeenCalledTimes(1);
+});
+
+resourceIt("keeps terminal intake cleanup uncertainty unavailable after ordinary Forget retry", async () => {
+  vi.spyOn(LinuxCodingArtifactStore.prototype, "sourceBoundary").mockRejectedValueOnce(new CodingArtifactCleanupError());
+  const value = await open(); await ready(value); await bind(value);
+  await expect(value.createWorkspace(spec(value), new AbortController().signal, () => true)).rejects.toBeInstanceOf(CodingArtifactCleanupError);
+  expect(sim.create).not.toHaveBeenCalled(); expect(value.availability().available).toBe(false);
+  await expect(value.invalidate()).rejects.toThrow("retained");
+  await (await value.results()).reset(); expect(value.availability().available).toBe(false);
+  await expect(value.close()).rejects.toThrow("retained");
+});
+
+resourceIt.each(["review", "export"] as const)("latches terminal %s cleanup uncertainty through its public result facade", async operation => {
+  const value = await open(); await ready(value); await bind(value);
+  const task = spec(value), workspace = await value.createWorkspace(task, new AbortController().signal, () => true);
+  const output = await workspace.exportReview(value.reviewBase), result = await value.publish(task, output, "done", { ran: 0, passed: 0, failed: 0 });
+  const results = await value.results();
+  const destination = path.join(temp, "exports"); await fs.mkdir(destination, { mode: 0o700 });
+  if (operation === "review") vi.spyOn(LinuxCodingArtifactStore.prototype, "verify").mockRejectedValueOnce(new CodingArtifactCleanupError());
+  else vi.spyOn(LinuxCodingArtifactStore.prototype, "export").mockRejectedValueOnce(new CodingArtifactCleanupError());
+  await expect(operation === "review" ? results.review(result.id) : results.export(result.id, destination, () => true)).rejects.toBeInstanceOf(CodingArtifactCleanupError);
+  expect(value.availability().available).toBe(false);
+  await results.reset(); expect(value.availability().available).toBe(false);
+  await workspace.close(); await expect(value.close()).rejects.toThrow("retained");
 });
 
 resourceIt("cleans a stopped old-owner output after owner ABA without publishing it to the restored account", async () => {

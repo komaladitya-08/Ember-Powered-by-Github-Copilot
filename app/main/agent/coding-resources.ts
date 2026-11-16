@@ -8,6 +8,8 @@ import { ProjectCodingWorkspaces } from "./project-coding-workspaces";
 import { discoverCodingToolchain } from "./coding-toolchain";
 import { IsolatedCommandWorkspace, type IsolatedCommandReview } from "./isolated-command-workspace";
 import { CodingResultRegistry, CodingResultRegistryError } from "./coding-result-registry";
+import { CodingArtifactCleanupError, type CodingArtifactSourceRef } from "./coding-artifact-store";
+import { LinuxCodingArtifactStore } from "./linux-coding-artifact-store";
 import type { CodingWorkspace } from "./coding-workspace";
 import type { TaskSpec } from "./worker";
 import type { ScopedCodingChecks } from "./scoped-coding-worker";
@@ -35,6 +37,7 @@ interface Pin { path: string; handle: fs.FileHandle; stat: BigIntStats; mount: s
 interface Authority {
   taskId: string; owner: string; projectId: string; source: string; title: string; ownerCurrent: () => boolean;
   publicationEpoch: number; projectRevision: number;
+  sourceBoundary: CodingArtifactSourceRef | null;
   publishing?: boolean;
   retired?: boolean;
   workspace?: IsolatedCommandWorkspace;
@@ -83,6 +86,7 @@ export class ProjectCodingResources {
   #discovery: Promise<void> = Promise.resolve();
   #registry: CodingResultRegistry | null = null;
   #registryOpening: Promise<CodingResultRegistry> | null = null;
+  #artifactStoreOpening: Promise<LinuxCodingArtifactStore> | null = null;
   #authorities = new WeakMap<TaskSpec, Authority>();
   #tasks = new Map<string, Authority>();
   #active = new Map<IsolatedCommandWorkspace, Authority>();
@@ -102,8 +106,8 @@ export class ProjectCodingResources {
     this.#common = this.#storage.common ?? this.#storage.protectedPaths[0];
     this.#results = Object.freeze({
       state: projectId => this.#registry?.state(projectId) ?? [],
-      review: id => this.#registry?.review(id) ?? Promise.resolve(null),
-      export: (id, destination, current) => this.#registry?.export(id, destination, current) ?? Promise.resolve({ ok: false, message: "No coding review is available to export." }),
+      review: id => this.#observeArtifactCleanup(this.#registry?.review(id) ?? Promise.resolve(null)),
+      export: (id, destination, current) => this.#observeArtifactCleanup(this.#registry?.export(id, destination, current) ?? Promise.resolve({ ok: false, message: "No coding review is available to export." })),
       reset: () => { this.#publicationEpoch++; return this.#retryRegistryReset(); },
       forgetResult: id => {
         const pending = this.#registry ? this.#registry.forgetResult(id) : this.#registryOpening ? this.#registryOpening.then(registry => registry.forgetResult(id)) : Promise.resolve();
@@ -278,7 +282,7 @@ export class ProjectCodingResources {
     const ownerCurrent = this.folders.ownerCurrent(), epoch = this.#epoch;
     const authority: Authority = { taskId: spec.id, owner, projectId, source: path,
       title: titleOf(spec.goal).replace(/[\p{Cc}\p{Cf}]/gu, value => `\\u${value.codePointAt(0)!.toString(16).padStart(4, "0")}`),
-      ownerCurrent, publicationEpoch: this.#publicationEpoch, projectRevision: this.#projectRevisions.get(projectId) ?? 0 };
+      ownerCurrent, publicationEpoch: this.#publicationEpoch, projectRevision: this.#projectRevisions.get(projectId) ?? 0, sourceBoundary: null };
     const current = () => !this.#closed && !this.#failed && this.#epoch === epoch && !signal.aborted && this.availability().available &&
       this.#owner() === owner && safeCall(ownerCurrent) && this.#project(projectId) && selected?.path === path &&
       safeCall(selected.current) && safeCall(sourceCurrent) && safeCall(admit);
@@ -288,6 +292,9 @@ export class ProjectCodingResources {
       try {
         await this.validateSource({ path, current: sourceCurrent }); if (!current()) throw stale();
         await this.#storageCurrent(); if (!current()) throw stale();
+        const store = await this.#artifactStoreValue(); if (!current()) throw stale();
+        authority.sourceBoundary = await store.sourceBoundary(path, () => { if (!current()) throw stale(); });
+        if (!current()) throw stale();
         const scope = await this.#sourceScope(path, current); if (!current()) throw stale();
         const backend = await IsolatedCommandWorkspace.create({ source: path, baseDir: this.#copies, protectedPaths: this.#roots, scope, privacyScope,
           binding: { owner, session: randomUUID(), snapshot: randomUUID() }, nodePath: this.#node!, signal, admit: current,
@@ -296,9 +303,9 @@ export class ProjectCodingResources {
         if (!current()) { await backend.stop(); await this.#closeBackend(backend); throw stale(); }
         return this.#wrapped(backend, authority);
       } catch (error) {
-        if (error instanceof CodingPrivacyCleanupError || (authority.workspace && this.#active.has(authority.workspace))) this.#failure();
+        if (error instanceof CodingPrivacyCleanupError || error instanceof CodingArtifactCleanupError || (authority.workspace && this.#active.has(authority.workspace))) this.#failure();
         if (!authority.workspace) { this.#tasks.delete(spec.id); this.#authorities.delete(spec); }
-        if (error instanceof CodingPrivacyCleanupError) throw error;
+        if (error instanceof CodingPrivacyCleanupError || error instanceof CodingArtifactCleanupError) throw error;
         throw fixed("The coding copy could not be created under its current project grant.");
       }
     })();
@@ -351,11 +358,25 @@ export class ProjectCodingResources {
     } });
   }
   #failure(): void { this.#failed = true; this.#cleanupFailed = true; this.#message = "Earlier coding resources could not be verified as closed. Further coding is unavailable."; this.#changed(); }
+  #observeArtifactCleanup<T>(pending: Promise<T>): Promise<T> {
+    return pending.catch(error => { if (error instanceof CodingArtifactCleanupError) this.#failure(); throw error; });
+  }
+  #artifactStoreValue(): Promise<LinuxCodingArtifactStore> {
+    if (!this.#artifactStoreOpening) {
+      const opening = LinuxCodingArtifactStore.create(this.#reviews).catch(error => {
+        if (this.#artifactStoreOpening === opening) this.#artifactStoreOpening = null;
+        if (error instanceof CodingArtifactCleanupError) this.#failure();
+        throw error;
+      });
+      this.#artifactStoreOpening = opening;
+    }
+    return this.#artifactStoreOpening;
+  }
   #registryValue(): Promise<CodingResultRegistry> {
     if (this.#registry) return Promise.resolve(this.#registry);
     if (!this.#registryOpening) {
-      const opening: Promise<CodingResultRegistry> = CodingResultRegistry.create({ privateBase: this.#reviews, currentOwner: this.#options.currentOwner,
-        projectExists: this.#options.projectExists }).then(registry => { this.#registry = registry; return registry; }, error => {
+      const opening: Promise<CodingResultRegistry> = this.#artifactStoreValue().then(store => CodingResultRegistry.create({ privateBase: this.#reviews, currentOwner: this.#options.currentOwner,
+        projectExists: this.#options.projectExists, store })).then(registry => { this.#registry = registry; return registry; }, error => {
           if (this.#registryOpening === opening) this.#registryOpening = null;
           throw error;
         });
@@ -377,9 +398,10 @@ export class ProjectCodingResources {
       try {
         const registry = await this.#registryValue();
         const summary = await registry.put({ expectedOwner: authority.owner, projectId: authority.projectId, taskId: spec.id, title: authority.title,
-          sourcePath: authority.source, status, checks, current, output });
+          sourcePath: authority.source, sourceBoundary: authority.sourceBoundary, status, checks, current, output });
         this.#unadopted.delete(output.directory); this.#changed(); return summary;
       } catch (error) {
+        if (error instanceof CodingArtifactCleanupError) this.#failure();
         try {
           if (!this.#registry) throw cleanupFailed();
           await this.#registry.discard(output.directory); this.#unadopted.delete(output.directory);
@@ -414,6 +436,7 @@ export class ProjectCodingResources {
   async #registryCleanup(pending: Promise<void>, allowMissingResult = false): Promise<void> {
     try { await pending; this.#artifactCleanupFailed = this.#unadopted.size > 0; this.#changed(); }
     catch (error) {
+      if (error instanceof CodingArtifactCleanupError) this.#failure();
       if (allowMissingResult && error instanceof CodingResultRegistryError && (error.code === "stale" || error.code === "invalid")) throw error;
       this.#artifactCleanupFailed = true; this.#changed(); throw cleanupFailed();
     }
@@ -475,6 +498,8 @@ export class ProjectCodingResources {
           try { await backend.stop(); await this.#closeBackend(backend); } catch { failed = true; }
         }
         try { if (this.#registryOpening) await (await this.#registryOpening).close(); } catch { failed = true; }
+        // A task may capture its source without ever publishing a result or opening the registry.
+        try { if (this.#artifactStoreOpening) await (await this.#artifactStoreOpening).close(); } catch { failed = true; }
         // File tools own their pure scanner too. Account/app cleanup waits for every source-holding worker heap.
         try { await retireCodingPrivacyScanners(); } catch { failed = true; }
         if (!failed && this.#private) {
