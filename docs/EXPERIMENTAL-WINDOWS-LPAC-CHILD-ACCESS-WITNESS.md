@@ -97,7 +97,7 @@ and no observed denied I/O do not establish the cause or a compatibility result.
 
 ## Validation
 
-The six portable suites in the workflow pass **361 tests** with one worker. They exercise the strict parser, actual
+The initial `1c1699ae` candidate passed **361 tests** across the six portable suites with one worker. They exercise the strict parser, actual
 manual-entry refusal on PR events, provenance/archive bounds, injected native ownership/faults, watchdog protocol
 and stopped readout ordering. Scoped ESLint and the fresh exact-final full `tsc --noEmit` pass. The Linux integration
 import succeeds and skips its one manual-only native case. Native-owner and coordinator/readout reviews found and
@@ -105,5 +105,24 @@ closed the retired-PID, first-close ownership-reference, readiness and watchdog 
 changed-path set has no match against the historical automatic driver workflow's trigger patterns.
 
 These portable checks load no collector/driver, run no real Worker/native binding, and perform no tool download.
-Native execution is pending Root's review and first manual dispatch. No source-built Node, production gate,
-desktop acceptance or physical client compatibility is claimed here.
+No source-built Node, production gate, desktop acceptance or physical client compatibility is claimed here.
+
+The first manually dispatched [run 43847141883](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43847141883),
+at `1c1699aea9f003d64fc8e0141ca6546d6e503efc`, refused on both Server images during phase 4/native stage 3/operation 9
+(`SetFilePointerEx`), domain/code 0/0, with helper-link preflight still 0. This was staged-tool readback, before any
+PowerShell or Procmon process was launched; no collector/driver execution or trace evidence was established.
+
+The old seek validator accepted only `0n`. The actual pinned Koffi 3.2.1 documentation lists `int64_t` as JS Number,
+with BigInt used when necessary for larger values; its [primitive types](https://koffi.dev/primitives),
+[decode values](https://koffi.dev/values) and [output parameters](https://koffi.dev/output) documentation describe this
+conversion. The repair accepts only literal number `0` or bigint `0n` after a successful seek, with an unset output
+sentinel and no coercion. Failed/thrown native calls, nonzero outputs and every unknown shape remain terminal before
+content reads; immutable identity, writer exclusion and single-link guards are unchanged. This corrects an ABI
+representation mismatch; the first receipt did not record the actual Windows output type or establish an OS denial.
+Another manual driver run remains pending review and Root's explicit dispatch.
+
+The repaired candidate passes **387 portable contracts**, including **100 native-owner contracts**, scoped
+ESLint and a fresh exact-final full TypeScript check. Both documented zero representations read the same held file;
+nonzero, missing, coerced, failed and unknown outputs refuse before `ReadFile` and preserve the terminal ownership
+fence. No second driver run was dispatched
+while preparing this repair.

@@ -303,10 +303,12 @@ export function bindWindowsLpacChildAccessNative(koffi: Pick<typeof Koffi, "size
         size: pin.size,
         unchanged() { stage = 2; pinCurrent(pin); },
         read() {
-          usable(); stage = 3; pinCurrent(pin); const output = Buffer.alloc(pin.size + 1), position: unknown[] = [0n];
+          usable(); stage = 3; pinCurrent(pin); const output = Buffer.alloc(pin.size + 1), position: unknown[] = [undefined];
           let complete = false;
           try {
-            requireTrue(call("SetFilePointerEx", record.value, 0n, position, 0)); if (position[0] !== 0n) throw failure();
+            requireTrue(call("SetFilePointerEx", record.value, 0n, position, 0));
+            // Koffi 3.2.1 marshals int64_t as Number when representable and BigInt for large values. Require literal zero, never coercion.
+            if (position[0] !== 0 && position[0] !== 0n) throw failure();
             let offset = 0;
             while (offset < output.length) {
               const count: unknown[] = [0], chunk = output.subarray(offset, Math.min(output.length, offset + 65536));

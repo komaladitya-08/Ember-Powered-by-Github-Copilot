@@ -138,6 +138,41 @@ describe("manual child access native owner", () => {
     const handle = [...f.files.keys()][0]; expect(f.calls.filter(call => call.name === "ReadFile").every(call => call.args[0] === handle)).toBe(true);
     pin.close(); pin.close(); expect(f.closed).toEqual([handle]);
   });
+  it.each([0, 0n])("reads the exact pinned file after either documented literal int64 zero representation (%#)", position => {
+    const f = fixture(), pin = f.pin();
+    f.set("SetFilePointerEx", (...args) => {
+      expect(args[1]).toBe(0n); expect(args[3]).toBe(0); expect((args[2] as unknown[])[0]).toBeUndefined();
+      f.files.get(args[0] as bigint)!.position = 0; (args[2] as unknown[])[0] = position; return 1;
+    });
+    const bytes = pin.read(); expect(bytes.toString()).toBe("fixed bytes"); bytes.fill(0);
+    expect(f.calls.filter(call => call.name === "CreateFileW")).toHaveLength(1);
+    const handle = [...f.files.keys()][0]; expect(f.calls.filter(call => call.name === "ReadFile").every(call => call.args[0] === handle)).toBe(true);
+    pin.close(); expect(f.closed).toEqual([handle]);
+  });
+  it.each([1, -1, 0.5, 1n, -1n, NaN, Infinity, -Infinity, "0", "0n", "", null, undefined, false, true, {}, Object(0n)])("fences nonzero or unknown seek outputs before any content read (%#)", position => {
+    const f = fixture(), pin = f.pin();
+    f.set("SetFilePointerEx", (...args) => { (args[2] as unknown[])[0] = position; return 1; });
+    expect(() => pin.read()).toThrow(WindowsLpacChildAccessNativeCleanupError);
+    expect(f.calls.filter(call => call.name === "ReadFile")).toEqual([]); expect(f.calls.at(-1)?.name).toBe("SetFilePointerEx");
+    const calls = f.calls.length; f.clear("SetFilePointerEx");
+    expect(() => pin.read()).toThrow(WindowsLpacChildAccessNativeCleanupError); expect(() => pin.close()).toThrow(WindowsLpacChildAccessNativeCleanupError);
+    expect(f.calls).toHaveLength(calls); expect(f.closed).toEqual([]); expect(f.fence.retained).toHaveLength(1);
+  });
+  it("requires an observed output and never coerces an object into a zero seek position", () => {
+    for (const written of [false, true]) {
+      const f = fixture(), pin = f.pin(), coerce = vi.fn(() => 0), position = { valueOf: coerce, toString: coerce };
+      f.set("SetFilePointerEx", (...args) => { if (written) (args[2] as unknown[])[0] = position; return 1; });
+      expect(() => pin.read()).toThrow(WindowsLpacChildAccessNativeCleanupError); expect(coerce).not.toHaveBeenCalled();
+      expect(f.calls.filter(call => call.name === "ReadFile")).toEqual([]); expect(f.closed).toEqual([]);
+    }
+  });
+  it.each([0, false, true, undefined, "1", new Error("private native seek failure")])("keeps failed, thrown or malformed native seek results terminal even with zero output (%#)", result => {
+    const f = fixture(), pin = f.pin();
+    f.set("SetFilePointerEx", (...args) => { (args[2] as unknown[])[0] = 0; if (result instanceof Error) throw result; return result; });
+    expect(() => pin.read()).toThrow(WindowsLpacChildAccessNativeCleanupError);
+    expect(f.calls.filter(call => call.name === "ReadFile")).toEqual([]); expect(f.closed).toEqual([]);
+    const calls = f.calls.length; expect(() => pin.close()).toThrow(WindowsLpacChildAccessNativeCleanupError); expect(f.calls).toHaveLength(calls);
+  });
   it.each(["\\\\server\\share\\trace.csv", "C:\\private\\..\\trace.csv", "C:\\private\\trace.csv:secret", "C:\\private\\bad.\\trace.csv", "C:\\private\ntrace.csv"])("rejects unsupported paths before a native acquisition (%#)", file => {
     const f = fixture(); expect(() => f.native.pinFile(file, 1024)).toThrow(); expect(f.calls).toEqual([]);
   });
