@@ -179,6 +179,30 @@ it("keeps producer ownership through unrelated cleanup and rejects forged-direct
   expect(f.store.size).toBe(1); await f.store.discard(output); expect(f.store.size).toBe(0); await f.store.close();
 });
 
+it("acknowledges only exact verified-removed capabilities without touching a later replacement or reviving claims", async () => {
+  const f = await setup(), output = await f.store.write(f.files, f.check), receipt = await f.store.claim(output, f.check);
+  await f.store.cleanup(new Set()); const removed = f.removed.length;
+  await f.store.discard(output); await f.store.discard({ ...output });
+  expect(f.removed.length).toBe(removed); expect(f.store.size).toBe(0);
+  await expect(f.store.claim(output, f.check)).rejects.toMatchObject({ code: "invalid" });
+  await expect(f.store.verify(receipt, f.check)).rejects.toMatchObject({ code: "invalid" });
+  await expect(f.store.discard({ directory: output.directory })).rejects.toMatchObject({ code: "invalid" });
+  await expect(f.store.discard({ ...output, directory: "C:\\other" })).rejects.toMatchObject({ code: "invalid" });
+  await expect(f.store.discard({ ...output, artifact: Object.freeze({}) as typeof output.artifact })).rejects.toMatchObject({ code: "invalid" });
+  const replacement = f.addUnknown(f.createdRoots[0]); await f.store.discard(output);
+  expect(f.nodes.get(replacement.info.finalPath.toLowerCase())).toBe(replacement); expect(f.removed.length).toBe(removed);
+  await f.store.close(); expect(f.handles.size).toBe(0);
+});
+
+it("does not acknowledge a removed capability through a later terminal cleanup failure", async () => {
+  const f = await setup(), previous = await f.store.write(f.files, f.check); await f.store.discard(previous);
+  const live = await f.store.write(f.files, f.check); await f.store.claim(live, f.check); f.failRemove("unknown");
+  let failure: unknown; try { await f.store.cleanup(new Set()); } catch (error) { failure = error; }
+  expect(failure).toMatchObject({ code: "coding-artifact-cleanup-unverified" });
+  await expect(f.store.discard(previous)).rejects.toBe(failure); await expect(f.store.discard(live)).rejects.toBe(failure);
+  await expect(f.store.close()).rejects.toBe(failure);
+});
+
 it("consumes a legitimate producer claim before failed verification and retains unknown children", async () => {
   const f = await setup(), output = await f.store.write(f.files, f.check), extra = f.addUnknown(f.createdRoots[0]);
   await expect(f.store.claim(output, f.check)).rejects.toMatchObject({ code: "artifact" });

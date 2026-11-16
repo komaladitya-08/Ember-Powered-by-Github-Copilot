@@ -32,6 +32,8 @@ function drivePath(value: string): boolean {
 export class WindowsCodingArtifactStore implements CodingArtifactStore {
   #api: WindowsCodingNative; #base: WindowsCodingPin; #baseInfo: WindowsCodingInfo; #options: WindowsCodingArtifactStoreOptions;
   #protected: Protected[]; #artifacts = new Map<CodingArtifactRef, Artifact>(); #sources = new WeakMap<CodingArtifactSourceRef, Source>();
+  /** Exact capability acknowledgements only, after every native disposition and handle close succeeded. */
+  #removed = new WeakMap<CodingArtifactRef, string>();
   #pins = new WeakMap<WindowsCodingPin, OwnedHandle[]>(); #failedPins = new Set<WindowsCodingPin>();
   #tail: Promise<unknown> = Promise.resolve(); #closed = false; #closing: Promise<void> | null = null;
   #terminal: CodingArtifactCleanupError | null = null; #pendingWrites = 0; #pendingBytes = 0;
@@ -391,6 +393,7 @@ export class WindowsCodingArtifactStore implements CodingArtifactStore {
     this.#removeHandle(record.root.handle); this.#close(record.root);
     if (record.ownParent) this.#closePin(record.parent);
     this.#artifacts.delete(record.ref);
+    this.#removed.set(record.ref, record.directory);
   }
   #removeHandle(handle: WindowsCodingHandle): void {
     try { this.#api.remove(handle); }
@@ -415,7 +418,15 @@ export class WindowsCodingArtifactStore implements CodingArtifactStore {
   discard(input: CodingArtifactInput): Promise<void> {
     let captured: CodingArtifactInput;
     try { captured = this.#input(input); this.#admit(() => undefined); } catch (error) { return Promise.reject(this.#safe(error)); }
-    return this.#queue(async () => { try { this.#admit(() => undefined); const record = this.#lookup(captured); record.state = "failed"; await this.#remove(record); } catch (error) { throw this.#safe(error, "cleanup"); } });
+    return this.#queue(async () => {
+      try {
+        this.#admit(() => undefined);
+        // A registry may already have removed a claimed token after rejecting publication. Acknowledge only that
+        // exact verified-removed capability; do not look up or delete a new object at its former directory path.
+        if (captured.artifact && this.#removed.get(captured.artifact) === captured.directory) return;
+        const record = this.#lookup(captured); record.state = "failed"; await this.#remove(record);
+      } catch (error) { throw this.#safe(error, "cleanup"); }
+    });
   }
   cleanup(retained: ReadonlySet<CodingArtifactRef>): Promise<void> {
     return this.#queue(async () => {
