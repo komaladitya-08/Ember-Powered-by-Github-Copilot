@@ -1,17 +1,58 @@
 /** Public run-source receipts only. Synthetic descriptors exercise refusal and one-attempt close without native calls. */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { beforeEach, expect, it, vi } from "vitest";
 
-const state = vi.hoisted(() => ({ fault: "", calls: [] as string[], next: 10,
+// These independent literals identify only the three public sources changed by the later creator-owner experiment.
+const baselineCommit = "3afc9828168031bff6aaee46402397cecafea9f3";
+const baselinePins = [
+  { path: "app/main/agent/windows-command-copy.ts", bytes: 12632, sha256: "33dac7049b83aa8f28fffdd24b26b4baef153fc1b15447b3e7dfaf46d3e2548f" },
+  { path: "app/main/agent/windows-command-stop.ts", bytes: 23106, sha256: "87a0ed54fa4d38c1ec33846d6fe61f349ddfa04b2e8dbf5124edb458d2be3d21" },
+  { path: "app/main/agent/windows-command-copy-native.ts", bytes: 46924, sha256: "9232f063867ad98185ac1fb056b6eca8c9740638cc83fe13ceff0e96773662f1" },
+] as const;
+const fixtureFile = fileURLToPath(new URL("../fixtures/windows-command-copy-detached-baseline.json", import.meta.url));
+const hash = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+const fixtureFailure = () => new Error("The public detached-copy baseline fixture was refused.");
+const exact = (value: unknown, keys: string[]): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value) &&
+  Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+/** Decode data only: no baseline source is imported, evaluated, written or used by a runtime verifier. */
+function decodeBaseline(bytes: Buffer): Map<string, Buffer> {
+  try {
+    if (!Buffer.isBuffer(bytes) || bytes.length < 1 || bytes.length > 64 * 1024) throw fixtureFailure();
+    const text = bytes.toString("utf8"); if (!Buffer.from(text, "utf8").equals(bytes)) throw fixtureFailure();
+    const value: unknown = JSON.parse(text);
+    if (!exact(value, ["schema", "commit", "encoding", "files"]) || value.schema !== 1 || value.commit !== baselineCommit ||
+        value.encoding !== "gzip-base64" || !Array.isArray(value.files) || value.files.length !== baselinePins.length) throw fixtureFailure();
+    const decoded = new Map<string, Buffer>();
+    for (const [index, pin] of baselinePins.entries()) {
+      const entry: unknown = value.files[index];
+      if (!exact(entry, ["path", "bytes", "sha256", "gzipBase64"]) || entry.path !== pin.path || entry.bytes !== pin.bytes || entry.sha256 !== pin.sha256 ||
+          typeof entry.gzipBase64 !== "string" || entry.gzipBase64.length < 4 || entry.gzipBase64.length > pin.bytes * 2 || entry.gzipBase64.length % 4 !== 0) throw fixtureFailure();
+      const compressed = Buffer.from(entry.gzipBase64, "base64");
+      if (compressed.length < 1 || compressed.length > pin.bytes || compressed.toString("base64") !== entry.gzipBase64) throw fixtureFailure();
+      const source = gunzipSync(compressed, { maxOutputLength: pin.bytes });
+      if (source.length !== pin.bytes || hash(source) !== pin.sha256) throw fixtureFailure();
+      decoded.set(pin.path, source);
+    }
+    return decoded;
+  } catch { throw fixtureFailure(); }
+}
+
+const state = vi.hoisted(() => ({ fault: "", baseline: true, calls: [] as string[], next: 10,
   files: new Map<string, { bytes: Buffer; id: bigint }>(), descriptors: new Map<number, { file: string; bytes: Buffer }>(),
   lstats: new Map<string, number>(), fstats: new Map<number, number>(), readActual: undefined as ((file: string) => Buffer) | undefined,
 }));
 vi.mock("node:fs", async original => {
   const actual = await original<typeof import("node:fs")>(); state.readActual = file => actual.readFileSync(file);
+  const baseline = decodeBaseline(actual.readFileSync(fixtureFile));
   const get = (file: string) => {
     let value = state.files.get(file);
-    if (!value) { value = { bytes: actual.readFileSync(file), id: BigInt(state.files.size + 1) }; state.files.set(file, value); }
+    if (!value) {
+      const relative = path.relative(repository, file).split(path.sep).join("/"), source = state.baseline ? baseline.get(relative) : undefined;
+      value = { bytes: source ? Buffer.from(source) : actual.readFileSync(file), id: BigInt(state.files.size + 1) }; state.files.set(file, value);
+    }
     return value;
   };
   const stat = (file: string, held: boolean, count: number) => {
@@ -56,10 +97,46 @@ vi.mock("node:fs", async original => {
 const repository = fileURLToPath(new URL("../../", import.meta.url)).replace(/[\\/]$/, "");
 const input = { image: "windows-2022", commit: "a".repeat(40) };
 beforeEach(() => {
-  vi.resetModules(); state.fault = ""; state.calls.length = 0; state.next = 10;
+  vi.resetModules(); state.fault = ""; state.baseline = true; state.calls.length = 0; state.next = 10;
   state.files.clear(); state.descriptors.clear(); state.lstats.clear(); state.fstats.clear();
 });
 const load = () => import("../fixtures/windows-command-copy-detached-variant");
+
+it("uses only independently pinned public baseline bytes while the actual changed checkout remains refused", async () => {
+  const { verifyWindowsRootCopyDetachedRun: verify } = await load(); state.baseline = false;
+  expect(baselinePins.some(pin => hash(state.readActual!(path.join(repository, pin.path))) !== pin.sha256)).toBe(true);
+  expect(() => verify(repository, input)).toThrow("fixed public run identity");
+  expect(state.descriptors.size).toBe(0);
+  expect(state.calls.filter(call => call === "open").length).toBe(state.calls.filter(call => call === "close").length);
+});
+
+it.each(["malformed", "oversized", "utf8", "schema", "commit", "encoding", "missing", "extra", "path", "size", "hash", "base64", "gzip", "truncated", "expanded", "content"])(
+  "refuses corrupted or misattributed baseline fixture %s", async fault => {
+    await load(); const original = state.readActual!(fixtureFile);
+    if (fault === "malformed") { expect(() => decodeBaseline(Buffer.from("{"))).toThrow("baseline fixture"); return; }
+    if (fault === "oversized") { expect(() => decodeBaseline(Buffer.alloc(64 * 1024 + 1))).toThrow("baseline fixture"); return; }
+    if (fault === "utf8") { expect(() => decodeBaseline(Buffer.from([255]))).toThrow("baseline fixture"); return; }
+    const value = JSON.parse(original.toString("utf8")) as { schema: number; commit: string; encoding: string;
+      files: { path: string; bytes: number; sha256: string; gzipBase64: string }[] };
+    if (fault === "schema") value.schema = 2;
+    if (fault === "commit") value.commit = "b".repeat(40);
+    if (fault === "encoding") value.encoding = "base64";
+    if (fault === "missing") value.files.pop();
+    if (fault === "extra") value.files.push({ ...value.files[0] });
+    if (fault === "path") value.files[0].path = baselinePins[1].path;
+    if (fault === "size") value.files[0].bytes++;
+    if (fault === "hash") value.files[0].sha256 = "0".repeat(64);
+    if (fault === "base64") value.files[0].gzipBase64 = "\n" + value.files[0].gzipBase64;
+    if (fault === "gzip") value.files[0].gzipBase64 = Buffer.from("invalid gzip").toString("base64");
+    if (fault === "truncated") value.files[0].gzipBase64 = Buffer.from(value.files[0].gzipBase64, "base64").subarray(0, 20).toString("base64");
+    if (fault === "expanded") value.files[0].gzipBase64 = gzipSync(Buffer.alloc(baselinePins[0].bytes + 1)).toString("base64");
+    if (fault === "content") {
+      const source = gunzipSync(Buffer.from(value.files[0].gzipBase64, "base64"), { maxOutputLength: baselinePins[0].bytes }); source[0] ^= 1;
+      value.files[0].gzipBase64 = gzipSync(source).toString("base64");
+    }
+    expect(() => decodeBaseline(Buffer.from(JSON.stringify(value)))).toThrow("baseline fixture");
+  },
+);
 
 it.each(["windows-2022", "windows-2025"])("binds fixed public baseline/run bytes and observed compile identity for %s", async image => {
   const { verifyWindowsRootCopyDetachedRun: verify, WINDOWS_ROOT_COPY_DETACHED_RUN: run } = await load();

@@ -4,7 +4,8 @@ import type { CodingExportEntry } from "./coding-result-export";
 import { ScopedCodingFileError } from "./coding-platform";
 import { WindowsCodingCleanupError } from "./windows-coding-native";
 import type { WindowsLpacApi, WindowsSuspendedProcess } from "./experimental-windows-lpac-api";
-import { createFreshWindowsCommandTree, type FreshWindowsCommandTree } from "./windows-command-copy-native";
+import { createFreshWindowsCommandTree, type FreshWindowsCommandTree, type WindowsCommandCreatorGrantRef } from "./windows-command-copy-native";
+import { windowsCommandCreatorProfile, type WindowsCommandCreatorProfileRef } from "./windows-command-creator-profile";
 import { createWindowsCommandRootOnlyStopOwner, requireWindowsCommandRootOnlyStopped,
   type WindowsCommandRootOnlyStopOwner } from "./windows-command-stop";
 
@@ -18,6 +19,8 @@ export interface WindowsRootOnlyCommandCopyInput {
   entries: readonly CodingExportEntry[];
   /** Borrowed identity of an actually fresh host-owned profile; profile issuance/deletion is a separate obligation. */
   packageSid: string;
+  /** Experimental opt-in, issued by the sealed fresh native profile factory; structural profile/SID claims cannot enable it. */
+  creatorProfile?: WindowsCommandCreatorProfileRef;
   current(): boolean;
   packageCurrent(): boolean;
   /** Captured publication/account/privacy authority, separate from the stopped worker's admission. */
@@ -31,7 +34,7 @@ export interface WindowsRootOnlyCommandCopyDependencies {
   fence?: WindowsRootOnlyCommandCopyFence;
 }
 export interface WindowsRootOnlyCommandCopyFence { failure?: WindowsRootOnlyCommandCopyCleanupError; retained: unknown[] }
-type Run = { binding: object; owner: WindowsCommandRootOnlyStopOwner; granted: boolean };
+type Run = { binding: object; owner: WindowsCommandRootOnlyStopOwner; granted: boolean; creator?: WindowsCommandCreatorGrantRef };
 const processFence: WindowsRootOnlyCommandCopyFence = { retained: [] };
 const activeOwners = new WeakMap<WindowsRootOnlyCommandCopyFence, Set<WindowsRootOnlyCommandCopy>>();
 const validPackage = (value: unknown): value is string => typeof value === "string" && /^S-1-15-2-(?:\d+-)*\d+$/.test(value) && value !== "S-1-15-2-1";
@@ -59,6 +62,7 @@ export class WindowsRootOnlyCommandCopy {
 
   private constructor(input: WindowsRootOnlyCommandCopyInput, dependencies: WindowsRootOnlyCommandCopyDependencies) {
     this.#input = { parent: input.parent, protectedPaths: [...input.protectedPaths], packageSid: input.packageSid,
+      creatorProfile: input.creatorProfile,
       current: input.current.bind(input), packageCurrent: input.packageCurrent.bind(input), reviewCurrent: input.reviewCurrent.bind(input) };
     this.#stopFactory = dependencies.createStopOwner?.bind(dependencies) ?? (binding => createWindowsCommandRootOnlyStopOwner(binding, dependencies.api));
     this.#fence = dependencies.fence ?? processFence;
@@ -70,6 +74,8 @@ export class WindowsRootOnlyCommandCopy {
         typeof input.current !== "function" || typeof input.packageCurrent !== "function" || typeof input.reviewCurrent !== "function" || !dependencies?.api)
       throw new ScopedCodingFileError("boundary");
     const owner = new WindowsRootOnlyCommandCopy(input, dependencies);
+    if (owner.#input.creatorProfile !== undefined && windowsCommandCreatorProfile(owner.#input.creatorProfile).sidText !== owner.#input.packageSid)
+      throw new ScopedCodingFileError("boundary");
     owner.#checkWork();
     let owners = activeOwners.get(owner.#fence);
     if (!owners) { owners = new Set(); activeOwners.set(owner.#fence, owners); }
@@ -77,7 +83,9 @@ export class WindowsRootOnlyCommandCopy {
     try {
       // The native factory validates and clones every entry before its first await; no caller buffer becomes a lease.
       const create = dependencies.createTree?.bind(dependencies) ?? createFreshWindowsCommandTree;
-      owner.#tree = await create({ parent: owner.#input.parent, protectedPaths: owner.#input.protectedPaths, entries: input.entries, current: () => owner.#workCurrent() });
+      owner.#tree = await create({ parent: owner.#input.parent, protectedPaths: owner.#input.protectedPaths, entries: input.entries, current: () => owner.#workCurrent(), creatorProfile: owner.#input.creatorProfile });
+      if (owner.#input.creatorProfile !== undefined && [owner.#tree.prepareCreator, owner.#tree.captureCreator, owner.#tree.revokeCreator].some(method => typeof method !== "function"))
+        throw new ScopedCodingFileError("boundary");
       owner.#checkWork(); return owner;
     } catch (error) {
       if (error instanceof WindowsCodingCleanupError || !(error instanceof ScopedCodingFileError)) throw owner.#poison();
@@ -136,7 +144,10 @@ export class WindowsRootOnlyCommandCopy {
       const proof = await run.owner.stop(15_000);
       this.#usable();
       requireWindowsCommandRootOnlyStopped(proof, run.binding);
-      if (run.granted) await this.#tree.revoke(this.#input.packageSid);
+      if (run.granted) {
+        if (run.creator) await this.#tree.revokeCreator!(run.creator, proof);
+        else await this.#tree.revoke(this.#input.packageSid);
+      }
       this.#usable();
       this.#run = undefined; // Only a verified closed job and complete revocation permit a later generation.
     } catch { throw this.#poison(); }
@@ -152,14 +163,21 @@ export class WindowsRootOnlyCommandCopy {
       const binding = Object.freeze({});
       try {
         const run: Run = { binding, owner: this.#stopFactory(binding), granted: false }; this.#run = run;
+        if (this.#input.creatorProfile !== undefined) run.creator = this.#tree.prepareCreator!(binding);
         // Mark before the first ACL mutation: a known partial grant still needs a closed empty-job proof and revoke.
         run.granted = true;
         await this.#native(() => this.#tree.grant(this.#input.packageSid, this.#checkWork)); this.#checkWork();
-        return await run.owner.launch(capturedCreate, root => {
+        const verified = (root: Readonly<WindowsSuspendedProcess>) => {
           this.#checkWork();
           if (capturedAttest(root) !== undefined) throw new ScopedCodingFileError("boundary");
           this.#checkWork();
-        }, () => this.#workCurrent());
+        };
+        if (run.creator) return await run.owner.launch(capturedCreate, verified, () => this.#workCurrent(), witness => {
+          this.#checkWork();
+          if (this.#tree.captureCreator!(run.creator!, witness) !== undefined) throw new ScopedCodingFileError("boundary");
+          this.#checkWork();
+        });
+        return await run.owner.launch(capturedCreate, verified, () => this.#workCurrent());
       } catch (error) {
         if (error instanceof WindowsCodingCleanupError || !(error instanceof ScopedCodingFileError)) throw this.#poison();
         await this.#quiesce(); throw error;

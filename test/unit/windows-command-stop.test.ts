@@ -3,6 +3,9 @@ import {
   bindWindowsCommandRootOnlyStopNative, createWindowsCommandRootOnlyStopOwner, requireWindowsCommandRootOnlyStopped,
   WindowsCommandRootOnlyCleanupError, WINDOWS_COMMAND_ROOT_ONLY_STOP_FUNCTIONS,
   windowsCommandRootOnlyFailure,
+  requireWindowsCommandRootOnlyCompletion, requireWindowsCommandRootOnlyAttestingCurrent, takeWindowsCommandRootOnlyAttesting,
+  requireWindowsCommandRootOnlyTokenHandle,
+  type WindowsCommandRootOnlyAttestingRef,
   type WindowsCommandRootOnlyJobState, type WindowsCommandRootOnlyStopFence,
 } from "../../app/main/agent/windows-command-stop";
 import { WindowsCodingCleanupError } from "../../app/main/agent/windows-coding-native";
@@ -38,6 +41,86 @@ type H = ReturnType<typeof harness>;
 const launch = (h: H, owner: ReturnType<H["owner"]>) => owner.launch(h.create, h.attest, h.current);
 const cleanup = async (promise: Promise<unknown>) => { const error = await promise.catch(error => error as unknown); expect(error).toBeInstanceOf(WindowsCommandRootOnlyCleanupError); expect(error).toBeInstanceOf(WindowsCodingCleanupError); expect(String(error)).not.toContain(PRIVATE); return error; };
 const caught = (work: () => unknown): unknown => { try { work(); } catch (error) { return error; } throw new Error("Expected the fixed Stop fault to refuse."); };
+
+describe("private live root attestation and completed root presence", () => {
+  it("issues only after ordinary attestation, exposes the same held root once and expires before Resume", async () => {
+    const h = harness(), owner = h.owner(); let witness: WindowsCommandRootOnlyAttestingRef | undefined;
+    await owner.launch(h.create, h.attest, h.current, ref => {
+      witness = ref; expect(h.events).toContain("attest"); expect(h.events).not.toContain("resume");
+      expect(() => requireWindowsCommandRootOnlyAttestingCurrent(ref, {})).toThrow();
+      requireWindowsCommandRootOnlyAttestingCurrent(ref, h.binding);
+      const actual = takeWindowsCommandRootOnlyAttesting(ref, h.binding); expect(actual).toEqual(root); expect(Object.isFrozen(actual)).toBe(true);
+      for (const alias of [10n, root.process, root.thread]) expect(() => requireWindowsCommandRootOnlyTokenHandle(ref, h.binding, alias)).toThrow();
+      expect(() => requireWindowsCommandRootOnlyTokenHandle(ref, h.binding, 900n)).not.toThrow();
+      expect(() => takeWindowsCommandRootOnlyAttesting(ref, h.binding)).toThrow();
+      requireWindowsCommandRootOnlyAttestingCurrent(ref, h.binding); h.events.push("creator-capture");
+    });
+    expect(h.events.indexOf("creator-capture")).toBeGreaterThan(h.events.indexOf("attest"));
+    expect(h.events.indexOf("creator-capture")).toBeLessThan(h.events.indexOf("resume"));
+    expect(() => requireWindowsCommandRootOnlyAttestingCurrent(witness, h.binding)).toThrow();
+    expect(() => takeWindowsCommandRootOnlyAttesting(witness, h.binding)).toThrow();
+    const completed = await owner.stop(); expect(requireWindowsCommandRootOnlyCompletion(completed, h.binding)).toEqual({ rootPresent: 1 });
+    expect(Object.keys(completed)).toEqual(["scope"]);
+  });
+  it.each([null, false, 0, Promise.resolve()])("refuses a non-undefined capture result without awaiting or Resume %#", async result => {
+    const h = harness(), owner = h.owner(); let witness: WindowsCommandRootOnlyAttestingRef | undefined;
+    await cleanup(owner.launch(h.create, h.attest, h.current, ref => { witness = ref; return result; }));
+    expect(h.api.resume).not.toHaveBeenCalled(); expect(h.fence.retained).toHaveLength(1);
+    expect(() => requireWindowsCommandRootOnlyAttestingCurrent(witness, h.binding)).toThrow();
+    const count = h.native.state.mock.calls.length; await cleanup(owner.stop()); expect(h.native.state).toHaveBeenCalledTimes(count);
+  });
+  it("expires on capture throw and retains the root without issuing any completed receipt", async () => {
+    const h = harness(), owner = h.owner(); let witness: WindowsCommandRootOnlyAttestingRef | undefined;
+    const error = await cleanup(owner.launch(h.create, h.attest, h.current, ref => { witness = ref; throw new Error(PRIVATE); }));
+    expect(() => requireWindowsCommandRootOnlyAttestingCurrent(witness, h.binding)).toThrow();
+    expect(() => requireWindowsCommandRootOnlyCompletion(error, h.binding)).toThrow(); expect(h.api.resume).not.toHaveBeenCalled();
+  });
+  it("a synchronous Stop inside capture revokes the live witness before any later owner query or Resume", async () => {
+    const h = harness(), owner = h.owner(); let queries = 0;
+    await cleanup(owner.launch(h.create, h.attest, h.current, ref => {
+      takeWindowsCommandRootOnlyAttesting(ref, h.binding);
+      void owner.stop().catch(() => undefined); queries = h.native.state.mock.calls.length;
+      expect(() => requireWindowsCommandRootOnlyAttestingCurrent(ref, h.binding)).toThrow();
+    }));
+    expect(h.native.state).toHaveBeenCalledTimes(queries); expect(h.api.resume).not.toHaveBeenCalled(); expect(h.api.close).not.toHaveBeenCalled();
+  });
+  it("never calls capture after failed original attestation", async () => {
+    const h = harness(), owner = h.owner(), capture = vi.fn(); h.attest.mockImplementation(() => { throw new Error(PRIVATE); });
+    await cleanup(owner.launch(h.create, h.attest, h.current, capture)); expect(capture).not.toHaveBeenCalled(); expect(h.api.resume).not.toHaveBeenCalled();
+  });
+  it("the original admission callback retiring during capture prevents the next query and Resume", async () => {
+    const h = harness(), owner = h.owner(), queries: string[] = []; let admitted = true;
+    h.current.mockImplementation(() => admitted);
+    await cleanup(owner.launch(h.create, h.attest, h.current, ref => {
+      takeWindowsCommandRootOnlyAttesting(ref, h.binding); queries.push("first-token-query"); admitted = false;
+      requireWindowsCommandRootOnlyAttestingCurrent(ref, h.binding); queries.push("forbidden-next-query");
+    }));
+    expect(queries).toEqual(["first-token-query"]); expect(h.api.resume).not.toHaveBeenCalled(); expect(h.api.close).not.toHaveBeenCalled();
+  });
+  it("a reentrant original admission callback cannot stop the owner and keep the live witness", async () => {
+    const h = harness(), owner = h.owner(); let inside = false;
+    h.current.mockImplementation(() => { if (inside) void owner.stop().catch(() => undefined); return true; });
+    await cleanup(owner.launch(h.create, h.attest, h.current, ref => {
+      inside = true; expect(() => takeWindowsCommandRootOnlyAttesting(ref, h.binding)).toThrow();
+    }));
+    expect(h.api.resume).not.toHaveBeenCalled(); expect(h.api.close).not.toHaveBeenCalled();
+  });
+  it("does not inspect foreign/getter-shaped witnesses or completion records", () => {
+    const foreign = new Proxy({}, { get() { throw new Error(PRIVATE); } });
+    for (const value of [null, foreign, { scope: "root-only-attesting" }, { scope: "root-only", rootPresent: 0 }]) {
+      expect(() => requireWindowsCommandRootOnlyAttestingCurrent(value, {})).toThrow();
+      expect(() => takeWindowsCommandRootOnlyAttesting(value, {})).toThrow(); expect(() => requireWindowsCommandRootOnlyCompletion(value, {})).toThrow();
+    }
+  });
+  it("distinguishes genuine empty-job completion from a launched root with no creator hook", async () => {
+    const a = harness(), empty = await a.owner().stop();
+    const facts = requireWindowsCommandRootOnlyCompletion(empty, a.binding); expect(facts).toEqual({ rootPresent: 0 }); expect(Object.isFrozen(facts)).toBe(true);
+    const b = harness(), launched = b.owner(); await launch(b, launched); const rootReceipt = await launched.stop();
+    expect(requireWindowsCommandRootOnlyCompletion(rootReceipt, b.binding)).toEqual({ rootPresent: 1 });
+    for (const forged of [{ ...empty }, { ...facts }, rootReceipt]) expect(() => requireWindowsCommandRootOnlyCompletion(forged, a.binding)).toThrow();
+    expect(Object.keys(empty)).toEqual(["scope"]); expect(Object.keys(rootReceipt)).toEqual(["scope"]);
+  });
+});
 
 describe("root-only stopped-writer authority", () => {
   it("closes a never-launched empty job and issues only an exact-bound immutable root-only receipt", async () => {

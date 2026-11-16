@@ -1,0 +1,54 @@
+name: experimental-windows-command-creator-owner
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/experimental-windows-command-creator-owner.yml"
+      - "app/main/agent/windows-command-*.ts"
+      - "scripts/experimental/build-windows-command-creator-owner-proof.mjs"
+      - "test/fixtures/windows-command-creator-*"
+      - "test/fixtures/windows-command-copy-detached-baseline.json"
+      - "test/unit/windows-command-creator-*.test.ts"
+      - "test/unit/windows-command-copy-detached-variant.test.ts"
+      - "test/integration/windows-command-creator-owner-native.test.ts"
+      - "docs/EXPERIMENTAL-WINDOWS-CREATOR-OWNER.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experimental-windows-command-creator-owner-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  creator-owner:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'ember-improve/20261116-command-creator-owner'
+    name: Fixed creator-owner confinement and transfer (${{ matrix.image }})
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.image }}
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Legacy root-only gates and experimental creator-owner contracts
+        run: npm test -- test/unit/windows-command-stop.test.ts test/unit/windows-command-copy.test.ts test/unit/windows-command-copy-native.test.ts test/unit/windows-command-copy-build.test.ts test/unit/windows-command-copy-report.test.ts test/unit/windows-command-copy-proof-native.test.ts test/unit/windows-command-copy-proof.test.ts test/unit/windows-command-copy-detached-variant.test.ts test/unit/windows-command-creator-owner-build.test.ts test/unit/windows-command-creator-token.test.ts test/unit/windows-command-creator-profile.test.ts test/unit/windows-command-creator-native.test.ts test/unit/windows-command-creator-ace.test.ts test/unit/windows-command-creator-auto-inherit.test.ts test/unit/windows-command-creator-metadata.test.ts test/unit/windows-command-creator-owner-report.test.ts test/unit/windows-command-creator-owner-proof.test.ts test/unit/windows-command-creator-owner-host.test.ts test/unit/windows-command-creator-owner-variant.test.ts --maxWorkers=1
+      - name: Required new-issuer C controls, in-run denials, attested owner and private transfer
+        timeout-minutes: 10
+        run: node scripts/run-integration.mjs test/integration/windows-command-creator-owner-native.test.ts
+        env:
+          EMBER_WINDOWS_COMMAND_CREATOR_OWNER_TEST: "1"
+          EMBER_WINDOWS_COMMAND_CREATOR_OWNER_IMAGE: ${{ matrix.image }}
+      # Fixed C only. Any successful LPAC WRITE_DAC/WRITE_OWNER probe remains FAILURE, even after cleanup.
