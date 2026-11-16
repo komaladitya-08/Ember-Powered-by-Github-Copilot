@@ -4,7 +4,7 @@ import { defineTool, type CopilotSession, type ProviderConfig, type SessionEvent
 import { z } from "zod";
 import type { RunCommandArgs, ShellId } from "../commands/types";
 import { ScopedCodingFileError, type CodingFileTools } from "./coding-platform";
-import { PrivateControllerRuntime, type PrivateControllerRuntimeInput } from "./private-controller-runtime";
+import { PrivateControllerRuntime, PrivateControllerCleanupError, type PrivateControllerRuntimeInput } from "./private-controller-runtime";
 import { hardenedSessionConfig, verifySessionTools } from "./session-config";
 import { emberSections } from "./persona";
 import { CodingBudget } from "./coding-budget";
@@ -180,6 +180,7 @@ export class CustomCodingController {
       return owner;
     } catch (error) {
       try { await owner.close(); } catch { throw new CodingControllerCleanupError(); }
+      if (error instanceof PrivateControllerCleanupError) throw new CodingControllerCleanupError();
       if (error instanceof CodingPrivacyCleanupError) throw error;
       // eslint-disable-next-line preserve-caught-error -- Upstream initialization errors may contain credentials or private paths.
       throw new Error("The coding controller could not be initialized safely.");

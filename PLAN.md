@@ -4855,3 +4855,24 @@ provider/project revocation, retirement and mixed-task cleanup checks remain in 
 production resource factory remain unchanged; this does not enable Windows coding. Portable Host regressions and a
 real Linux Host/conductor/custom-SDK fixture cover file-only edits, zero executed checks, original preservation,
 verified teardown and a folder revoked while creation waits.
+
+**Windows trusted-controller storage foundation (2026-11-16).** Windows controller cwd/home/state/tmp use fresh,
+native-pinned TokenUser/SYSTEM protected directories rather than POSIX mode bits. A separate post-SDK-exit adapter
+accepts only exact TokenUser/SYSTEM allow ACEs on SDK descendants, whose owner must be TokenUser or the actual token's
+captured default owner; elevated ownership is observed from that token, never guessed from an administrator group.
+No ACL is changed and the existing copy/artifact native guards remain exact. Disposal drains owned native handles,
+preserves per-controller uncertainty through concurrent closes, and keeps failed SDK/native cleanup terminal. A typed
+failure before runtime assignment now survives custom-controller startup sanitization. The dedicated Server
+2022/2025 controller matrix checks the pinned SDK's explicit files-only tools, native copied-file edits, execution and
+ambient-configuration negatives, and disposable native/plugin positive controls. Windows product availability and
+Host/resources wiring remain separate work; this foundation does not claim a command runtime or project process-stop
+proof.
+
+**Windows files-only product candidate (2026-11-16, draft).** The fixed platform selector now connects the Windows
+resource owner, private trusted controller, native file-only workspace and ordinary project/Host lifecycle without
+requiring local command services. Windows work edits a fresh private source copy and publishes a sealed review after
+awaited controller/file disposal; explicit export and Forget retain exact native ownership. Its UI/tool metadata
+discloses unavailable commands, tests, dependencies and result continuation. Linux command behavior and the legacy
+disabled SDK gate remain unchanged. Dedicated Server 2022/2025 tests cover resource lifecycle, actual SDK admission
+and real Electron Home/preload/IPC sessions with commands off; their exact candidate results and Windows 10/11 client
+acceptance remain required. No main merge or release is authorized by portable tests alone.

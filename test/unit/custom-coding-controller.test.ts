@@ -4,12 +4,14 @@ import type { CopilotSession } from "@github/copilot-sdk";
 import { CodingControllerCleanupError, CustomCodingController, type CustomCodingControllerOptions, type CodingControllerOptions, type FileOnlyCodingControllerOptions } from "../../app/main/agent/custom-coding-controller";
 import { ScopedCodingFileError, type CodingFileTools } from "../../app/main/agent/coding-platform";
 import { CodingPrivacyCleanupError } from "../../app/main/agent/coding-privacy-scanner";
+import { PrivateControllerCleanupError } from "../../app/main/agent/private-controller-runtime";
 
 const sim = vi.hoisted(() => ({ sessions: [] as any[], inputs: [] as any[], drive: null as null | ((session: any) => Promise<void>), stops: 0, calls: 0, createFailure: false,
-  runtimeCloseGate: null as Promise<void> | null, runtimeCloseFailure: false }));
-vi.mock("../../app/main/agent/private-controller-runtime", () => ({ PrivateControllerRuntime: {
+  runtimeCloseGate: null as Promise<void> | null, runtimeCloseFailure: false, runtimeStartFailure: false }));
+vi.mock("../../app/main/agent/private-controller-runtime", async importOriginal => ({ ...await importOriginal<typeof import("../../app/main/agent/private-controller-runtime")>(), PrivateControllerRuntime: {
   start: async (input: unknown) => {
     sim.inputs.push(input);
+    if (sim.runtimeStartFailure) throw new PrivateControllerCleanupError();
     return { workingDirectory: "/private/coding-cwd", close: async () => {
       sim.stops++; if (sim.runtimeCloseGate) await sim.runtimeCloseGate;
       if (sim.runtimeCloseFailure) throw new Error("synthetic private runtime cleanup canary");
@@ -32,6 +34,7 @@ vi.mock("../../app/main/agent/private-controller-runtime", () => ({ PrivateContr
 const controllers: CustomCodingController[] = [];
 beforeEach(() => { sim.sessions = []; sim.inputs = []; sim.drive = null; sim.stops = 0; sim.calls = 0; sim.createFailure = false;
   sim.runtimeCloseGate = null; sim.runtimeCloseFailure = false;
+  sim.runtimeStartFailure = false;
 });
 afterEach(async () => { for (const owner of controllers.splice(0)) await owner.close(); vi.useRealTimers(); });
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
@@ -142,6 +145,12 @@ it("cleans up a failed initialization without exposing upstream exception text",
 it("preserves a typed cleanup failure when initialization fails before the controller can be returned", async () => {
   const f = fixture(); sim.createFailure = true; f.files.close.mockRejectedValueOnce(new Error("untrusted cleanup diagnostic"));
   await expect(CustomCodingController.start(f.options)).rejects.toBeInstanceOf(CodingControllerCleanupError);
+});
+
+it("preserves unknown runtime retirement when startup rejected before the controller received its runtime", async () => {
+  const f = fixture(); sim.runtimeStartFailure = true;
+  await expect(CustomCodingController.start(f.options)).rejects.toBeInstanceOf(CodingControllerCleanupError);
+  expect(sim.stops).toBe(0); expect(f.createFiles).not.toHaveBeenCalled(); expect(sim.sessions).toEqual([]);
 });
 
 it("preserves a file-factory privacy cleanup failure after awaiting normal controller retirement", async () => {

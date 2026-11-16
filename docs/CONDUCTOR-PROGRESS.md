@@ -119,13 +119,30 @@ and denies Linux key-management syscalls in project commands. The latter closes 
 surface; it does not report an observed credential leak. Settings search prioritizes the names and aliases of settings
 before explanatory project text, preserving Conversation as the first result for history.
 
-## What still needs implementation
+## Windows files-only product candidate
+
+The development candidate now selects an explicit Windows copied-file backend through
+`project-coding-backend.ts`. It does not require a local command service and never substitutes for a failed command
+backend. Project/account/source grants, task disposal, private controller storage, native file tools, sealed review,
+explicit export and Forget are connected. The controller exposes seven file tools, completion and the existing
+optional clarification tool; native SDK execution and configuration loading remain disabled. Commands, test execution,
+dependency installation and result continuation are unavailable in this mode and are disclosed in the UI/tool metadata.
+Linux retains its existing command backend. The legacy `codingAvailable()` remains false.
+
+Exact head `e1e90907` passed the Server 2022/2025 artifact workflow (`43806345002`): 78 portable contracts, 30 native
+artifact cases and 23 native review/adapter cases on each server, with zero skips. The new resource owner adds 20
+portable tests and four actual NTFS cases. The private controller adds its separate SDK/native contract, and a real
+Windows Electron journey covers two fresh sessions, zero checks, source preservation, export, selective/global Forget
+and normal shutdown with local commands off. Those newly composed native/product cases still require their own run;
+writing a test or collecting a Linux platform skip is not Windows evidence. The candidate is not ready to merge.
+
+## What still needs implementation or verification
 
 1. **Production coding isolation and toolchains.** Finish the custom-tool product path and its enforced command backend
    on each supported platform. Linux currently supplies a small offline bash/Node environment; npm, arbitrary compilers
    and external or cyclic dependency links remain unsupported; validated internal links can be materialized. Packaged
    Electron is not a substitute for a real Node binary. Windows/macOS need their own stopped-writer and filesystem
-   implementations and canary tests. Windows CI still exposes child-process creation and PowerShell runtime failures
+   command implementations and canary tests. Windows files-only work has the separate candidate above. Windows CI still exposes child-process creation and PowerShell runtime failures
    in the native prototype; see [the current proof](ISOLATED-WINDOWS-COMMAND-PROOF.md). Do not enable coding by changing
    `codingAvailable()` or interpret a small native fixture as the production backend.
 2. **Coding product integration.** Complete packaged/native-provider verification of per-project grants, real
@@ -160,6 +177,14 @@ the coding isolation, persistent recovery and orchestration work above. Main sho
 requirements and relevant native acceptance are satisfied.
 
 ## Verification
+
+At `410161e7`, full run `43804472777` passed Linux lint/types/build/lab, 19,480 units (38 environment skips), two Stop
+deadlines, 300 integrations (698 environment skips), the genuine sandboxed Electron journey (1/1, 8.77 seconds) and
+all 293 renderer cases. macOS, RHEL compatibility, packaging, evaluation and voice jobs passed. Windows unit, build,
+desktop and packaging checks passed; only the experimental LPAC startup fixture failed, so the overall run remains red.
+This also verifies the repaired cleanup fixture with its real tree wiper, owned-byte clearing after drain and unchanged
+external review buffers. The later combined adapter candidate passed full local types/lint/build, 12 real SDK cases,
+20 Chromium coding UI cases and the genuine Electron journey again (19.61 seconds).
 
 At `29cb624e`, [the Linux checks job](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43793162486/job/133055944521)
 passed lint, types, 19,119 unit tests (38 skipped), 297 integration tests (658 skipped), the isolated Stop deadline and
