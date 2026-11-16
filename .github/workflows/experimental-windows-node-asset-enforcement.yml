@@ -1,0 +1,108 @@
+name: Experimental fixed Windows Node asset enforcement
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/experimental-windows-node-asset-enforcement.yml'
+      - 'scripts/experimental/build-windows-node-asset-enforcement.mjs'
+      - 'scripts/package/windows-node-toolchain.*'
+      - 'test/fixtures/windows-node-asset-enforcement*'
+      - 'test/unit/windows-node-asset-enforcement*'
+      - 'test/integration/windows-node-asset-enforcement-native.test.ts'
+      - 'app/main/agent/windows-node-toolchain-native.ts'
+      - 'app/main/agent/windows-command-launch-cancel.ts'
+      - 'app/main/agent/windows-command-copy.ts'
+      - 'app/main/agent/windows-command-stop.ts'
+      - 'app/main/agent/windows-command-output.ts'
+      - 'app/main/agent/windows-command-creator-profile.ts'
+      - 'app/shared/windows-node-toolchain.json'
+      - 'docs/EXPERIMENTAL-WINDOWS-NODE-ASSET-ENFORCEMENT.md'
+permissions:
+  contents: read
+concurrency:
+  group: fixed-node-asset-enforcement-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+jobs:
+  contracts:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'ember-improve/20261116-node-asset-enforcement'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.23.5'
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - name: Fixed asset enforcement ownership, exact source and build contracts
+        run: npx vitest run test/unit/windows-node-asset-enforcement-build.test.ts test/unit/windows-node-asset-enforcement-native.test.ts test/unit/windows-node-asset-enforcement-proof.test.ts test/unit/windows-node-asset-enforcement-program.test.ts test/unit/windows-node-asset-enforcement-run.test.ts test/unit/windows-node-asset-enforcement-stage.test.ts --maxWorkers=2
+  native:
+    # PR registration starts no native witness. Only the reviewed branch can run this manual pair.
+    if: github.event_name == 'workflow_dispatch' && github.ref_name == 'ember-improve/20261116-node-asset-enforcement'
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.image }}
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    env:
+      EMBER_WINDOWS_NODE_ASSET_ENFORCEMENT_IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.23.5'
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - name: Fixed asset enforcement ownership, exact source and build contracts
+        run: npx vitest run test/unit/windows-node-asset-enforcement-build.test.ts test/unit/windows-node-asset-enforcement-native.test.ts test/unit/windows-node-asset-enforcement-proof.test.ts test/unit/windows-node-asset-enforcement-program.test.ts test/unit/windows-node-asset-enforcement-run.test.ts test/unit/windows-node-asset-enforcement-stage.test.ts --maxWorkers=2
+      - name: Read only the fixed reviewed public producer artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api repos/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/artifacts/14224884648/zip > "$RUNNER_TEMP/windows-node-asset-enforcement-producer.zip"
+      - name: Authenticate the fixed archive and extract only its exact four members
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, pathlib, stat, zipfile
+          source = pathlib.Path(os.environ['RUNNER_TEMP']) / 'windows-node-asset-enforcement-producer.zip'
+          with source.open('rb') as input_file:
+              archive_sha256 = hashlib.file_digest(input_file, 'sha256').hexdigest()
+          if source.stat().st_size != 38424638 or archive_sha256 != '97d34d7260474d71699f6ebca3a5b4a88e1d3663aa4a817a9f02c43a4ff29234':
+              raise RuntimeError('The fixed producer archive is unavailable or changed.')
+          manifest = json.loads(pathlib.Path('app/shared/windows-node-toolchain.json').read_text())
+          expected = {item['source']: item for item in manifest['files']}
+          destination = pathlib.Path('.ember-node-asset-enforcement-producer')
+          with zipfile.ZipFile(source) as archive:
+              entries = archive.infolist()
+              if len(entries) != 4 or {entry.filename for entry in entries} != set(expected):
+                  raise RuntimeError('The producer member set changed.')
+              destination.mkdir()
+              for entry in entries:
+                  pin = expected[entry.filename]
+                  if entry.is_dir() or entry.flag_bits & 1 or stat.S_ISLNK(entry.external_attr >> 16) or entry.file_size != pin['bytes']:
+                      raise RuntimeError('A producer member is unsupported.')
+                  body = archive.read(entry)
+                  if len(body) != pin['bytes'] or hashlib.sha256(body).hexdigest() != pin['sha256']:
+                      raise RuntimeError('A producer member changed.')
+                  with (destination / entry.filename).open('xb') as output:
+                      output.write(body)
+          PY
+      - name: Required actual production assets, native access denial, pinned Node and known cleanup
+        env:
+          EMBER_WINDOWS_NODE_ASSET_ENFORCEMENT_TEST: '1'
+          EMBER_WINDOWS_NODE_ASSET_ENFORCEMENT_PRODUCER: ${{ github.workspace }}/.ember-node-asset-enforcement-producer
+        run: node scripts/run-integration.mjs test/integration/windows-node-asset-enforcement-native.test.ts --maxWorkers=1
+      # No child source, private output, path, SID, handle, raw native error, TAP, report or dump is uploaded.
