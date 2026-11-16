@@ -2,12 +2,14 @@ import { expect, it } from "vitest";
 import { ExperimentalWindowsCreateUncertain, LPAC_ATTRIBUTES } from "../../app/main/agent/experimental-windows-lpac-api";
 import { bindWindowsChildProcessPolicyIo, WindowsChildProcessPolicyIoCleanupError, windowsChildProcessPolicyIoSetupReceipt, WINDOWS_CHILD_PROCESS_POLICY_IO_OUTPUT, WINDOWS_CHILD_PROCESS_POLICY_IO_SETUP_STAGES, WINDOWS_CHILD_PROCESS_POLICY_IO_SETUP_OPERATIONS } from "../fixtures/windows-child-process-policy-io";
 import { windowsChildPolicyFailure } from "../fixtures/windows-child-process-policy-diagnostic";
+import { bindWindowsChildProcessPolicyDetachedIo } from "../fixtures/windows-child-process-policy-detached-io";
+import { WINDOWS_CHILD_POLICY_DETACHED_VARIANT as detached } from "../fixtures/windows-child-process-policy-detached-variant";
 
 const profile = { name: "Ember.Experimental.fresh", sid: 55n, sidText: "S-1-15-2-1234" };
 const program = "C:\\fixture\\tools\\node.exe", state = "C:\\fixture\\state", cwd = "C:\\fixture\\work";
 const command = Buffer.from(`"${program}" --eval "process.exitCode = 0"\0`, "utf16le"), env = Buffer.from("SystemRoot=C:\\Windows\0\0", "utf16le");
 type Call = { name: string; args: unknown[] };
-function setup(initialFault = "", birthPolicy: 0 | 1 | 2 = 0) {
+function setup(initialFault = "", birthPolicy: 0 | 1 | 2 = 0, binder: typeof bindWindowsChildProcessPolicyIo = bindWindowsChildProcessPolicyIo) {
   const calls: Call[] = [], flags = new Map<bigint, number>([[10n, 0], [11n, 0], [12n, 0], [13n, 0]]), positions = new Map<bigint, number>();
   const readBuffers: Buffer[] = [];
   let exclusiveHandle: bigint | undefined;
@@ -130,7 +132,7 @@ function setup(initialFault = "", birthPolicy: 0 | 1 | 2 = 0) {
       return 1;
     };
   } });
-  const bind = () => bindWindowsChildProcessPolicyIo(native, load, state, profile, { ownerSid: () => "S-1-5-21-1234" }, fence, birthPolicy);
+  const bind = () => binder(native, load, state, profile, { ownerSid: () => "S-1-5-21-1234" }, fence, birthPolicy);
   return { bind, calls, control, flags, fence, readBuffers };
 }
 function started() {
@@ -139,6 +141,51 @@ function started() {
   return { ...s, owner };
 }
 const closedHandles = (calls: Call[]) => calls.filter(call => call.name === "CloseHandle").map(call => call.args[0]);
+
+it.each([0, 1, 2] as const)("changes only both roots' console flags and preserves every native argument/attribute for birth %s", birth => {
+  const original = setup("", birth), changed = setup("", birth, bindWindowsChildProcessPolicyDetachedIo);
+  const owners = [original.bind(), changed.bind()];
+  for (const owner of owners) { owner.createHost(program, command, cwd, env); owner.acceptHostControl(); owner.createLpac(profile, program, command, cwd, env); }
+  const before = original.calls.filter(call => call.name === "CreateProcessW"), after = changed.calls.filter(call => call.name === "CreateProcessW");
+  expect(before).toHaveLength(2); expect(after).toHaveLength(2);
+  for (let i = 0; i < 2; i++) {
+    expect(before[i].args[5]).toBe(detached.originalRootCreateFlags);
+    expect(after[i].args).toEqual([...before[i].args.slice(0, 5), detached.rootCreateFlags, ...before[i].args.slice(6)]);
+    expect(Number(after[i].args[5]) & 0x08000000).toBe(0); expect(Number(after[i].args[5]) & 8).toBe(8);
+    const startup = after[i].args[8] as Buffer;
+    expect(startup.readUInt32LE(0)).toBe(112); expect(startup.readUInt32LE(60)).toBe(0x100);
+    expect([80, 88, 96].map(offset => startup.readBigUInt64LE(offset))).toEqual([12n, 10n, 10n]);
+    const index = changed.calls.indexOf(after[i]);
+    expect(changed.calls.slice(index + 1, index + 5).map(call => call.name)).toEqual(["SetHandleInformation", "GetHandleInformation", "SetHandleInformation", "GetHandleInformation"]);
+    expect(changed.calls[index + 1].args).toEqual([12n, 1, 0]); expect(changed.calls[index + 3].args).toEqual([10n, 1, 0]);
+  }
+  const updates = changed.calls.filter(call => call.name === "UpdateProcThreadAttribute");
+  expect(updates).toEqual(original.calls.filter(call => call.name === "UpdateProcThreadAttribute"));
+  const lists = updates.filter(call => call.args[2] === 0x20002);
+  expect(lists).toHaveLength(2);
+  for (const list of lists) expect([list.args[4], ...(list.args[3] as Buffer).values()]).toEqual([16, 12, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0]);
+  const capability = updates.find(call => call.args[2] === LPAC_ATTRIBUTES.securityCapabilities)!.args[3] as Buffer;
+  expect(capability.readBigUInt64LE()).toBe(55n); expect(capability.subarray(8)).toEqual(Buffer.alloc(16));
+  expect((updates.find(call => call.args[2] === LPAC_ATTRIBUTES.allApplicationPackagesPolicy)!.args[3] as Buffer).readUInt32LE()).toBe(1);
+  expect(updates.filter(call => call.args[2] === 0x2000e).map(call => (call.args[3] as Buffer).readUInt32LE())).toEqual(birth ? [birth, birth] : []);
+  expect(changed.flags).toEqual(new Map([[10n, 0], [11n, 0], [12n, 0], [13n, 0]]));
+  for (const owner of owners) owner.close();
+});
+
+it.each(["create false", "create throw"])("keeps the original reset/uncertainty boundary after detached %s", fault => {
+  const s = setup(fault, 1, bindWindowsChildProcessPolicyDetachedIo), owner = s.bind();
+  expect(() => owner.createHost(program, command, cwd, env)).toThrow();
+  expect(s.calls.filter(call => call.name === "CreateProcessW").map(call => call.args[5])).toEqual([detached.rootCreateFlags]);
+  expect(s.flags.get(10n)).toBe(0); expect(s.flags.get(12n)).toBe(0);
+  if (fault === "create throw") { expect(s.fence.retained.length).toBeGreaterThan(0); expect(() => owner.close()).toThrow(ExperimentalWindowsCreateUncertain); }
+  else owner.close();
+});
+
+it("keeps detached OVERRIDE unavailable to a creator reporting restriction before any create call", () => {
+  const s = setup("creator restricted", 2, bindWindowsChildProcessPolicyDetachedIo), owner = s.bind();
+  expect(() => owner.createHost(program, command, cwd, env)).toThrow();
+  expect(s.calls.some(call => call.name === "CreateProcessW")).toBe(false); owner.close();
+});
 
 it.each([
   ["descriptor false", "security-descriptor", "ConvertStringSecurityDescriptorToSecurityDescriptorW"],
