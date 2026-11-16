@@ -2,7 +2,37 @@
 import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { bindInheritedChildObserver, INHERITED_CHILD_FUNCTIONS, InheritedChildCleanupError,
+  inheritedChildNumericFailure, inheritedChildCompilerFailure, inheritedChildVisualStudioRange,
   type InheritedChildAdmission, type InheritedChildFence } from "../fixtures/windows-lpac-inherited-child";
+
+describe("inherited-child closed setup diagnostics", () => {
+  it("accepts only the two reviewed compiler image ranges", () => {
+    expect(inheritedChildVisualStudioRange(undefined)).toBe("[17.0,18.0)");
+    expect(inheritedChildVisualStudioRange("windows-2022")).toBe("[17.0,18.0)");
+    expect(inheritedChildVisualStudioRange("windows-2025")).toBe("[18.0,19.0)");
+    expect(() => inheritedChildVisualStudioRange("private image name")).toThrow("fixed reviewed");
+  });
+  it("emits only fixed numeric domains for known Node, Win32 and HRESULT errors", () => {
+    expect(inheritedChildNumericFailure(Object.assign(new Error("C:\\private\\secret"), { code: "EACCES" }))).toEqual({ domain: 1, code: 1 });
+    expect(inheritedChildNumericFailure(new Error("CreateFileW(directory) failed (Windows error 5)."))).toEqual({ domain: 2, code: 5 });
+    expect(inheritedChildNumericFailure(new Error("CreateAppContainerProfile failed (HRESULT 2147942405); no profile is adopted."))).toEqual({ domain: 3, code: 2147942405 });
+    expect(inheritedChildNumericFailure(new Error("GetAppContainerFolderPath failed (HRESULT 2147942402)."))).toEqual({ domain: 3, code: 2147942402 });
+    expect(inheritedChildNumericFailure(new Error("GetTokenInformation(1) failed (Windows error 122)."))).toEqual({ domain: 2, code: 122 });
+  });
+  it.each([
+    null, "private text", new Error("private path failed (Windows error 5)."),
+    new Error("CreateDirectoryW failed (Windows error 4294967296)."), new Error("CreateDirectoryW failed (Windows error 0005)."),
+    Object.assign(new Error("private environment"), { code: "private errno" }), new Error("CreateDirectoryW failed (Windows error 5). C:\\private"),
+  ])("refuses unrecognized, out-of-range or text-bearing diagnostics without disclosure (%#)", error => {
+    expect(inheritedChildNumericFailure(error)).toEqual({ domain: 0, code: 0 });
+  });
+  it("extracts only bounded fixed compiler error numbers from private output", () => {
+    expect(inheritedChildCompilerFailure("C:\\private\\secret.c(4): error C2065: secret" )).toEqual({ domain: 4, code: 2065 });
+    expect(inheritedChildCompilerFailure("LINK : fatal error LNK2019: secret" )).toEqual({ domain: 5, code: 2019 });
+    expect(inheritedChildCompilerFailure("private error C12345: extra digit" )).toEqual({ domain: 0, code: 0 });
+    expect(inheritedChildCompilerFailure("private non-compiler text" )).toEqual({ domain: 0, code: 0 });
+  });
+});
 
 const JOB = 10n, ROOT = 20n, CHILD = 30n, ROOT_PID = 400, CHILD_PID = 500;
 const IMAGE = "C:\\private\\tools\\fixture.exe";

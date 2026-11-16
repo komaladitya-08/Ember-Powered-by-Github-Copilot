@@ -4,6 +4,31 @@ import type * as Koffi from "koffi";
 import type { WindowsHandle } from "../../app/main/agent/experimental-windows-lpac-api";
 
 type NativeFunction = (...args: unknown[]) => unknown;
+/** Closed host-side diagnostics. No native text, path, SID or arbitrary errno string is returned. */
+export function inheritedChildNumericFailure(error: unknown): { domain: number; code: number } {
+  const unknown = { domain: 0, code: 0 };
+  try {
+    if (!(error instanceof Error)) return unknown;
+    const nodeCodes = ["EACCES", "EPERM", "ENOENT", "EEXIST", "ENOTDIR", "ELOOP", "ETIMEDOUT", "ENOBUFS"];
+    const nodeIndex = nodeCodes.indexOf((error as NodeJS.ErrnoException).code ?? "");
+    if (nodeIndex >= 0) return { domain: 1, code: nodeIndex + 1 };
+    const windows = /^(?:CloseHandle|OpenProcessToken|ConvertSidToStringSidW|GetTokenInformation\(\d+\)|GetVolumeInformationW|CreateDirectoryW|CreateFileW\((?:directory|CREATE_NEW)\)|GetFileInformationByHandle|WriteFile|ConvertStringSecurityDescriptorToSecurityDescriptorW) failed \(Windows error (0|[1-9]\d{0,9})\)\.$/.exec(error.message);
+    const hresult = /^(?:CreateAppContainerProfile|DeleteAppContainerProfile|GetAppContainerFolderPath) failed \(HRESULT (0|[1-9]\d{0,9})\)(?:\.|; no profile is adopted\.)$/.exec(error.message);
+    const match = windows ?? hresult;
+    if (match && Number(match[1]) <= 0xffffffff) return { domain: windows ? 2 : 3, code: Number(match[1]) };
+  } catch { /* Unknown host/ABI error shapes remain unclassified. */ }
+  return unknown;
+}
+export function inheritedChildCompilerFailure(text: string): { domain: number; code: number } {
+  // Compiler output is inspected in memory and never included in the resulting exception or receipt.
+  const match = /\b(?:fatal )?error (C\d{4}|LNK\d{4})\b/.exec(text);
+  return match ? { domain: match[1].startsWith("C") ? 4 : 5, code: Number(match[1].replace(/\D/g, "")) } : { domain: 0, code: 0 };
+}
+export function inheritedChildVisualStudioRange(runner: string | undefined): string {
+  if (runner === undefined || runner === "windows-2022") return "[17.0,18.0)";
+  if (runner === "windows-2025") return "[18.0,19.0)";
+  throw new Error("The inherited-child probe requires a fixed reviewed Windows compiler image.");
+}
 const MAX_PIDS = 8;
 const failure = () => new Error("The inherited-child probe could not verify its fixed native admission contract.");
 export class InheritedChildCleanupError extends Error {
