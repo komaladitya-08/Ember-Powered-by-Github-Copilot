@@ -1,0 +1,68 @@
+name: Experimental fixed Windows command output
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/experimental-windows-command-output.yml'
+      - 'scripts/experimental/build-windows-command-output-proof.mjs'
+      - 'test/fixtures/windows-command-output-*'
+      - 'test/unit/windows-command-output*.test.ts'
+      - 'test/integration/windows-command-output-native.test.ts'
+      - 'app/main/agent/windows-command-output.ts'
+      - 'app/main/agent/windows-command-copy.ts'
+      - 'app/main/agent/windows-command-stop.ts'
+      - 'app/main/agent/windows-command-creator-profile.ts'
+      - 'app/main/agent/windows-command-copy-native.ts'
+      - 'docs/EXPERIMENTAL-WINDOWS-COMMAND-OUTPUT.md'
+permissions:
+  contents: read
+concurrency:
+  group: fixed-command-output-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+jobs:
+  contracts:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'ember-improve/20261116-command-output-native'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '22.23.5'
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - name: Fixed output ownership, source identity and build contracts
+        run: npx vitest run test/unit/windows-command-output.test.ts test/unit/windows-command-output-build.test.ts test/unit/windows-command-output-proof.test.ts test/unit/windows-command-output-run.test.ts --maxWorkers=2
+  native:
+    # PR registration executes no native witness. Dispatch is separately restricted to this reviewed branch.
+    if: github.event_name == 'workflow_dispatch' && github.ref_name == 'ember-improve/20261116-command-output-native'
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.image }}
+    timeout-minutes: 15
+    env:
+      EMBER_WINDOWS_COMMAND_OUTPUT_IMAGE: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '22.23.5'
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - name: Fixed output ownership, source identity and build contracts
+        run: npx vitest run test/unit/windows-command-output.test.ts test/unit/windows-command-output-build.test.ts test/unit/windows-command-output-proof.test.ts test/unit/windows-command-output-run.test.ts --maxWorkers=2
+      - name: Required real production-owner C output, EOF, overflow, cancellation and known cleanup
+        env:
+          EMBER_WINDOWS_COMMAND_OUTPUT_TEST: '1'
+        run: node scripts/run-integration.mjs test/integration/windows-command-output-native.test.ts --maxWorkers=1
+      # No user source, Node workload, network probe, credential, raw output, report, TAP or dump is uploaded.
