@@ -7,6 +7,7 @@ import type { IsolatedCommandWorkspaceInput, IsolatedCommandWorkspace, IsolatedC
 import { createCodingReviewExport, type CodingExportTree } from "../../app/main/agent/coding-result-export";
 import { CodingResultRegistry } from "../../app/main/agent/coding-result-registry";
 import { ProjectCodingWorkspaces } from "../../app/main/agent/project-coding-workspaces";
+import { projectCommandFolder } from "../../app/main/agent/project";
 import type { TaskSpec } from "../../app/main/agent/worker";
 
 const sim = vi.hoisted(() => ({ discover: vi.fn(), create: vi.fn() }));
@@ -388,12 +389,18 @@ it("keeps unsupported-platform folder metadata and empty result reset usable wit
   const { ProjectCodingResources: Unsupported } = await import("../../app/main/agent/coding-resources");
   const value = await Unsupported.create(options); resources.push(value);
   expect(value.availability().available).toBe(false); expect(value.availability().message).toContain("metadata only");
-  const folder = await value.validateSource({ path: source, current: () => true });
-  value.folders.bind(P, folder, value.folders.ownerCurrent(P)); expect(value.folders.state(P)).toMatchObject({ path: source, valid: true });
+  const selected = projectCommandFolder(source, userData);
+  const folder = await value.validateSource(selected);
+  value.folders.bind(P, folder, value.folders.ownerCurrent(P)); expect(value.folders.state(P)).toMatchObject({ path: await fs.realpath(source), valid: true });
+  // Metadata-only choices still require the canonical grant and all protected-path checks.
+  const refusal = "Choose a project folder outside Ember's data, application and private coding storage.";
+  await expect(value.validateSource({ path: `${selected.path}${path.sep}.`, current: () => true })).rejects.toThrow(refusal);
+  await expect(value.validateSource({ path: await fs.realpath(userData), current: () => true })).rejects.toThrow(refusal);
   const results = await value.results(); await results.reset(); await results.forgetProject(P); await results.forgetResult("unknown");
   expect(results.state(P)).toEqual([]); expect(await results.review("unknown")).toBeNull();
   expect((await results.export("unknown", source, () => true)).ok).toBe(false);
   expect(sim.discover).not.toHaveBeenCalled(); expect(sim.create).not.toHaveBeenCalled();
+  expect(await fs.readdir(temporary)).toEqual([]);
 });
 
 resourceIt("allocates only in the same selected storage base already registered with desktop gates", async () => {
