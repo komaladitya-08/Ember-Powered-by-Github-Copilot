@@ -117,6 +117,14 @@ establish useful Node compatibility: zero-capability LPAC startup reaches a libu
 fixed libuv probe is a separate bounded experiment, not a Node runtime or
 command backend. Windows commands and toolchains remain software work; server evidence does not certify client Windows.
 
+The separate fixed C/libuv [draft #218](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/218)
+now has positive feasibility evidence: [run 43814351971](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43814351971)
+at `91de031c` passed 400 portable contracts (one privilege-dependent case skipped) and four native cases on each
+Server image. The independent ordinary-host controls retained their parent's observed security context; stock LPAC
+preserved the expected Winsock failure, while the separately built fixed program completed its local file, timer,
+thread, work-queue and loop operations with verified cleanup. This establishes only that fixed program. Node startup,
+normal child spawning and an actual coding command backend still require separate implementation and proof.
+
 The follow-up also includes the temporary coding store in desktop command, GUI and integration own-data protection,
 and denies Linux key-management syscalls in project commands. The latter closes a potential inherited-session-keyring
 surface; it does not report an observed credential leak. Settings search prioritizes the names and aliases of settings
