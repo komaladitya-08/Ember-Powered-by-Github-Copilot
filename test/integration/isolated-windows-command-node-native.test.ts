@@ -9,6 +9,7 @@ import { loadExperimentalWindowsLpacApi } from "../../app/main/agent/experimenta
 import { compileWindowsNodeBootstrap, prepareWindowsNodeProof, windowsNodeProofPin, WindowsNodeProofCleanupError, type WindowsNodeProofMode } from "../fixtures/windows-node-lpac-proof";
 import { observeWindowsNodeApplicationError } from "../fixtures/windows-node-lpac-events";
 import { parseWindowsNodeFatalOutput } from "../fixtures/windows-node-lpac-fatal";
+import { windowsNodeIoSetupReceipt } from "../fixtures/windows-node-lpac-io";
 
 const denial = z.object({ denied: z.boolean(), code: z.string().max(32).nullable() }).strict();
 const direct = z.object({ version: z.string().max(32), pid: z.number().int().positive(), environmentAbsent: z.boolean(), copiedEdit: z.boolean(),
@@ -121,6 +122,8 @@ describe.skipIf(process.platform !== "win32" || process.env.EMBER_LPAC_NODE_PROO
         expect(creationDenied || startupFailed).toBe(true);
       }
     } catch (error) {
+      const setupReceipt = windowsNodeIoSetupReceipt(error);
+      if (setupReceipt) console.info("Node LPAC stdio setup failure", JSON.stringify(setupReceipt));
       if (error instanceof WindowsNodeProofCleanupError) retained = true;
       failure = { error };
     } finally {

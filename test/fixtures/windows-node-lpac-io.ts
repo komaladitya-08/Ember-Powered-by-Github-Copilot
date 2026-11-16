@@ -5,6 +5,30 @@ import type * as Koffi from "koffi";
 import { ExperimentalWindowsCreateUncertain, LPAC_ATTRIBUTES, LPAC_CREATE_FLAGS, type WindowsHandle, type WindowsLpacApi, type WindowsLpacProfile, type WindowsSuspendedProcess } from "../../app/main/agent/experimental-windows-lpac-api";
 
 export const WINDOWS_NODE_IO_OUTPUT = "node-startup-output.bin";
+export const WINDOWS_NODE_IO_SETUP_STAGES = Object.freeze([
+  "security-descriptor", "create-output-writer", "release-security-descriptor", "open-identity-pin", "identity-pin-metadata",
+  "writer-metadata", "output-identity", "open-null", "null-type", "null-name", "null-eof", "writer-inheritance",
+  "null-inheritance", "pin-inheritance", "writer-rights", "pin-rights", "null-rights",
+] as const);
+export const WINDOWS_NODE_IO_SETUP_OPERATIONS = Object.freeze([
+  "ConvertStringSecurityDescriptorToSecurityDescriptorW", "CreateFileW", "GetHandleInformation",
+  "NtQueryObject", "GetFileInformationByHandle", "ReadFile",
+] as const);
+type SetupStage = (typeof WINDOWS_NODE_IO_SETUP_STAGES)[number];
+type SetupOperation = (typeof WINDOWS_NODE_IO_SETUP_OPERATIONS)[number];
+export type WindowsNodeIoSetupReceipt = Readonly<{ stage: SetupStage; operation?: SetupOperation; code?: number }>;
+const setupReceipts = new WeakMap<object, WindowsNodeIoSetupReceipt>();
+class WindowsNodeIoSetupError extends Error {
+  constructor(receipt: WindowsNodeIoSetupReceipt) {
+    super("The bounded Node stdio diagnostic failed its native contract.");
+    this.name = "WindowsNodeIoSetupError";
+    setupReceipts.set(this, Object.freeze(receipt));
+  }
+}
+/** Only branded setup failures yield fixed facts. Raw errors, similarly named objects and later failures do not. */
+export function windowsNodeIoSetupReceipt(error: unknown): WindowsNodeIoSetupReceipt | undefined {
+  return error !== null && typeof error === "object" ? setupReceipts.get(error) : undefined;
+}
 const INVALID_HANDLE = 0xffffffffffffffffn, HANDLE_INHERIT = 1, HANDLE_LIST = 0x20002, MAX_OUTPUT = 64 * 1024;
 type NativeFunction = (...args: unknown[]) => unknown;
 /** One native uncertainty fences subsequent diagnostics in this process; test bindings use an isolated fence. */
@@ -56,7 +80,20 @@ export function bindWindowsNodeIo(koffi: Pick<typeof Koffi, "sizeof" | "address"
     const dll = load(`${library}.dll`);
     for (const prototype of prototypes) fn[/\b(\w+)\s*\(/.exec(prototype)![1]] = dll.func(prototype) as NativeFunction;
   }
-  const failure = () => new Error("The bounded Node stdio diagnostic failed its native contract.");
+  let setupStage: SetupStage | undefined = "security-descriptor";
+  const failure = (operation?: SetupOperation, code?: unknown) => {
+    if (setupStage === undefined) return new Error("The bounded Node stdio diagnostic failed its native contract.");
+    const receipt: WindowsNodeIoSetupReceipt = typeof code === "number" && Number.isInteger(code) && code >= 0 && code <= 0xffffffff && operation
+      ? { stage: setupStage, operation, code } : { stage: setupStage };
+    return new WindowsNodeIoSetupError(receipt);
+  };
+  // Call only immediately after a native FALSE/invalid-handle result. Predicate failures must never sample stale error state.
+  const win32Failure = (operation: SetupOperation, result: unknown) => {
+    const failed = operation === "CreateFileW" ? result === INVALID_HANDLE : result === 0 || result === false;
+    if (setupStage === undefined || !failed) return failure();
+    try { return failure(operation, fn.GetLastError()); } catch { return failure(); }
+  };
+  const ntFailure = (status: number) => failure("NtQueryObject", Number.isInteger(status) && status >= -0x80000000 && status <= 0xffffffff ? status >>> 0 : undefined);
   const valid = (value: unknown): value is WindowsHandle => typeof value === "bigint" && value > 0n && value < 0x8000000000000000n;
   const handle = (value: unknown): WindowsHandle => { if (!valid(value)) throw failure(); return value; };
   let writer: WindowsHandle | undefined, stdin: WindowsHandle | undefined, pin: WindowsHandle | undefined;
@@ -75,7 +112,7 @@ export function bindWindowsNodeIo(koffi: Pick<typeof Koffi, "sizeof" | "address"
   const open = (...args: unknown[]): WindowsHandle => {
     let value: unknown;
     try { value = fn.CreateFileW(...args); } catch { throw poison(); }
-    if (value === null || value === 0n || value === INVALID_HANDLE) throw failure();
+    if (value === null || value === 0n || value === INVALID_HANDLE) throw win32Failure("CreateFileW", value);
     if (!valid(value)) throw poison();
     if (retainedHandles.has(value)) throw poison();
     // Win32 can recycle a successfully closed writer/stdin value for the publication read pin.
@@ -85,17 +122,24 @@ export function bindWindowsNodeIo(koffi: Pick<typeof Koffi, "sizeof" | "address"
   };
   const flags = (value: WindowsHandle, inherit: boolean) => {
     const observed = [0];
-    if (!fn.GetHandleInformation(value, observed) || observed[0] !== (inherit ? HANDLE_INHERIT : 0)) throw failure();
+    const ok = fn.GetHandleInformation(value, observed);
+    if (!ok) throw win32Failure("GetHandleInformation", ok);
+    if (observed[0] !== (inherit ? HANDLE_INHERIT : 0)) throw failure();
   };
   const granted = (value: WindowsHandle, required: number, allowed: number) => {
     const basic = Buffer.alloc(64), returned = [0];
-    if (Number(fn.NtQueryObject(value, 0, basic, basic.length, returned)) !== 0 || returned[0] < 8 || returned[0] > basic.length) throw failure();
+    const status = fn.NtQueryObject(value, 0, basic, basic.length, returned);
+    if (status !== 0) throw typeof status === "number" ? ntFailure(status) : failure();
+    if (returned[0] < 8 || returned[0] > basic.length) throw failure();
     const access = basic.readUInt32LE(4);
     if ((access & required) !== required || (access & ~allowed) !== 0) throw failure();
   };
   const info = (value: WindowsHandle): Buffer => {
     const bytes = Buffer.alloc(52);
-    if (Number(fn.GetFileType(value)) !== 1 || !fn.GetFileInformationByHandle(value, bytes) || (bytes.readUInt32LE(0) & 0x410) !== 0 || bytes.readUInt32LE(40) !== 1) throw failure();
+    if (Number(fn.GetFileType(value)) !== 1) throw failure();
+    const ok = fn.GetFileInformationByHandle(value, bytes);
+    if (!ok) throw win32Failure("GetFileInformationByHandle", ok);
+    if ((bytes.readUInt32LE(0) & 0x410) !== 0 || bytes.readUInt32LE(40) !== 1) throw failure();
     return bytes;
   };
   const sameId = (a: Buffer, b: Buffer) => a.readUInt32LE(28) === b.readUInt32LE(28) && a.subarray(44, 52).equals(b.subarray(44, 52));
@@ -148,41 +192,63 @@ export function bindWindowsNodeIo(koffi: Pick<typeof Koffi, "sizeof" | "address"
       throw poison();
     }
     if (!converted) {
+      const conversionError = win32Failure("ConvertStringSecurityDescriptorToSecurityDescriptorW", converted);
       if (descriptorOutput[0] !== null && descriptorOutput[0] !== 0n) {
         if (valid(descriptorOutput[0])) retainedHandles.add(descriptorOutput[0]);
         throw poison();
       }
-      throw failure();
+      throw conversionError;
     }
     if (!valid(descriptorOutput[0])) throw poison();
     const descriptor = descriptorOutput[0];
     let writerFailed = false, writerError: unknown;
     try {
+      setupStage = "create-output-writer";
       const security = Buffer.alloc(24); security.writeUInt32LE(24); security.writeBigUInt64LE(descriptor, 8); // bInheritHandle remains FALSE.
       writer = open(path.join(stateDir, WINDOWS_NODE_IO_OUTPUT), 0x2, 3, security, 1, 0x00200000, null);
     } catch (error) { writerFailed = true; writerError = error; }
+    setupStage = "release-security-descriptor";
     try { if (fn.LocalFree(descriptor) !== null) throw failure(); }
     catch { retainedHandles.add(descriptor); throw poison(); }
     if (writerFailed) throw writerError;
     if (writer === undefined) throw failure();
+    setupStage = "open-identity-pin";
     pin = open(path.join(stateDir, WINDOWS_NODE_IO_OUTPUT), 0x81, 3, null, 3, 0x00200000, null);
     if (pin === writer) throw failure();
+    setupStage = "identity-pin-metadata";
     initial = info(pin);
-    if (!sameId(initial, info(writer)) || size(initial) !== 0) throw failure();
+    setupStage = "writer-metadata";
+    const writerInfo = info(writer);
+    setupStage = "output-identity";
+    if (!sameId(initial, writerInfo) || size(initial) !== 0) throw failure();
+    setupStage = "open-null";
     stdin = open("\\\\?\\GLOBALROOT\\Device\\Null", 0x80000000, 3, null, 3, 0, null);
+    setupStage = "null-type";
     if (stdin === writer || stdin === pin || Number(fn.GetFileType(stdin)) !== 2) throw failure();
+    setupStage = "null-name";
     const name = Buffer.alloc(4096), returned = [0];
-    if (Number(fn.NtQueryObject(stdin, 1, name, name.length, returned)) !== 0 || returned[0] < 16 || returned[0] > name.length) throw failure();
+    const nameStatus = fn.NtQueryObject(stdin, 1, name, name.length, returned);
+    if (nameStatus !== 0) throw typeof nameStatus === "number" ? ntFailure(nameStatus) : failure();
+    if (returned[0] < 16 || returned[0] > name.length) throw failure();
     const length = name.readUInt16LE(0), maximum = name.readUInt16LE(2), offset = name.readBigUInt64LE(8) - koffi.address(name);
     if (length === 0 || length % 2 || maximum % 2 || maximum < length || offset < 16n || offset > BigInt(returned[0] - maximum) ||
       name.toString("utf16le", Number(offset), Number(offset) + length) !== "\\Device\\Null") throw failure();
+    setupStage = "null-eof";
     const eof = [0];
-    if (!fn.ReadFile(stdin, Buffer.alloc(1), 1, eof, null) || eof[0] !== 0) throw failure();
-    for (const value of [writer, stdin, pin]) flags(value, false);
+    const readOk = fn.ReadFile(stdin, Buffer.alloc(1), 1, eof, null);
+    if (!readOk) throw win32Failure("ReadFile", readOk);
+    if (eof[0] !== 0) throw failure();
+    for (const [value, stage] of [[writer, "writer-inheritance"], [stdin, "null-inheritance"], [pin, "pin-inheritance"]] as const) {
+      setupStage = stage; flags(value, false);
+    }
+    setupStage = "writer-rights";
     granted(writer, 0x2, 0x100002); // Win32 may add SYNCHRONIZE to the requested payload-only access.
+    setupStage = "pin-rights";
     granted(pin, 0x81, 0x100081);
+    setupStage = "null-rights";
     granted(stdin, 0x1, 0x120089); // GENERIC_READ mapping on the canonical character device.
   } catch (error) {
+    const original = windowsNodeIoSetupReceipt(error) ? error : failure();
     // Independently release every known IO handle even if descriptor cleanup already poisoned this owner.
     for (const value of new Set([writer, stdin, pin])) if (value !== undefined) {
       retainedHandles.add(value);
@@ -191,8 +257,9 @@ export function bindWindowsNodeIo(koffi: Pick<typeof Koffi, "sizeof" | "address"
     closed = true;
     if (terminal) throw terminal;
     if (error instanceof WindowsNodeIoCleanupError) throw error;
-    throw failure();
+    throw original;
   }
+  setupStage = undefined;
   const unchanged = () => {
     try {
       if (pin === undefined) throw failure();

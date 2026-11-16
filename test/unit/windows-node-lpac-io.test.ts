@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { ExperimentalWindowsCreateUncertain, LPAC_ATTRIBUTES } from "../../app/main/agent/experimental-windows-lpac-api";
-import { bindWindowsNodeIo, WindowsNodeIoCleanupError, WINDOWS_NODE_IO_OUTPUT } from "../fixtures/windows-node-lpac-io";
+import { bindWindowsNodeIo, WindowsNodeIoCleanupError, windowsNodeIoSetupReceipt, WINDOWS_NODE_IO_OUTPUT, WINDOWS_NODE_IO_SETUP_STAGES, WINDOWS_NODE_IO_SETUP_OPERATIONS } from "../fixtures/windows-node-lpac-io";
 
 const profile = { name: "Ember.Experimental.fresh", sid: 55n, sidText: "S-1-15-2-1234" };
 const program = "C:\\fixture\\tools\\node.exe", state = "C:\\fixture\\state", cwd = "C:\\fixture\\work";
@@ -11,7 +11,7 @@ function setup(initialFault = "") {
   const readBuffers: Buffer[] = [];
   let exclusiveHandle: bigint | undefined;
   const addresses = new Map<Buffer, bigint>();
-  const control = { fault: initialFault, output: Buffer.alloc(0), metadata: "", mutateOnRead: false };
+  const control = { fault: initialFault, output: Buffer.alloc(0), metadata: "", mutateOnRead: false, lastError: 122 as unknown, cleanupLastError: undefined as unknown, failCleanup: false };
   const fence = { retained: [] as unknown[], failure: undefined as Error | undefined };
   const address = (buffer: Buffer) => { let pointer = addresses.get(buffer); if (!pointer) { pointer = BigInt(0x10000 + addresses.size * 0x10000); addresses.set(buffer, pointer); } return pointer; };
   const native = { sizeof: () => 8, address } as unknown as Parameters<typeof bindWindowsNodeIo>[0];
@@ -20,8 +20,9 @@ function setup(initialFault = "") {
     return (...args: unknown[]) => {
       calls.push({ name, args: args.map(value => Buffer.isBuffer(value) ? Buffer.from(value) : value) });
       const fault = control.fault;
-      if (name === "GetLastError") return 122;
+      if (name === "GetLastError") return control.lastError;
       if (name === "ConvertStringSecurityDescriptorToSecurityDescriptorW") {
+        if (fault === "descriptor false") { (args[2] as unknown[])[0] = null; return 0; }
         (args[2] as unknown[])[0] = 300n;
         if (fault === "descriptor throw") throw new Error("native private diagnostic");
         return 1;
@@ -29,8 +30,8 @@ function setup(initialFault = "") {
       if (name === "LocalFree") { if (fault === "free throw") throw new Error("native private diagnostic"); return fault === "free failed" ? 300n : null; }
       if (name === "CreateFileW") {
         if (fault === "open throw" || fault === "pin throw" && args[4] !== 1) throw new Error("native private diagnostic");
-        if (args[4] === 1) return fault === "invalid writer" ? 0n : 10n;
-        if ((args[0] as string).includes("GLOBALROOT")) return fault === "aliased stdin" ? 10n : 12n;
+        if (args[4] === 1) return fault === "invalid writer" ? 0xffffffffffffffffn : 10n;
+        if ((args[0] as string).includes("GLOBALROOT")) return fault === "null open false" ? 0xffffffffffffffffn : fault === "aliased stdin" ? 10n : 12n;
         if (args[2] === 1) {
           if (fault === "remaining writer") return 0xffffffffffffffffn;
           if (fault === "exclusive open throw") throw new Error("native private diagnostic");
@@ -41,6 +42,9 @@ function setup(initialFault = "") {
       }
       if (name === "GetFileType") return args[0] === 12n ? fault === "disk stdin" ? 1 : 2 : 1;
       if (name === "GetFileInformationByHandle") {
+        if (fault === "writer metadata undefined" && args[0] === 10n) return undefined;
+        if (fault === "writer metadata false" && args[0] === 10n || fault === "pin metadata false" && args[0] === 11n) return 0;
+        if (fault === "writer metadata throw" && args[0] === 10n) throw new Error("private path, credential and native exception");
         const buffer = args[1] as Buffer, meta = control.metadata || fault;
         buffer.writeUInt32LE(meta === "reparse" ? 0x400 : meta === "directory" ? 0x10 : 0x80, 0);
         buffer.writeBigUInt64LE(100n, 4); buffer.writeBigUInt64LE(meta === "write time" || fault === "exclusive changed metadata" && args[0] === exclusiveHandle ? 501n : 500n, 20);
@@ -51,6 +55,7 @@ function setup(initialFault = "") {
         return 1;
       }
       if (name === "GetHandleInformation") {
+        if (fault === "flags false") return 0;
         (args[1] as number[])[0] = fault === "inheritable pin" && args[0] === 11n || fault === "exclusive inheritable" && args[0] === exclusiveHandle ? 1 : flags.get(args[0] as bigint)!;
         return 1;
       }
@@ -61,6 +66,8 @@ function setup(initialFault = "") {
         return 1;
       }
       if (name === "NtQueryObject") {
+        if (fault === "rights status string" && args[1] === 0) return "-1073741790";
+        if (fault === "rights status" && args[1] === 0) return -1073741790;
         const buffer = args[2] as Buffer;
         if (args[1] === 0) {
           let access = args[0] === exclusiveHandle ? 0x81 : args[0] === 10n ? 2 : args[0] === 11n ? 0x81 : 0x120089;
@@ -77,6 +84,7 @@ function setup(initialFault = "") {
         name.copy(buffer, 16); (args[4] as number[])[0] = 16 + name.length; return fault === "NUL query" ? -1 : 0;
       }
       if (name === "ReadFile") {
+        if (fault === "null read false" && args[0] === 12n) return 0;
         if (args[0] === 12n) { (args[3] as number[])[0] = fault === "nonEOF stdin" ? 1 : 0; return 1; }
         if ((args[2] as number) > 1) readBuffers.push(args[1] as Buffer);
         const position = positions.get(args[0] as bigint) ?? 0, length = Math.min(args[2] as number, Math.max(0, control.output.length - position));
@@ -104,6 +112,8 @@ function setup(initialFault = "") {
       if (name === "DeleteProcThreadAttributeList" && (fault === "delete attrs" || fault === "unobserved" || fault === "close root")) throw new Error("native private diagnostic");
       if (name === "WaitForSingleObject") return fault === "unobserved" ? 258 : 0;
       if (name === "CloseHandle") {
+        if (control.cleanupLastError !== undefined) control.lastError = control.cleanupLastError;
+        if (control.failCleanup && args[0] === 10n) return 0;
         if (fault === "close writer throw" && args[0] === 10n) throw new Error("native private diagnostic");
         return fault === "close writer" && args[0] === 10n || fault === "close root" && args[0] === 20n || fault === "close original pin" && args[0] === 11n ? 0 : 1;
       }
@@ -119,6 +129,86 @@ function started() {
   return { ...s, owner };
 }
 const closedHandles = (calls: Call[]) => calls.filter(call => call.name === "CloseHandle").map(call => call.args[0]);
+
+it.each([
+  ["descriptor false", "security-descriptor", "ConvertStringSecurityDescriptorToSecurityDescriptorW"],
+  ["invalid writer", "create-output-writer", "CreateFileW"],
+  ["pin metadata false", "identity-pin-metadata", "GetFileInformationByHandle"],
+  ["writer metadata false", "writer-metadata", "GetFileInformationByHandle"],
+  ["null open false", "open-null", "CreateFileW"],
+  ["null read false", "null-eof", "ReadFile"],
+  ["flags false", "writer-inheritance", "GetHandleInformation"],
+])("reports only the fixed setup stage and immediate failed API code: %s", (fault, stage, operation) => {
+  const s = setup(fault); s.control.lastError = 5; s.control.cleanupLastError = "private cleanup state";
+  let error: unknown; try { s.bind(); } catch (caught) { error = caught; }
+  expect(error).toBeInstanceOf(Error);
+  const receipt = windowsNodeIoSetupReceipt(error);
+  expect(receipt).toEqual({ stage, operation, code: 5 }); expect(Object.isFrozen(receipt)).toBe(true);
+  const sampling = s.calls.findIndex(call => call.name === "GetLastError");
+  expect(sampling).toBeGreaterThan(0); expect(s.calls[sampling - 1].name).toBe(operation);
+  expect(s.calls.filter(call => call.name === "GetLastError")).toHaveLength(1);
+  const closes = closedHandles(s.calls); expect(new Set(closes).size).toBe(closes.length);
+  expect(JSON.stringify(receipt)).not.toMatch(/private|C:|S-1-|handle|mask|credential/);
+});
+
+it.each([
+  ["wrong ID", "output-identity"], ["wrong NUL name", "null-name"], ["nonEOF stdin", "null-eof"],
+  ["inheritable pin", "pin-inheritance"], ["readable writer", "writer-rights"], ["disk stdin", "null-type"],
+])("reports only a stage for a failed predicate without sampling stale LastError: %s", (fault, stage) => {
+  const s = setup(fault); s.control.lastError = 0xdeadbeef;
+  let error: unknown; try { s.bind(); } catch (caught) { error = caught; }
+  expect(windowsNodeIoSetupReceipt(error)).toEqual({ stage });
+  expect(s.calls.some(call => call.name === "GetLastError")).toBe(false);
+});
+
+it("uses the actual unsigned NTSTATUS rather than Win32 LastError for a failed object query", () => {
+  const s = setup("rights status"); s.control.lastError = "private stale native state";
+  let error: unknown; try { s.bind(); } catch (caught) { error = caught; }
+  expect(windowsNodeIoSetupReceipt(error)).toEqual({ stage: "writer-rights", operation: "NtQueryObject", code: 0xc0000022 });
+  expect(s.calls.some(call => call.name === "GetLastError")).toBe(false);
+});
+
+it.each([NaN, -1, 0x100000000, "private native error", undefined])("discards a malformed native error value: %s", value => {
+  const s = setup("writer metadata false"); s.control.lastError = value;
+  let error: unknown; try { s.bind(); } catch (caught) { error = caught; }
+  expect(windowsNodeIoSetupReceipt(error)).toEqual({ stage: "writer-metadata" });
+});
+
+it("keeps a thrown native exception private and does not pretend that it was a FALSE/API-code result", () => {
+  const s = setup("writer metadata throw");
+  let error: unknown; try { s.bind(); } catch (caught) { error = caught; }
+  expect(windowsNodeIoSetupReceipt(error)).toEqual({ stage: "writer-metadata" });
+  expect(String(error)).not.toMatch(/private path|credential|native exception/);
+  expect(s.calls.some(call => call.name === "GetLastError")).toBe(false);
+  expect(closedHandles(s.calls)).toEqual([10n, 11n]);
+});
+
+it.each([["writer metadata undefined", "writer-metadata"], ["rights status string", "writer-rights"]])("does not classify a malformed native return as a failed API status: %s", (fault, stage) => {
+  const s = setup(fault);
+  let error: unknown; try { s.bind(); } catch (caught) { error = caught; }
+  expect(windowsNodeIoSetupReceipt(error)).toEqual({ stage });
+  expect(s.calls.some(call => call.name === "GetLastError")).toBe(false);
+});
+
+it("preserves typed unknown cleanup over an ordinary setup receipt and fences future admission", () => {
+  const s = setup("writer metadata false"); s.control.failCleanup = true;
+  let error: unknown; try { s.bind(); } catch (caught) { error = caught; }
+  expect(error).toBeInstanceOf(WindowsNodeIoCleanupError); expect(windowsNodeIoSetupReceipt(error)).toBeUndefined();
+  expect(s.fence.failure).toBe(error); expect(closedHandles(s.calls)).toEqual([10n, 11n]);
+  const count = s.calls.length; expect(s.bind).toThrow(WindowsNodeIoCleanupError); expect(s.calls).toHaveLength(count);
+});
+
+it("brands receipts without trusting similarly named objects and closes the setup-only diagnostic lifetime", () => {
+  expect(Object.isFrozen(WINDOWS_NODE_IO_SETUP_STAGES)).toBe(true); expect(Object.isFrozen(WINDOWS_NODE_IO_SETUP_OPERATIONS)).toBe(true);
+  for (const candidate of [undefined, "private", { stage: "writer-metadata", operation: "CreateFileW", code: 5 },
+    new Proxy({}, { getPrototypeOf() { throw new Error("private prototype"); }, get() { throw new Error("private getter"); } }),
+    Object.assign(new Error("private path"), { name: "WindowsNodeIoSetupError", receipt: { stage: "writer-metadata" } })]) {
+    expect(windowsNodeIoSetupReceipt(candidate)).toBeUndefined();
+  }
+  const s = setup(), owner = s.bind();
+  let error: unknown; try { owner.acceptHostControl(); } catch (caught) { error = caught; }
+  expect(error).toBeInstanceOf(Error); expect(windowsNodeIoSetupReceipt(error)).toBeUndefined(); owner.close();
+});
 
 it("creates one fresh protected output, a separate same-file nonwritable read pin, and canonical read-only NUL", () => {
   const s = setup(), owner = s.bind(), files = s.calls.filter(call => call.name === "CreateFileW");
