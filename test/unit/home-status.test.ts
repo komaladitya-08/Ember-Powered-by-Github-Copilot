@@ -304,6 +304,16 @@ describe("Search settings", () => {
     expect(fs.readFileSync("app/renderer/home/index.html", "utf8")).toContain('<h3 class="sub" id="byok-h">Model provider</h3>');
   });
 
+  it("ranks setting names and aliases before incidental descriptions and keeps qualified descriptions discoverable", () => {
+    const note = { pane: "project", text: "Exported copies and project or session history stay.", description: true };
+    const conversation = { pane: "home", text: "Conversation", alias: SEARCH_ALIASES["conversation-h"] };
+    const named = { pane: "other", text: "History" };
+    // Description order cannot displace a setting's explicit alternate name; a setting's own name still wins.
+    expect(searchMatches("history", [note, conversation, named])).toEqual([named, conversation, note]);
+    expect(searchMatches("clear history", [note, conversation])).toEqual([conversation]);
+    for (const query of ["project history", "session history"]) expect(searchMatches(query, [conversation, note]), query).toEqual([note]);
+  });
+
   /** A small element tree, shaped as the DOM gives it (text nodes 3, elements 1). */
   const text = (t: string): ShownNode => ({ nodeType: 3, nodeValue: t, childNodes: [] });
   const elem = (tagName: string, children: ShownNode[], o: { hidden?: boolean; aria?: string; cls?: string } = {}): ShownNode => ({

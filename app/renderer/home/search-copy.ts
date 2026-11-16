@@ -6,7 +6,13 @@
  */
 
 /** One thing the search can find: a heading, a switch's label, a footnote, a button. */
-export interface Searchable { pane: string; text: string; alias?: string }
+export interface Searchable {
+  pane: string;
+  text: string;
+  alias?: string;
+  /** Explanatory copy remains searchable after named settings and their alternate names. */
+  description?: boolean;
+}
 
 /** Lower case without accents or quote marks, so “Hey Ember” is found by hey ember. */
 export function searchFold(s: string): string {
@@ -64,15 +70,18 @@ export function shownText(node: ShownNode): string {
 }
 
 /**
- * The items whose words hold every word of `query` (none for a blank query), in the page's order: those whose own words
- * hold it first, then those found only by a pane's other words (SEARCH_ALIASES), so Enter goes to the setting named.
+ * The items whose words hold every word of `query` (none for a blank query). Named settings come first, then their
+ * alternate names (SEARCH_ALIASES), then explanatory copy. Each group keeps the page's order, so a word mentioned in
+ * another setting's note cannot displace the named setting, while a more specific query still finds that note.
  */
 export function searchMatches<T extends Searchable>(query: string, items: readonly T[]): T[] {
   const words = searchFold(query).split(/\s+/).filter(Boolean);
   if (!words.length) return [];
   const holds = (t: string) => { const f = searchFold(t); return words.every(w => f.includes(w)); };
-  const own = items.filter(i => holds(i.text));
-  return [...own, ...items.filter(i => !own.includes(i) && !!i.alias && holds(`${i.text} ${i.alias}`))];
+  const own = items.filter(i => !i.description && holds(i.text));
+  const aliases = items.filter(i => !i.description && !own.includes(i) && !!i.alias && holds(`${i.text} ${i.alias}`));
+  const descriptions = items.filter(i => i.description && (holds(i.text) || (!!i.alias && holds(`${i.text} ${i.alias}`))));
+  return [...own, ...aliases, ...descriptions];
 }
 
 /** What a screen reader hears as the search narrows the sidebar. */

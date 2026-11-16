@@ -306,6 +306,23 @@ describe.skipIf(gate)("Home's Search settings, as the person reads the results (
     await page.close();
   });
 
+  it("opens Conversation for history and keeps project or session history discoverable in Projects", async () => {
+    const page = await open("home");
+    expect((await results(page, "history"))[0]).toBe("Home: Conversation");
+    await page.locator("#search").press("Enter");
+    expect(await page.evaluate(() => document.activeElement?.id)).toBe("conversation-h");
+    for (const query of ["project history", "session history"]) {
+      const first = (await results(page, query))[0];
+      expect(first, query).toMatch(/^Projects: /);
+      expect(first, query).toContain("project or session history");
+    }
+    await page.locator("#search").press("Enter");
+    expect(await page.locator("#jump a[aria-current]").getAttribute("href")).toBe("#project-h");
+    expect(await page.evaluate(() => !!document.activeElement?.closest("#project-coding"))).toBe(true);
+    expect(page.errors).toEqual([]);
+    await page.close();
+  });
+
   it("names Setup & about plainly in its results while the sidebar's badge shows, and finds the log file (home-r2)", async () => {
     const page = await open("home", { checks: [{ id: "atspi", status: "fail", label: "Accessibility", detail: "Ember can't read apps.", fix: "Turn on assistive technologies." }] });
     // The badge is on the sidebar's link: its number for the eye, its words for a screen reader.

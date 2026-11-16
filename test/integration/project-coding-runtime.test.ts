@@ -174,7 +174,10 @@ it.skipIf(process.env.EMBER_UIUX_TEST !== "1" || process.platform !== "linux" ||
       const id = host!.projectSessionsState().selectedProjectId!;
       await page!.locator("#project-sessions-request").fill(request); await page!.locator("#project-sessions-send").click();
       await expect.poll(() => host!.projectSessionsState().projects.find(p => p.id === id)?.sessions[0]?.status, { timeout: 35_000 }).toBe("done");
-      await expect.poll(() => page!.locator("#project-coding-results button").count()).toBe(1);
+      const results = page!.locator("#project-coding-results");
+      await expect.poll(() => results.locator(":scope > li").count()).toBe(1);
+      await expect.poll(() => results.getByRole("button", { name: /^Review result: / }).count()).toBe(1);
+      expect(await results.getByRole("button", { name: /^Forget private result: / }).count()).toBe(1);
       return id;
     };
     const project = await prepare("Copied Node repair", repairRequest);
@@ -183,7 +186,7 @@ it.skipIf(process.env.EMBER_UIUX_TEST !== "1" || process.platform !== "linux" ||
     expect(exits.map(exit => exit.code)).toEqual([1, 0]); expect(exits.every(exit => exit.ended === "exit" && !exit.outputCut && !exit.endLost)).toBe(true);
     expect(cards).toHaveLength(2); expect(cards[0].sha256).toBe(cards[1].sha256); expect(cards.every(card => card.cwd === "/work")).toBe(true);
     expect(questions).toHaveLength(2); expect(audit.recent().filter(entry => entry.event === "command" && entry.phase === "started")).toHaveLength(2);
-    await page.locator("#project-coding-results button").click();
+    await page.locator("#project-coding-results").getByRole("button", { name: /^Review result: / }).click();
     await expect.poll(() => page!.locator("#project-coding-patch").textContent()).toContain("1 + 1, 2");
     await expect.poll(() => host!.conductor!.turnOpen).toBe(false);
     const modelCount = model.requests.length;
@@ -208,7 +211,15 @@ it.skipIf(process.env.EMBER_UIUX_TEST !== "1" || process.platform !== "linux" ||
     emit("onConversationForgotten"); await events;
     expect(access.state(second)).toEqual([]); expect(await access.review(secondResult.id)).toBeNull();
     expect(fs.readdirSync(resources.reviewBase)).toEqual([]);
-    await expect.poll(() => page!.locator("#project-coding").isHidden()).toBe(true);
+    const clearedResults = page.locator("#project-coding-results");
+    await expect.poll(() => clearedResults.getByRole("button").count()).toBe(0);
+    expect(await clearedResults.getByRole("heading").count()).toBe(0);
+    expect(await clearedResults.innerText()).toBe("Select a project to see its coding results.");
+    expect(await page.locator("#project-coding-review").isHidden()).toBe(true);
+    expect(await page.locator("#project-coding-patch").textContent()).toBe("");
+    expect(await page.locator("#project-coding-folder").textContent()).toBe("Create or select a project above to choose its coding folder.");
+    expect(await page.locator("#project-coding-choose").isDisabled()).toBe(true);
+    expect(await page.locator("#project-coding-forget").isDisabled()).toBe(true);
     expect(pickerCalls).toEqual(["Choose a coding folder", "Export coding review", "Choose a coding folder"]);
     expect(dispatched.size).toBe(2); expect(errors).toEqual([]);
     expect(fs.readFileSync(path.join(source, "test.cjs"), "utf8")).toBe(original);

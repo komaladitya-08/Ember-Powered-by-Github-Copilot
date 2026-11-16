@@ -2520,8 +2520,8 @@ for (const el of [$("jump"), ...jumpLinks]) jumpSizes.observe(el, { box: "border
 // ───── Search settings: at the top of the sidebar, it narrows the panes to those that hold the words typed, and
 // Enter goes to the first setting found (System Settings' search, HIG/search-fields) ─────
 const SEARCHED = "h2, h3.sub, label, summary, .hint, .row-note, .intro, .agent-actions > button, .pick-row label";
-function searchItems(): { pane: string; text: string; alias?: string; el: HTMLElement }[] {
-  const items: { pane: string; text: string; alias?: string; el: HTMLElement }[] = [];
+function searchItems(): { pane: string; text: string; alias?: string; description: boolean; el: HTMLElement }[] {
+  const items: { pane: string; text: string; alias?: string; description: boolean; el: HTMLElement }[] = [];
   for (const el of document.querySelectorAll<HTMLElement>(`.home > [data-pane] :is(${SEARCHED})`)) {
     const p = paneOf(el);
     // A fold's heading is found as its summary, once, by the heading's words (the note beside it isn't its name).
@@ -2532,7 +2532,8 @@ function searchItems(): { pane: string; text: string; alias?: string; el: HTMLEl
     if (!p || hiddenHere(el) || !text.trim()) continue;
     const pick = el instanceof HTMLLabelElement && el.control instanceof HTMLSelectElement ? el.control : el.querySelector("select");
     const options = pick ? [...pick.options].map(o => o.textContent ?? "").join(" ") : "";
-    items.push({ pane: p, text, alias: [SEARCH_ALIASES[(head ?? el).id], options].filter(Boolean).join(" ") || undefined, el });
+    items.push({ pane: p, text, alias: [SEARCH_ALIASES[(head ?? el).id], options].filter(Boolean).join(" ") || undefined,
+      description: el.matches(".hint, .row-note, .intro"), el });
   }
   return items;
 }
