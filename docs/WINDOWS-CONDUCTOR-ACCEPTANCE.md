@@ -46,8 +46,14 @@ foundation's ordinary CI also passed macOS and RHEL; its Windows job retained th
 earlier Save-button failure did not recur, but its cause remains unknown. The redaction optimisation's Linux and
 RHEL gates passed; after its cancelled PR job, exact-head macOS-only run 43956411177 passed 19,453 units, the
 unchanged redaction budget assertion and the full build/native/smoke/app-bundle job. The disabled native owner
-`5ef8b2fc` has passed local gates, but full coordinator composition found a shared-task cancellation gap before
-output matching; its correction and actual explicit/default-Medium parent enforcement remain unfinished.
+`5ef8b2fc` exposed a shared-task cancellation gap in full coordinator composition. Its authenticated returned-child
+cleanup correction is published at `46fed893` with 1,142 affected cases, full types and independent review passed.
+The unregistered Node workspace `68860d55` passed 1,248 local cases and full types; its six existing hosted
+controller/ZIP/files-only Electron jobs passed. Actual explicit/default-Medium parent enforcement, native canonical
+transfer and the complete Node product journey remain unverified. Host/resource integration is local and has an
+unresolved protected-ancestor allocation conflict. Four-patch Node producer `4d052231` passed registration and has
+one pending [manual build 43968426268](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43968426268);
+its mandatory SDK preflight, build, artifact authentication and runtime validation are not yet complete.
 Worker startup fix `bec2e6ad` passed all six existing Windows controller/ZIP/files-only Electron jobs. None of these results enables Windows commands
 in the product or closes live-account and physical-laptop acceptance.
 

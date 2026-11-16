@@ -289,10 +289,27 @@ Node-only workspace are being implemented and reviewed separately; authentic can
 product verification remain unfinished. The disabled native owner [#257](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/257)
 at `5ef8b2fc` passed 1,104 affected cases, 90 final focused cases, full types and source review. Ordinary CI passed
 20,547 macOS and 20,497 Windows units; the Windows job still fails the old LPAC fixture. Full default-factory
-coordinator composition exposed shared-task cancellation before output matching: it can currently become an
-unknown-cleanup fence. A narrowly authenticated returned-child cleanup correction, typed failure propagation,
-coordinator integration and actual native asset/parent enforcement remain under implementation/review. The existing
+coordinator composition exposed shared-task cancellation before output matching. Its correction is now published
+at `46fed893`: exact returned-child authority permits only authenticated Stop, output drain and prepared-grant
+revocation, with no Resume or execution claim. It passed 1,142 affected cases, full types and independent source
+review. The current head also passed 20,585 macOS and 20,535 Windows units; the Windows job still fails the old
+LPAC fixture. Actual native asset/parent enforcement remains under review. The existing
 five-second timeout and initial typing failures remain disclosed in that foundation's validation document.
+
+The unregistered Node coordinator [#259](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/259)
+at `68860d55` composes the real canonical copy, native assets, stopped output and one-shot adoption. Its disjoint
+local gates passed 1,248 cases across 27 files and full types; hosted regression checks passed all six existing
+Windows controller, ZIP and files-only Electron jobs. Those jobs do not exercise the new Node command path.
+Host/resource integration is still local: actual default-resource tests found a protected-ancestor allocation
+conflict, which must be resolved without weakening source or private-storage protection.
+
+The additive four-patch Node producer [#260](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/260)
+at `4d052231` preserves the three reviewed startup patches and adds the fixed POSIX file-rename operation supported
+by the full LPAC proof. Its local source/build/rename gates and full types passed; registration passed 160 cases.
+One exact-head [manual build 43968426268](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43968426268)
+was dispatched. Mandatory Win8/Win10RS1 SDK compilation, the Node build, artifact authentication and actual runtime
+validation are pending. The seven-case native asset proof is also awaiting final review and execution. Neither
+candidate enables Windows commands in the published product; software work remains before laptop acceptance.
 
 The separate worker startup correction [#258](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/258)
 at `bec2e6ad` preserves genuine native/artifact/seed cleanup uncertainty when a factory rejects before returning a
