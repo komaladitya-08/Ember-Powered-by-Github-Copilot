@@ -42,7 +42,7 @@ type FailureOperation = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 1
 type FailurePredicate = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 type FailureDomain = 0 | 1 | 2;
 interface OwnerFacts {
-  /** 1 host user (not emitted on mismatch), 2 known package, 3 SYSTEM, 4 public builtin Administrators, 5 other. */
+  /** 1 host user (may differ from an exact captured creator), 2 known package, 3 SYSTEM, 4 public builtin Administrators, 5 other. */
   readonly ownerClass: 1 | 2 | 3 | 4 | 5;
   readonly nodeKind: 1 | 2;
   readonly nodeRoot: 0 | 1;
@@ -50,7 +50,17 @@ interface OwnerFacts {
   readonly nodeAcl: 1 | 2 | 3;
   readonly nodeDetached: 0 | 1;
 }
-export interface WindowsCommandCopyNativeFailure extends Partial<OwnerFacts> {
+interface AceHeaderFacts { readonly type: number; readonly flags: number; readonly size: number; readonly mask: number; readonly expectedFlags: number }
+interface AceRowFacts { readonly sidClass: OwnerFacts["ownerClass"]; readonly mask: number }
+interface AceFacts {
+  /** DACL length/type/flags/size/set (1..5), label length/type/flags/mask/size/SID (6..11), first failed arm only. */
+  readonly aceConstraint: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
+  /** Present only when the already returned header has exactly eight bytes. Never contains a pointer or SID. */
+  readonly aceHeader?: Readonly<AceHeaderFacts>;
+  /** Exact-set refusal only: at most three already decoded rows, with unknown SID mapped to class 5. */
+  readonly aceRows?: readonly Readonly<AceRowFacts>[];
+}
+export interface WindowsCommandCopyNativeFailure extends Partial<OwnerFacts>, Partial<AceFacts> {
   readonly stage: FailureStage; readonly operation: FailureOperation; readonly predicate: FailurePredicate; readonly domain: FailureDomain; readonly code: number;
 }
 const nativeFailures = new WeakMap<object, WindowsCommandCopyNativeFailure>();
@@ -167,10 +177,10 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
     let creator: CreatorGrant | undefined;
     let phase: "private" | "granting" | "granted" | "revoking" = "private", ticks = 0;
     let stage: FailureStage = 1;
-    const poison = (predicate: FailurePredicate = 8, operation: FailureOperation = 0, status: { domain: FailureDomain; code: number } = { domain: 0, code: 0 }, ownerFacts?: OwnerFacts): never => {
+    const poison = (predicate: FailurePredicate = 8, operation: FailureOperation = 0, status: { domain: FailureDomain; code: number } = { domain: 0, code: 0 }, facts?: OwnerFacts | (AceFacts & Pick<OwnerFacts, "nodeKind" | "nodeRoot" | "nodeAcl" | "nodeDetached">)): never => {
       const first = !terminal && !fence.failure;
       terminal ??= fence.failure ?? new WindowsCommandCopyCleanupError(); fence.failure ??= terminal;
-      if (first) nativeFailures.set(terminal, Object.freeze({ stage, operation, predicate, domain: status.domain, code: status.code, ...ownerFacts }));
+      if (first) nativeFailures.set(terminal, Object.freeze({ stage, operation, predicate, domain: status.domain, code: status.code, ...facts }));
       for (const owner of peers) if (!retainedOwners.has(owner)) { fence.retained.push(owner); retainedOwners.add(owner); }
       throw terminal;
     };
@@ -290,19 +300,35 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       const expectedAces = [{ sid: owner, mask: ALL }, { sid: "S-1-5-18", mask: ALL }, ...(expected === "private" ? [] : [{ sid: packageSid!, mask: MODIFY }])];
       if (details.readUInt32LE(0) !== expectedAces.length) return poison(7, OP.GetAclInformation);
       const observed: string[] = [];
+      const decodedRows: { sid: string; mask: number }[] = [];
+      const aceFailure = (aceConstraint: AceFacts["aceConstraint"], header?: Buffer, expectedFlags?: number,
+        rows?: readonly { sid: string; mask: number }[]): never => {
+        // Called only after the unchanged ACL predicate refused. All inputs were already returned/decoded; no query follows.
+        const sidClass = (sid: string): OwnerFacts["ownerClass"] => sid === owner ? 1 : sid === packageSid ? 2 : sid === "S-1-5-18" ? 3 : sid === "S-1-5-32-544" ? 4 : 5;
+        return poison(7, OP.GetAce, undefined, { aceConstraint,
+          nodeKind: node.kind === "file" ? 1 : 2, nodeRoot: node.relative === "" ? 1 : 0,
+          nodeAcl: node.acl === "private" ? 1 : node.acl === "granted" ? 2 : 3, nodeDetached: detached ? 1 : 0,
+          ...(header?.length === 8 && expectedFlags !== undefined ? { aceHeader: Object.freeze({ type: header[0], flags: header[1],
+            size: header.readUInt16LE(2), mask: header.readUInt32LE(4), expectedFlags }) } : {}),
+          ...(rows ? { aceRows: Object.freeze(rows.map(row => Object.freeze({ sidClass: sidClass(row.sid), mask: row.mask }))) } : {}),
+        });
+      };
       for (let i = 0; i < expectedAces.length; i++) {
         const out: unknown[] = [null]; bool("GetAce", [acl, i, out]); const p = pointer(out[0]); let header: Buffer;
         try { header = Buffer.from(native.decode(p, "uint8_t", 8) as Uint8Array); } catch { return poison(3, OP.GetAce); }
         const flags = (node.kind === "directory" ? 3 : 0) | (expected === "inherited" ? 16 : 0);
-        if (header.length !== 8 || header[0] !== 0 || header[1] !== flags || header.readUInt16LE(2) < 12 || header.readUInt16LE(2) > 76) return poison(7, OP.GetAce);
-        observed.push(`${textSid(p + 8n)}:${header.readUInt32LE(4)}`);
+        if (header.length !== 8 || header[0] !== 0 || header[1] !== flags || header.readUInt16LE(2) < 12 || header.readUInt16LE(2) > 76)
+          return aceFailure(header.length !== 8 ? 1 : header[0] !== 0 ? 2 : header[1] !== flags ? 3 : 4, header, flags);
+        const sid = textSid(p + 8n), mask = header.readUInt32LE(4);
+        observed.push(`${sid}:${mask}`); decodedRows.push({ sid, mask });
       }
-      if (observed.sort().join("|") !== expectedAces.map(ace => `${ace.sid}:${ace.mask}`).sort().join("|")) return poison(7, OP.GetAce);
+      if (observed.sort().join("|") !== expectedAces.map(ace => `${ace.sid}:${ace.mask}`).sort().join("|")) return aceFailure(5, undefined, undefined, decodedRows);
       const labelAcl = pointer(sacl[0]), labelInfo = Buffer.alloc(12); bool("GetAclInformation", [labelAcl, labelInfo, labelInfo.length, 2]); if (labelInfo.readUInt32LE(0) !== 1) return poison(7, OP.GetAclInformation);
       const labelOut: unknown[] = [null]; bool("GetAce", [labelAcl, 0, labelOut]); const lp = pointer(labelOut[0]); let lh: Buffer;
       try { lh = Buffer.from(native.decode(lp, "uint8_t", 8) as Uint8Array); } catch { return poison(3, OP.GetAce); }
       const labelFlags = (node.kind === "directory" ? 3 : 0) | (expected === "inherited" ? 16 : 0);
-      if (lh.length !== 8 || lh[0] !== 17 || lh[1] !== labelFlags || lh.readUInt32LE(4) !== 1 || lh.readUInt16LE(2) < 12 || lh.readUInt16LE(2) > 76 || textSid(lp + 8n) !== "S-1-16-4096") return poison(7, OP.GetAce);
+      if (lh.length !== 8 || lh[0] !== 17 || lh[1] !== labelFlags || lh.readUInt32LE(4) !== 1 || lh.readUInt16LE(2) < 12 || lh.readUInt16LE(2) > 76 || textSid(lp + 8n) !== "S-1-16-4096")
+        return aceFailure(lh.length !== 8 ? 6 : lh[0] !== 17 ? 7 : lh[1] !== labelFlags ? 8 : lh.readUInt32LE(4) !== 1 ? 9 : lh.readUInt16LE(2) < 12 || lh.readUInt16LE(2) > 76 ? 10 : 11, lh, labelFlags);
       free(sd); return observedOwner;
     };
     const withDescriptor = <T>(directory: boolean, granted: boolean, operation: (sd: bigint) => T): T => {

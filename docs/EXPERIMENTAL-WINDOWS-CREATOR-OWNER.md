@@ -13,6 +13,37 @@ Administrators SID. That observation does not establish the creator token's
 default owner or the failing C operation. No useful-work, revoke, or cleanup
 success was accepted.
 
+The first creator-owner matrix, run `43910559432` at head
+`3871b17f0d2e5075219c9fe12e0428bb5b6153ae`, compiled the new producer on both
+images and passed 1,437 portable contracts with one expected skip per image.
+The ordinary-host four-access control completed and the creator-enabled launch
+returned. The useful C root then exited 1, and revoke stopped at Native stage 7,
+GetAce operation 27, predicate 7. The receipt was phase 3, subphase 4, with no
+accepted failed report, useful completion, private owner readback or cleanup.
+That shared ACL predicate does not identify a particular ACE or permission
+failure. The C failure remains unclassified because failed-report acquisition
+requires a complete positive Stop and revoke.
+
+An evidence-only follow-up preserves every ACL predicate and native call, adding
+the first failed ACE constraint after refusal:
+
+| ID | Original failed condition |
+| --- | --- |
+| 1–4 | DACL header length, type, flags, size, in that order |
+| 5 | Exact DACL SID/mask set |
+| 6–11 | Mandatory-label header length, type, flags, mask, size, LOW SID, in that order |
+
+An exactly eight-byte returned header may contribute its type and flags
+(0–255), size (0–65,535), mask (DWORD), and already computed expected flags.
+Constraint 5 instead projects the two or three already decoded DACL rows as a
+known SID class (host user, package, SYSTEM, public builtin Administrators, or
+other) plus DWORD mask. Node kind, root status, ACL provenance and detached
+status describe the existing check. Every published record, header, row and
+array is frozen. No SID, path, file data, pointer, new query or repeated SID
+decode is added. The final LOW-SID constraint is inferred only after the earlier
+arms of the unchanged original predicate passed. These facts grant no cleanup
+or permission authority, and the first failure remains authoritative.
+
 ## Authority and normalisation
 
 The new path is opt-in and uses a separately compiled C program, report schema,
@@ -114,7 +145,7 @@ the experiment must remain a draft until the actual controls and cleanup pass.
 
 ## Portable verification
 
-The final 16-file affected contract batch passed 1,438 tests with no skips,
+The final 17-file affected contract batch passed 1,472 tests with no skips,
 including the emitted 19-export CJS graph, bounded token ABI, actual
 coordinator/Native/Stop composition, strict report decoder and source verifier.
 The historical DETACHED verifier's positive unit cases use three bounded,
@@ -132,5 +163,7 @@ reported four return-narrowing/test-double typing findings. After those narrow
 fixes, the six affected suites passed 458 tests, lint passed, and a fresh full
 `npm run typecheck` passed for the ownership implementation. The exact-final
 full TypeScript check including the historical-test follow-up also passed.
-Native C compilation and both Windows control outcomes remain unobserved for
-this candidate.
+The ACE diagnostic adds 34 passing boundary cases; its exact-final full
+TypeScript check also passed.
+The first native matrix failed as recorded above. The evidence-only ACE
+follow-up has not yet run on Windows.
