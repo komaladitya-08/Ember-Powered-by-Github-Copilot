@@ -721,3 +721,12 @@ bounded inert app roles/names/text, omits private fields, secret descendants and
 snapshots. It does not expose interactive app controls or replace a remote accessibility tree. Consent and a known
 unlocked screen are required before and after reading, and a hidden/replaced desk invalidates the reply. Refresh
 uses keep:false so the worker's action/approval identifiers are unchanged.
+
+The unwired Windows root-only copy prerequisite owns a fresh tree with a separate native raw-handle ledger.
+It grants one fresh package Modify only while an independently owned ACTIVE_PROCESS_LIMIT=1 job can execute
+its attested fixed root. File/review callbacks await the exact branded closed-root/job receipt and complete
+package revocation; snapshots are detached and cleared after their callback. Shared native or callback
+uncertainty retains every known owner and forbids further admission/disposal. This is not a general command
+workspace: ordinary descendants need a reliable enforced admission/completion mechanism, and shell/toolchain,
+source privacy and executable admission remain separate obligations. See
+[the prerequisite record](EXPERIMENTAL-WINDOWS-ROOT-ONLY-COPY.md) for the native harness and remaining gates.
