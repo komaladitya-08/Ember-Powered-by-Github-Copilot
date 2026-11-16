@@ -300,30 +300,40 @@ The unregistered Node coordinator [#259](https://github.com/komaladitya-08/Ember
 at `68860d55` composes the real canonical copy, native assets, stopped output and one-shot adoption. Its disjoint
 local gates passed 1,248 cases across 27 files and full types; hosted regression checks passed all six existing
 Windows controller, ZIP and files-only Electron jobs. Those jobs do not exercise the new Node command path.
-Host/resource integration is still local: actual default-resource tests found a protected-ancestor allocation
-conflict. A narrow owned-parent capability preserves the full protected set and passes seven resource model cases;
-negative tests and final review remain in progress. A separate workspace-first bundled import exposed an initialisation
-cycle that resource-first tests hid; its fix and entry-point regressions are also pending. Atomic request intake now
-keeps commands-off requests file-only and prevents later enablement or failed Node startup from upgrading them.
+Host/resource integration remains local and unpublished. The protected-ancestor allocation conflict is corrected
+with a narrow, one-use owned-parent capability while preserving the full protected set. Independent review is
+closed on the six runtime modules, including namespace uniqueness and cross-input refusal. Workspace-first,
+resource-first and platform-first import regressions now pass. Atomic request intake keeps commands-off requests
+file-only and prevents later enablement or failed Node startup from upgrading them. Local gates passed 74 runtime,
+14 resource/readiness, 68 controller, 53 host, three actual SDK/model and twelve Linux SDK/isolation cases; these
+are separate scopes, not a single non-overlapping total. Full types passed before the new packaged test was added,
+and the application build and one normal-sandbox Linux Electron journey passed (13.10 seconds). Source Home and
+ordinary packaged Windows UI journeys have reviewed test implementations but no Windows execution receipt.
+A final integrated typecheck remains after the new test files and harness review.
 
 The additive four-patch Node producer [#260](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/260)
-at `4d052231` preserves the three reviewed startup patches and adds the fixed POSIX file-rename operation supported
-by the full LPAC proof. Its local source/build/rename gates and full types passed; registration passed 160 cases.
-The sole exact-head [manual build 43968426268](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43968426268)
-failed at the mandatory ABI preflight before vcbuild and produced no artifact. Diagnostic head `67c1f0be` passed
-306 local cases, full types and 188 registration cases. Its [ABI-only run 43971356498](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43971356498)
-observed target 1, phase 0, exit 1 and no compiler codes: no batch-entry marker or compiler cause was established.
-A narrow command-launch quoting correction is being reviewed; a successful dual-target preflight, Node build,
-artifact authentication and runtime validation remain unfinished.
+preserves the three reviewed startup patches and adds the fixed POSIX regular-file rename operation. Five distinct
+exact-head hosted attempts have failed their mandatory ABI preflight; none reached vcbuild or produced a new Node
+artifact. The launch correction established actual compiler entry, and the C11 probe correction passed the first
+SDK target. The latest enum-correction head `20af8be2` passed 326 local contracts, full types and 208 registration
+cases, but [ABI-only run 43979412098](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43979412098)
+again refused target 2 at phase 2 with C2220/C5287. The candidate cast did not clear the warning. A diagnostic-only
+exact-public-source-site classifier has passed Root/peer review, 351 contracts and full types; its next hosted
+observation is pending. No further source or warning relaxation is inferred from the code alone. Both actual SDK
+targets must pass before the full source build, artifact authentication and runtime validation.
 
 The seven-case native asset proof [#261](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/261)
-passed full types, source review, real four-to-three-file staging and all 231 hosted portable cases. Its sole
-[native pair 43971415844](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43971415844)
-failed the first natural case at the C access-prelude phase on both images; no native case passed and later cases
-were correctly blocked after retention. Diagnostic-only head `34372b2c` adds bounded substages, authenticated C
-exits and exact-graph error classes without changing C, production, expectations or cleanup. Its full types and
-51 affected cases passed; the follow-up native outcome remains pending. No candidate here enables Windows commands
-in the published product. Software work remains before laptop acceptance.
+has four failed hosted native pairs, with all original failures retained. Latest matrix head `1998bead` passed
+393 local contracts, full types and registration; both images passed 308 eligible portable cases but refused the
+first C prelude with exit 205 in [run 43979739808](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43979739808).
+Authenticated failure-only observations show all three opens denied for the actual borrowed parent and host-only
+control; asset root/image allow READ_CONTROL and deny WRITE_DAC/WRITE_OWNER; both Low full-package controls allow
+all three. No protected write escalation was observed, but the old parent READ_CONTROL and host-control WRITE_DAC
+positive expectations were invalid, and that witness did not establish a causal MIC control. A distinct V2 witness
+is being implemented: unchanged production rights, correctly expected private denials and fresh Medium/Low
+full-package control pairs with identical owner/DACL and different mandatory labels. V1 receipts cannot certify V2.
+No V2 native receipt exists. No candidate here enables Windows commands in the published product. Software work
+remains before laptop acceptance.
 
 The separate worker startup correction [#258](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/258)
 at `bec2e6ad` preserves genuine native/artifact/seed cleanup uncertainty when a factory rejects before returning a

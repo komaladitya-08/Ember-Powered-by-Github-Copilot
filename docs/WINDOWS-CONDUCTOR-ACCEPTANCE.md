@@ -49,17 +49,23 @@ unchanged redaction budget assertion and the full build/native/smoke/app-bundle 
 `5ef8b2fc` exposed a shared-task cancellation gap in full coordinator composition. Its authenticated returned-child
 cleanup correction is published at `46fed893` with 1,142 affected cases, full types and independent review passed.
 The unregistered Node workspace `68860d55` passed 1,248 local cases and full types; its six existing hosted
-controller/ZIP/files-only Electron jobs passed. Actual explicit/default-Medium parent enforcement, native canonical
-transfer and the complete Node product journey remain unverified. Local resource integration now passes seven
-model cases with full protected paths; final negative/source review and a workspace-first import-cycle fix remain.
-Four-patch Node producer `4d052231` failed its mandatory ABI preflight in
-[43968426268](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43968426268), before vcbuild.
-Diagnostic `67c1f0be` observed no batch-entry marker or compiler codes in ABI-only run `43971356498`; a narrow
-launcher correction is under review. Asset proof `c1be1787` passed 231 hosted portable cases but failed its first
-C access-prelude case on both images in `43971415844`; later cases remained blocked. Diagnostic-only `34372b2c`
-passed types and affected tests; its native follow-up is pending. No new Node artifact or product proof exists yet.
-Worker startup fix `bec2e6ad` passed all six existing Windows controller/ZIP/files-only Electron jobs. None of these results enables Windows commands
-in the product or closes live-account and physical-laptop acceptance.
+controller/ZIP/files-only Electron jobs passed. Local product resource, atomic intake, protected-parent allocation,
+import-cycle and SDK/model work is reviewed and passing its scoped gates. The build and existing normal-sandbox
+Linux Electron journey pass; full types passed before the newly added packaged test. Windows source Home and
+packaged normal-UI tests are implemented and source-reviewed, but remain unrun on Windows; final integrated types
+and harness corrections are still in progress. These results do not establish native canonical transfer.
+
+Four-patch Node producer `20af8be2` again failed its second mandatory ABI target with C2220/C5287 in
+[43979412098](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43979412098).
+No complete dual-target preflight or full Node build has passed. A reviewed, bounded diagnostic-only classifier
+will identify only an exact public source class and numeric location before a further correction is considered.
+Asset witness `1998bead` failed its first C prelude on both images in
+[43979739808](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43979739808).
+Its authenticated matrix disproved two original positive-control assumptions; production asset writes remained
+denied. A separately issued V2 witness with causal Medium/Low paired controls is being implemented; all four V1
+failures remain failures. No new Node artifact or complete Windows Node product proof exists yet.
+Worker startup fix `bec2e6ad` passed all six existing Windows controller/ZIP/files-only Electron jobs. None of these
+results enables Windows commands in the published product or closes live-account and physical-laptop acceptance.
 
 ## Prepare a fresh acceptance profile
 
