@@ -16,7 +16,7 @@ const failureReceipts = new WeakMap<object, Readonly<{ stage: Stage; reason: Rea
 export function windowsLibuvHostIdentityFailure(error: unknown) {
   return error !== null && typeof error === "object" ? failureReceipts.get(error) : undefined;
 }
-export interface WindowsLibuvTokenFacts { readonly hasRestrictions: number; readonly everFiltered: boolean; readonly integrityRid: number; readonly appContainer: 0 | 1 }
+export interface WindowsLibuvTokenFacts { readonly hasRestrictingSids: boolean; readonly integrityRid: number; readonly appContainer: 0 | 1 }
 export interface WindowsLibuvHostIdentity {
   readonly sameUser: boolean;
   readonly parent: Readonly<WindowsLibuvTokenFacts>;
@@ -42,10 +42,12 @@ const processFence: WindowsLibuvHostIdentityFence = { retained: [] };
 const INVALID_HANDLE = 0xffffffffffffffffn, MAX_POINTER = INVALID_HANDLE;
 const TOKEN_QUERY = 0x8, MAX_TOKEN_BYTES = 256;
 export const WINDOWS_LIBUV_HOST_IDENTITY_FUNCTIONS = {
-  kernel32: ["void * __stdcall GetCurrentProcess()", "int __stdcall CloseHandle(void *handle)", "uint32_t __stdcall GetLastError()"],
+  kernel32: ["void * __stdcall GetCurrentProcess()", "int __stdcall CloseHandle(void *handle)", "uint32_t __stdcall GetLastError()",
+    "void __stdcall SetLastError(uint32_t code)"],
   advapi32: [
     "int __stdcall OpenProcessToken(void *process, uint32_t access, _Out_ void **token)",
     "int __stdcall GetTokenInformation(void *token, int kind, void *information, uint32_t size, _Out_ uint32_t *returned)",
+    "int __stdcall IsTokenRestricted(void *token)",
   ],
 } as const;
 const isHandle = (value: unknown): value is WindowsHandle => typeof value === "bigint" && value > 0n && value < 0x8000000000000000n;
@@ -88,7 +90,7 @@ export function bindWindowsLibuvHostIdentity(koffi: Pick<typeof Koffi, "sizeof" 
     let uncertain = false, currentProcess: unknown, result: WindowsLibuvHostIdentity | undefined;
     let failure: WindowsLibuvHostIdentityError | undefined;
     function fail(stage: Stage, reason: Reason, code?: number, returnedBytes?: unknown): never { throw new WindowsLibuvHostIdentityError(stage, reason, code, returnedBytes); }
-    const lastError = () => { try { const value = fn.GetLastError(); return typeof value === "number" ? value : undefined; } catch { return undefined; } };
+    const lastError = () => { try { const value = fn.GetLastError(); return isCount(value, 0xffffffff) ? value : undefined; } catch { return undefined; } };
     const open = (process: unknown, stage: "parent-open" | "host-open"): WindowsHandle => {
       const output: unknown[] = [null]; outputs.push(output);
       let ok: unknown, code: number | undefined;
@@ -104,8 +106,8 @@ export function bindWindowsLibuvHostIdentity(koffi: Pick<typeof Koffi, "sizeof" 
       if (!isHandle(token) || !owned.has(token)) { uncertain = true; fail(stage, "abi"); }
       return token;
     };
-    const query = (token: WindowsHandle, kind: 1 | 21 | 25 | 29, stage: Stage): { bytes: Buffer; returned: number } => {
-      const bytes = Buffer.alloc(kind === 21 || kind === 29 ? 4 : MAX_TOKEN_BYTES), returned: unknown[] = [0]; buffers.push(bytes);
+    const query = (token: WindowsHandle, kind: 1 | 25 | 29, stage: Stage): { bytes: Buffer; returned: number } => {
+      const bytes = Buffer.alloc(kind === 29 ? 4 : MAX_TOKEN_BYTES), returned: unknown[] = [0]; buffers.push(bytes);
       let ok: unknown;
       try { ok = fn.GetTokenInformation(token, kind, bytes, bytes.length, returned); }
       catch { fail(stage, "abi"); }
@@ -125,14 +127,27 @@ export function bindWindowsLibuvHostIdentity(koffi: Pick<typeof Koffi, "sizeof" 
       if (value !== 0 && value !== 1) fail(stage, "contract");
       return value;
     };
+    const restrictingSids = (token: WindowsHandle, stage: Stage): boolean => {
+      let value: unknown;
+      try {
+        // FALSE means either no restricting SIDs or an error. Clear only this thread's diagnostic error first.
+        fn.SetLastError(0); value = fn.IsTokenRestricted(token);
+      } catch { fail(stage, "abi"); }
+      if (!isBool(value)) fail(stage, "abi");
+      if (value === 0) {
+        const code = lastError();
+        if (code === undefined) fail(stage, "abi");
+        if (code !== 0) fail(stage, "native-false", code);
+      }
+      return value !== 0;
+    };
     const facts = (token: WindowsHandle, side: "parent" | "host"): Readonly<WindowsLibuvTokenFacts> => {
-      // TokenHasRestrictions is a DWORD that is nonzero if the token has ever been filtered, not a canonical BOOL.
-      const hasRestrictions = query(token, 21, `${side}-restricted`).bytes.readUInt32LE(0);
+      const hasRestrictingSids = restrictingSids(token, `${side}-restricted`);
       const integrity = tokenSid(token, 25, `${side}-integrity`);
       if (integrity.bytes[1] !== 1 || !integrity.bytes.subarray(2, 8).equals(Buffer.from([0, 0, 0, 0, 0, 16])) || (integrity.attributes & 0x20) === 0)
         fail(`${side}-integrity`, "contract");
       const integrityRid = integrity.bytes.readUInt32LE(8), appContainer = tokenBool(token, `${side}-app-container`);
-      return Object.freeze({ hasRestrictions, everFiltered: hasRestrictions !== 0, integrityRid, appContainer });
+      return Object.freeze({ hasRestrictingSids, integrityRid, appContainer });
     };
     try {
       try { currentProcess = fn.GetCurrentProcess(); } catch { fail("current-process", "abi"); }

@@ -7,6 +7,7 @@ type Call = { name: string; args: unknown[] };
 const HOST_PROCESS = 500n, PARENT_TOKEN = 11n, HOST_TOKEN = 12n, PSEUDO_PROCESS = 0xffffffffffffffffn;
 function setup() {
   const calls: Call[] = [], buffers: Buffer[] = [], addresses = new Map<Buffer, bigint>();
+  let nativeError = 5;
   const fence: WindowsLibuvHostIdentityFence = { retained: [] };
   const control = { fault: "", closeFault: "", closeToken: HOST_TOKEN, at: "parent-user", differentUser: false, parentRestricted: 0, hostRestricted: 0,
     parentIntegrity: 0x3000, hostIntegrity: 0x3000, parentAppContainer: 0, hostAppContainer: 0, pseudo: PSEUDO_PROCESS, pointerSize: 8 };
@@ -21,7 +22,19 @@ function setup() {
     const name = /\b(\w+)\s*\(/.exec(prototype)![1];
     return (...args: unknown[]) => {
       calls.push({ name, args });
-      if (name === "GetLastError") return 5;
+      if (name === "SetLastError") { expect(args).toEqual([0]); if (control.fault === "set-error throw") throw new Error("private thread error failure"); nativeError = 0; return; }
+      if (name === "GetLastError") {
+        const invalid: Record<string, unknown> = { "last-error ABI": undefined, "last-error NaN": NaN, "last-error fraction": 1.5,
+          "last-error negative": -1, "last-error oversized": 0x100000000 };
+        return Object.hasOwn(invalid, control.fault) ? invalid[control.fault] : nativeError;
+      }
+      if (name === "IsTokenRestricted") {
+        const side = args[0] === PARENT_TOKEN ? "parent" : "host", fault = control.at === `${side}-restricted` ? control.fault : "";
+        if (fault === "restricted throw") throw new Error("private token restriction query failure");
+        if (fault === "restricted ABI") return undefined;
+        if (fault === "restricted error") { nativeError = 5; return 0; }
+        return side === "parent" ? control.parentRestricted : control.hostRestricted;
+      }
       if (name === "GetCurrentProcess") {
         if (control.fault === "current throw") throw new Error("private native current-process failure");
         return control.pseudo;
@@ -35,7 +48,7 @@ function setup() {
       }
       if (name === "OpenProcessToken") {
         const side = args[0] === HOST_PROCESS ? "host-open" : "parent-open", output = args[2] as unknown[];
-        if (control.at === side && control.fault === "open false") return 0;
+        if (control.at === side && control.fault === "open false") { nativeError = 5; return 0; }
         if (control.at === side && control.fault === "open throw empty") throw new Error("private native token-open failure");
         if (control.at === side && control.fault === "open ABI empty") return undefined;
         output[0] = args[0] === HOST_PROCESS ? HOST_TOKEN : PARENT_TOKEN;
@@ -53,15 +66,14 @@ function setup() {
       }
       if (name === "GetTokenInformation") {
         const [token, kind, buffer, capacity, returned] = args as [bigint, number, Buffer, number, unknown[]];
-        expect(buffer.length).toBe(capacity); expect(capacity).toBe(kind === 21 || kind === 29 ? 4 : 256); buffers.push(buffer);
-        const side = token === PARENT_TOKEN ? "parent" : "host", stage = `${side}-${({ 1: "user", 21: "restricted", 25: "integrity", 29: "app-container" } as Record<number, string>)[kind]}`;
+        expect(buffer.length).toBe(capacity); expect(capacity).toBe(kind === 29 ? 4 : 256); buffers.push(buffer);
+        const side = token === PARENT_TOKEN ? "parent" : "host", stage = `${side}-${({ 1: "user", 25: "integrity", 29: "app-container" } as Record<number, string>)[kind]}`;
         const fault = stage === control.at ? control.fault : "";
-        if (fault === "query false") return 0;
+        if (fault === "query false") { nativeError = 5; return 0; }
         if (fault === "query throw") throw new Error("private native query failure and S-1-5-21-1001");
         if (fault === "query ABI") return true;
-        if (kind === 21 || kind === 29) {
-          const value = kind === 21 ? side === "parent" ? control.parentRestricted : control.hostRestricted
-            : side === "parent" ? control.parentAppContainer : control.hostAppContainer;
+        if (kind === 29) {
+          const value = side === "parent" ? control.parentAppContainer : control.hostAppContainer;
           buffer.writeUInt32LE(fault === "boolean invalid" ? 2 : value); returned[0] = fault === "boolean short" ? 3 : 4;
         } else {
           const subAuthorities = kind === 25 ? [side === "parent" ? control.parentIntegrity : control.hostIntegrity]
@@ -103,21 +115,21 @@ const fixedError = (error: unknown) => {
 
 it("queries the exact host and parent with TOKEN_QUERY only, returns fixed facts and closes only the two owned tokens", () => {
   const s = setup(), result = s.bind().inspect(HOST_PROCESS);
-  expect(result).toEqual({ sameUser: true, parent: { hasRestrictions: 0, everFiltered: false, integrityRid: 0x3000, appContainer: 0 }, host: { hasRestrictions: 0, everFiltered: false, integrityRid: 0x3000, appContainer: 0 } });
+  expect(result).toEqual({ sameUser: true, parent: { hasRestrictingSids: false, integrityRid: 0x3000, appContainer: 0 }, host: { hasRestrictingSids: false, integrityRid: 0x3000, appContainer: 0 } });
   expect(Object.isFrozen(result)).toBe(true); expect(Object.isFrozen(result.parent)).toBe(true); expect(Object.isFrozen(result.host)).toBe(true);
   expect(s.calls.filter(call => call.name === "OpenProcessToken").map(call => call.args.slice(0, 2))).toEqual([[PSEUDO_PROCESS, 8], [HOST_PROCESS, 8]]);
   expect(s.calls.filter(call => call.name === "GetTokenInformation").map(call => call.args.slice(0, 2))).toEqual([
-    [PARENT_TOKEN, 1], [HOST_TOKEN, 1], [PARENT_TOKEN, 21], [PARENT_TOKEN, 25], [PARENT_TOKEN, 29], [HOST_TOKEN, 21], [HOST_TOKEN, 25], [HOST_TOKEN, 29],
+    [PARENT_TOKEN, 1], [HOST_TOKEN, 1], [PARENT_TOKEN, 25], [PARENT_TOKEN, 29], [HOST_TOKEN, 25], [HOST_TOKEN, 29],
   ]);
   expect(closes(s.calls)).toEqual([HOST_TOKEN, PARENT_TOKEN]); expect(s.fence.retained).toEqual([]);
   expect(s.buffers.every(bytes => bytes.every(value => value === 0))).toBe(true);
-  expect(JSON.stringify(result)).not.toMatch(/S-1-|1001|handle|buffer|sid|private/i);
+  expect(JSON.stringify(result)).not.toMatch(/S-1-|1001|handle|buffer|private/i);
 });
 
 it("reports observed user difference, restrictions and integrity independently without granting or altering anything", () => {
   const s = setup(); Object.assign(s.control, { differentUser: true, parentRestricted: 1, hostRestricted: 0, parentIntegrity: 0x2000, hostIntegrity: 0x1000, hostAppContainer: 1 });
-  expect(s.bind().inspect(HOST_PROCESS)).toEqual({ sameUser: false, parent: { hasRestrictions: 1, everFiltered: true, integrityRid: 0x2000, appContainer: 0 }, host: { hasRestrictions: 0, everFiltered: false, integrityRid: 0x1000, appContainer: 1 } });
-  expect(new Set(s.calls.map(call => call.name))).toEqual(new Set(["GetCurrentProcess", "OpenProcessToken", "GetTokenInformation", "CloseHandle"]));
+  expect(s.bind().inspect(HOST_PROCESS)).toEqual({ sameUser: false, parent: { hasRestrictingSids: true, integrityRid: 0x2000, appContainer: 0 }, host: { hasRestrictingSids: false, integrityRid: 0x1000, appContainer: 1 } });
+  expect(new Set(s.calls.map(call => call.name))).toEqual(new Set(["GetCurrentProcess", "OpenProcessToken", "GetTokenInformation", "IsTokenRestricted", "SetLastError", "GetLastError", "CloseHandle"]));
 });
 
 it("accepts nonzero integer BOOL success without treating JavaScript truthiness as a native ABI", () => {
@@ -181,19 +193,28 @@ it.each(["parent-app-container", "host-app-container"])("preserves the exact ord
   expect(() => s.bind().inspect(HOST_PROCESS)).toThrowError(expect.objectContaining({ stage: at, reason: "contract" }));
 });
 
-it.each([2, 16, 0xffffffff])("records the documented nonzero TokenHasRestrictions DWORD without treating it as a canonical BOOL (%i)", value => {
+it.each([-1, 2, 16])("records only the documented nonzero restricting-SID predicate (%i)", value => {
   const s = setup(); Object.assign(s.control, { parentRestricted: value, hostRestricted: value });
   const result = s.bind().inspect(HOST_PROCESS);
-  expect(result.parent).toMatchObject({ hasRestrictions: value, everFiltered: true, appContainer: 0 });
-  expect(result.host).toMatchObject({ hasRestrictions: value, everFiltered: true, appContainer: 0 });
+  expect(result.parent).toMatchObject({ hasRestrictingSids: true, appContainer: 0 });
+  expect(result.host).toMatchObject({ hasRestrictingSids: true, appContainer: 0 });
   expect(closes(s.calls)).toEqual([HOST_TOKEN, PARENT_TOKEN]); expect(s.fence.retained).toEqual([]);
 });
 
-it.each(["parent-restricted", "host-restricted"])("still refuses an incorrectly sized HasRestrictions DWORD and exposes only its bounded returned count (%s)", at => {
-  const s = setup(); Object.assign(s.control, { at, fault: "boolean short" }); let error: unknown;
+it.each(["parent-user", "host-user"])("still refuses an incorrectly sized token buffer and exposes only its bounded returned count (%s)", at => {
+  const s = setup(); Object.assign(s.control, { at, fault: "returned oversized" }); let error: unknown;
   try { s.bind().inspect(HOST_PROCESS); } catch (caught) { error = caught; }
-  expect(windowsLibuvHostIdentityFailure(error)).toEqual({ stage: at, reason: "contract", returnedBytes: 3 });
+  expect(windowsLibuvHostIdentityFailure(error)).toEqual({ stage: at, reason: "contract", returnedBytes: 257 });
   expect(closes(s.calls)).toEqual([HOST_TOKEN, PARENT_TOKEN]);
+});
+
+it.each(["restricted throw", "restricted ABI", "restricted error", "set-error throw", "last-error ABI", "last-error NaN", "last-error fraction",
+  "last-error negative", "last-error oversized"])("refuses an ambiguous restricting-SID query and closes both known tokens (%s)", fault => {
+  const s = setup(); Object.assign(s.control, { at: "parent-restricted", fault }); let error: unknown;
+  try { s.bind().inspect(HOST_PROCESS); } catch (caught) { error = caught; }
+  expect(windowsLibuvHostIdentityFailure(error)).toEqual({ stage: "parent-restricted", reason: fault === "restricted error" ? "native-false" : "abi",
+    ...(fault === "restricted error" ? { code: 5 } : {}) });
+  fixedError(error); expect(closes(s.calls)).toEqual([HOST_TOKEN, PARENT_TOKEN]); expect(s.fence.failure).toBeUndefined();
 });
 
 it.each(["open throw empty", "open ABI empty", "open zero", "open invalid", "open borrowed process", "open borrowed pseudo", "open duplicate", "open false with token", "open throw with token", "open ABI with token"])("retains and fences ambiguous token ownership, closing only known nonborrowed tokens once: %s", fault => {

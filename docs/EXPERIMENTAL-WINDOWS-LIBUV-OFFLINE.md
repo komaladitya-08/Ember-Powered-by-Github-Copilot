@@ -44,8 +44,7 @@ current-directory query, its equality to the selected directory, an exact attrib
 ordinary non-reparse directory metadata, and successful handle close. The alternate open requests the same
 attributes access and read/write sharing as the retained parent pins; its result never authorizes useful work.
 The exact suspended host's token is also compared with the parent process token using query-only handles:
-receipts contain only user-equality, the bounded `TokenHasRestrictions` DWORD and its ever-filtered predicate,
-AppContainer booleans and integrity RIDs. SID pointers must be
+receipts contain only user-equality, restricting-SID presence, AppContainer booleans and integrity RIDs. SID pointers must be
 wholly contained in their bounded token buffers; raw SIDs are never returned. Unknown token ownership or close
 failure quarantines the diagnostic. Facts are published only after native root/job stop and verified fixture cleanup.
 No path, SID, native text, ACL or privilege change is involved. The access-denial cause remains pending.
@@ -65,6 +64,16 @@ defines a nonzero DWORD predicate for whether a token has ever been filtered. Th
 DWORD and derives the documented predicate; exact returned sizes, SID bounds and ordinary-AppContainer admission
 stay enforced. This changes no process token or access grant. A malformed returned count is reported only as a
 bounded numeric refusal. Actual token values and C directory facts remain pending.
+
+Run [43811722242](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43811722242)
+at `2f2fcd2ae6b663d92bd3e632aac389784d46c2e9` proved that both Windows images actually return one byte for
+`TokenHasRestrictions`, despite the documented DWORD description. Each image passed 391 contracts with one
+privilege skip; the strict inspector refused before resume. The diagnostic now uses the separately documented
+[IsTokenRestricted](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-istokenrestricted)
+BOOL API on the same query-only handles. It reports only whether restricting SIDs are present, rather than token
+filtering history or disabled privileges. FALSE is accepted only with immediate zero `GetLastError` after clearing
+that thread-local diagnostic value; a nonzero error or invalid native BOOL still refuses. The one-byte query format
+is never accepted or interpreted. No token, policy, ACL or privilege is changed. Actual token and C facts remain pending.
 
 The official Node experiment identified `WSAStartup / 10107` on both pinned versions and both Windows Server images,
 with successful ordinary-host controls. See [the bounded native receipts](WINDOWS-NODE-LPAC-PROOF.md).
