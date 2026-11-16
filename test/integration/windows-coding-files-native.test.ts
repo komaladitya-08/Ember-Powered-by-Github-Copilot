@@ -12,6 +12,28 @@ import * as native from "../../app/main/agent/windows-coding-native";
 
 const SECRET = "ghp_" + "A".repeat(36), ORIGINAL = "export const answer = 41;\n";
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
+/** Emit one fixed, path-free native receipt before the host's public error sanitizer removes its cause. */
+function captureNativeRenameFailure(): void {
+  const load = native.loadWindowsCodingNative; let remaining = 1;
+  vi.spyOn(native, "loadWindowsCodingNative").mockImplementation(() => {
+    const api = load(), replace = api.replace;
+    api.replace = (...args) => {
+      try { return replace.apply(api, args); }
+      catch (error) {
+        if (remaining-- > 0) {
+          const cause = (error as { cause?: { operation?: unknown; status?: unknown } } | null)?.cause;
+          const allowed = ["NtSetInformationFile(rename)", "NtCreateFile", "GetFileInformationByHandle", "GetFinalPathNameByHandleW", "GetSecurityInfo"];
+          const operation = typeof cause?.operation === "string" && allowed.includes(cause.operation) ? cause.operation : "unavailable";
+          const status = typeof cause?.status === "number" && Number.isInteger(cause.status) && cause.status >= 0 && cause.status <= 0xffffffff
+            ? `0x${cause.status.toString(16).padStart(8, "0")}` : "unavailable";
+          console.error(`Native rename failure: ${JSON.stringify({ operation, status })}`);
+        }
+        throw error;
+      }
+    };
+    return api;
+  });
+}
 describe.skipIf(process.platform !== "win32")("native Windows private coding-copy foundation", () => {
   let root: string, source: string, base: string, protectedRoot: string, signal: AbortController, current: boolean;
   let copies: WindowsCodingCopy[], brokers: WindowsScopedCodingFiles[];
@@ -66,6 +88,7 @@ describe.skipIf(process.platform !== "win32")("native Windows private coding-cop
   });
 
   it("performs create, literal replacement, atomic overwrite, search, mkdir and exact deletion inside the copy", async () => {
+    captureNativeRenameFailure();
     const { workspace, broker } = await open();
     const before = await broker.readText("src/app.ts");
     await expect(broker.writeText("src/app.ts", "bad", { expectedSha256: "0".repeat(64) })).rejects.toMatchObject({ code: "conflict" });
@@ -84,6 +107,7 @@ describe.skipIf(process.platform !== "win32")("native Windows private coding-cop
   });
 
   it("validates real atomic replacement while the old exact native target remains open, and rejects expired handle tokens", async () => {
+    captureNativeRenameFailure();
     const workspace = await copy(); let stale: { api: native.WindowsCodingNative; handle: bigint } | undefined;
     await workspace.withTree(async tree => {
       const before = tree.entries.get("README.md")!, temporary = tree.api.create(tree.root, ".atomic-fixture.tmp", "file");
