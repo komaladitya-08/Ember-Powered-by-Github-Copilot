@@ -1,10 +1,11 @@
 /** Lifecycle regressions with a host workspace factory; no SDK process or native command starts in these cases. */
 import { expect, it, vi } from "vitest";
-import { ScopedCodingWorker, type ScopedCodingWorkerOptions } from "../../app/main/agent/scoped-coding-worker";
+import { ScopedCodingWorker, type ScopedCodingWorkerOptions, type FileOnlyScopedCodingWorkerOptions } from "../../app/main/agent/scoped-coding-worker";
 import type { IsolatedCommandWorkspace } from "../../app/main/agent/isolated-command-workspace";
 import type { CommandService } from "../../app/main/commands/types";
 import type { TaskSpec } from "../../app/main/agent/worker";
 import { CodingPrivacyCleanupError } from "../../app/main/agent/coding-privacy-scanner";
+import { CustomCodingController } from "../../app/main/agent/custom-coding-controller";
 
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 function fixture() {
@@ -18,6 +19,52 @@ function fixture() {
   const spec = { id: "task-fixture", goal: "Fix the copied project", target: { xid: 1, pid: 1, title: "fixture", bounds: { x: 0, y: 0, width: 10, height: 10 } } } as unknown as TaskSpec;
   return { worker: new ScopedCodingWorker(spec, options), options, backend, beforeStart, createWorkspace, facts, service };
 }
+
+function fileOnlyFixture() {
+  const f = fixture(), { commandService: _service, commandContext: _context, ...base } = f.options;
+  const files = vi.fn(async () => { throw new Error("No file broker should start in this lifecycle fixture"); });
+  const options: FileOnlyScopedCodingWorkerOptions = { ...base, mode: "files-only", platform: { files } };
+  const spec = { id: "file-only-lifecycle", goal: "Review files without commands", target: {} } as TaskSpec;
+  return { ...f, options, worker: new ScopedCodingWorker(spec, options), files };
+}
+
+it("requires an explicit file-only capability with no injected command service or fallback file adapter", async () => {
+  const f = fileOnlyFixture();
+  const spec = { id: "bad-file-only", goal: "Review files", target: {} } as TaskSpec;
+  for (const options of [{ ...f.options, commandService: f.service }, { ...f.options, platform: undefined }]) {
+    const worker = new ScopedCodingWorker(spec, options as unknown as FileOnlyScopedCodingWorkerOptions);
+    expect((await worker.run(new AbortController().signal)).success).toBe(false);
+    await worker.dispose(); expect(await worker.disposed).toBe(true);
+  }
+  expect(f.beforeStart).not.toHaveBeenCalled(); expect(f.createWorkspace).not.toHaveBeenCalled(); expect(f.facts).not.toHaveBeenCalled();
+});
+
+it("never consults command facts after stopping an asynchronously created file-only copy", async () => {
+  const f = fileOnlyFixture(), entered = deferred<void>(), release = deferred<IsolatedCommandWorkspace>();
+  f.createWorkspace.mockImplementationOnce(async () => { entered.resolve(); return release.promise; });
+  const running = f.worker.run(new AbortController().signal); await entered.promise;
+  const disposing = f.worker.dispose(); let done = false; void disposing.then(() => { done = true; });
+  await Promise.resolve(); expect(done).toBe(false);
+  release.resolve(f.backend as unknown as IsolatedCommandWorkspace);
+  expect((await running).success).toBe(false); await disposing;
+  expect(f.backend.stop).toHaveBeenCalled(); expect(f.backend.close).toHaveBeenCalledTimes(1);
+  expect(f.facts).not.toHaveBeenCalled(); expect(f.files).not.toHaveBeenCalled(); expect(f.service.runner.start).not.toHaveBeenCalled();
+});
+
+it("cannot upgrade a captured file-only task by changing its options while startup waits", async () => {
+  const f = fileOnlyFixture(), entered = deferred<void>(), release = deferred<void>();
+  f.options.beforeStart = async () => { entered.resolve(); await release.promise; };
+  const start = vi.spyOn(CustomCodingController, "start").mockImplementationOnce(async options => {
+    expect(options.mode).toBe("files-only"); expect(options.commands).toBeUndefined(); expect(options.runCommand).toBeUndefined();
+    throw new Error("No SDK process in this capability-capture fixture");
+  });
+  try {
+    const running = f.worker.run(new AbortController().signal); await entered.promise;
+    Object.assign(f.options, { mode: "commands", commandService: f.service, commandContext: vi.fn() });
+    release.resolve(); expect((await running).success).toBe(false); await f.worker.dispose();
+    expect(start).toHaveBeenCalledTimes(1); expect(f.facts).not.toHaveBeenCalled(); expect(f.service.runner.start).not.toHaveBeenCalled();
+  } finally { release.resolve(); start.mockRestore(); }
+});
 
 it("does no startup work for a pre-aborted task and shares verified disposal", async () => {
   const f = fixture(), task = new AbortController(); task.abort();
