@@ -6,7 +6,6 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { build } from "esbuild";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { expect, it } from "vitest";
@@ -29,6 +28,7 @@ import type { CommandCard, RunExit } from "../../app/main/commands/types";
 import type { ActiveProvider } from "../../app/main/provider";
 import { CONSENT_VERSION } from "../../app/shared/consent";
 import { IPC, type EmberHomeApi } from "../../app/shared/ipc";
+import { codingTestIsolationSupported, trustedCodingTestNodeOrSkip } from "../fixtures/coding/trusted-node";
 // @ts-expect-error -- offline JavaScript model fixture
 import { startMockLlm } from "../mock-llm/server.mjs";
 
@@ -37,16 +37,13 @@ declare global { interface Window {
   __projectCodingCall(method: string, args: unknown[]): Promise<unknown>;
   __projectCodingEmit(name: string, value?: unknown): void;
 } }
-const supported = () => {
-  const probe = spawnSync("/usr/bin/bwrap", ["--unshare-net", "--ro-bind", "/", "/", "--", "/usr/bin/true"], { stdio: "ignore" });
-  return !probe.error && probe.status === 0;
-};
 const repairRequest = "In this project's chosen folder, run node --test test.cjs, fix its assertion in the private copy, rerun that exact check, and prepare a review. Leave the original unchanged.";
 const cleanupRequest = "Prepare an unchanged cleanup fixture copy for review without running commands or claiming its test passes.";
 const original = "const {test}=require('node:test');const assert=require('node:assert/strict');test('sum',()=>assert.equal(1 + 1, 3));\n";
 
 it.skipIf(process.env.EMBER_UIUX_TEST !== "1" || process.platform !== "linux" || process.arch !== "x64")("repairs a copied Node project through the full host/UI flow and retires private reviews on Forget and account change", async ctx => {
-  if (!supported()) { ctx.skip(); return; }
+  const node = await trustedCodingTestNodeOrSkip(ctx);
+  if (!codingTestIsolationSupported()) { ctx.skip(); return; }
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ember-project-coding-runtime-"));
   const userData = path.join(root, "host"), source = path.join(root, "source"), exported = path.join(root, "exported");
   for (const directory of [userData, source, exported]) fs.mkdirSync(directory, { mode: 0o700 });
@@ -119,10 +116,12 @@ it.skipIf(process.env.EMBER_UIUX_TEST !== "1" || process.platform !== "linux" ||
       offerConnect: () => "No remote connection in this fixture", activeLine: () => "This computer has commands on and no desktop." };
     let provider: ActiveProvider = { kind: "user", config: { type: "openai", wireApi: "completions", baseUrl: model.baseUrl, apiKey: "synthetic-first-account" },
       models: { conductor: "mock-model", worker: "mock-model" } };
-    resources = await ProjectCodingResources.create({ userData, protectedPaths: [userData], env: process.env, execPath: process.execPath, isElectron: false,
+    resources = await ProjectCodingResources.create({ userData, protectedPaths: [userData],
+      env: { ...process.env, PATH: [path.dirname(node.nodePath), process.env.PATH].filter(Boolean).join(path.delimiter) }, execPath: node.nodePath, isElectron: false,
       currentOwner: () => host?.projectWorkspaceScope() ?? null, projectExists: id => !!host?.projectSessionsState().projects.some(p => p.id === id),
       changed: () => emit("onTasks") });
     await expect.poll(() => resources!.availability().available, { timeout: 20_000 }).toBe(true);
+    expect(resources.availability().nodePath).toBe(node.nodePath);
     const runtime = runtimeFor("linux", process.arch), located = locateRuntime({ appPath: process.cwd(), runtimeId: runtime.id, exe: runtime.exe });
     expect(located.exists).toBe(true);
     host = new AgentHost({ userData, settings, runtimePath: located.path, log, targets, taskBase: { audit, confirmer }, provider: () => provider,
