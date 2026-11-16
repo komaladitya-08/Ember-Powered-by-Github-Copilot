@@ -43,7 +43,7 @@ jobs:
     env:
       # Missing kernel/toolchain support must fail the configured coding proofs rather than silently skip them.
       EMBER_REQUIRE_CODING_ISOLATION: "1"
-      EMBER_TEST_CODING_NODE: "/opt/node/bin/node"
+      EMBER_TEST_CODING_NODE: "/usr/lib/ember-coding-test-node/bin/node"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -54,13 +54,22 @@ jobs:
           cache: npm
       - name: Trusted Node and namespaces for isolated coding proofs
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y bubblewrap xvfb dbus-x11
           # setup-node may place its authenticated download in a runner-writable cache. The tested sandbox accepts
           # only root-owned, non-writable tool ancestors, so keep a fresh copy before running repository code.
+          # The hosted image deliberately makes /opt writable, including its root; fixing only /opt/node is not enough.
+          # https://github.com/actions/runner-images/blob/ubuntu24/20261111.370/images/ubuntu/scripts/build/configure-system.sh
           coding_node_source="$(readlink -f "$(command -v node)")"
-          sudo install -d -m 755 -o root -g root /opt/node /opt/node/bin
-          sudo install -m 755 -o root -g root "$coding_node_source" /opt/node/bin/node
+          sudo install -d -m 755 -o root -g root /usr/lib/ember-coding-test-node /usr/lib/ember-coding-test-node/bin
+          sudo install -m 755 -o root -g root "$coding_node_source" /usr/lib/ember-coding-test-node/bin/node
+          # Fixed paths and metadata only: distinguish an ancestor/asset problem from native namespace denial early.
+          printf '%s\n' 'coding.ci_stage=trusted_asset_metadata'
+          stat -c 'coding.asset uid=%u mode=%a links=%h %n' / /usr /usr/lib /usr/lib/ember-coding-test-node /usr/lib/ember-coding-test-node/bin /usr/lib/ember-coding-test-node/bin/node /usr/bin/bwrap
+          /usr/lib/ember-coding-test-node/bin/node --version
+          printf '%s\n' 'coding.ci_stage=namespace_probe'
+          timeout --signal=KILL 5s /usr/bin/bwrap --unshare-user --unshare-pid --unshare-net --unshare-ipc --unshare-uts --new-session --die-with-parent --clearenv --ro-bind / / --chdir / -- /usr/bin/true
           # Tests select this isolated-command asset explicitly. Keep setup-node's writable npm prefix for npm setup.
       # The release's notes link the README at the tag: fail the tag's run at once if it says this version isn't out,
       # or if GitHub would refuse the notes, which the release job finds only after every other job.
