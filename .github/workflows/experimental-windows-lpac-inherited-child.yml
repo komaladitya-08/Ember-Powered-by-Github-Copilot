@@ -6,7 +6,9 @@ on:
       - ".github/workflows/experimental-windows-lpac-inherited-child.yml"
       - "test/fixtures/experimental-windows-lpac*.c"
       - "test/fixtures/windows-lpac-inherited-child.ts"
+      - "test/fixtures/windows-lpac-child-sd-diagnostic.*"
       - "test/unit/windows-lpac-inherited-child.test.ts"
+      - "test/unit/windows-lpac-child-sd-diagnostic.test.ts"
       - "test/integration/windows-lpac-inherited-child-native.test.ts"
       - "app/main/agent/experimental-windows-lpac*.ts"
   workflow_dispatch:
@@ -40,7 +42,7 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - name: Inherited-child admission and existing native fixture lifecycle contracts
-        run: npm test -- test/unit/windows-lpac-inherited-child.test.ts test/unit/experimental-windows-lpac.test.ts test/unit/experimental-windows-lpac-api.test.ts --maxWorkers=1
+        run: npm test -- test/unit/windows-lpac-inherited-child.test.ts test/unit/windows-lpac-child-sd-diagnostic.test.ts test/unit/experimental-windows-lpac.test.ts test/unit/experimental-windows-lpac-api.test.ts --maxWorkers=1
       - name: Original and plain denial controls plus fully checked AAP-only inherited child
         run: node scripts/run-integration.mjs test/integration/windows-lpac-inherited-child-native.test.ts
         env:

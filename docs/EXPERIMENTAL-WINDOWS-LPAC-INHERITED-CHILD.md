@@ -94,7 +94,7 @@ The third, separately compiled `aap-only` variant selects `EMBER_LPAC_CHILD_AAP_
 with exactly one AAP opt-out attribute set to 1, without a `SECURITY_CAPABILITIES` attribute or new token construction.
 All arguments, process/thread security, inherited-handle denial, current directory, environment, no-window/suspended
 flags, breakaway attempt, child attestations and Stop/readout rules remain the same. Both controls compile with no
-override: explicit uses the original source and plain uses the unchanged default branch. Only the AAP-only inherited
+override: explicit uses the original source and plain uses the default launch branch. Only the AAP-only inherited
 build adds `EXTENDED_STARTUPINFO_PRESENT`.
 
 Microsoft documents [generic AppContainer child inheritance](https://learn.microsoft.com/en-us/windows/win32/secauthz/appcontainer-for-legacy-applications-)
@@ -115,6 +115,31 @@ and pins on that status. The ordinary child never resumes after such a cleanup f
 Each of the three compiler children retains its 60-second bound. Setup allows their combined bounds plus discovery;
 root, acknowledgement, admission, independent-stop and runtime test deadlines remain unchanged.
 
+The two instrumented variants additionally write a separate 80-byte child-object diagnostic only after the ordinary
+`CreateProcessW` call returned FALSE and its original Win32/NT statuses were saved. Creation inputs, object security,
+labels, flags, token and capabilities remain unchanged. The original explicit source remains untouched.
+The helper copies the exact supplied process/thread DACLs, preserving ACE order, types, flags and SID bytes, then
+expands only their known GA masks on those in-memory copies using the SDK's concrete process/thread ALL_ACCESS.
+Unexpected generic read/write/execute or ACE forms refuse diagnostic setup instead of guessing a mapping.
+[MS-DTYP Access Mask rules](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-dtyp/7a53f60e-e730-4dfe-bbe9-b21b62eb790b)
+explain why generic ACE masks require this expansion; the earlier raw `0x10000000` maximum-allowed result is not
+evidence of concrete process/thread rights. The descriptor passed to `CreateProcessW` is never modified.
+
+Each absolute diagnostic copy uses the actual caller token's `TokenOwner` (class 4) and `TokenPrimaryGroup` (class 5)
+defaults and the actual token duplicated for query-only impersonation-token AccessCheck; the process never impersonates.
+Owner/group/SID/ACL buffers remain alive through the checks and are wiped before publication. This isolates DACL
+access in memory, without modeling kernel process creation, mandatory labels, console allocation or all launch policy.
+Node's NULL process/thread `SECURITY_ATTRIBUTES` path uses default object security and is not this explicit-SD path.
+
+The 20 DWORDs are magic/schema, setup stage/error, process requested/checked/allowed/granted/API error, thread
+requested/checked/allowed/granted/API error, owner/group source classes, copied-DACL bitmask, primary/duplicate
+known-close flags and reserved zero. API failure and a completed denial remain distinct; no identity bytes or strings
+leave the C program. Stage 8 denotes complete setup/checks and known cleanup, while a setup failure retains its
+actual stage/error. The host reads this file only for an instrumented root's ordinary stage-18 producer outcome,
+after whole-job and independent-handle Stop. Writer failure 33 prevents invoking its reader even if 80 bytes exist;
+it remains an ordinary failed experiment with known cleanup. Uncertain native close 31 blocks all payload readers
+and retains owners/pins. Existing launch and positive confinement assertions remain mandatory.
+
 At `5dff8e203462e6f3f65ffcfc461cbc4013142f39`, [run 43819235798](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43819235798)
 passed 82 portable tests and the original explicit-attribute denial control on each Server image. Both inherited
 cases stopped cleanly after a host-side admission refusal, with no C result/failure report. That outcome establishes
@@ -130,3 +155,7 @@ passed 108 portable tests per image and the original control. After accounting f
 inherited call itself exited naturally at stage 18 with error 5 and status `0xc0000022` on both images. All contained
 processes and retained handles stopped and closed before that receipt. Plain inheritance alone therefore did not
 resolve creation. The original and plain outcomes are retained as explicit negative controls for the AAP-only test.
+At `5c04bf33961ce0a4b8d0f34e2a71e2706907a152`, [run 43826611127](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43826611127)
+passed 119 portable tests and both denial controls per image. The AAP-only call also naturally returned stage 18,
+error 5 and status `0xc0000022` on both images, with the same root checks and known Stop/cleanup. This policy-only
+combination did not resolve creation; no child admission or Node compatibility was established.

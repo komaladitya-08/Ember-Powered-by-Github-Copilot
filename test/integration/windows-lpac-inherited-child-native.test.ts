@@ -10,6 +10,7 @@ import { loadExperimentalWindowsLpacApi, type WindowsLpacProfile, type WindowsHa
 import { loadInheritedChildObserver, InheritedChildCleanupError, inheritedChildNumericFailure, inheritedChildCompilerFailure, inheritedChildVisualStudioRange,
   INHERITED_CHILD_VARIANTS, inheritedChildReadout, inheritedChildVariantDefine, type InheritedChildVariant } from "../fixtures/windows-lpac-inherited-child";
 import { nativeChecks, WindowsNodeProofCleanupError } from "../fixtures/windows-node-lpac-proof";
+import { parseWindowsLpacChildSdDiagnostic, readWindowsLpacChildSdDiagnostic, WINDOWS_LPAC_CHILD_SD_BYTES, type WindowsLpacChildSdDiagnostic } from "../fixtures/windows-lpac-child-sd-diagnostic";
 
 const required = process.env.EMBER_LPAC_INHERITED_CHILD_TEST === "1", supported = process.platform === "win32";
 const retainedOwners: unknown[] = [];
@@ -143,7 +144,8 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
     }
     let unsafe = false, stopped = false, failed = false, child: number | null = null, descendantRemained = false, hostOperation = 0;
     let imagePin: ReturnType<ReturnType<typeof nativeChecks>["pin"]> | undefined;
-    let outcome: { mode: InheritedChildVariant; rootExit: number; report: number[] | null; failure: number[] | null; jobStopped: true; membersStopped: true; admitted: boolean; descendantRemained: boolean; profilePaths: boolean } | undefined;
+    let outcome: { mode: InheritedChildVariant; rootExit: number; report: number[] | null; failure: number[] | null; sdAccess: WindowsLpacChildSdDiagnostic | null;
+      sdAccessInvalid: boolean; jobStopped: true; membersStopped: true; admitted: boolean; descendantRemained: boolean; profilePaths: boolean } | undefined;
     const previous = processEnvMarker();
     try {
       hostOperation = 1;
@@ -200,6 +202,14 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
         const rootExit = fixture.exitCode();
         outcome = inheritedChildReadout(rootExit, () => {
         const report = reportWords(path.join(fixture.paths.state, "report.bin"), 12), diagnostic = reportWords(path.join(fixture.paths.state, "failure.bin"), 25);
+        let sdAccess: WindowsLpacChildSdDiagnostic | null = null, sdAccessInvalid = false;
+        if (variant !== "explicit") try {
+          sdAccess = readWindowsLpacChildSdDiagnostic(rootExit, () => {
+            const sdBytes = boundedRead(path.join(fixture.paths.state, "child-sd-access.bin"), WINDOWS_LPAC_CHILD_SD_BYTES);
+            if (!sdBytes) return null;
+            try { return parseWindowsLpacChildSdDiagnostic(sdBytes); } finally { sdBytes.fill(0); }
+          });
+        } catch (error) { if (error instanceof InheritedChildCleanupError) throw error; sdAccessInvalid = true; }
         let profilePaths = false;
         if (report) {
           profilePaths = true;
@@ -208,7 +218,8 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
             try { profilePaths &&= !!bytes && bytes.toString("utf16le").toLowerCase() === expected.toLowerCase(); } finally { bytes?.fill(0); }
           }
         }
-        return { mode: variant, rootExit, report, failure: diagnostic, jobStopped: true as const, membersStopped: true as const, admitted: child !== null, descendantRemained, profilePaths };
+        return { mode: variant, rootExit, report, failure: diagnostic, sdAccess, sdAccessInvalid,
+          jobStopped: true as const, membersStopped: true as const, admitted: child !== null, descendantRemained, profilePaths };
         });
       } catch (error) { failed = true; if (error instanceof InheritedChildCleanupError) unsafe = true; }
       if (!unsafe) try { observer.closeStopped(); } catch { unsafe = true; }
@@ -218,9 +229,12 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
     }
     if (unsafe) throw new InheritedChildCleanupError();
     if (!outcome) throw fixedFailure();
+    const sdAccessMissing = variant !== "explicit" && outcome.failure?.[0] === 18 && outcome.failure?.[24] !== 0xffffffff && !outcome.sdAccess;
+    if (sdAccessMissing || outcome.sdAccessInvalid) failed = true;
     if (failed || outcome.failure) {
       console.info("Stopped inherited-child refusal", JSON.stringify({ mode: variant, rootExit: outcome.rootExit, jobStopped: true, stage: outcome.failure?.[0] ?? null,
         error: outcome.failure?.[1] ?? null, childNtStatus: outcome.failure?.[24] ?? null, hostOperation, observer: observer.observation(),
+        childObjectAccess: outcome.sdAccess, sdAccessMissing, sdAccessInvalid: outcome.sdAccessInvalid,
         ...(outcome.failure ? { checks: outcome.failure.slice(2, 11), childPidRecorded: outcome.failure[11] !== 0,
           workAndTemp: outcome.failure.slice(12, 14), imageExecute: outcome.failure.slice(14, 16), selfCreateProcess: outcome.failure.slice(16, 18),
           childPolicy: outcome.failure.slice(18, 20), defaultDaclAccess: outcome.failure.slice(20, 24) } : {}) }));

@@ -6,6 +6,7 @@
 #define mainCRTStartup explicitAttributesControlMain
 #include "experimental-windows-lpac.c"
 #undef mainCRTStartup
+#include "windows-lpac-child-sd-diagnostic.h"
 
 #ifndef EMBER_LPAC_CHILD_AAP_ONLY
 #define EMBER_LPAC_CHILD_AAP_ONLY 0
@@ -92,6 +93,7 @@ static BOOL spawnInherited(DWORD flags, PROCESS_INFORMATION *process, DWORD *err
         }
         aapCreationRefusal(32, failure);
     }
+    if (!created && flags == 0) writeChildSdAccessDiagnostic();
     return created;
 #else
     STARTUPINFOW startup;
@@ -109,6 +111,7 @@ static BOOL spawnInherited(DWORD flags, PROCESS_INFORMATION *process, DWORD *err
                              NULL, NULL, &startup, process);
     *error = created ? ERROR_SUCCESS : GetLastError();
     childNtStatus = created ? 0 : getLastNtStatus ? (DWORD)getLastNtStatus() : MAXDWORD;
+    if (!created && flags == 0) writeChildSdAccessDiagnostic();
     return created;
 #endif
 }
