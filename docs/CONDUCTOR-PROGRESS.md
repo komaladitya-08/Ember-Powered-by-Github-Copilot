@@ -1,6 +1,6 @@
 # Conductor progress and remaining work
 
-Reviewed 15 November 2026. Baseline: `audit/beta-readiness` at `76d0a2c9`, the most recently submitted remote branch;
+Reviewed 16 November 2026. Baseline: `audit/beta-readiness` at `76d0a2c9`, the most recently submitted remote branch;
 main was `85b5bd56`. This follow-up deliberately retains the native coding gate and is not a release certification.
 
 ## What was already implemented
@@ -91,14 +91,23 @@ disposal-only receipts. Per-result Forget revokes pending access to that review 
 completed exports.
 
 The disabled [Windows file foundation](EXPERIMENTAL-WINDOWS-CODING-FILES.md) and separate
-[direct Node LPAC diagnostic](WINDOWS-NODE-LPAC-PROOF.md) have portable source checks. Their Windows enforcement
-workflows must run before any native compatibility claim. Neither supplies or enables a production Windows adapter.
+[direct Node LPAC diagnostic](WINDOWS-NODE-LPAC-PROOF.md) now have actual Windows Server 2022/2025 CI evidence.
+At `7942e554`, file ABI/cleanup units passed seven cases on each server and native files passed 27 of 29 cases on each;
+both remaining failures involve atomic replacement. The drive-root bootstrap passed. All twelve Node workload cases
+across versions 22/24 and both servers exited with `0x80000003`; useful Node compatibility was not established.
+Bounded native rename status and independent fixed-eval host/LPAC startup diagnostics are the next investigation steps.
+Neither experiment supplies or enables a production Windows adapter, and server evidence does not certify client Windows.
+
+The follow-up also includes the temporary coding store in desktop command, GUI and integration own-data protection,
+and denies Linux key-management syscalls in project commands. The latter closes a potential inherited-session-keyring
+surface; it does not report an observed credential leak. Settings search prioritizes the names and aliases of settings
+before explanatory project text, preserving Conversation as the first result for history.
 
 ## What still needs implementation
 
 1. **Production coding isolation and toolchains.** Finish the custom-tool product path and its enforced command backend
    on each supported platform. Linux currently supplies a small offline bash/Node environment; npm, arbitrary compilers
-   and ordinary repositories containing dependency links need explicit supported-copy/toolchain design. Packaged
+   and external or cyclic dependency links remain unsupported; validated internal links can be materialized. Packaged
    Electron is not a substitute for a real Node binary. Windows/macOS need their own stopped-writer and filesystem
    implementations and canary tests. Windows CI still exposes child-process creation and PowerShell runtime failures
    in the native prototype; see [the current proof](ISOLATED-WINDOWS-COMMAND-PROOF.md). Do not enable coding by changing
