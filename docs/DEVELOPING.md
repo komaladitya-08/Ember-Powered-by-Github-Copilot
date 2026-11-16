@@ -2472,7 +2472,13 @@ live-provider and physical Windows acceptance. These candidate results do not au
 
 The independent `packaged-controller` job builds the normal Windows ZIP, extracts it, checks unchanged fuses and
 packaged debugging/development-provider guards, and runs the ordinary packaged launch/window/handover smoke. The
-provider guard requires the real startup authentication source to be `none` with an empty synthetic profile. A separate
+provider guard requires the real startup authentication source to be `none` with an empty synthetic profile. Shell
+launch preserves Windows' real `HOME`, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA`; only Ember's profile, GitHub config
+and credential environment are isolated. Paired run `43816454071` showed that redirecting the OS profile broke
+jump-list registration. One Server image also reported the documented mute fallback; the owner of that chord was
+not identified. The explicit smoke option accepts only the exact Windows mute fallback with no missing IDs or no
+unavailable events. Missing, extra or malformed shortcut receipts still fail, and ordinary smoke runs remain strict
+without that option. The separate SDK/native helper keeps its own isolated home and profile. A separate
 fixed test bundle then uses the extracted `Ember.exe`'s supported Node mode with the shipped SDK, Koffi and native
 runtime to edit a private NTFS copy and verify disposal. This is packaged dependency/ABI proof, separate from the
 development Home/preload/IPC journey; it does not automate packaged Home or establish a live account session.

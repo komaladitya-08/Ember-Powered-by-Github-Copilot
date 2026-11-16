@@ -1294,6 +1294,18 @@ else {
   fs.writeFileSync(path.join(dir, "first"), "");
   if (process.env.FAKE_EMBER_LOG) log(process.env.FAKE_EMBER_LOG);
   if (mode !== "no-auth") log("auth.token", { source: mode === "test-provider" ? "test-provider" : "none" });
+  const mute = { taken: ["Super+Alt+M"], fallback: ["mute"], missing: [] };
+  const fallbackEvents = {
+    "mute-fallback": mute,
+    "mute-no-fallback": { ...mute, fallback: [] },
+    "mute-missing": { ...mute, missing: ["mute"] },
+    "mute-extra-key": { ...mute, taken: ["Super+Alt+M", "Super+Alt+X"] },
+    "mute-extra-id": { ...mute, fallback: ["mute", "stop"] },
+    "mute-missing-other": { ...mute, missing: ["stop"] },
+    "mute-malformed": { ...mute, taken: "Super+Alt+M" },
+    "mute-absent-field": { taken: ["Super+Alt+M"], fallback: ["mute"] },
+  };
+  if (fallbackEvents[mode]) log("shortcut.unavailable", fallbackEvents[mode]);
   // As Ember does once it has started: the jump list on Windows (whether setUserTasks took it), the Dock menu on a Mac.
   if (mode !== "no-launcher") { log("launcher.tasks", { ok: mode !== "tasks-refused" }); log("launcher.dock"); }
   log("window.home.shown");
@@ -1309,6 +1321,7 @@ else {
     log("ask.open", { source: "launcher" });
     // Once the box is on screen (AskWindow's reveal); "no-reveal": asked for, but it never showed.
     if (mode !== "no-reveal") log("ask.reveal", { source: "launcher" });
+    if (mode === "late-mute-missing") log("shortcut.unavailable", { taken: ["Super+Alt+M"], fallback: [], missing: ["mute"] });
   }, 50);
 }
 `, { mode: 0o755 });
@@ -1339,6 +1352,19 @@ else {
     expect(smoke("no-auth", { args, windowMs: 1_000 })).toMatchObject({ status: 1, stderr: expect.stringContaining("report its auth source") });
     expect(spawnSync(process.execPath, [path.resolve("test/smoke/launch.mjs"), "--expect-auth-source"], { encoding: "utf8" })).toMatchObject({ status: 2 });
   }, 15_000);
+
+  it("accepts only the explicit exact Windows mute fallback and preserves strict smoke behavior otherwise", () => {
+    const args = ["--forbid", "shortcut.unavailable", "--allow-shortcut-fallback", "mute"], os = "win32" as const;
+    expect(smoke("ok", { args, os }).status).toBe(0);
+    expect(smoke("mute-fallback", { args, os })).toMatchObject({ status: 0, stdout: expect.stringContaining("held the documented mute fallback") });
+    expect(smoke("mute-fallback", { args: ["--forbid", "shortcut.unavailable"], os }).status).toBe(1);
+    for (const mode of ["mute-no-fallback", "mute-missing", "mute-extra-key", "mute-extra-id", "mute-missing-other", "mute-malformed", "mute-absent-field", "late-mute-missing"]) {
+      expect(smoke(mode, { args, os }), mode).toMatchObject({ status: 1, stderr: expect.stringContaining("outside the exact permitted Windows mute fallback receipt") });
+    }
+    expect(smoke("mute-missing", { args: ["--allow-shortcut-fallback", "mute"], os }).status).toBe(1);
+    expect(smoke("ok", { args, os: "linux" }).status).toBe(2);
+    expect(smoke("ok", { args: ["--allow-shortcut-fallback", "stop"], os }).status).toBe(2);
+  }, 20_000);
 
   it("requires Ask Ember in the jump list on Windows and in the Dock menu on a Mac (D-45b)", () => {
     expect(smoke("ok", { os: "win32" })).toMatchObject({ status: 0, stdout: expect.stringMatching(/ok {3}the first instance put Ask Ember in its jump list\n/) });

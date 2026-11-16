@@ -43,6 +43,7 @@ function smokeFacts(smoke: ProcessObservation) {
   }
   if (smoke.stdout.includes("the first instance put Ask Ember in its jump list")) jumpList.add(true);
   if (failure.includes("Windows refused the jump list (launcher.tasks ok: false)")) jumpList.add(false);
+  if (smoke.stdout.includes("the first instance held the documented mute fallback")) { taken.add(SHORTCUTS.win32.mute.accel); fallback.add("mute"); }
   return { code: smoke.code, signal: smoke.signal,
     authSourceMismatch: failure.includes("used an unexpected auth source"), authSourceMissing: failure.includes("report its auth source"),
     shortcutUnavailable: failure.includes("shortcut.unavailable"), takenAccelerators: [...taken].sort(), fallbackIds: [...fallback].sort(), missingIds: [...missing].sort(), jumpList: [...jumpList],
@@ -115,23 +116,18 @@ it.skipIf(!available && !required)("verifies the extracted Windows ZIP launch an
       expect(refused.stderr).toContain("doesn't start with debugging switches"); expect(refused.stderr).not.toMatch(/(?:Debugger|DevTools) listening/);
     }
     // Existing smoke proves ordinary launch/window/handover only; its force-stop is never a native cleanup receipt.
-    const smokeArguments = [path.join(checkout, "test/smoke/launch.mjs"), "--exe", exe, "--forbid", "shortcut.unavailable", "--expect-auth-source", "none"];
-    const smoke = await run(process.execPath, smokeArguments,
-      { ...env, EMBER_TEST_PROVIDER_URL: forbiddenUrl }, 90_000);
-    console.info("Packaged launch smoke diagnostics (redirected profile):", smokeFacts(smoke));
-    // Control only: preserve Windows' own profile locations while GitHub config, credential environment variables
-    // and Ember's own profile stay isolated. Every packaged smoke assertion remains in force.
+    const smokeArguments = [path.join(checkout, "test/smoke/launch.mjs"), "--exe", exe, "--forbid", "shortcut.unavailable", "--expect-auth-source", "none", "--allow-shortcut-fallback", "mute"];
+    // Windows shell integration needs its real OS profile locations. GitHub config, credential environment variables
+    // and Ember's own profile stay isolated; the separate SDK/controller fixture below keeps its private HOME too.
     const normalProfileEnv = { ...env };
     for (const name of ["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"]) {
       const actual = Object.entries(process.env).find(([key]) => key.toUpperCase() === name)?.[1];
       if (actual === undefined) delete normalProfileEnv[name]; else normalProfileEnv[name] = actual;
     }
-    const control = await run(process.execPath, smokeArguments, { ...normalProfileEnv, EMBER_TEST_PROVIDER_URL: forbiddenUrl }, 90_000);
-    console.info("Packaged launch smoke diagnostics (normal OS profile control):", smokeFacts(control));
+    const smoke = await run(process.execPath, smokeArguments, { ...normalProfileEnv, EMBER_TEST_PROVIDER_URL: forbiddenUrl }, 90_000);
+    console.info("Packaged launch smoke diagnostics:", smokeFacts(smoke));
     expect(smoke.code, "The extracted packaged app must pass its normal launch/window/handover smoke").toBe(0); expect(smoke.signal).toBeNull();
     expect(smoke.stdout).toContain("the first instance used auth source none");
-    expect(control.code, "The normal OS profile control must preserve every packaged smoke assertion").toBe(0); expect(control.signal).toBeNull();
-    expect(control.stdout).toContain("the first instance used auth source none");
     expect(devRequests, "Packaged main must ignore the development model endpoint").toBe(0);
     const probeDirectory = path.join(app, "test-only-packaged-probe"); fs.mkdirSync(probeDirectory);
     const probe = path.join(probeDirectory, "controller.cjs"), input = path.join(root, "probe-input.json");
