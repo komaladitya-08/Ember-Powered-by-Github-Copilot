@@ -2,6 +2,7 @@
 import type { PathFact, RunnerFacts } from "../commands/types";
 import type { CodingReviewExport } from "./coding-result-export";
 import type { IsolatedCodingCommandPort } from "./isolated-coding-command-runner";
+import type { CodingArtifactRef } from "./coding-artifact-store";
 
 export type ScopedCodingFileFailure = "unavailable" | "cancelled" | "path" | "boundary" | "unsupported" | "privacy" | "binary" |
   "secret" | "limit" | "missing" | "exists" | "conflict" | "ambiguous" | "not-empty" | "io";
@@ -54,7 +55,11 @@ export interface CodingFileBroker extends CodingFileTools {
   /** Facts for existing command policy under the same exclusive lease; no unguarded source-path probes. */
   inspect(paths: readonly string[], cwd?: string): Promise<PathFact[]>;
 }
-export interface CodingWorkspaceReview { directory: string; review: CodingReviewExport; cleanup: "complete" | "retained" }
+export interface CodingWorkspaceReview {
+  directory: string; review: CodingReviewExport; cleanup: "complete" | "retained";
+  /** Host-only producer capability for stores which prohibit adopting arbitrary directory paths. Never IPC. */
+  artifact?: CodingArtifactRef;
+}
 /** Each backend must supply its real stopped-writer proof before files, results or another command are admitted. */
 export interface CodingCommandWorkspace extends IsolatedCodingCommandPort, ScopedCodingWorkspace {
   readonly nodeAvailable: boolean;
