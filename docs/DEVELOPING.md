@@ -2491,8 +2491,13 @@ node scripts/run-integration.mjs test/integration/windows-packaged-coding-native
 ```
 
 The dedicated job treats missing Windows/archive prerequisites as failures. A successful job retains only its original
-Windows ZIP for three days; no fixture, profile or private review is uploaded. Its actual packaged results remain
-pending until the configured Windows jobs complete.
+Windows ZIP for three days; no fixture, profile or private review is uploaded. At `4db67491`,
+[run 43817687919](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43817687919) passed
+this packaged case on both Server 2022 and 2025 (about 15.2/13.1 seconds). Both completed the fixed shipped-dependency
+edit and verified SDK-child/controller/copy cleanup. Server 2025 used only the exact registered mute fallback with
+no missing IDs; Server 2022 held all defaults. The ordinary launch smoke's forced cleanup is not a native shutdown
+receipt; only the separate helper's actual stopped-child/native cleanup supplies that narrower proof. This remains
+separate from packaged Home-to-Host, live-account and physical Windows client acceptance.
 
 ### 10.4 The accessibility helper (UI Automation)
 

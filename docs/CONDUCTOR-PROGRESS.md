@@ -164,6 +164,15 @@ exit `0` remained verified. Public PR #223 advanced to `7eabd077` with the same 
 `canContinue: true`. The exact-head native matrix above is green; ordinary CI is blocked by the known Windows LPAC child-launch case.
 Commands, live-provider and physical Windows acceptance remain separate; the candidate is not ready to merge.
 
+The actual ZIP now has separate packaged evidence at `4db67491` in
+[run 43817687919](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43817687919): one
+native integration case passed on each Server image (about 15.2/13.1 seconds). The original extracted app retained
+normal fuses, refused debugging, ignored the development provider, opened Home/Ask and handed over correctly. A
+separate fixed source fixture used packaged Ember's supported Node mode and the shipped SDK/Koffi/runtime to edit
+a private native copy, preserve source, record zero checks and verify SDK-child, controller, copy and privacy cleanup.
+The original ZIPs are Actions artifacts for three days. This proves packaged launch/dependencies, not a live packaged
+Home-to-Host coding session or physical client acceptance; see [development checks](DEVELOPING.md).
+
 ## What still needs implementation or verification
 
 1. **Production coding isolation and toolchains.** Finish the custom-tool product path and its enforced command backend
