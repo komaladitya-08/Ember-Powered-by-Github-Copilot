@@ -83,7 +83,7 @@ import { ProjectWorkspaceStore, workspaceAction, type ProjectExchange } from "./
 import { CodingWorkspaceStore, codingBranch, type CodingWorkspace } from "./agent/coding-workspace";
 import { ProjectSessionStore } from "./agent/project-session-store";
 import { ProjectCodingWorkspaces } from "./agent/project-coding-workspaces";
-import { ProjectCodingResources } from "./agent/coding-resources";
+import { createProjectCodingBackend, type ProjectCodingResourcesPort } from "./agent/project-coding-backend";
 import { selectCodingStorageBase } from "./agent/coding-storage";
 import { registerProjectCodingIpc, type ProjectCodingIpc } from "./project-coding-ipc";
 import { memoryRefusal } from "./memory/guard";
@@ -2384,20 +2384,21 @@ function start(): void {
     projectExists: id => agent?.projectSessionsState().projects.some(project => project.id === id) === true,
   });
   let projectCoding: ProjectCodingIpc | null = null;
-  let codingResources: ProjectCodingResources | null = null;
+  let codingResources: ProjectCodingResourcesPort | null = null;
   let codingCleanupPending = 0;
   let codingCleanupFailed = false;
   const codingCleanupReceipts = new Set<CodingCleanupReceipt>();
   const codingCleanupReceiptsByHost = new WeakMap<AgentHost, Set<CodingCleanupReceipt>>();
   let codingCleanupAttempt = 0;
   const projectCodingChanged = () => tasksShown();
-  const codingResourcesReady = ProjectCodingResources.create({
+  const codingBackend = createProjectCodingBackend({
     userData, folders: projectCodingFolders, storage: codingStorage,
     protectedPaths: [userData, app.getAppPath(), process.resourcesPath],
     currentOwner: () => agent?.projectWorkspaceScope() ?? null,
     projectExists: id => agent?.projectSessionsState().projects.some(project => project.id === id) === true,
     env: process.env, execPath: process.execPath, isElectron: true, changed: projectCodingChanged,
-  }).then(resources => { codingResources = resources; projectCodingChanged(); return resources; });
+  });
+  const codingResourcesReady = codingBackend.ready.then(resources => { codingResources = resources; projectCodingChanged(); return resources; });
   // Keep initialization errors private; availability describes the failure without exposing storage paths.
   void codingResourcesReady.catch(() => { codingCleanupFailed = true; projectCodingChanged(); });
   const scopedCodingAvailability = () => vaultRedactor.active
@@ -4053,7 +4054,7 @@ function start(): void {
     });
     agent = new AgentHost({
       history,
-      scopedCoding: {
+      scopedCoding: codingBackend.host({
         available: () => consented() && screenLock?.locked === false && policy.features.actions !== false &&
           scopedCodingAvailability().available,
         unavailable: () => !consented() ? "Finish setup before starting coding work." : screenLock?.locked !== false
@@ -4062,10 +4063,9 @@ function start(): void {
         workspace: id => id ? codingResources?.workspace(id) ?? null : null,
         captureContinuation: (id, projectId) => codingResources?.captureContinuation(id, projectId) ?? null,
         continuationCurrent: (ref, projectId) => codingResources?.continuationCurrent(ref, projectId) === true,
-        createWorkspace: async (spec, signal, admit) => (await codingResourcesReady).createWorkspace(spec, signal, admit),
         get reviewBase() { return codingResources?.reviewBase ?? ""; },
         publish: async (spec, output, status, checks) => (await codingResourcesReady).publish(spec, output, status, checks),
-      },
+      }),
       codingWorkspace: codingCurrent,
       codingClarify: (request, signal) => targets?.codingClarify(request, signal) ?? Promise.resolve(null),
       onCodingRunning: running => {
