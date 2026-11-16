@@ -45,7 +45,7 @@
   "maximumBootstrapBytes": 16777216,
   "maximumToolBytes": 67108864,
   "maximumReceiptBytes": 32768,
-  "nodeBuildTimeoutMs": 2400000,
+  "nodeBuildTimeoutMs": 3600000,
   "entropyImportPolicy": {
     "module": "bcrypt.dll",
     "required": "BCryptGenRandom",

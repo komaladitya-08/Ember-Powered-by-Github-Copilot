@@ -207,8 +207,28 @@ export function windowsNodeSourceBuildBatch(paths) {
     `"${paths.linker}" ${buildPin.bootstrapLinkArguments.join(" ")} /OUT:"${paths.bootstrapOutput}" "${paths.bootstrapObject}" kernel32.lib`,
     "if errorlevel 1 exit /b 1", "exit /b 0", ""].join("\r\n");
 }
+/** Closed child outcome only: no error message, signal name, command, output or host path is retained. */
+export function windowsNodeSourceCompileOutcome(result) {
+  const outcome = (name, exitCode = null) => freeze({ schema: 1, outcome: name, exitCode });
+  try {
+    if (!result || typeof result !== "object" || Array.isArray(result) || !Object.hasOwn(result, "status") || !Object.hasOwn(result, "signal")) return outcome("malformed");
+    const status = result.status, signal = result.signal, error = result.error;
+    if (status !== null && (!Number.isInteger(status) || status < -0x80000000 || status > 0xffffffff) ||
+        signal !== null && (typeof signal !== "string" || signal.length < 1 || signal.length > 64) ||
+        error !== undefined && error !== null && (typeof error !== "object" || Array.isArray(error))) return outcome("malformed");
+    if (error) {
+      if (status !== null) return outcome("malformed");
+      return outcome(error.code === "ETIMEDOUT" ? "timeout" : "spawn");
+    }
+    if (signal !== null) return status === null ? outcome("signal") : outcome("malformed");
+    if (status === null) return outcome("malformed");
+    return outcome(status === 0 ? "success" : "exit", status);
+  } catch { return outcome("malformed"); }
+}
+let compileOutcome;
 let buildStage = "inputs";
 export async function buildWindowsNodeSource({ sourceArchivePath, nasmArchivePath, destination, pythonPath }) {
+  buildStage = "inputs"; compileOutcome = undefined;
   if (process.platform !== "win32" || process.arch !== "x64") fail();
   for (const value of [sourceArchivePath, nasmArchivePath, destination, pythonPath]) ordinary(value);
   pythonPath = trustedWindowsNodeSourcePythonPath(pythonPath);
@@ -256,7 +276,9 @@ export async function buildWindowsNodeSource({ sourceArchivePath, nasmArchivePat
   const batch = path.join(destination, "build-source.cmd"); fs.writeFileSync(batch, windowsNodeSourceBuildBatch(batchPaths), { flag: "wx" });
   buildStage = "compile";
   const result = spawnSync(env.ComSpec, ["/d", "/s", "/v:off", "/c", batch], { env, cwd: destination, stdio: "inherit", timeout: buildPin.nodeBuildTimeoutMs, windowsHide: true });
-  if (result.error || result.status !== 0 || result.signal) fail();
+  compileOutcome = windowsNodeSourceCompileOutcome(result);
+  if (compileOutcome.outcome !== "success") fail();
+  buildStage = "post-batch-tool-identity";
   for (const [name, expected] of [["compiler", toolsPaths.compiler], ["python", pythonPath], ["nasm", nasm.nasmPath]]) {
     for (const suffix of ["Before", "After"]) if (firstPath(batchPaths[`${name}${suffix}`]).toLowerCase() !== expected.toLowerCase()) fail();
   }
@@ -289,5 +311,5 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (args.length !== 8 || args[0] !== "--source-archive" || args[2] !== "--nasm-archive" || args[4] !== "--destination" || args[6] !== "--python") fail();
     const receipt = await buildWindowsNodeSource({ sourceArchivePath: args[1], nasmArchivePath: args[3], destination: args[5], pythonPath: args[7] });
     console.log(JSON.stringify({ issuer: receipt.issuer, version: receipt.sourceVersion, compilerVersion: receipt.build.compilerVersion, nodeBytes: receipt.assets.node.bytes, bootstrapBytes: receipt.assets.bootstrap.bytes }));
-  } catch { console.error(JSON.stringify({ status: "failed", stage: buildStage })); process.exitCode = 1; }
+  } catch { console.error(JSON.stringify({ status: "failed", stage: buildStage, ...(compileOutcome ? { compile: compileOutcome } : {}) })); process.exitCode = 1; }
 }

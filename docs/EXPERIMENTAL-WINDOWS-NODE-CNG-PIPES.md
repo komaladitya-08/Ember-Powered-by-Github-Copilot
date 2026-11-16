@@ -3,7 +3,8 @@
 This separate candidate tests a fixed local coding-loop prerequisite in zero-capability LPAC. It adds three
 authenticated source deltas to Node 22.23.5: the existing Winsock initialization call guard, a Windows entropy
 selector confined to one OpenSSL translation unit, and the upstream AppContainer local-pipe runtime backport.
-The fresh Windows build and all new native outcomes are pending. No product backend is enabled, no project code
+The first fresh Windows build exhausted its trusted compile budget before producing an admitted image; all new
+native outcomes remain pending. No product backend is enabled, no project code
 is accepted, and no general Node compatibility is claimed.
 
 ## Why this candidate exists
@@ -96,16 +97,44 @@ Even complete success would establish only these fixed operations. Complete API 
 behavior, project admission, denial coverage, child lifecycle and production integration remain separate gates.
 The product command gate remains false. This work uses hosted Windows CI and does not require a user laptop.
 
+## First combined build outcome
+
+The [first combined source run 43847857889](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43847857889)
+at source head `872d042dd2d0263c00548650302a6a8102176c9c` used actual merge compile commit
+`f13ed57a22077629b8e6037f7ff12d8f42fe58fb`. Its completed Windows job passed 448 portable contracts with one
+expected privilege skip. Python preflight, official-control preparation and pinned source/NASM acquisition passed.
+
+The compile stage failed after its fixed 2,400,000 ms producer limit. The first VS batch output was 10:24:47.612 UTC
+and the closed compile-stage refusal was 11:04:47.559 UTC, about 2,400 seconds later. Compilation was still making
+progress; the log contains no C, LNK or MSB compiler error and no `Build FAILED` marker. `rand_win.c` compiled at
+10:58:07 and `openssl.lib` completed at 10:58:18. Those intermediate observations do not establish a final import
+table or useful runtime behavior. The old wrapper does not return a typed ETIMEDOUT code, so the timing identifies
+the configured limit without pretending a raw timeout result was published.
+
+No admitted Node PE, import check, staged image, new build artifact or native result was produced. The required
+native gates were not run. The wrapper's batch-root termination is not proof of complete compiler-descendant
+cleanup; disposable runner teardown remains the outer boundary. No whole compiler-child cleanup certificate is
+claimed.
+
+The source-only follow-up adds closed numeric compile-result diagnostics and a separate post-batch tool-identity
+stage. Its reviewed trusted producer budget is sixty minutes, with a seventy-minute build step inside a
+ninety-minute workflow job. Source bytes, compiler flags, the five-minute native step and every root/job/Stop
+deadline remain unchanged. The frozen follow-up still requires review before a new source build is dispatched.
+
 ## Local verification
 
-All 539 focused source, build, artifact, literal, report, ownership, observer and stdio contracts pass on this
-Linux host. This includes 138 single-role native-binding tests, 107 bounded child-observer tests and two actual
+The initial candidate passed all 539 focused source, build, artifact, literal, report, ownership, observer and
+stdio contracts on this Linux host. This includes 138 single-role native-binding tests, 107 bounded child-observer tests and two actual
 ordinary-process three-pipe transport cases with synthetic version/path metadata. Scoped ESLint and diff checks
 pass, and the final complete TypeScript check passes. The native integration imports and skips its six Windows
 cases on Linux; explicitly requiring it fails at the Windows-x64 prerequisite. These are portable contract and
-program-logic results, with no Windows execution
-or compatibility claim. The signed-source full-tree preparation result above is separate from a successful
+program-logic results, with no Windows execution or compatibility claim. The signed-source full-tree preparation
+result above is separate from a successful
 Windows compile; fresh build and all six native cases remain required.
+
+The producer-budget follow-up passed all 156 affected build/artifact contracts, scoped ESLint, YAML validation,
+diff checks and a fresh complete TypeScript check. These are producer contract results, not another compile or
+native outcome.
 
 ## Sources
 

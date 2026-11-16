@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import sourcePin from "../../scripts/experimental/windows-node-source-pin.json";
 // @ts-expect-error -- shared trusted-host JavaScript compile recipe and portable bounded receipt parser
-import { buildPin, parseWindowsNodeSourceBuildReceipt, windowsNodeSourceBuildRecipe, windowsNodeSourceBuildEnvironment, windowsNodeSourceBuildBatch, windowsNodeSourceImageFingerprint, windowsNodeSourceEntropyImports, trustedWindowsNodeSourcePythonPath, attestWindowsNodeSourcePython } from "../../scripts/experimental/build-windows-node-source.mjs";
+import { buildPin, parseWindowsNodeSourceBuildReceipt, windowsNodeSourceBuildRecipe, windowsNodeSourceBuildEnvironment, windowsNodeSourceBuildBatch, windowsNodeSourceImageFingerprint, windowsNodeSourceEntropyImports, windowsNodeSourceCompileOutcome, trustedWindowsNodeSourcePythonPath, attestWindowsNodeSourcePython } from "../../scripts/experimental/build-windows-node-source.mjs";
 // @ts-expect-error -- trusted-host JavaScript source-preparation API
 import { validateSourceInputs } from "../../scripts/experimental/windows-node-source.mjs";
 
@@ -225,4 +225,33 @@ it("requires the actual named CNG import in a bounded mapped PE and refuses lega
     (data: Buffer) => data.writeUInt32LE(0x1100, 0x314),
     (data: Buffer) => data.fill(65, 0x350, 0x3d2),
   ]) { const data = entropyImage(); mutate(data); expect(() => windowsNodeSourceEntropyImports(data)).toThrow("exact source, recipe or issuer"); }
+});
+
+it.each([
+  [{ status: 0, signal: null }, { outcome: "success", exitCode: 0 }],
+  [{ status: 1, signal: null }, { outcome: "exit", exitCode: 1 }],
+  [{ status: 0xffffffff, signal: null }, { outcome: "exit", exitCode: 0xffffffff }],
+  [{ status: -1073741819, signal: null }, { outcome: "exit", exitCode: -1073741819 }],
+  [{ status: null, signal: "SIGTERM", error: Object.assign(new Error("private host path"), { code: "ETIMEDOUT" }) }, { outcome: "timeout", exitCode: null }],
+  [{ status: null, signal: null, error: Object.assign(new Error("private host path"), { code: "ENOENT" }) }, { outcome: "spawn", exitCode: null }],
+  [{ status: null, signal: "private signal name" }, { outcome: "signal", exitCode: null }],
+])("classifies only finite compile outcome facts for injected result %#", (result, expected) => {
+  const observed = windowsNodeSourceCompileOutcome(result);
+  expect(observed).toEqual({ schema: 1, ...expected }); expect(Object.isFrozen(observed)).toBe(true);
+  expect(JSON.stringify(observed)).not.toMatch(/private|ETIMEDOUT|ENOENT|SIGTERM/);
+});
+it.each([null, [], {}, { status: 0 }, { status: 0, signal: "SIGTERM" }, { status: null, signal: null },
+  { status: "private", signal: null }, { status: 1.5, signal: null }, { status: 0x100000000, signal: null },
+  { status: 0, signal: null, error: "private" }, { status: null, signal: "" }, { status: null, signal: true },
+  { status: 0, signal: null, error: { code: "ETIMEDOUT" } }, { get status() { throw new Error("private property"); }, signal: null },
+])("refuses malformed or contradictory compile outcome %# without forwarding private data", result => {
+  expect(windowsNodeSourceCompileOutcome(result)).toEqual({ schema: 1, outcome: "malformed", exitCode: null });
+});
+it("extends only the trusted compiler budget while preserving the native workflow deadline", () => {
+  expect(buildPin.nodeBuildTimeoutMs).toBe(3_600_000);
+  const workflow = fs.readFileSync(new URL("../../.github/workflows/experimental-windows-node-source.yml", import.meta.url), "utf8");
+  expect(workflow).toMatch(/source-node:[\s\S]*?timeout-minutes: 90/);
+  expect(workflow).toMatch(/name: Build the source Node[\s\S]*?timeout-minutes: 70/);
+  expect(workflow).toMatch(/name: Independent official controls[\s\S]*?timeout-minutes: 5/);
+  expect(buildPin.compilerEnvironment).toBe("/DEMBER_UV_FIXED_PROBE_OFFLINE=1 /DEMBER_NODE_FIXED_PROBE_CNG=1");
 });
