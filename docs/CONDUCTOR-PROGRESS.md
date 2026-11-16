@@ -232,6 +232,16 @@ backend for a declared supported toolchain, live-provider verification and the r
 Hosted Windows can advance the command backend before laptop access. Main should remain unmerged while that
 backend, the existing failing CI case and the live/native acceptance checks remain unresolved.
 
+The latest software investigations still have reproducible blockers. The creator-owner
+[fifth matrix](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43927686126) passed the
+fresh staging-metadata correction on both Server images, then failed replacement with exit 212/error 5 after
+temporary-file preparation. First Stop/revoke/private readback and the four in-run ACL denials passed; full useful
+completion and final cleanup were not established. The separate Node single-process
+[third matrix](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43923940767) passed both
+ordinary-host controls but still exited 1 in LPAC without a report or output. Removing its exact earlier discovery
+refusal did not prove module loading. These diagnostic drafts remain separate from the integrated product and do
+not establish a laptop-only remaining checklist. See the boundary plan for the finite command milestone and bridge.
+
 Automatic checkpoints, general dependency graphs, future wakeups, automatic source writeback and macOS coding
 are separate extensions. They do not add requirements to this Windows milestone; the implemented limits must
 remain explicit in the product and acceptance results.

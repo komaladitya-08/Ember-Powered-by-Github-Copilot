@@ -64,12 +64,25 @@ subprocesses, npm and network installation unavailable. Pinned Node 22.23.5 requ
 it into an approved `node --test` command or reinterpret an npm script.
 
 The separate [in-process diagnostic #242](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/242)
-preserves the original six assertions and source artifact. Its first native matrix passed the ordinary-host test
-on both Server images. LPAC exited 1 before producing a test report, with 144 private output bytes and complete
-known cleanup. Those bytes were not viewed; a bounded exact discovery-message diagnostic is pending. The
+preserves the original six assertions and source artifact. A bounded comparison identified the original 144-byte
+output as the pinned Node file-discovery refusal. Selecting the same fixed test by its verified relative sibling
+pattern removed that message. The [third matrix](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43923940767)
+still passed the ordinary-host case and failed LPAC on both images: exit 1, no report, zero output bytes and complete
+known cleanup. Successful import and the remaining cause are unproved. A separate fixed loader diagnostic is being
+verified; it independently attempts read, default realpath and CommonJS require without changing the earlier test.
+No raw TAP or private output was viewed. The
 [creator-owner prerequisite #241](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/241)
-reached first Stop/revocation/private readback on Server 2022, then a file-replacement failure; Server 2025 stopped
-at prelaunch metadata validation. Neither experiment establishes a usable product command capability.
+now passes fresh pregrant metadata admission, first Stop/revocation/private readback and all four in-run ACL denials
+on both images. The [fifth matrix](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43927686126)
+still fails replacement on both: MoveFileEx returns FALSE/error 5 after temporary-file preparation succeeds. The
+staging-clock correction preserves all later checks; it does not resolve replacement or prove full cleanup.
+Neither experiment establishes a usable product command capability.
+
+The [separate libuv observer #240](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/240)
+now compiles on hosted Windows. Its emission guard still refuses two matching static delegate call sites in each of
+two wrappers; these are lexical counts, not dynamic call or LastError evidence. Its workflow remains compile-only
+and the native execution guard stays false. A separate ordinary-host ABI control is being prepared without altering
+that observer object, source, workflow or guard.
 
 After native feasibility passes, the finite product bridge still needs these changes:
 
