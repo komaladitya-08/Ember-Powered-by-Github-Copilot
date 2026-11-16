@@ -36,7 +36,7 @@ interface Authority {
 interface PendingArtifact { projectId: string; input: CodingArtifactInput }
 type ResourceOptions = Pick<ProjectCodingResourcesOptions, "userData" | "protectedPaths" | "currentOwner" | "projectExists" | "changed">;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const DISCLOSURE = "Windows coding can edit files in a private copy and prepare a review. Commands, tests and dependency installation are unavailable. Captures exclude .git and node_modules; review exports include all captured files, including unchanged files. Continuing a previous result is unavailable on Windows.";
+const DISCLOSURE = "Windows coding can edit files in a private copy and prepare a review. Commands, tests and dependency installation are unavailable. Captures exclude .git and node_modules; review exports include all captured files, including unchanged files. Continue from a review starts a fresh private copy of its proposed files. Your original project stays unchanged.";
 const stale = () => new Error("The coding account, project or folder grant changed. Start a new request.");
 const cleanupFailed = () => new Error("Private Windows coding resources could not be closed safely. They were retained for diagnosis.");
 const copyFailed = () => new Error("The private Windows coding copy could not be created under its current project grant.");
@@ -124,10 +124,10 @@ export class WindowsProjectCodingResources {
 
   get reviewBase(): string { return this.#reviews; }
   results(): Promise<CodingResultsAccess> { return Promise.resolve(this.#results); }
-  availability(): { available: boolean; message: string; mode: "files-only"; canContinue: false } {
+  availability(): { available: boolean; message: string; mode: "files-only"; canContinue: true } {
     const privacy = codingPrivacyCleanupFailure();
     const available = this.#ready && !this.#closed && !this.#failed && !this.#invalidationPending && !this.#artifactCleanupFailed && !privacy;
-    return { available, mode: "files-only", canContinue: false, message: this.#closed ? "Coding resources are closed." : this.#invalidationPending
+    return { available, mode: "files-only", canContinue: true, message: this.#closed ? "Coding resources are closed." : this.#invalidationPending
       ? "Private coding work is being closed and removed." : privacy ? "Earlier coding privacy work could not be verified as stopped. Further coding is unavailable."
         : this.#artifactCleanupFailed && !this.#failed ? "Private coding reviews could not be removed. Retry Forget everything; coding resumes after verified cleanup." : this.#message };
   }

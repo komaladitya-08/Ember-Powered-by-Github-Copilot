@@ -295,7 +295,7 @@ async function setup(options: { existingCommon?: boolean; unknownChildren?: numb
 
 it("uses only files/review resources and supplied folder metadata, without discovering or exposing command tools", async () => {
   const f = await setup(), value = await f.open();
-  expect(value.availability()).toMatchObject({ available: true, mode: "files-only", canContinue: false });
+  expect(value.availability()).toMatchObject({ available: true, mode: "files-only", canContinue: true });
   expect(value.availability()).not.toHaveProperty("nodePath"); expect(value.folders).toBe(f.folders); expect(f.discover).not.toHaveBeenCalled();
   expect(value.availability().message).toContain("Commands, tests and dependency installation are unavailable");
   expect((await value.results()).state(P)).toEqual([]); expect(f.storeCreate).not.toHaveBeenCalled();
@@ -469,7 +469,7 @@ it("loads an opaque predecessor through its original same-store source boundary 
   const decoded = await load.mock.results[0].value as CodingExportInput;
   expect(treeBytes(decoded).every(bytes => bytes.every(byte => byte === 0))).toBe(true);
   expect(f.backends[1].seed?.proposed.entries[0]).not.toBe(decoded.proposed.entries[0]);
-  expect(value.availability()).toMatchObject({ canContinue: false, mode: "files-only" }); await workspace.close();
+  expect(value.availability()).toMatchObject({ canContinue: true, mode: "files-only" }); await workspace.close();
 });
 
 it("forgets the predecessor after admission without revoking the independent new copy or its result", async () => {
