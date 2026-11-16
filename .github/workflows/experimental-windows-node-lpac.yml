@@ -5,9 +5,14 @@ on:
     paths:
       - ".github/workflows/experimental-windows-node-lpac.yml"
       - "scripts/experimental/windows-node-lpac-pin.json"
+      - "scripts/experimental/windows-node-lpac-sources.json"
       - "test/fixtures/windows-node-lpac-*"
       - "test/fixtures/experimental-windows-lpac.c"
       - "test/integration/isolated-windows-command-node-native.test.ts"
+      - "test/unit/windows-node-lpac-startup.test.ts"
+      - "test/unit/windows-node-lpac-events.test.ts"
+      - "test/unit/windows-node-lpac-io.test.ts"
+      - "test/unit/windows-node-lpac-fatal.test.ts"
       - "app/main/agent/experimental-windows-lpac*.ts"
       - "app/main/agent/isolated-windows-command-assets.ts"
   workflow_dispatch:
@@ -41,6 +46,8 @@ jobs:
       - run: npm ci
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Startup, event, stdio lifecycle and fatal-output privacy contracts
+        run: npm test -- test/unit/windows-node-lpac-startup.test.ts test/unit/windows-node-lpac-events.test.ts test/unit/windows-node-lpac-io.test.ts test/unit/windows-node-lpac-fatal.test.ts --maxWorkers=1
       - name: Fetch the independently pinned official Windows archive and extract only node.exe
         timeout-minutes: 2
         shell: pwsh

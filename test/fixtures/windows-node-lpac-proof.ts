@@ -7,13 +7,14 @@ import { execFileSync, spawnSync } from "node:child_process";
 import type * as Koffi from "koffi";
 import pins from "../../scripts/experimental/windows-node-lpac-pin.json";
 import { ExperimentalWindowsLpacFixture, experimentalWindowsEnvironment, experimentalWindowsSddl } from "../../app/main/agent/experimental-windows-lpac";
-import { loadExperimentalWindowsLpacApi, type WindowsHandle, type WindowsLpacApi, type WindowsSuspendedProcess, type WindowsLpacProfile } from "../../app/main/agent/experimental-windows-lpac-api";
+import { ExperimentalWindowsCreateUncertain, loadExperimentalWindowsLpacApi, type WindowsHandle, type WindowsLpacApi, type WindowsSuspendedProcess, type WindowsLpacProfile } from "../../app/main/agent/experimental-windows-lpac-api";
 import { loadWindowsCommandAssetReader, ordinaryWindowsCommandAssetSize } from "../../app/main/agent/isolated-windows-command-assets";
 import { WINDOWS_NODE_STARTUP_ARGS, WindowsNodeHostCleanupError, WindowsNodeStartupGate, runWindowsNodeHostStartup } from "./windows-node-lpac-startup";
 import type { WindowsNodeEventIdentity } from "./windows-node-lpac-events";
+import { loadWindowsNodeIo, WindowsNodeIoCleanupError, type WindowsNodeIoOwner } from "./windows-node-lpac-io";
 
 type NodePin = (typeof pins.versions)[keyof typeof pins.versions];
-export type WindowsNodeProofMode = "startup" | "direct" | "inprocess" | "child";
+export type WindowsNodeProofMode = "startup" | "startup-io" | "direct" | "inprocess" | "child";
 const digest = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const stable = (before: Buffer, after: Buffer) => before.subarray(0, 12).equals(after.subarray(0, 12)) && before.subarray(20).equals(after.subarray(20));
 export function windowsNodeProofPin(version: string): Readonly<NodePin> {
@@ -154,17 +155,22 @@ export interface WindowsNodeProof {
   hostStartup(): Promise<{ exitCode: number; jobStopped: true }>;
   /** Exact verified image/PID for optional diagnostics. No identity is released before root exit and job zero. */
   eventIdentity(): WindowsNodeEventIdentity;
+  /** New diagnostic mode only. Root/job zero and parent-writer closure precede any output payload read. */
+  readIoOutput(): Buffer;
   report(name: "direct.json" | "inprocess.json" | "child.json" | "failure.json" | "test.tap"): string | null;
   close(): Promise<void>;
 }
 export async function prepareWindowsNodeProof(input: { parent: string; bootstrap: Buffer; version: string; asset: string; mode: WindowsNodeProofMode; canary: string; port: number }, api = loadExperimentalWindowsLpacApi()): Promise<WindowsNodeProof> {
   if (input.canary !== path.join(input.parent, "host-only-canary.txt")) throw new Error("Use only the fixed disposable host canary for this proof.");
-  if (process.platform !== "win32" || process.arch !== "x64" || !["startup", "direct", "inprocess", "child"].includes(input.mode) || !Number.isInteger(input.port) || input.port < 1 || input.port > 65535) throw new Error("Invalid bounded Windows Node proof configuration.");
+  if (process.platform !== "win32" || process.arch !== "x64" || !["startup", "startup-io", "direct", "inprocess", "child"].includes(input.mode) || !Number.isInteger(input.port) || input.port < 1 || input.port > 65535) throw new Error("Invalid bounded Windows Node proof configuration.");
+  const withIo = input.mode === "startup-io";
   const pin = windowsNodeProofPin(input.version), reader = loadWindowsCommandAssetReader(), native = nativeChecks(api);
   const directoryPins = pinAncestors(input.asset, api), filePins: PinnedFile[] = [];
   let fixture: ExperimentalWindowsLpacFixture | undefined, profileSid = "", created: WindowsSuspendedProcess | undefined, privateJob: WindowsHandle | undefined;
   const profileCapture: { value?: WindowsLpacProfile } = {};
   let program = "", args: string[] = [], signatureVerified = false, closing: Promise<void> | undefined;
+  let io: WindowsNodeIoOwner | undefined, ioUncertain = false;
+  const unsafeIo = (error: unknown) => error instanceof WindowsNodeIoCleanupError || error instanceof ExperimentalWindowsCreateUncertain;
   let launchedAt: number | undefined;
   const startupGate = new WindowsNodeStartupGate();
   let expectedBootstrap = "", expectedWork = "", expectedState = "", expectedEnvironment: Buffer | undefined;
@@ -173,6 +179,7 @@ export async function prepareWindowsNodeProof(input: { parent: string; bootstrap
   const close = () => {
     startupGate.retire();
     return closing ??= (async () => {
+      if (ioUncertain) throw new WindowsNodeProofCleanupError();
       // A host control has independent ownership. Unknown shutdown must retain the same staged assets and pins.
       try { await startupGate.hostCompletion; } catch (error) { if (error instanceof WindowsNodeProofCleanupError) throw error; }
       try { await fixture?.close(); } catch { throw new WindowsNodeProofCleanupError(); } // Unknown stop retains every asset pin and scratch.
@@ -187,13 +194,26 @@ export async function prepareWindowsNodeProof(input: { parent: string; bootstrap
       const profile = api.createProfile(name); profileSid = profile.sidText; profileCapture.value = profile; return profile;
     },
     createJob() { if (privateJob) throw new Error("One private job only."); return privateJob = api.createJob(); },
+    deleteProfile(profile) {
+      // Fixture disposal reaches this only after positive process/job cleanup (or before any process existed).
+      // Close diagnostic IO before releasing its profile; an uncertain close retains every remaining asset pin.
+      try { io?.close(); } catch { ioUncertain = true; throw new WindowsNodeProofCleanupError(); }
+      api.deleteProfile(profile);
+    },
     createSuspended(profile, bootstrapProgram, command, cwd, env) {
       if (!fixture || created || !signatureVerified || bootstrapProgram !== expectedBootstrap || !command.equals(windowsNodeProofCommand(expectedBootstrap, [])) || cwd !== expectedWork ||
         !expectedEnvironment || !env.equals(expectedEnvironment) || profile.sidText !== profileSid)
         throw new Error("The direct Node redirect rejected an unexpected bootstrap, argument or environment.");
       for (const file of filePins) file.unchanged();
       launchedAt = Date.now();
-      created = api.createSuspended(profile, program, windowsNodeProofCommand(program, args), cwd, env); return created;
+      try {
+        created = io ? io.createLpac(profile, program, windowsNodeProofCommand(program, args), cwd, env)
+          : api.createSuspended(profile, program, windowsNodeProofCommand(program, args), cwd, env);
+      } catch (error) {
+        if (unsafeIo(error)) { ioUncertain = true; throw new ExperimentalWindowsCreateUncertain("The separate Node IO creation is unverified; preserve its profile and assets."); }
+        throw error;
+      }
+      return created;
     },
     assign(job, process) { if (!created || job !== privateJob || process !== created.process) throw new Error("Unexpected Node job assignment."); api.assign(job, process); observations.assigned = true; },
     verifyToken(profile, process) {
@@ -228,9 +248,10 @@ export async function prepareWindowsNodeProof(input: { parent: string; bootstrap
     verifyOpenJs(program, pin, api);
     if (digest(reader.read(program)) !== pin.executableSha256) throw new Error("The staged Node image changed across its signature check.");
     signatureVerified = true;
-    args = input.mode === "startup" ? [...WINDOWS_NODE_STARTUP_ARGS] : input.mode === "inprocess"
+    args = input.mode === "startup" || withIo ? [...WINDOWS_NODE_STARTUP_ARGS] : input.mode === "inprocess"
       ? ["--no-warnings", pin.isolationFlag, "--test-reporter=tap", `--test-reporter-destination=${path.join(fixture.paths.state, "test.tap")}`, "--test", path.join(fixture.paths.tools, "windows-node-lpac-inprocess.cjs")]
       : ["--no-warnings", path.join(fixture.paths.tools, "windows-node-lpac-probe.cjs"), input.mode, input.canary, String(input.port)];
+    if (withIo) io = loadWindowsNodeIo(expectedState, capturedProfile, api);
     const prepared = fixture;
     return { fixture: prepared, version: pin.version, get observations() { return { ...observations }; }, profile: Object.freeze({ ...profilePaths }),
       launch: () => startupGate.launch(() => prepared.launch()),
@@ -239,13 +260,24 @@ export async function prepareWindowsNodeProof(input: { parent: string; bootstrap
         if (!created || launchedAt === undefined) throw new Error("No stopped Node process identity is available.");
         return Object.freeze({ pid: created.pid, image: program, startedAt: launchedAt });
       },
+      readIoOutput() {
+        if (!withIo || !io || closing || ioUncertain) throw new Error("Output payload is available only in the open separate fixed IO diagnostic.");
+        try { return io.readAfterStopped(() => { prepared.exitCode(); }); }
+        catch (error) { if (unsafeIo(error)) { ioUncertain = true; throw new WindowsNodeProofCleanupError(); } throw error; }
+      },
       hostStartup() {
-        if (input.mode !== "startup") return Promise.reject(new Error("Use the separate trusted-host control only for the fixed startup probe before LPAC launch."));
+        if (input.mode !== "startup" && !withIo) return Promise.reject(new Error("Use the separate trusted-host control only for the fixed startup probe before LPAC launch."));
         return startupGate.host(() => runWindowsNodeHostStartup({ program, command: windowsNodeProofCommand(program, args), cwd: expectedWork, environment: expectedEnvironment!,
           unchanged() { for (const file of filePins) file.unchanged(); } }, api, {
-          create: native.createHostSuspended,
+          create: (program, command, cwd, environment) => io ? io.createHost(program, command, cwd, environment) : native.createHostSuspended(program, command, cwd, environment),
           verify(created, expected) { native.image(created.process, created.pid, expected); native.verifyHost(created.process); },
-        }).catch(error => { if (error instanceof WindowsNodeHostCleanupError) throw new WindowsNodeProofCleanupError(); throw error; }));
+        }).then(result => {
+          if (io) { if (result.exitCode !== 0 || result.jobStopped !== true) throw new Error("The separate IO host control did not succeed."); io.acceptHostControl(); }
+          return result;
+        }).catch(error => {
+          if (error instanceof WindowsNodeHostCleanupError || unsafeIo(error)) { ioUncertain = true; throw new WindowsNodeProofCleanupError(); }
+          throw error;
+        }));
       },
       report(name) {
         if (!["direct.json", "inprocess.json", "child.json", "failure.json", "test.tap"].includes(name)) throw new Error("Unknown fixed Node proof report.");
@@ -261,5 +293,5 @@ export async function prepareWindowsNodeProof(input: { parent: string; bootstrap
         }
         try { const data = reader.read(file); reportPin.unchanged(); return data.toString("utf8"); } finally { reportPin.close(); }
       }, close };
-  } catch (error) { await close(); throw error; }
+  } catch (error) { if (unsafeIo(error)) ioUncertain = true; await close(); throw error; }
 }

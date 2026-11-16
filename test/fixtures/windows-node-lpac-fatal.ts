@@ -1,0 +1,57 @@
+/**
+ * Test-only public V8 fatal location parser. Captured messages, stacks and build paths never leave this module.
+ * Filename authority comes only from exact official release-tree metadata; missing release locations stay missing.
+ */
+import sources from "../../scripts/experimental/windows-node-lpac-sources.json";
+
+export const WINDOWS_NODE_FATAL_MAX_BYTES = 64 * 1024;
+export type WindowsNodeFatalOutput =
+  | { status: "location"; file: string; line: number; bytes: number }
+  | { status: "no-location" | "oversize" | "unreadable" | "ambiguous"; bytes: number };
+
+type FilesByDirectory = Readonly<Record<string, readonly string[]>>;
+const knownFiles = (groups: FilesByDirectory): string[] => Object.entries(groups).flatMap(([directory, names]) =>
+  names.map(name => `${sources.prefix}${directory ? directory + "/" : ""}${name}`));
+const common = knownFiles(sources.commonFilesByDirectory);
+const releases = new Map<string, ReadonlySet<string>>(
+  (["22.23.5", "24.21.0"] as const).map(version => [version, new Set([...common, ...knownFiles(sources.versions[version].filesByDirectory)])]),
+);
+
+function publicSource(file: string, allowed: ReadonlySet<string>): string | undefined {
+  if (!file || file.length > 4096) return undefined;
+  const parts = file.replaceAll("\\", "/").split("/");
+  // An explicit Node V8 root wins over a build ancestor named "src". Otherwise the first V8 "src" root is
+  // authoritative: never skip a traversal-containing suffix to find a later, apparently safe source pathname.
+  const nodeRoot = parts.findIndex((part, index) => part === "deps" && parts[index + 1] === "v8" && parts[index + 2] === "src");
+  const root = nodeRoot < 0 ? parts.indexOf("src") : nodeRoot + 2;
+  if (root < 0) return undefined;
+  const suffix = parts.slice(root + 1);
+  if (!suffix.length || suffix.some(part => part === "." || part === ".." || !/^[A-Za-z0-9_.-]+$/.test(part))) return undefined;
+  const candidate = sources.prefix + suffix.join("/");
+  return allowed.has(candidate) ? candidate : undefined;
+}
+
+/** Return only a pinned public source location, or a fixed status and byte count capped at the oversize sentinel. */
+export function parseWindowsNodeFatalOutput(bytes: Buffer, version: string): WindowsNodeFatalOutput {
+  const count = Buffer.isBuffer(bytes) ? Math.min(bytes.length, WINDOWS_NODE_FATAL_MAX_BYTES + 1) : 0;
+  const fixed = (status: "no-location" | "oversize" | "unreadable" | "ambiguous"): WindowsNodeFatalOutput => ({ status, bytes: count });
+  if (!Buffer.isBuffer(bytes)) return fixed("unreadable");
+  if (bytes.length > WINDOWS_NODE_FATAL_MAX_BYTES) return fixed("oversize");
+  const allowed = releases.get(version);
+  if (!allowed) return fixed("unreadable");
+  // ASCII plus ordinary text whitespace is also valid UTF8; reject binary/Unicode before decoding any text.
+  if (bytes.some(byte => byte !== 9 && byte !== 10 && byte !== 13 && (byte < 0x20 || byte > 0x7e))) return fixed("unreadable");
+  const text = bytes.toString("utf8");
+  const normalized = text.replaceAll("\r\n", "\n");
+  if (normalized.includes("\r")) return fixed("unreadable");
+  const headers = normalized.split("\n").filter(line => line.startsWith("# Fatal error in "));
+  if (!headers.length) return fixed("no-location");
+  if (headers.length !== 1) return fixed("ambiguous");
+  const location = /^# Fatal error in (.*), line ([0-9]{1,6})$/.exec(headers[0]);
+  if (!location) return fixed("unreadable");
+  // Non-debug V8_Fatal explicitly prints an empty filename and line zero. Do not infer a location from its body.
+  if (location[1] === "" && location[2] === "0") return fixed("no-location");
+  const line = Number(location[2]), file = publicSource(location[1], allowed);
+  if (!file || line < 1 || line > 100_000) return fixed("unreadable");
+  return { status: "location", file, line, bytes: count };
+}
