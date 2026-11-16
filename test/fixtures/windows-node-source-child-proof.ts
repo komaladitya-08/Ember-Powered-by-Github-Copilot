@@ -11,6 +11,7 @@ import { inspectWindowsNodeSourceFatalOutput } from "./windows-node-source-fatal
 import { parseWindowsNodeSourceChildReport, inspectWindowsNodeSourceTestOutput, type WindowsSourceNodeChildMode } from "./windows-node-source-child-report";
 import { loadWindowsNodeSourceChildObserver } from "./windows-node-source-child-observer";
 import { runWindowsNodeSourceChildHost } from "./windows-node-source-child-host";
+import { readStoppedWindowsNodeSourceChildFailure } from "./windows-node-source-child-failure-read";
 import { WindowsNodeSourceOwnership } from "./windows-node-source-ownership";
 import { disposeWindowsLibuvProbe } from "./windows-libuv-probe-disposal";
 import { loadWindowsLibuvHostIdentity, windowsLibuvHostIdentityFailure, type WindowsLibuvHostIdentity } from "./windows-libuv-host-identity";
@@ -139,7 +140,8 @@ export async function runWindowsSourceNodeChildProbe(input: { parent: string; bu
   };
   const acquirePin = (file: string, maximum: number) => owned(() => native.pin(file, maximum));
   let result: { issuer: string; buildCommit: string; runCommit: string; programs: ReturnType<typeof windowsNodeSourceChildProgramReceipts>; host: { exitCode: number; jobStopped: true; identity: WindowsLibuvHostIdentity; report: ReturnType<typeof parseWindowsNodeSourceChildReport> };
-    lpac: { exitCode: number; jobStopped: true; report: ReturnType<typeof parseWindowsNodeSourceChildReport> | null; output: ReturnType<typeof inspectWindowsNodeSourceFatalOutput>; testOutput: FixedChildOutput } } | undefined;
+    lpac: { exitCode: number; jobStopped: true; report: ReturnType<typeof parseWindowsNodeSourceChildReport> | null; output: ReturnType<typeof inspectWindowsNodeSourceFatalOutput>; testOutput: FixedChildOutput;
+      failure?: ReturnType<typeof readStoppedWindowsNodeSourceChildFailure> } } | undefined;
   const checkPins = () => { for (const pin of pins) pin.unchanged(); };
   const closePin = (pin: ReturnType<typeof native.pin>) => { if (attemptedPins.has(pin)) return; attemptedPins.add(pin); owned(() => pin.close()); };
   const controlled: WindowsLpacApi = { ...api,
@@ -292,10 +294,31 @@ export async function runWindowsSourceNodeChildProbe(input: { parent: string; bu
         : { accepted: false, tests: 0, passed: 0 };
     } finally { outputBytes.fill(0); }
     const lpacReport = exitCode === 0 && lpacAdmitted ? readReport(1) : null;
+    const childFailure = exitCode !== 0 ? readStoppedWindowsNodeSourceChildFailure({ role: 1, mode: input.mode,
+      requireStopped() {
+        if (unsafe || ownership.unsafe) throw new WindowsNodeSourceChildProbeCleanupError();
+        lease.requireStopped(); lpacObserver.requireStopped(); checkPins();
+      },
+      readFrame(basename, maximum) {
+        const file = path.join(prepared.paths.state, basename);
+        try {
+          const stat = fs.lstatSync(file);
+          if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size !== maximum) return null;
+        } catch (error) {
+          if (error !== null && typeof error === "object" && Object.getOwnPropertyDescriptor(error, "code")?.value === "ENOENT") return null;
+          // eslint-disable-next-line preserve-caught-error -- Filesystem causes may contain private paths; only a fixed refusal may leave this diagnostic.
+          throw new Error("The fixed stopped child failure file could not be inspected.");
+        }
+        const pin = acquirePin(file, maximum); pins.push(pin);
+        const bytes = readBounded(file, maximum);
+        try { owned(() => pin.unchanged()); return bytes; } catch (error) { bytes.fill(0); throw error; }
+      },
+    }) : undefined;
     if (!hostAdmitted) throw new Error("The fixed source child supplied no ordinary token observation.");
     checkPins();
     result = { issuer: sourcePin.issuer, buildCommit: input.buildCommit, runCommit: input.runCommit, programs: windowsNodeSourceChildProgramReceipts(),
-      host: { ...host, identity: hostIdentity, report: hostReport }, lpac: { exitCode, jobStopped: true, report: lpacReport, output, testOutput } };
+      host: { ...host, identity: hostIdentity, report: hostReport }, lpac: { exitCode, jobStopped: true, report: lpacReport, output, testOutput,
+        ...(childFailure === undefined ? {} : { failure: childFailure }) } };
   } catch (error) {
     identityFailure = windowsLibuvHostIdentityFailure(error);
     if (uncertain(error) || phase === "prepare" && !fixture) unsafe = true;

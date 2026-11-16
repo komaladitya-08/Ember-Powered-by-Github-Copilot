@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "issuer": "ember-experimental-source-node-cng-native-reuse",
+  "repository": "komaladitya-08/Ember-Powered-by-Github-Copilot",
+  "repositoryId": 1419326021,
+  "runId": 43858256344,
+  "attempt": 1,
+  "workflowId": 419841405,
+  "workflowPath": ".github/workflows/experimental-windows-node-source.yml",
+  "headBranch": "ember-improve/20261116-source-node-cng-pipes",
+  "headCommit": "e3d5626aab7e731d7102f7804f4bd2bc80f83fe0",
+  "compileCommit": "df3d273dc1028f2358a119db0719b4cf2cb471f9",
+  "artifactId": 14224884648,
+  "artifactName": "source-node-22.23.5-windows-2022-df3d273dc1028f2358a119db0719b4cf2cb471f9",
+  "zipBytes": 38424638,
+  "zipSha256": "97d34d7260474d71699f6ebca3a5b4a88e1d3663aa4a817a9f02c43a4ff29234",
+  "maximumExpandedBytes": 167772160,
+  "members": {
+    "source-node.exe": 134217728,
+    "bootstrap.exe": 16777216,
+    "build-receipt.json": 32768,
+    "LICENSE": 1048576
+  },
+  "memberManifestSha256": "74696a2ed8435b2f507559b5d7a491e685bef377957fc88a22e5795f0321c12c",
+  "verifiedFiles": {
+    "LICENSE": {
+      "bytes": 145485,
+      "sha256": "c738ae413cf561f174e34f6961f8ca458aae2369a73640dda6234c629b98bcc4"
+    },
+    "bootstrap.exe": {
+      "bytes": 2560,
+      "sha256": "bb80548df91d6989305bfe6ed357cb21f47cef31af4a424ca4df5e598d3bcacc"
+    },
+    "build-receipt.json": {
+      "bytes": 6035,
+      "sha256": "f50e4859309b72dde505b99cd4c8edd926f2c55dc4aa74f035712d0d5323c9ad"
+    },
+    "source-node.exe": {
+      "bytes": 120219136,
+      "sha256": "d95bc2f8d456eb84306f54aa798c17ee21e5fd22591f943fc13c6adc8fd115db"
+    }
+  },
+  "memberHashPolicy": "Literal member hashes derived from the exact connector-downloaded ZIP after full outer size/SHA verification and strict extraction; independently verified current compile receipt, PE shape and named BCrypt imports. No PE execution.",
+  "producer": {
+    "jobId": 133268040660,
+    "jobName": "Source Node feasibility (windows-2022)",
+    "buildStep": {
+      "number": 10,
+      "name": "Build the source Node feasibility image and inert bootstrap with the fixed recipe"
+    },
+    "uploadStep": {
+      "number": 12,
+      "name": "Keep only the public-source build assets for subsequent reviewed diagnostics"
+    }
+  }
+}
