@@ -71,6 +71,11 @@ guard omits its `uv__winsock_init()` call only under `EMBER_UV_FIXED_PROBE_OFFLI
 both complete source manifests are pinned. The stock tree remains unmodified. Every source is revalidated after
 its out-of-tree build.
 
+The full PR test run at `f7a7bc3` exposed two macOS source-fixture failures at the strict destination check.
+The test now canonicalizes its host-owned temporary base before creating scratch, accounting for Darwin's normal
+`/var` alias. A local reproduction through an aliased temporary base and all 37 source contracts pass; the explicit
+extractor alias refusal stays intact. A new actual macOS run is still required for that fixture correction.
+
 The new issuer is `ember-experimental-libuv-fixed-probe`. Its receipt binds the checked-out commit, fixed C program,
 preparer and CMake recipe, exact source/patch manifests, selected tools and both executable hashes. Both recipes select
 x64 v143 toolset 14.44.35207, SDK 10.0.26100.0 and a static runtime/library. Server 2022 uses VS2022/CMake 3.31.6;

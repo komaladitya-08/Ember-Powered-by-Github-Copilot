@@ -8,7 +8,10 @@ import { afterEach, expect, it } from "vitest";
 import { sourcePin, applyOfflineCorePatch, prepareWindowsLibuvSource, validateSourceTree } from "../../scripts/experimental/windows-libuv-source.mjs";
 
 const temporary: string[] = [];
-const temp = () => { const root = fs.mkdtempSync(path.join(os.tmpdir(), "ember-libuv-source-unit-")); temporary.push(root); return root; };
+const temp = (base = os.tmpdir()) => {
+  // Darwin's normal /var temp prefix is an alias. Tests own this canonical scratch; extractor aliases stay refused.
+  const root = fs.mkdtempSync(path.join(fs.realpathSync.native(base), "ember-libuv-source-unit-")); temporary.push(root); return root;
+};
 afterEach(() => { for (const directory of temporary.splice(0)) fs.rmSync(directory, { recursive: true, force: true }); });
 const python = process.platform === "win32" ? "python" : "python3";
 const pythonAvailable = spawnSync(python, ["--version"], { encoding: "utf8", windowsHide: true }).status === 0;
@@ -44,8 +47,8 @@ try:
  print(json.dumps({"ok":True,"records":records,"written":sorted(str(p.relative_to(dest)).replace("\\","/") for p in dest.rglob("*") if p.is_file())}))
 except m.SourceError as error:print(json.dumps({"ok":False,"stage":str(error),"destinationExists":dest.exists(),"existingRetained":(dest/"owner.txt").is_file()}))
 `;
-function extract(config: object) {
-  const result = spawnSync(python, ["-B", "-c", pythonFixture, extractor, JSON.stringify(config), temp()], { encoding: "utf8", windowsHide: true, timeout: 5000, maxBuffer: 4096 });
+function extract(config: object, root = temp()) {
+  const result = spawnSync(python, ["-B", "-c", pythonFixture, extractor, JSON.stringify(config), root], { encoding: "utf8", windowsHide: true, timeout: 5000, maxBuffer: 4096 });
   expect(result.status, result.stderr).toBe(0);
   return JSON.parse(result.stdout) as { ok: boolean; stage?: string; destinationExists?: boolean; existingRetained?: boolean; records?: { path: string; bytes: number; sha256: string }[]; written?: string[] };
 }
@@ -101,6 +104,14 @@ it.skipIf(!pythonAvailable)("extracts only declared ordinary libuv members, pres
     { name: ".gitattributes", text: "metadata\n" }, { name: "ignored", kind: "symlink", outside: true }] });
   expect(result.ok).toBe(true); expect(result.written).toEqual([".gitattributes", "src/first.c"]);
   expect(result.records).toEqual([expect.objectContaining({ path: ".gitattributes", bytes: 9 }), expect.objectContaining({ path: "src/first.c", bytes: 29 })]);
+});
+
+it.skipIf(!pythonAvailable)("uses canonical host-owned scratch when the system temp prefix is an alias", () => {
+  const parent = temp(), directory = path.join(parent, "ordinary"), alias = path.join(parent, "system-temp");
+  fs.mkdirSync(directory); fs.symlinkSync(directory, alias, "junction");
+  const scratch = temp(alias);
+  expect(path.dirname(scratch)).toBe(fs.realpathSync.native(directory));
+  expect(extract({ entries: [{ name: "first.c", text: "fixed content" }] }, scratch).ok).toBe(true);
 });
 
 it.skipIf(!pythonAvailable).each(["../outside.c", "src/../outside.c", "src/./first.c", "/absolute.c", "C:/drive.c", "src\\outside.c", "src//first.c", "first.c:stream", "first.c.", "first.c ", "bad\nname.c", "bad\0name.c", "NUL", "con.txt", "LPT9.log"])("rejects unsafe archive-relative names before writing: %s", name => {
