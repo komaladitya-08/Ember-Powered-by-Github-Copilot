@@ -17,6 +17,15 @@ then failed during the host phase without an exit/report receipt; no useful-work
 The harness now distinguishes fixed host substages and retains only stopped numeric host/report facts in a branded
 failure receipt, after verified teardown. Missing stopped reports are explicit rather than losing the observed exit.
 
+At `3780c8ae`, [both servers](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43806418378)
+compiled both programs with the selected v143 family (observed compiler servicing versions 19.44.35229.0 and
+19.44.35230.0, separately hash-recorded). All 318 contracts passed per server, with the one expected symlink skip.
+Both ordinary-host variants exited 10 with no report, which identifies the C program's compound pre-libuv bootstrap
+guard, not a libuv/LPAC outcome. That guard now has fixed distinct exits: 10 for argument count; 100/200 plus a
+closed directory-validation reason for work/state; 300 for equal folders. Reasons identify missing/oversized values,
+root/component/character rules, fixed-drive type or directory attributes without returning paths or argument text.
+The original validation predicates are unchanged. Native identification of the failed predicate remains pending.
+
 The official Node experiment identified `WSAStartup / 10107` on both pinned versions and both Windows Server images,
 with successful ordinary-host controls. See [the bounded native receipts](WINDOWS-NODE-LPAC-PROOF.md).
 The immediate question is whether a few useful local libuv operations can run in the same capability-free LPAC

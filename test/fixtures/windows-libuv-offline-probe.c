@@ -86,27 +86,32 @@ static DWORD fixedChecksum(void)
 static int localDirectory(const WCHAR *name, WCHAR *output)
 {
   DWORD count = GetEnvironmentVariableW(name, output, PROBE_PATH_CHARS);
-  DWORD index, start = 3, attributes;
+  DWORD index, start = 3, attributes, driveType;
   WCHAR drive[4];
-  if (count < 4 || count >= PROBE_PATH_CHARS ||
+  if (count == 0) return 1;
+  if (count < 4 || count >= PROBE_PATH_CHARS) return 2;
+  if (
       !((output[0] >= L'A' && output[0] <= L'Z') || (output[0] >= L'a' && output[0] <= L'z')) ||
-      output[1] != L':' || output[2] != L'\\') return 0;
+      output[1] != L':' || output[2] != L'\\') return 3;
   for (index = 3; index <= count; index++) {
     WCHAR c = output[index];
     if (c == L'\\' || c == 0) {
       DWORD length = index - start;
       if (!length || (length == 1 && output[start] == L'.') ||
           (length == 2 && output[start] == L'.' && output[start + 1] == L'.') ||
-          output[index - 1] == L'.' || output[index - 1] == L' ') return 0;
+          output[index - 1] == L'.' || output[index - 1] == L' ') return 4;
       start = index + 1;
     } else if (c < 32 || c == 127 || c == L':' || c == L'/' || c == L'"' || c == L'<' ||
-               c == L'>' || c == L'|' || c == L'?' || c == L'*') return 0;
+               c == L'>' || c == L'|' || c == L'?' || c == L'*') return 5;
   }
   drive[0] = output[0]; drive[1] = L':'; drive[2] = L'\\'; drive[3] = 0;
-  if (GetDriveTypeW(drive) != DRIVE_FIXED) return 0;
+  driveType = GetDriveTypeW(drive);
+  if (driveType != DRIVE_FIXED) return (int)(16 + (driveType <= 6 ? driveType : 15));
   attributes = GetFileAttributesW(output);
-  return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 &&
-      (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
+  if (attributes == INVALID_FILE_ATTRIBUTES) return 32;
+  if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) return 33;
+  if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) return 34;
+  return 0;
 }
 
 static int fixedPath(WCHAR *output, const WCHAR *directory, const WCHAR *name)
@@ -351,8 +356,11 @@ int main(int argc, char **argv)
   (void)argv;
   record[R_MAGIC] = PROBE_MAGIC; record[R_VERSION] = 1; record[R_BUILD] = EMBER_UV_FIXED_PROBE_OFFLINE;
   record[R_LOOP_INIT] = PROBE_UNOBSERVED; record[R_LOOP_RUN] = PROBE_UNOBSERVED; record[R_LOOP_CLOSE] = PROBE_UNOBSERVED;
-  if (argc != 1 || !localDirectory(L"EMBER_LPAC_WORK", workPath) || !localDirectory(L"EMBER_LPAC_STATE", statePath) ||
-      _wcsicmp(workPath, statePath) == 0) return 10;
+  /* Bootstrap failures have fixed numeric exits; paths, arguments and native text are never printed. */
+  if (argc != 1) return 10;
+  rc = localDirectory(L"EMBER_LPAC_WORK", workPath); if (rc != 0) return 100 + rc;
+  rc = localDirectory(L"EMBER_LPAC_STATE", statePath); if (rc != 0) return 200 + rc;
+  if (_wcsicmp(workPath, statePath) == 0) return 300;
   if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return 11;
   rc = GetTokenInformation(token, TOKEN_IS_APP_CONTAINER, &appContainer, sizeof(appContainer), &bytes) != 0 &&
       bytes == sizeof(appContainer) && appContainer <= 1;
