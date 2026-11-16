@@ -3591,3 +3591,17 @@ the cache's version that runs when `ps` shows it; where `ps` isn't read, on Wind
 installed from the zip, which shares the single-instance lock, or any older one when the cache holds another version).
 Tests in
 `test/unit/npm-install-rollback.test.ts` inject filesystem errors without downloading or running a release.
+
+### Unwired Windows root-only copy prerequisite
+
+`experimental-windows-command-copy` runs portable ownership/ABI/report/build contracts on pull requests.
+Its real NTFS/LPAC Server 2022/2025 jobs run only on explicit workflow dispatch. The integration entry is
+`node scripts/run-integration.mjs test/integration/windows-command-copy-native.test.ts` with
+`EMBER_WINDOWS_COMMAND_COPY_TEST=1`, `EMBER_WINDOWS_COMMAND_COPY_IMAGE=windows-2022` or `windows-2025`,
+and the exact checkout `GITHUB_SHA`. An explicitly required unsupported host fails rather than skips.
+The hosted `RUNNER_TEMP` must be available separately from Vitest's managed temporary tree so failed native
+ownership cannot be erased by its global teardown.
+These test-only variables are not product switches. The fixture supplies only fixed synthetic bytes, builds
+the trusted C witness locally and exercises emitted CJS/default Koffi loading. It never opens Windows commands
+or a general toolchain. Native evidence remains pending until the dedicated matrix completes; details and
+the root-only completion limit are in [the prerequisite record](EXPERIMENTAL-WINDOWS-ROOT-ONLY-COPY.md).

@@ -1,0 +1,70 @@
+name: experimental-windows-command-copy
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/experimental-windows-command-copy.yml"
+      - "app/main/agent/windows-command-*.ts"
+      - "scripts/experimental/build-windows-command-copy-proof.mjs"
+      - "test/fixtures/windows-command-copy-*"
+      - "test/unit/windows-command-*.test.ts"
+      - "test/integration/windows-command-copy-native.test.ts"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experimental-windows-command-copy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    name: Portable root-only copy contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Ownership, fault, CJS recipe and closed report contracts
+        run: npm test -- test/unit/windows-command-stop.test.ts test/unit/windows-command-copy.test.ts test/unit/windows-command-copy-native.test.ts test/unit/windows-command-copy-build.test.ts test/unit/windows-command-copy-report.test.ts test/unit/windows-command-copy-proof-native.test.ts test/unit/windows-command-copy-proof.test.ts --maxWorkers=1
+
+  native-copy:
+    # PR events register the workflow and exercise contracts. Native execution starts only on explicit dispatch.
+    if: github.event_name == 'workflow_dispatch'
+    name: Root-only NTFS ownership (${{ matrix.image }})
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.image }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Portable native ownership contracts
+        run: npm test -- test/unit/windows-command-stop.test.ts test/unit/windows-command-copy.test.ts test/unit/windows-command-copy-native.test.ts test/unit/windows-command-copy-build.test.ts test/unit/windows-command-copy-report.test.ts test/unit/windows-command-copy-proof-native.test.ts test/unit/windows-command-copy-proof.test.ts --maxWorkers=1
+      - name: Required real root-only grants, edit/revoke, Stop and CJS factory evidence
+        timeout-minutes: 8
+        run: node scripts/run-integration.mjs test/integration/windows-command-copy-native.test.ts
+        env:
+          EMBER_WINDOWS_COMMAND_COPY_TEST: "1"
+          EMBER_WINDOWS_COMMAND_COPY_IMAGE: ${{ matrix.image }}

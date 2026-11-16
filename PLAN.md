@@ -4889,3 +4889,14 @@ in 16.393/15.970 seconds with the normal OS sandbox, sender guards and unforced 
 `canContinue: true`; its exact-head native matrix above is green while ordinary CI is blocked by the known Windows LPAC child-launch case.
 Command-runtime software blockers, live-provider verification and Windows 10/11 laptop acceptance
 remain separate requirements. No main merge or release is authorised by these candidate proofs.
+
+**2026-11-16, unwired root-only Windows command-copy prerequisite.** A separate native tree owner now stages
+already admitted synthetic bytes under exact owner/SYSTEM LOW ACLs and owns fresh-package grant/revoke leases.
+The root-only Stop owner enforces/readbacks ACTIVE_PROCESS_LIMIT=1 with no breakaway, attests the held root
+before Resume, and issues a binding-specific receipt only after every retained root/thread handle signals and
+the job is empty and closed. File/review callbacks wait for this receipt and revocation, receive detached bytes
+and clear them on completion. Callback reentrancy and native ownership uncertainty fence every peer and retain
+all known owners. The fixed C/MSVC/emitted-CJS harness and manual-only Server 2022/2025 workflow are implemented;
+actual native execution remains pending. This does not enable commands, certify generic descendants, supply a
+shell/toolchain or admit arbitrary project executables. See
+[the prerequisite record](docs/EXPERIMENTAL-WINDOWS-ROOT-ONLY-COPY.md).
