@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "issuer": "ember-experimental-windows-secure-rng-fixed-probe",
+  "sourceBasis": {
+    "nodeVersion": "22.23.5",
+    "nodeCommit": "60553651579ec33ca1aef9e1eedab2c3855f1f7e",
+    "opensslVersion": "3.5.9",
+    "file": "deps/openssl/openssl/providers/implementations/rands/seeding/rand_win.c",
+    "lines": "24-125",
+    "requestBytes": 48,
+    "claim": "Independent fixed API witness; no OpenSSL or Node execution, no entropy/FIPS/runtime compatibility claim."
+  },
+  "toolsetDirectory": "14.44.35207",
+  "compilerVersionPrefix": "19.44.",
+  "linkerVersionPrefix": "14.44.",
+  "sdk": "10.0.26100.0",
+  "maximumExecutableBytes": 16777216,
+  "compileTimeoutMs": 120000,
+  "hostRecipes": {
+    "windows-2022": {
+      "visualStudioRange": "[17.0,18.0)",
+      "visualStudioVersionPrefix": "17."
+    },
+    "windows-2025": {
+      "visualStudioRange": "[18.0,19.0)",
+      "visualStudioVersionPrefix": "18."
+    }
+  }
+}

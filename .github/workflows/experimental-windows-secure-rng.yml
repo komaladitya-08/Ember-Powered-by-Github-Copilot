@@ -1,0 +1,75 @@
+name: experimental-windows-secure-rng
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/experimental-windows-secure-rng.yml"
+      - "scripts/experimental/*windows-secure-rng*"
+      - "test/fixtures/windows-secure-rng*"
+      - "test/fixtures/windows-secure-rng-mock/**"
+      - "test/unit/windows-secure-rng*"
+      - "test/integration/windows-secure-rng-native.test.ts"
+      - "test/integration/windows-secure-rng-fault.test.ts"
+permissions:
+  contents: read
+concurrency:
+  group: experimental-windows-secure-rng-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  c-fault-logic:
+    name: Linux C fault logic (not Windows native proof)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Exercise actual fixed C ownership/wipe failures using test-only API declarations
+        run: node scripts/run-integration.mjs test/integration/windows-secure-rng-fault.test.ts
+        env:
+          EMBER_SECURE_RNG_FAULT: "1"
+  fixed-secure-rng-prerequisite:
+    name: Fixed C secure RNG API prerequisite (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      EMBER_SECURE_RNG_IMAGE: ${{ matrix.os }}
+      EMBER_SECURE_RNG_PROBE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Portable receipt, environment and terminal-owner contracts
+        run: npm test -- test/unit/windows-secure-rng.test.ts test/unit/windows-secure-rng-report.test.ts test/unit/windows-libuv-probe-disposal.test.ts test/unit/windows-libuv-host-identity.test.ts test/unit/windows-node-lpac-io.test.ts test/unit/experimental-windows-lpac.test.ts test/unit/experimental-windows-lpac-api.test.ts --maxWorkers=1
+      - name: Select the fresh fixed build root on the allocated runner
+        shell: pwsh
+        run: |
+          $rngBuildRoot = Join-Path $env:RUNNER_TEMP 'ember-secure-rng-build'
+          "EMBER_SECURE_RNG_BUILD_ROOT=$rngBuildRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Compile only the fixed repository C program
+        timeout-minutes: 5
+        run: node scripts/experimental/build-windows-secure-rng.mjs --destination "$env:EMBER_SECURE_RNG_BUILD_ROOT" --image "$env:EMBER_SECURE_RNG_IMAGE"
+      - name: Independent ordinary host and zero-capability LPAC secure API observations
+        run: node scripts/run-integration.mjs test/integration/windows-secure-rng-native.test.ts
+      # No raw output, private scratch, entropy, provider names, paths, SIDs, handles or process IDs are published.
+      # These observations never enable a product backend or establish Node/OpenSSL/FIPS compatibility.

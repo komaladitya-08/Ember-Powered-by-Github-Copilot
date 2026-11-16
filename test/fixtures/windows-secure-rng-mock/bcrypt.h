@@ -1,0 +1,6 @@
+#ifndef EMBER_RNG_TEST_BCRYPT_H
+#define EMBER_RNG_TEST_BCRYPT_H
+#include "windows.h"
+#define BCRYPT_USE_SYSTEM_PREFERRED_RNG 2
+NTSTATUS BCryptGenRandom(HANDLE, BYTE *, DWORD, DWORD);
+#endif
