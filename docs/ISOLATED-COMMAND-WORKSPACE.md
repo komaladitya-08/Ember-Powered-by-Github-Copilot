@@ -91,6 +91,13 @@ Excluded paths and dependency trees are not automatically archived. Commands can
 into ordinary source outputs, which are captured/exported. The dependency digest is a receipt rather than an archive
 from which that environment can be reconstructed.
 
+Ubuntu CI checks the trusted Node copy and the full namespace probe before npm or test execution. If Ubuntu's
+AppArmor userns restriction rejects Bubblewrap, CI provisions only the exact root-owned `/usr/bin/bwrap` executable's
+`userns` permission, following [Canonical's per-application guidance](https://ubuntu.com/blog/ubuntu-23-10-restricted-unprivileged-user-namespaces)
+and Ubuntu's packaged Flatpak/Sbuild profiles. It records bounded policy metadata and filtered Bubblewrap capability
+denials, then requires the identical probe to pass with global restrictions unchanged. This is disposable runner
+provisioning; it neither changes the product validator nor certifies Windows, and a load/probe failure still fails CI.
+
 The current implementation requires Linux x64 with supported Bubblewrap/user namespaces. The asset resolver includes
 the common Debian and RHEL library directories, but supported packaged systems still require native verification.
 Windows and macOS need their own process-tree and filesystem boundaries. This backend does not enable the legacy

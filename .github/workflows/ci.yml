@@ -69,7 +69,7 @@ jobs:
           stat -c 'coding.asset uid=%u mode=%a links=%h %n' / /usr /usr/lib /usr/lib/ember-coding-test-node /usr/lib/ember-coding-test-node/bin /usr/lib/ember-coding-test-node/bin/node /usr/bin/bwrap
           /usr/lib/ember-coding-test-node/bin/node --version
           printf '%s\n' 'coding.ci_stage=namespace_probe'
-          timeout --signal=KILL 5s /usr/bin/bwrap --unshare-user --unshare-pid --unshare-net --unshare-ipc --unshare-uts --new-session --die-with-parent --clearenv --ro-bind / / --chdir / -- /usr/bin/true
+          /usr/lib/ember-coding-test-node/bin/node scripts/ci/coding-userns-preflight.mjs
           # Tests select this isolated-command asset explicitly. Keep setup-node's writable npm prefix for npm setup.
       # The release's notes link the README at the tag: fail the tag's run at once if it says this version isn't out,
       # or if GitHub would refuse the notes, which the release job finds only after every other job.
