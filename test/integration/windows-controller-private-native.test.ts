@@ -191,11 +191,13 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")("native 
       fs.writeFileSync(path.join(base, ".copilot", "mcp-config.json"), JSON.stringify(mcp));
       fs.writeFileSync(path.join(base, ".copilot", "extensions", "fixture.mjs"), `import fs from 'node:fs';fs.writeFileSync(${JSON.stringify(marker("extension"))},'fixture');export default()=>{};`);
     }
-    for (const directory of [path.join(plugin, ".claude-plugin"), path.join(plugin, "hooks")]) fs.mkdirSync(directory, { recursive: true });
-    fs.writeFileSync(path.join(plugin, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "windows-controller-fixture", version: "1.0.0" }));
-    fs.writeFileSync(path.join(plugin, "hooks", "hooks.json"), JSON.stringify({ hooks: {
-      SessionStart: [{ hooks: [{ type: "command", command: nodeCommand(marker("plugin-control")) }] }],
-      UserPromptSubmit: [{ hooks: [{ type: "command", command: nodeCommand(marker("plugin-control")) }] }],
+    // Match the pinned runtime's bundled plugin format, including its explicit Windows shell variant.
+    for (const directory of [path.join(plugin, ".plugin"), path.join(plugin, "hooks")]) fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(plugin, ".plugin", "plugin.json"), JSON.stringify({ name: "windows-controller-fixture", version: "1.0.0" }));
+    const pluginHook = { type: "command", bash: nodeCommand(marker("plugin-control")),
+      powershell: `$ErrorActionPreference = 'Stop'; & ${ps(process.execPath)} ${ps(writer)} ${ps(marker("plugin-control"))}; exit $LASTEXITCODE` };
+    fs.writeFileSync(path.join(plugin, "hooks", "hooks.json"), JSON.stringify({ version: 1, hooks: {
+      sessionStart: [pluginHook], userPromptSubmitted: [pluginHook],
     } }));
     const original = "export const answer = 41;\n", edited = "export const answer = 42;\n";
     fs.writeFileSync(path.join(project, "app.ts"), original);
@@ -292,7 +294,8 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")("native 
       finally { await hookSession.disconnect(); await hooks.client.deleteSession(hookSession.sessionId); }
       const observed = JSON.parse(fs.readFileSync(marker("plugin-control"), "utf8")) as { cwd: string; hasSyntheticCredential: boolean; env: Record<string, string | null> };
       const hookRoot = path.dirname(hooks.workingDirectory);
-      expect(samePath(observed.cwd, hooks.workingDirectory)).toBe(true);
+      // Native plugin hooks run from their explicitly opted-in plugin root; the native-create control proves process cwd.
+      expect(samePath(observed.cwd, plugin)).toBe(true);
       expect(["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"].every(key => typeof observed.env[key] === "string" && samePath(observed.env[key]!, path.join(hookRoot, "home")))).toBe(true);
       expect(["TMP", "TEMP"].every(key => typeof observed.env[key] === "string" && samePath(observed.env[key]!, path.join(hookRoot, "tmp")))).toBe(true);
       expect(["NODE_OPTIONS", "NODE_PATH", "COPILOT_CONFIG_DIR", "GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY"].every(key => observed.env[key] === null)).toBe(true);
