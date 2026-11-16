@@ -12,7 +12,7 @@ import { inspectWindowsNodeFatalOutput } from "./windows-node-lpac-fatal";
 import { parseWindowsLibuvProbeReport } from "./windows-libuv-probe-report";
 import { disposeWindowsLibuvProbe } from "./windows-libuv-probe-disposal";
 // @ts-expect-error -- fixed trusted-host JavaScript build recipe
-import { buildPin, windowsLibuvRecipe } from "../../scripts/experimental/build-windows-libuv-probe.mjs";
+import { selectedWindowsLibuvBuildPin, windowsLibuvRecipe } from "../../scripts/experimental/build-windows-libuv-probe.mjs";
 import sourcePin from "../../scripts/experimental/windows-libuv-source-pin.json";
 
 const hash = z.string().regex(/^[0-9a-f]{64}$/);
@@ -29,13 +29,13 @@ const manifest = z.object({ schema: z.literal(1), issuer: z.literal("ember-exper
   assets: z.object({ stock: asset("stock-probe.exe"), offline: asset("offline-probe.exe") }).strict(),
 }).strict();
 
-export function parseWindowsLibuvBuildReceipt(bytes: Buffer, commit: string) {
+export function parseWindowsLibuvBuildReceipt(bytes: Buffer, commit: string, image: "windows-2022" | "windows-2025") {
   try {
     if (!Buffer.isBuffer(bytes) || bytes.length < 1 || bytes.length > 16 * 1024 || !/^[0-9a-f]{40}$/.test(commit)) throw new Error();
     const receipt = manifest.parse(JSON.parse(bytes.toString("utf8")));
     const version = receipt.build.compilerVersion;
     if (typeof version !== "string" || !/^19\.44\.[0-9]+(?:\.[0-9]+)?$/.test(version) || receipt.commit !== commit ||
-      JSON.stringify(receipt.build) !== JSON.stringify({ ...buildPin, compilerVersion: version }) ||
+      JSON.stringify(receipt.build) !== JSON.stringify({ ...selectedWindowsLibuvBuildPin(image), compilerVersion: version }) ||
       JSON.stringify(receipt.recipe) !== JSON.stringify(windowsLibuvRecipe())) throw new Error();
     return receipt;
   } catch { throw new Error("The fixed libuv build receipt failed its exact source, recipe or issuer contract."); }
@@ -47,6 +47,13 @@ export class WindowsLibuvProbeCleanupError extends WindowsNodeHostCleanupError {
 const uncertain = (error: unknown) => error instanceof WindowsNodeHostCleanupError || error instanceof WindowsNodeIoCleanupError || error instanceof WindowsNodeProofCleanupError || error instanceof ExperimentalWindowsCreateUncertain;
 const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 const quarantinedProbeOwners: unknown[] = [];
+type FixedFailureReceipt = Readonly<{ variant: "stock" | "offline"; phase: string;
+  host?: Readonly<{ exitCode: number; jobStopped: true; reportState: "not-read" | "valid" | "absent" | "refused";
+    report: ReturnType<typeof parseWindowsLibuvProbeReport> | null }> }>;
+const failureReceipts = new WeakMap<object, FixedFailureReceipt>();
+export function windowsLibuvProbeFailureReceipt(error: unknown): FixedFailureReceipt | undefined {
+  return error !== null && typeof error === "object" ? failureReceipts.get(error) : undefined;
+}
 
 function readBounded(file: string, maximum: number): Buffer {
   let fd: number | undefined, result: Buffer | undefined, failure: Error | undefined;
@@ -91,22 +98,31 @@ function pinAssetAncestors(file: string, api: WindowsLpacApi): WindowsHandle[] {
 }
 
 /** One stock/offline pair. Results are emitted only after native root exit, job zero and verified fixture cleanup. */
-export async function runWindowsLibuvFixedProbe(input: { parent: string; buildRoot: string; variant: "stock" | "offline"; commit: string }, api: WindowsLpacApi) {
+export async function runWindowsLibuvFixedProbe(input: { parent: string; buildRoot: string; variant: "stock" | "offline"; commit: string; image: "windows-2022" | "windows-2025" }, api: WindowsLpacApi) {
   if (quarantinedProbeOwners.length) throw new WindowsLibuvProbeCleanupError();
+  if (input.variant !== "stock" && input.variant !== "offline") throw new Error("Select one fixed libuv probe variant.");
   let native: ReturnType<typeof nativeChecks>;
   try { native = nativeChecks(api); } catch { throw new Error("The fixed probe native checks could not be bound."); }
   const directories: WindowsHandle[] = [], pins: ReturnType<typeof native.pin>[] = [], attemptedPins = new Set<object>();
   let fixture: ExperimentalWindowsLpacFixture | undefined, profile: WindowsLpacProfile | undefined, lpacProcess: WindowsSuspendedProcess | undefined;
   let io: ReturnType<typeof loadWindowsNodeIo> | undefined, program = "", environment: Buffer | undefined;
   let phase = "receipt";
+  let stoppedHost: { exitCode: number; jobStopped: true } | undefined, hostReportFact: ReturnType<typeof parseWindowsLibuvProbeReport> | null = null;
+  let hostReportState: "not-read" | "valid" | "absent" | "refused" = "not-read";
   let unsafe = false, failure: { error: unknown } | undefined;
   let result: { issuer: string; variant: "stock" | "offline"; host: { exitCode: number; jobStopped: true; report: ReturnType<typeof parseWindowsLibuvProbeReport> };
-    lpac: { exitCode: number; jobStopped: true; report: ReturnType<typeof parseWindowsLibuvProbeReport>; output: ReturnType<typeof inspectWindowsNodeFatalOutput> } } | undefined;
+    lpac: { exitCode: number; jobStopped: true; report: ReturnType<typeof parseWindowsLibuvProbeReport> | null; output: ReturnType<typeof inspectWindowsNodeFatalOutput> } } | undefined;
   const checkPins = () => { for (const pin of pins) pin.unchanged(); };
   const closePin = (pin: ReturnType<typeof native.pin>) => { if (attemptedPins.has(pin)) return; attemptedPins.add(pin); pin.close(); };
   const readReport = (token: 0 | 1) => {
     if (!fixture) throw new Error("No fixed probe fixture was created.");
-    const file = path.join(fixture.paths.state, token ? "lpac-probe.bin" : "host-probe.bin"), pin = native.pin(file, 96); pins.push(pin);
+    const file = path.join(fixture.paths.state, token ? "lpac-probe.bin" : "host-probe.bin");
+    try { fs.lstatSync(file); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      // eslint-disable-next-line preserve-caught-error -- Filesystem errors can contain private paths; only the fixed phase leaves the fixture.
+      throw new Error("The stopped fixed report could not be inspected.");
+    }
+    const pin = native.pin(file, 96); pins.push(pin);
     const bytes = readBounded(file, 96); pin.unchanged();
     try { return parseWindowsLibuvProbeReport(bytes, { build: input.variant === "offline" ? 1 : 0, token }); }
     finally { bytes.fill(0); }
@@ -117,7 +133,7 @@ export async function runWindowsLibuvFixedProbe(input: { parent: string; buildRo
     const receiptPin = native.pin(receiptPath, 16 * 1024); pins.push(receiptPin);
     const receiptBytes = readBounded(receiptPath, 16 * 1024); receiptPin.unchanged();
     let receipt: ReturnType<typeof parseWindowsLibuvBuildReceipt>;
-    try { receipt = parseWindowsLibuvBuildReceipt(receiptBytes, input.commit); } finally { receiptBytes.fill(0); }
+    try { receipt = parseWindowsLibuvBuildReceipt(receiptBytes, input.commit, input.image); } finally { receiptBytes.fill(0); }
     const record = receipt.assets[input.variant], assetPath = path.join(input.buildRoot, record.name);
     phase = "asset";
     const source = native.pin(assetPath, 16 * 1024 * 1024); pins.push(source);
@@ -155,11 +171,16 @@ export async function runWindowsLibuvFixedProbe(input: { parent: string; buildRo
     const prepared = fixture, ownedIo = io;
     phase = "host";
     const host = await runWindowsNodeHostStartup({ program, command: windowsNodeProofCommand(program, []), cwd: prepared.paths.work, environment,
-      unchanged: checkPins }, api, { create: (...args) => ownedIo.createHost(...args), verify(created, expected) { native.image(created.process, created.pid, expected); native.verifyHost(created.process); } });
-    if (host.exitCode !== 0) throw new Error("The fixed libuv ordinary-host control failed.");
-    ownedIo.acceptHostControl();
+      unchanged: checkPins }, api, {
+      create(...args) { phase = "host-create"; const created = ownedIo.createHost(...args); phase = "host-created"; return created; },
+      verify(created, expected) { phase = "host-image"; native.image(created.process, created.pid, expected); phase = "host-token"; native.verifyHost(created.process); phase = "host-running"; },
+    });
+    stoppedHost = host; phase = "host-report"; hostReportState = "refused";
     const hostReport = readReport(0);
-    if (hostReport.status !== 1) throw new Error("The fixed libuv host supplied no complete useful-work witness.");
+    hostReportFact = hostReport; hostReportState = hostReport ? "valid" : "absent";
+    phase = "host-outcome";
+    if (host.exitCode !== 0 || !hostReport || hostReport.status !== 1) throw new Error("The fixed libuv host supplied no complete useful-work witness.");
+    phase = "host-stdio"; ownedIo.acceptHostControl();
     // The same suspended handle is checked for exact image/PID before the fixture can resume it.
     phase = "lpac";
     const createdPid = await prepared.launch();
@@ -188,7 +209,11 @@ export async function runWindowsLibuvFixedProbe(input: { parent: string; buildRo
     if (unsafe) quarantinedProbeOwners.push({ fixture, profile, io, pins, directories, lpacProcess, parent: input.parent });
   }
   if (unsafe) throw new WindowsLibuvProbeCleanupError();
-  if (failure) throw failure.error;
+  if (failure) {
+    if (failure.error !== null && typeof failure.error === "object") failureReceipts.set(failure.error, Object.freeze({ variant: input.variant, phase,
+      ...(stoppedHost ? { host: Object.freeze({ ...stoppedHost, reportState: hostReportState, report: hostReportFact }) } : {}) }));
+    throw failure.error;
+  }
   if (!result) throw new Error("The fixed libuv probe returned no stopped numeric result.");
   return result;
 }

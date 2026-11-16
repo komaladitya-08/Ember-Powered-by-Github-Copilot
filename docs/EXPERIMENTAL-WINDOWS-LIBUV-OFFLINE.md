@@ -1,13 +1,21 @@
 # Fixed libuv initialization feasibility probe
 
 This is a separate trusted C program, not Node, a project-code runner or a general offline-runtime boundary.
-Native Windows compilation and results are pending. It does not enable any Windows coding gate.
+Server 2022 has compiled both programs; useful native operation results remain pending. It does not enable any Windows coding gate.
 
 The first [Server 2022/2025 run](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43804801904)
-at `28ecd028` passed 315 contracts per job (one symlink-privilege case skipped), verified/extracted the exact source
-and selected the pinned toolchain. Both jobs stopped during stock CMake configuration because a native backslash
-path supplied through `-D` was parsed as a CMake escape. Typed PATH/FILEPATH definitions now receive forward slashes
-after the original strict local-path validation. Neither C program was compiled or launched in that run.
+at `28ecd028` passed 315 contracts per job (one symlink-privilege case skipped) and verified/extracted the exact source.
+Server 2022 selected the pinned tools, then stopped during stock CMake configuration because a backslash `-D` path
+was parsed as an escape. Typed PATH/FILEPATH definitions now receive forward slashes after strict local-path validation.
+Server 2025 stopped at tool selection; its actual published image contains VS2026 and CMake 4.4.5, differing from
+the initial VS2022 recipe. Separate explicit image recipes now retain the same v143 compiler pin while selecting
+the published Visual Studio/CMake family for each server. Neither C program was compiled or launched in that run.
+
+At `0d938c14`, [the next run](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43805335292)
+compiled both C programs on Server 2022 after 316 passing contracts (one expected symlink skip). Its native harness
+then failed during the host phase without an exit/report receipt; no useful-work or LPAC success was established.
+The harness now distinguishes fixed host substages and retains only stopped numeric host/report facts in a branded
+failure receipt, after verified teardown. Missing stopped reports are explicit rather than losing the observed exit.
 
 The official Node experiment identified `WSAStartup / 10107` on both pinned versions and both Windows Server images,
 with successful ordinary-host controls. See [the bounded native receipts](WINDOWS-NODE-LPAC-PROOF.md).
@@ -32,8 +40,10 @@ both complete source manifests are pinned. The stock tree remains unmodified. Ev
 its out-of-tree build.
 
 The new issuer is `ember-experimental-libuv-fixed-probe`. Its receipt binds the checked-out commit, fixed C program,
-preparer and CMake recipe, exact source/patch manifests, selected tools and both executable hashes. The recipe selects
-VS2022 x64 toolset 14.44.35207, SDK 10.0.26100.0, CMake 3.31.6 and a static runtime/library. Compiler/linker/CMake hashes
+preparer and CMake recipe, exact source/patch manifests, selected tools and both executable hashes. Both recipes select
+x64 v143 toolset 14.44.35207, SDK 10.0.26100.0 and a static runtime/library. Server 2022 uses VS2022/CMake 3.31.6;
+the published VS2026 Server 2025 image uses VS2026/CMake 4.4.5 with its explicitly installed legacy v143 component.
+Compiler/linker/CMake hashes
 and the observed compiler version are recorded. Ambient compiler/toolchain flags, credentials and user build settings
 are excluded from the child environment; host build profiles are fresh. The ordinary Windows token and mandatory OS
 policy remain in effect. This build does not claim OpenJS Authenticode authority; the official Node verifier is unchanged.

@@ -4,14 +4,18 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadExperimentalWindowsLpacApi } from "../../app/main/agent/experimental-windows-lpac-api";
-import { runWindowsLibuvFixedProbe, WindowsLibuvProbeCleanupError } from "../fixtures/windows-libuv-probe";
+import { runWindowsLibuvFixedProbe, windowsLibuvProbeFailureReceipt, WindowsLibuvProbeCleanupError } from "../fixtures/windows-libuv-probe";
 
 describe.skipIf(process.platform !== "win32" || process.env.EMBER_LPAC_LIBUV_PROBE !== "1")("fixed verified-source libuv initialization in capability-free LPAC", () => {
   let parent = "", buildRoot = "", commit = "", retained = false;
+  let image: "windows-2022" | "windows-2025";
   const outcomes = new Map<string, ReturnType<typeof runWindowsLibuvFixedProbe>>();
   beforeAll(() => {
     if (process.arch !== "x64") throw new Error("The explicitly configured libuv probe requires Windows x64.");
     buildRoot = process.env.EMBER_LIBUV_BUILD_ROOT ?? ""; commit = process.env.GITHUB_SHA ?? "";
+    const selectedImage = process.env.EMBER_LIBUV_BUILD_IMAGE;
+    if (selectedImage !== "windows-2022" && selectedImage !== "windows-2025") throw new Error("Select one fixed workflow image recipe.");
+    image = selectedImage;
     if (!/^[A-Za-z]:\\/.test(buildRoot) || !/^[0-9a-f]{40}$/.test(commit)) throw new Error("Use only the workflow's fixed build and checked-out commit.");
     const temporary = fs.realpathSync.native(os.tmpdir());
     const base = path.basename(temporary).startsWith("ember-run-") ? path.dirname(temporary) : temporary;
@@ -25,9 +29,14 @@ describe.skipIf(process.platform !== "win32" || process.env.EMBER_LPAC_LIBUV_PRO
     if (!pending) {
       if (retained) return Promise.reject(new WindowsLibuvProbeCleanupError());
       const fresh = fs.mkdtempSync(path.join(parent, `${variant}-`));
-      pending = runWindowsLibuvFixedProbe({ parent: fresh, buildRoot, commit, variant }, loadExperimentalWindowsLpacApi())
+      pending = runWindowsLibuvFixedProbe({ parent: fresh, buildRoot, commit, variant, image }, loadExperimentalWindowsLpacApi())
         .then(result => { console.info("Fixed verified-source libuv result", JSON.stringify(result)); return result; })
-        .catch(error => { if (error instanceof WindowsLibuvProbeCleanupError) retained = true; throw error; });
+        .catch(error => {
+          if (error instanceof WindowsLibuvProbeCleanupError) retained = true;
+          const receipt = windowsLibuvProbeFailureReceipt(error);
+          if (receipt) console.info("Fixed libuv stopped failure receipt", JSON.stringify(receipt));
+          throw error;
+        });
       outcomes.set(variant, pending);
     }
     return pending;

@@ -30,6 +30,8 @@ jobs:
       matrix:
         os: [windows-2022, windows-2025]
     runs-on: ${{ matrix.os }}
+    env:
+      EMBER_LIBUV_BUILD_IMAGE: ${{ matrix.os }}
     timeout-minutes: 18
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

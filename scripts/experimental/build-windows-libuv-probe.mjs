@@ -7,7 +7,13 @@ import { execFileSync } from "node:child_process";
 import { prepareWindowsLibuvSource, validateSourceTree, sourcePin } from "./windows-libuv-source.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-export const buildPin = Object.freeze(JSON.parse(fs.readFileSync(path.join(root, "scripts/experimental/windows-libuv-build-pin.json"), "utf8")));
+const freeze = value => { if (value && typeof value === "object") { for (const child of Object.values(value)) freeze(child); Object.freeze(value); } return value; };
+export const buildPin = freeze(JSON.parse(fs.readFileSync(path.join(root, "scripts/experimental/windows-libuv-build-pin.json"), "utf8")));
+export function selectedWindowsLibuvBuildPin(image) {
+  if (typeof image !== "string" || !Object.hasOwn(buildPin.hostRecipes, image)) throw new Error("Select one explicitly pinned libuv build image.");
+  const { hostRecipes, ...common } = buildPin;
+  return Object.freeze({ ...common, image, ...hostRecipes[image] });
+}
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
 const fixedFiles = ["scripts/experimental/build-windows-libuv-probe.mjs", "scripts/experimental/windows-libuv-build-pin.json",
   "scripts/experimental/windows-libuv-source.mjs", "scripts/experimental/extract-node-libuv-source.py", "scripts/experimental/windows-libuv-source-pin.json",
@@ -58,6 +64,7 @@ const run = (program, args, timeout) => {
 
 export async function buildWindowsLibuvProbe({ archivePath, destination, pythonPath }) {
   if (process.platform !== "win32" || process.arch !== "x64") throw new Error("This fixed build requires a Windows x64 host.");
+  const selectedPin = selectedWindowsLibuvBuildPin(process.env.EMBER_LIBUV_BUILD_IMAGE);
   ordinary(destination); ordinary(archivePath); ordinary(pythonPath);
   if (fs.existsSync(destination)) throw new Error("The fixed build destination must be fresh.");
   fs.mkdirSync(destination, { mode: 0o700 });
@@ -71,12 +78,12 @@ export async function buildWindowsLibuvProbe({ archivePath, destination, pythonP
   const programFiles = ordinary(process.env.ProgramFiles ?? "C:\\Program Files");
   const vswhere = ordinary(path.join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Microsoft Visual Studio", "Installer", "vswhere.exe"));
   buildStage = "selected-toolchain";
-  const installation = ordinary(run(vswhere, ["-latest", "-version", "[17.0,18.0)", "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"], 15_000).trim());
+  const installation = ordinary(run(vswhere, ["-latest", "-version", selectedPin.visualStudioRange, "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"], 15_000).trim());
   const cmake = ordinary(path.join(programFiles, "CMake", "bin", "cmake.exe"));
   const toolsDirectory = path.join(installation, "VC", "Tools", "MSVC", buildPin.toolsetDirectory, "bin", "Hostx64", "x64");
   const cl = ordinary(path.join(toolsDirectory, "cl.exe")), linker = ordinary(path.join(toolsDirectory, "link.exe"));
   const tools = { cmake: snapshot(cmake), compiler: snapshot(cl), linker: snapshot(linker) };
-  if (run(cmake, ["--version"], 15_000).split(/\r?\n/, 1)[0] !== `cmake version ${buildPin.cmakeVersion}`)
+  if (run(cmake, ["--version"], 15_000).split(/\r?\n/, 1)[0] !== `cmake version ${selectedPin.cmakeVersion}`)
     throw new Error("The fixed CMake version is unavailable.");
   const cmakeProject = path.join(root, "test/fixtures/windows-libuv-probe-build");
   const cProgram = ordinary(path.join(root, "test/fixtures/windows-libuv-offline-probe.c"));
@@ -87,10 +94,10 @@ export async function buildWindowsLibuvProbe({ archivePath, destination, pythonP
     const sourceDirectory = variant === "stock" ? sources.stockDir : sources.offlineDir;
     await validateSourceTree(sourceDirectory, variant);
     const buildDirectory = ordinary(path.join(destination, `build-${variant}`));
-    run(cmake, ["-S", windowsLibuvCmakePath(cmakeProject), "-B", windowsLibuvCmakePath(buildDirectory), "-G", buildPin.generator, "-A", buildPin.platform, "-T", buildPin.toolset,
+    run(cmake, ["-S", windowsLibuvCmakePath(cmakeProject), "-B", windowsLibuvCmakePath(buildDirectory), "-G", selectedPin.generator, "-A", buildPin.platform, "-T", buildPin.toolset,
       `-DCMAKE_GENERATOR_INSTANCE:PATH=${windowsLibuvCmakePath(installation)}`, `-DCMAKE_SYSTEM_VERSION=${buildPin.sdk}`, `-DCMAKE_MSVC_RUNTIME_LIBRARY=${buildPin.runtimeLibrary}`,
       `-DEMBER_PROBE_MODE=${variant}`, `-DEMBER_UV_SOURCE:PATH=${windowsLibuvCmakePath(sourceDirectory)}`, `-DEMBER_PROBE_C:FILEPATH=${windowsLibuvCmakePath(cProgram)}`], 90_000);
-    const metadataPath = path.join(buildDirectory, "CMakeFiles", buildPin.cmakeVersion, "CMakeCCompiler.cmake");
+    const metadataPath = path.join(buildDirectory, "CMakeFiles", selectedPin.cmakeVersion, "CMakeCCompiler.cmake");
     const metadata = fs.readFileSync(metadataPath, "utf8");
     if (metadata.length > 64 * 1024) throw new Error("The selected compiler metadata is not bounded.");
     const versions = [...metadata.matchAll(/^set\(CMAKE_C_COMPILER_VERSION "([0-9.]+)"\)\r?$/gm)];
@@ -120,7 +127,7 @@ export async function buildWindowsLibuvProbe({ archivePath, destination, pythonP
     sourceCommit: sourcePin.provenance.commit, source: { stockManifestSha256: sources.receipt.stock.manifestSha256,
       offlineManifestSha256: sources.receipt.offline.manifestSha256, files: sourcePin.files.length, stockBytes: sources.receipt.stock.bytes,
       offlineBytes: sources.receipt.offline.bytes, patchBeforeSha256: sourcePin.patch.beforeSha256, patchAfterSha256: sourcePin.patch.afterSha256 },
-    build: { ...buildPin, compilerVersion }, tools, recipe, commit, assets };
+    build: { ...selectedPin, compilerVersion }, tools, recipe, commit, assets };
   fs.writeFileSync(path.join(destination, "build-receipt.json"), JSON.stringify(receipt, null, 2) + "\n", { flag: "wx" });
   return receipt;
 }

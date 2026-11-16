@@ -1,9 +1,8 @@
 import { expect, it } from "vitest";
-import { parseWindowsLibuvBuildReceipt } from "../fixtures/windows-libuv-probe";
+import { parseWindowsLibuvBuildReceipt, windowsLibuvProbeFailureReceipt } from "../fixtures/windows-libuv-probe";
 import sourcePin from "../../scripts/experimental/windows-libuv-source-pin.json";
-import buildPin from "../../scripts/experimental/windows-libuv-build-pin.json";
 // @ts-expect-error -- fixed trusted-host JavaScript build recipe
-import { windowsLibuvRecipe } from "../../scripts/experimental/build-windows-libuv-probe.mjs";
+import { selectedWindowsLibuvBuildPin, windowsLibuvRecipe } from "../../scripts/experimental/build-windows-libuv-probe.mjs";
 
 const commit = "a".repeat(40), sha256 = "b".repeat(64);
 function receipt() {
@@ -12,10 +11,10 @@ function receipt() {
     sourceCommit: sourcePin.provenance.commit, source: { stockManifestSha256: sourcePin.stockManifestSha256, offlineManifestSha256: sourcePin.offlineManifestSha256,
       files: sourcePin.files.length, stockBytes, offlineBytes: stockBytes - sourcePin.patch.beforeBytes + sourcePin.patch.afterBytes,
       patchBeforeSha256: sourcePin.patch.beforeSha256, patchAfterSha256: sourcePin.patch.afterSha256 },
-    build: { ...buildPin, compilerVersion: "19.44.35211.0" }, tools: { cmake: { bytes: 10, sha256 }, compiler: { bytes: 10, sha256 }, linker: { bytes: 10, sha256 } },
+    build: { ...selectedWindowsLibuvBuildPin("windows-2022"), compilerVersion: "19.44.35211.0" }, tools: { cmake: { bytes: 10, sha256 }, compiler: { bytes: 10, sha256 }, linker: { bytes: 10, sha256 } },
     recipe: windowsLibuvRecipe(), commit, assets: { stock: { name: "stock-probe.exe", bytes: 100, sha256 }, offline: { name: "offline-probe.exe", bytes: 100, sha256 } } };
 }
-const parse = (value: unknown) => parseWindowsLibuvBuildReceipt(Buffer.from(JSON.stringify(value)), commit);
+const parse = (value: unknown) => parseWindowsLibuvBuildReceipt(Buffer.from(JSON.stringify(value)), commit, "windows-2022");
 
 it("requires a distinct exact-source/patch/compiler recipe issuer rather than official Node authority", () => {
   const value = receipt(), result = parse(value);
@@ -59,7 +58,21 @@ it("refuses unknown manifest fields, arbitrary asset paths, oversized executable
 
 it("bounds the manifest before decoding and refuses malformed input with a fixed error", () => {
   for (const bytes of [Buffer.alloc(0), Buffer.alloc(16 * 1024 + 1), Buffer.from("private-json")]) {
-    expect(() => parseWindowsLibuvBuildReceipt(bytes, commit)).toThrow("exact source, recipe or issuer contract");
+    expect(() => parseWindowsLibuvBuildReceipt(bytes, commit, "windows-2022")).toThrow("exact source, recipe or issuer contract");
   }
-  expect(() => parseWindowsLibuvBuildReceipt(Buffer.from(JSON.stringify(receipt())), "private-commit")).toThrow();
+  expect(() => parseWindowsLibuvBuildReceipt(Buffer.from(JSON.stringify(receipt())), "private-commit", "windows-2022")).toThrow();
+});
+
+it("binds the exact runner-image recipe rather than silently falling back between Visual Studio families", () => {
+  const value = receipt(); value.build = { ...selectedWindowsLibuvBuildPin("windows-2025"), compilerVersion: "19.44.35211.0" };
+  const bytes = Buffer.from(JSON.stringify(value));
+  expect(() => parseWindowsLibuvBuildReceipt(bytes, commit, "windows-2022")).toThrow();
+  expect(parseWindowsLibuvBuildReceipt(bytes, commit, "windows-2025").build.image).toBe("windows-2025");
+  expect(() => selectedWindowsLibuvBuildPin("__proto__")).toThrow("explicitly pinned");
+});
+it("does not treat caller-created errors, objects or getters as native failure receipts", () => {
+  for (const value of [undefined, "private", new Error("private"), { phase: "host-outcome", host: { exitCode: 1 } },
+    new Proxy({}, { get() { throw new Error("private getter"); }, getPrototypeOf() { throw new Error("private prototype"); } })]) {
+    expect(windowsLibuvProbeFailureReceipt(value)).toBeUndefined();
+  }
 });
