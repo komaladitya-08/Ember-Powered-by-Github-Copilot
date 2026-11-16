@@ -436,6 +436,7 @@ export class WindowsCodingCopy implements ScopedCodingWorkspace {
       if (this.#closed) return;
       clearWindowsCodingTree(this.#baseline); this.#baseline = undefined;
       if (this.#producer?.owned) await this.#producer.discard();
+      this.#producer = undefined;
       await this.#tree(async tree => {
         for (const entry of [...tree.entries.values()].sort((a, b) => b.path.split("/").length - a.path.split("/").length)) { tree.api.remove(entry.handle); tree.release(entry.handle); }
       }, false);

@@ -12,6 +12,7 @@ import { decodeCodingReviewExport, type CodingExportBinding, type CodingExportTr
 import { retireCodingPrivacyScanners } from "../../app/main/agent/coding-privacy-scanner";
 import type { CodingArtifactSourceRef } from "../../app/main/agent/coding-artifact-store";
 import * as native from "../../app/main/agent/windows-coding-native";
+import { WindowsFileOnlyWorkspace } from "../../app/main/agent/windows-file-only-workspace";
 
 const A = "a".repeat(64), B = "b".repeat(64);
 const ORIGINAL = "export const answer = 41;\n", PROPOSED = "export const answer = 42;\n";
@@ -26,6 +27,7 @@ describe.skipIf(process.platform !== "win32")("native Windows sealed file-only r
   let reviewHook: (() => void) | undefined;
   let copies: WindowsCodingCopy[], brokers: WindowsScopedCodingFiles[], store: WindowsCodingArtifactStore, registry: CodingResultRegistry;
   let controllers: Map<WindowsCodingCopy, { close(): Promise<void> }>;
+  let fileWorkspaces: WindowsFileOnlyWorkspace[];
   let setupComplete: boolean;
   beforeEach(async () => {
     setupComplete = false;
@@ -36,7 +38,7 @@ describe.skipIf(process.platform !== "win32")("native Windows sealed file-only r
     for (const directory of [source, copiesBase, reviewsBase, destination, protectedRoot]) fs.mkdirSync(directory);
     fs.writeFileSync(path.join(source, "app.ts"), ORIGINAL); fs.writeFileSync(path.join(protectedRoot, "auth.txt"), "protected-host-canary");
     signal = new AbortController(); fileCurrent = true; reviewCurrent = true; owner = A; reviewHook = undefined;
-    binding = { owner: A, session: randomUUID(), snapshot: randomUUID() }; copies = []; brokers = []; controllers = new Map();
+    binding = { owner: A, session: randomUUID(), snapshot: randomUUID() }; copies = []; brokers = []; controllers = new Map(); fileWorkspaces = [];
     store = await WindowsCodingArtifactStore.create({ privateBase: reviewsBase, protectedPaths: [protectedRoot] });
     registry = await CodingResultRegistry.create({ privateBase: reviewsBase, store, currentOwner: () => owner,
       projectExists: id => id === "project-one" });
@@ -46,6 +48,7 @@ describe.skipIf(process.platform !== "win32")("native Windows sealed file-only r
     vi.restoreAllMocks();
     const errors: unknown[] = [];
     if (!setupComplete) { console.info("Native sealed review setup failed; synthetic scratch retained without forced cleanup."); return; }
+    for (const workspace of fileWorkspaces.reverse()) { try { await workspace.close(); } catch (error) { errors.push(error); } }
     for (const broker of brokers.reverse()) { try { await broker.close(); } catch (error) { errors.push(error); } }
     for (const copy of copies.reverse()) { try { await copy.close(); } catch (error) { errors.push(error); } }
     try { await registry.close(); } catch (error) { errors.push(error); }
@@ -66,6 +69,39 @@ describe.skipIf(process.platform !== "win32")("native Windows sealed file-only r
     return { expectedOwner: A, projectId: "project-one", taskId: randomUUID(), title: "Edit the copied app", sourcePath: source,
       status: "done", checks: { ran: 0, passed: 0, failed: 0 }, current: () => reviewCurrent && owner === A, output, sourceBoundary };
   }
+
+  async function openFileWorkspace() {
+    const workspace = await WindowsFileOnlyWorkspace.create({ source, privateBase: copiesBase, protectedPaths: [protectedRoot],
+      signal: signal.signal, current: () => fileCurrent, reviewBase: reviewsBase, scope: { excludeRoots: [".git", "node_modules"] },
+      review: { binding, store, current: () => reviewCurrent && owner === A } });
+    fileWorkspaces.push(workspace); return workspace;
+  }
+  it("adapts actual native file edits to a removed-copy review and one exact registry handoff without command authority", async () => {
+    const workspace = await openFileWorkspace();
+    expect(workspace).not.toHaveProperty("run"); expect(workspace).not.toHaveProperty("nodeAvailable");
+    await expect(workspace.exportReview(reviewsBase)).rejects.toMatchObject({ code: "boundary" });
+    const broker = await workspace.filesBroker(signal.signal), before = await broker.readText("app.ts");
+    await broker.replaceText("app.ts", "41", "42", { expectedSha256: before.sha256 }); await broker.close(); await workspace.stop();
+    // This fixture supplies only the host seam attestation; actual SDK disposal has its own controller suite.
+    await workspace.sealForReview(); const output = await workspace.exportReview(reviewsBase), boundary = workspace.sourceBoundary;
+    expect(output.cleanup).toBe("complete"); expect(fs.readdirSync(copiesBase)).toEqual([]);
+    const ownedRegistration = registration(output, boundary); workspace.transferReview(output);
+    expect(() => workspace.transferReview(output)).toThrowError(expect.objectContaining({ code: "invalid" }));
+    const result = await registry.put(ownedRegistration); await workspace.close();
+    expect(await registry.review(result.id)).toMatchObject({ files: 1, checks: { ran: 0, passed: 0, failed: 0 } });
+    expect(fs.readFileSync(path.join(source, "app.ts"), "utf8")).toBe(ORIGINAL);
+    await registry.forgetResult(result.id); expect(store.size).toBe(0); expect(fs.readdirSync(reviewsBase)).toEqual([]);
+  });
+
+  it("reclaims the exact native artifact if a sealed adapter result is never transferred to a project", async () => {
+    const workspace = await openFileWorkspace(), broker = await workspace.filesBroker(signal.signal);
+    await broker.writeText("app.ts", PROPOSED); await broker.close(); await workspace.stop(); await workspace.sealForReview();
+    const output = await workspace.exportReview(reviewsBase);
+    expect(output.cleanup).toBe("complete"); expect(store.size).toBe(1); expect(fs.readdirSync(copiesBase)).toEqual([]);
+    await workspace.close(); expect(store.size).toBe(0); expect(fs.readdirSync(reviewsBase)).toEqual([]);
+    expect(() => workspace.transferReview(output)).toThrowError(expect.objectContaining({ code: "invalid" }));
+    expect(fs.readFileSync(path.join(source, "app.ts"), "utf8")).toBe(ORIGINAL);
+  });
 
   it("preserves baseline/proposed/current bytes through native publication, explicit export and Forget", async () => {
     const { workspace, broker } = await open(), before = await broker.readText("app.ts");

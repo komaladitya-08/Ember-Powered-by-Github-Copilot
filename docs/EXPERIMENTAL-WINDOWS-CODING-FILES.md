@@ -45,3 +45,27 @@ The corrected probe head `9965eee95b28c94e9d9b1c931f8dbb0413187143`, [run 437917
 This run verifies the original atomic replacement cases with the old exact target handle retained and readable, the paired no-delete-share reader rejection and copy-reader replacement, rejection of a concurrent external writer, named-directory cleanup, source pin rename denial, and private-root namespace replacement. The existing hardlink/junction/protected-canary, content privacy, cancellation, stale-capability, bounds, and ACL cases also passed. This is file-foundation evidence on the probe branch; it does not enable the product adapter or validate a Windows command runtime, export/publication integration, or desktop experience.
 
 The initial local Node 22 validation passed seven native ABI/cleanup-ownership unit cases, scoped TypeScript, and ESLint for all six source/test TypeScript files; Linux registered and skipped all 29 native cases by platform. The sharing repair adds ownership-transfer failure/mismatched-identity and uncertain-close cases. The local contract model enforces the documented by-ID normalized-name traversal requirement and the observed by-ID disposition rejection. All 15 focused cases pass, including named-candidate mismatch, expired parent/no-fallback, and exact source/copy/temp access/share masks; scoped lint also passes. The merged probe's global TypeScript and focused checks passed before dispatch, and its full 32-case native matrix now passes on both servers. Hosted server evidence remains distinct from testing on the user's Windows laptop.
+
+## Explicit files-only workspace adapter (16 November 2026)
+
+`WindowsFileOnlyWorkspace` connects the copy, one file broker and the sealed artifact producer to the common
+`CodingReviewWorkspace` lifecycle. This interface has no command or Node capability. The worker calls its host-only
+seal only after awaited SDK/controller and file-broker closure; uncertain startup or closure suppresses review
+publication. The adapter also drains its own broker and ordinary copy leases before attesting that seal.
+
+The adapter retains the exact producer output and original source capability before awaiting copy removal. Only
+verified copy removal yields `cleanup: "complete"`. The resources owner records both capabilities and transfers the
+exact result synchronously before awaiting registry publication. Close reclaims only untransferred results. A close
+waiting for an export permits that immediate transfer; once artifact disposal starts, transfer is permanently
+refused. Failure retains the owned receipt and cached cleanup barrier. Closed copies and transferred adapters drop
+their cached private review references.
+
+A registry may claim an artifact and then reject publication. The Windows store records a weak acknowledgement only
+after every native deletion and handle close succeeds, allowing the producer to settle cleanup for that exact token
+and directory. It never probes or removes a later object at that name, accepts no forged token, revives no claim, and
+does not bypass a terminal native cleanup failure.
+
+Portable ownership/race tests and new native adapter cases cover these seams. The earlier sealed-copy head
+`86d2fc43` passed 53 units, 29 artifact cases and 21 native sealed-review cases per server in run `43804441087` on
+Server 2022 and 2025. The adapter's added native cases still require their own exact-head run. Production resource
+selection, Windows SDK execution-denial/private-directory proof and supported-client acceptance remain separate work.
