@@ -10,6 +10,24 @@ namespace, and results are reviewed/exported without source writes. Its per-proj
 are tracked in [CONDUCTOR-PROGRESS.md](CONDUCTOR-PROGRESS.md); it does not turn this older path into an enforced backend
 or establish Windows/macOS coding support.
 
+## Explicit files-only controller capability (16 November 2026)
+
+The custom controller and scoped worker now accept an explicit `mode: "files-only"`. This mode registers the seven
+scoped file tools and `finish_coding` (plus the existing optional clarification tool), with no `run_command`, command
+service, runner facts or command context. The existing SDK hardening and live inventory verification still apply.
+The worker captures that capability before startup waits, so changing caller options later cannot add execution.
+An invalid command configuration fails; failed isolation never silently selects files-only mode.
+
+Files-only sessions use the same private-copy, privacy, cancellation, awaited controller/file-broker disposal and
+review publication lifecycle. Their host-recorded check counts are zero and the final summary explicitly says no
+commands or tests ran. File-edit completion is not evidence that edited code builds or passes tests.
+
+Portable unit tests cover inventory, forced execution-tool rejection, revocation and capability mutation during
+startup. Real pinned-SDK Linux integrations exercise read/edit/finish and private-copy cleanup alongside the existing
+command and native-tool negative controls. This is a controller/worker foundation: production host availability and
+Windows resource/controller-directory integration are still absent. It does not enable Windows coding or prove
+Windows SDK native-tool rejection; those require their own native tests before any product gate changes.
+
 The real bundled runtime tests demonstrate two unresolved boundaries:
 
 - The SDK sandbox's path-based denied paths block direct and symbolic-link access but do not block a pre-existing hardlink alias. Native file tools and sandboxed shell commands can read a disposable protected canary through such an alias. `test/integration/coding-native-runtime.test.ts` and `test/integration/sdk-sandbox-protection.test.ts` preserve diagnostic reproductions; the host gate is tested independently.

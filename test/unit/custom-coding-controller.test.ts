@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- offline SDK event/handler boundary */
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CopilotSession } from "@github/copilot-sdk";
-import { CodingControllerCleanupError, CustomCodingController, type CustomCodingControllerOptions } from "../../app/main/agent/custom-coding-controller";
+import { CodingControllerCleanupError, CustomCodingController, type CustomCodingControllerOptions, type CodingControllerOptions, type FileOnlyCodingControllerOptions } from "../../app/main/agent/custom-coding-controller";
 import { ScopedCodingFileError, type CodingFileTools } from "../../app/main/agent/coding-platform";
 import { CodingPrivacyCleanupError } from "../../app/main/agent/coding-privacy-scanner";
 
@@ -56,7 +56,7 @@ function fixture(extra: Partial<CustomCodingControllerOptions> = {}) {
     files: createFiles, commands: { target: "This computer", shells: ["bash"] }, runCommand, finishCheck, current: () => current, ...extra };
   return { files, createFiles, runCommand, finishCheck, options, retire: () => { current = false; } };
 }
-async function start(o: CustomCodingControllerOptions) { const c = await CustomCodingController.start(o); controllers.push(c); return c; }
+async function start(o: CodingControllerOptions) { const c = await CustomCodingController.start(o); controllers.push(c); return c; }
 async function call(session: any, name: string, args: unknown, id = `call-${++sim.calls}`) {
   session.emit("assistant.message", { toolRequests: [{ toolCallId: id, name }] });
   session.emit("tool.execution_start", { toolCallId: id, toolName: name });
@@ -66,6 +66,58 @@ async function call(session: any, name: string, args: unknown, id = `call-${++si
 }
 const command = { target: "This computer", command: "node test.js", why: "Check the copied code" };
 const finish = (session: any) => call(session, "finish_coding", { success: true, summary: "Observed the requested checks." });
+
+function fileOnly() {
+  const f = fixture();
+  const { commands: _commands, runCommand: _runCommand, ...common } = f.options;
+  const options: FileOnlyCodingControllerOptions = { ...common, mode: "files-only" };
+  return { ...f, options };
+}
+
+it("edits through explicit file-only tools with no command authority and a truthful no-checks notice", async () => {
+  const f = fileOnly(), c = await start(f.options), config = sim.sessions[0].config;
+  expect(config.tools.map((tool: any) => tool.name).sort()).toEqual(["coding_list", "coding_read", "coding_write", "coding_replace", "coding_delete", "coding_mkdir", "coding_search", "finish_coding"].sort());
+  expect(config).toMatchObject({ availableTools: [], enableConfigDiscovery: false, enableFileHooks: false, enableSkills: false,
+    enableHostGitOperations: false, pluginDirectories: [], customAgents: [], mcpServers: {}, requestExtensions: false });
+  expect(JSON.stringify(config.systemMessage)).toContain("Commands and test execution are unavailable");
+  sim.drive = async session => {
+    await call(session, "coding_read", { path: "a.ts" });
+    await call(session, "coding_replace", { path: "a.ts", oldText: "old", newText: "new" });
+    await call(session, "finish_coding", { success: true, summary: "Edited the private copy for review." });
+  };
+  expect(await c.run("Edit the private file without running commands")).toEqual({ success: true, summary: "Edited the private copy for review. No commands or tests were run." });
+  expect(f.files.replaceText).toHaveBeenCalledTimes(1); expect(f.runCommand).not.toHaveBeenCalled();
+  expect(f.finishCheck).toHaveBeenCalledTimes(2);
+});
+
+it.each(["run_command", "powershell", "shell", "view", "create_file", "spawn_agent", "web_fetch"])("refuses an invented execution or native tool in file-only mode: %s", async name => {
+  const f = fileOnly(), c = await start(f.options);
+  sim.drive = async session => {
+    session.emit("assistant.message", { toolRequests: [{ toolCallId: "unavailable", name }] });
+    expect(session.config.tools.some((tool: any) => tool.name === name)).toBe(false);
+    await call(session, "finish_coding", { success: true, summary: "No execution was available." });
+  };
+  expect((await c.run("Review copied files")).success).toBe(false);
+  expect(f.runCommand).not.toHaveBeenCalled(); expect(f.files.readText).not.toHaveBeenCalled();
+});
+
+it("never converts a missing command capability into file-only mode implicitly", async () => {
+  const f = fixture();
+  await expect(CustomCodingController.start({ ...f.options, commands: { target: "This computer", shells: [] } })).rejects.toThrow("command capability is invalid");
+  await expect(CustomCodingController.start({ ...f.options, mode: "files-only" } as unknown as FileOnlyCodingControllerOptions)).rejects.toThrow("command capability is invalid");
+  await expect(CustomCodingController.start({ ...fileOnly().options, mode: "unknown" } as unknown as CodingControllerOptions)).rejects.toThrow("command capability is invalid");
+  expect(sim.inputs).toEqual([]);
+});
+
+it("revokes a pending file-only read before accepting its result and drains normal teardown", async () => {
+  const f = fileOnly(), entered = deferred<void>(), release = deferred<void>();
+  f.files.readText.mockImplementationOnce(async () => { entered.resolve(); await release.promise; return fileRead(); });
+  const c = await start(f.options);
+  sim.drive = async session => { const read = await call(session, "coding_read", { path: "a.ts" }); expect(read.resultType).toBe("failure"); };
+  const running = c.run("Read copied text"); await entered.promise; f.retire(); release.resolve();
+  expect((await running).success).toBe(false);
+  await c.close(); expect(f.files.close).toHaveBeenCalledTimes(1); expect(sim.stops).toBe(1);
+});
 
 it("creates a fresh hardened custom-only session, delegates commands and requires explicit settled completion", async () => {
   const f = fixture(), c = await start(f.options);

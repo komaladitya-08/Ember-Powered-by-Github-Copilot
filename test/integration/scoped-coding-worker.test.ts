@@ -5,7 +5,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { codingTestIsolationSupported, trustedCodingTestNodeOrSkip } from "../fixtures/coding/trusted-node";
 import { expect, it, vi } from "vitest";
-import { ScopedCodingWorker, type ScopedCodingWorkerOptions } from "../../app/main/agent/scoped-coding-worker";
+import { ScopedCodingWorker, type ScopedCodingWorkerOptions, type FileOnlyScopedCodingWorkerOptions } from "../../app/main/agent/scoped-coding-worker";
+import { ScopedCodingFiles } from "../../app/main/agent/scoped-coding-files";
 import { IsolatedCommandWorkspace, type IsolatedCommandReview } from "../../app/main/agent/isolated-command-workspace";
 import { locateRuntime, runtimeFor } from "../../app/main/agent/runtime";
 import { Refusals } from "../../app/main/policy/refusals";
@@ -55,6 +56,35 @@ function fixture(model: { baseUrl: string }, nodePath: string, extra: Partial<Sc
   const spec = { id: "worker-fixture", goal: "Fix the copied test and verify it with node --test test.cjs", target: { xid: 1, pid: 1 } } as unknown as TaskSpec;
   return { root, source, baseDir, userData, reviews, options, worker: new ScopedCodingWorker(spec, options), contexts, nativeStart, published, states, asks, attach, audit };
 }
+
+it.skipIf(process.platform !== "linux" || process.arch !== "x64")("publishes an explicitly file-only SDK task with zero checks and no command service", async ctx => {
+  if (!supported()) { ctx.skip(); return; }
+  const asset = await trustedCodingTestNodeOrSkip(ctx);
+  let step = 0;
+  const model = await startMockLlm({ delayMs: 0, respond: () => {
+    step++;
+    if (step === 1) return { tool: { name: "coding_read", args: { path: "README.md" } } };
+    if (step === 2) return { tool: { name: "coding_replace", args: { path: "README.md", oldText: "Old heading", newText: "Reviewed heading" } } };
+    if (step === 3) return { tool: { name: "finish_coding", args: { success: true, summary: "Updated the copied heading for review." } } };
+    return { text: "Review ready." };
+  } });
+  const f = fixture(model, asset.nodePath), { commandService: _service, commandContext: _context, ...base } = f.options;
+  const facts = vi.spyOn(_service.runner, "facts");
+  const options: FileOnlyScopedCodingWorkerOptions = { ...base, mode: "files-only",
+    platform: { files: (workspace, signal) => ScopedCodingFiles.create({ workspace, signal }) } };
+  const worker = new ScopedCodingWorker({ id: "file-only-worker", goal: "Change the README heading without commands", target: {} } as TaskSpec, options);
+  fs.writeFileSync(path.join(f.source, "README.md"), "Old heading\n");
+  try {
+    expect(await worker.run(new AbortController().signal)).toEqual({ success: true, summary: "Updated the copied heading for review. No commands or tests were run." });
+    await worker.dispose(); expect(await worker.disposed).toBe(true); expect(worker.handoffSafe()).toBe(true);
+    expect(facts).not.toHaveBeenCalled(); expect(f.contexts).not.toHaveBeenCalled(); expect(f.nativeStart).not.toHaveBeenCalled(); expect(f.asks).not.toHaveBeenCalled();
+    expect(f.published).toHaveLength(1); expect(f.published[0]).toMatchObject({ status: "done", checks: { ran: 0, passed: 0, failed: 0 } });
+    expect(f.published[0].output.review.textPatch).toContain("+Reviewed heading");
+    expect(fs.readFileSync(path.join(f.source, "README.md"), "utf8")).toBe("Old heading\n");
+    expect(fs.readdirSync(f.baseDir)).toEqual([]); expect(fs.readdirSync(path.join(f.userData, "coding-controllers"))).toEqual([]);
+    expect(model.requests.every((request: { tools: string[] }) => !request.tools.some(name => ["run_command", "bash", "create", "task", "web_fetch"].includes(name)))).toBe(true);
+  } finally { await worker.dispose(); await model.close(); facts.mockRestore(); fs.rmSync(f.root, { recursive: true, force: true }); }
+}, 45_000);
 
 it.skipIf(process.platform !== "linux" || process.arch !== "x64")("fixes a real failing Node check through custom files and policy-approved commands, then exports without changing the source", async ctx => {
   if (!supported()) { ctx.skip(); return; }

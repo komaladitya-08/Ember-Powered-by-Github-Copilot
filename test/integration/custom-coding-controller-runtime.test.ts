@@ -33,6 +33,51 @@ const runtimePath = () => {
   expect(runtime.exists).toBe(true); return runtime.path;
 };
 
+it.skipIf(process.platform !== "linux")("edits a real private copy through an explicit file-only SDK session without exposing a command tool", async () => {
+  const temporary = fs.realpathSync(os.tmpdir()), parent = path.basename(temporary).startsWith("ember-run-") ? path.dirname(temporary) : temporary;
+  const root = fs.mkdtempSync(path.join(parent, "ember-file-only-controller-"));
+  const source = path.join(root, "source"), copy = path.join(root, "copy"), userData = path.join(root, "host");
+  for (const directory of [source, copy, userData]) fs.mkdirSync(directory, { mode: 0o700 });
+  fs.writeFileSync(path.join(source, "README.md"), "Old private-copy heading\n");
+  fs.copyFileSync(path.join(source, "README.md"), path.join(copy, "README.md"));
+  const marker = path.join(root, "must-not-execute");
+  fs.writeFileSync(path.join(copy, "never-run.cjs"), "require('node:fs').writeFileSync(" + JSON.stringify(marker) + ", 'bad');\n");
+  let step = 0, owner: CustomCodingController | undefined;
+  const model = await startMockLlm({ delayMs: 0, respond: () => {
+    step++;
+    if (step === 1) return { tool: { name: "coding_read", args: { path: "README.md" } } };
+    if (step === 2) return { tool: { name: "coding_replace", args: { path: "README.md", oldText: "Old private-copy heading", newText: "Reviewed heading" } } };
+    if (step === 3) return { tool: { name: "finish_coding", args: { success: true, summary: "Updated the copied README heading." } } };
+    return { text: "Ready for review." };
+  } });
+  let current = true;
+  try {
+    owner = await CustomCodingController.start({ mode: "files-only", runtime: { userData, runtimePath: runtimePath(), env: process.env },
+      model: "mock-model", provider: { type: "openai", baseUrl: model.baseUrl, apiKey: "synthetic-file-only-provider" },
+      current: () => current,
+      files: signal => ScopedCodingFiles.create({ signal, workspace: {
+        files: async operation => { if (!current || signal.aborted) throw new Error("The file-only fixture retired."); return operation(copy); },
+      } }),
+      finishCheck: async () => current,
+    });
+    expect(await owner.run("Change only the README heading in the private copy; do not run any commands.")).toEqual({
+      success: true, summary: "Updated the copied README heading. No commands or tests were run.",
+    });
+    expect(model.requests.length).toBeGreaterThanOrEqual(3);
+    const allowed = ["coding_list", "coding_read", "coding_write", "coding_replace", "coding_delete", "coding_mkdir", "coding_search", "finish_coding"];
+    expect(model.requests.every((request: { tools: string[] }) => request.tools.length === allowed.length && request.tools.every(name => allowed.includes(name)))).toBe(true);
+    expect(fs.readFileSync(path.join(source, "README.md"), "utf8")).toBe("Old private-copy heading\n");
+    expect(fs.readFileSync(path.join(copy, "README.md"), "utf8")).toBe("Reviewed heading\n");
+    expect(fs.existsSync(marker)).toBe(false);
+    current = false; await owner.close();
+    expect(fs.readdirSync(path.join(userData, "coding-controllers"))).toEqual([]);
+  } finally {
+    let closed = false;
+    try { if (owner) { await owner.close(); closed = true; } }
+    finally { await model.close(); if (closed) fs.rmSync(root, { recursive: true, force: true }); }
+  }
+}, 30_000);
+
 it.skipIf(process.platform !== "linux")("rejects forced native tools and ambient project configuration, with working native-tool and plugin-hook positive controls", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "ember-custom-controller-probe-"));
   const project = path.join(root, "untrusted-project"), userData = path.join(root, "host"), plugin = path.join(project, "evil-plugin");

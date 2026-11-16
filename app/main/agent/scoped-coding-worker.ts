@@ -13,17 +13,12 @@ import { handoffContext } from "./handoff-context";
 import { CodingPrivacyCleanupError } from "./coding-privacy-scanner";
 
 export interface ScopedCodingChecks { ran: number; passed: number; failed: number }
-export interface ScopedCodingWorkerOptions {
+interface ScopedCodingWorkerBaseOptions {
   runtime: PrivateControllerRuntimeInput;
   model?: string | null;
   provider?: ProviderConfig;
   /** Host-selected source, private paths and owner binding. No model-supplied path reaches this factory. */
   createWorkspace(signal: AbortSignal, admit: () => boolean): Promise<CodingCommandWorkspace>;
-  /** Host-selected platform implementation; omission keeps the existing Linux backend/file facts. */
-  platform?: CodingPlatformAdapter;
-  commandService: CommandService;
-  /** Called once. Its original words, refusals, taint, policy and mutable flow state survive every command. */
-  commandContext(service: CommandService, signal: AbortSignal): CommandFlowContext;
   current(): boolean;
   reviewBase: string;
   /** The registry owns a separate captured account/project capability, including rejection and artifact cleanup. */
@@ -34,6 +29,21 @@ export interface ScopedCodingWorkerOptions {
   onInvalidated?(): void;
   clarify?: CustomCodingControllerOptions["clarify"];
 }
+export interface ScopedCodingWorkerOptions extends ScopedCodingWorkerBaseOptions {
+  mode?: "commands";
+  /** Host-selected platform implementation; omission keeps the existing Linux backend/file facts. */
+  platform?: CodingPlatformAdapter;
+  commandService: CommandService;
+  /** Called once. Its original words, refusals, taint, policy and mutable flow state survive every command. */
+  commandContext(service: CommandService, signal: AbortSignal): CommandFlowContext;
+}
+export interface FileOnlyScopedCodingWorkerOptions extends ScopedCodingWorkerBaseOptions {
+  mode: "files-only";
+  platform: Pick<CodingPlatformAdapter, "files">;
+  commandService?: never;
+  commandContext?: never;
+}
+export type CodingWorkerOptions = ScopedCodingWorkerOptions | FileOnlyScopedCodingWorkerOptions;
 
 /** Copy the existing service's live policy/capabilities, while replacing every executable runner entry point. */
 function isolatedService(source: CommandService, runner: IsolatedCodingCommandRunner, shells: readonly ShellId[]): CommandService {
@@ -68,7 +78,7 @@ export class ScopedCodingWorker {
   private finishDisposed!: (ok: boolean) => void;
   readonly disposed = new Promise<boolean>(resolve => { this.finishDisposed = resolve; });
 
-  constructor(private readonly spec: TaskSpec, private readonly o: ScopedCodingWorkerOptions) {}
+  constructor(private readonly spec: TaskSpec, private readonly o: CodingWorkerOptions) {}
   get sessionId(): null { return null; }
   async steer(): Promise<boolean> { return false; }
   handoffSafe(): boolean {
@@ -119,30 +129,40 @@ export class ScopedCodingWorker {
     try {
       if (signal.aborted) this.stop();
       this.requireCurrent();
+      if (this.o.mode !== undefined && this.o.mode !== "commands" && this.o.mode !== "files-only") throw new Error("The coding capability is invalid.");
+      if (this.o.mode === "files-only" && (this.o.commandService !== undefined || this.o.commandContext !== undefined || typeof this.o.platform?.files !== "function")) throw new Error("The coding capability is invalid.");
+      // Capture execution authority before startup can wait. A later caller mutation cannot upgrade this task.
+      const commands = this.o.mode === "files-only" ? null : { service: this.o.commandService, context: this.o.commandContext,
+        facts: this.o.platform?.facts.bind(this.o.platform) };
+      const files = this.o.platform?.files.bind(this.o.platform);
       this.watch = setInterval(() => { if (!this.current() && !this.lifetime.signal.aborted) this.invalidate(); }, 100);
       this.watch.unref?.();
       await this.o.beforeStart(); this.requireCurrent();
       this.workspace = await this.o.createWorkspace(this.lifetime.signal, this.current);
       if (!this.current()) { this.stop(); this.requireCurrent(); }
-      const original = this.o.commandService;
-      if (original.binding.id !== "local" || original.binding.kind !== "local") throw new Error("Coding requires the local command service.");
-      const hostFacts = await original.runner.facts(); this.requireCurrent();
-      const facts: RunnerFacts = this.o.platform?.facts(this.workspace, hostFacts) ?? { ...hostFacts, os: "linux", home: "/state", shells: ["bash"], shellPaths: { bash: "/usr/bin/bash" }, script: null, pty: false, extraPath: [] };
-      if (!facts.shells.length || facts.shells.some(shell => !["bash", "sh", "zsh", "powershell"].includes(shell))) throw new Error("The coding platform has no supported command shell.");
-      this.runner = new IsolatedCodingCommandRunner({ workspace: this.workspace, facts, signal: this.lifetime.signal,
-        current: this.current, inspect: (paths, cwd) => this.files ? this.files.inspect(paths, cwd) : Promise.resolve(paths.map(() => ({ exists: null, real: null }))) });
-      const service = isolatedService(original, this.runner, facts.shells), context = this.o.commandContext(service, this.lifetime.signal);
-      context.state.cwd = this.workspace.executionRoot;
-      this.controller = await CustomCodingController.start({ runtime: this.o.runtime, ...(this.o.model ? { model: this.o.model } : {}),
-        ...(this.o.provider ? { provider: this.o.provider } : {}), commands: { target: service.binding.label, shells: facts.shells },
+      const controller = { runtime: this.o.runtime, ...(this.o.model ? { model: this.o.model } : {}),
+        ...(this.o.provider ? { provider: this.o.provider } : {}),
         current: this.current, signal: this.lifetime.signal, progress: this.o.progress, clarify: this.o.clarify,
-        files: async controllerSignal => {
+        files: async (controllerSignal: AbortSignal) => {
           this.requireCurrent();
           const signal = AbortSignal.any([controllerSignal, this.lifetime.signal]);
-          this.files = this.o.platform ? await this.o.platform.files(this.workspace!, signal) : await ScopedCodingFiles.create({ workspace: this.workspace!, signal });
+          this.files = files ? await files(this.workspace!, signal) : await ScopedCodingFiles.create({ workspace: this.workspace!, signal });
           this.requireCurrent(); return this.files;
         },
-        finishCheck: () => this.workspace!.files(async () => this.current() && this.runner!.running === 0),
+        finishCheck: () => this.workspace!.files(async () => this.current() && (commands === null ? this.runner === null : this.runner !== null && this.runner.running === 0)),
+      };
+      if (commands === null) this.controller = await CustomCodingController.start({ ...controller, mode: "files-only" });
+      else {
+        const original = commands.service;
+        if (original.binding.id !== "local" || original.binding.kind !== "local") throw new Error("Coding requires the local command service.");
+        const hostFacts = await original.runner.facts(); this.requireCurrent();
+        const facts: RunnerFacts = commands.facts?.(this.workspace, hostFacts) ?? { ...hostFacts, os: "linux", home: "/state", shells: ["bash"], shellPaths: { bash: "/usr/bin/bash" }, script: null, pty: false, extraPath: [] };
+        if (!facts.shells.length || facts.shells.some(shell => !["bash", "sh", "zsh", "powershell"].includes(shell))) throw new Error("The coding platform has no supported command shell.");
+        this.runner = new IsolatedCodingCommandRunner({ workspace: this.workspace, facts, signal: this.lifetime.signal,
+          current: this.current, inspect: (paths, cwd) => this.files ? this.files.inspect(paths, cwd) : Promise.resolve(paths.map(() => ({ exists: null, real: null }))) });
+        const service = isolatedService(original, this.runner, facts.shells), context = commands.context(service, this.lifetime.signal);
+        context.state.cwd = this.workspace.executionRoot;
+        this.controller = await CustomCodingController.start({ ...controller, commands: { target: service.binding.label, shells: facts.shells },
         runCommand: async (args, tool) => {
           this.requireCurrent();
           const combined = AbortSignal.any([context.signal, tool.signal, this.lifetime.signal]);
@@ -162,7 +182,8 @@ export class ScopedCodingWorker {
           this.stop();
           return { result: output, success: false };
         },
-      });
+        });
+      }
       this.requireCurrent();
       result = await this.controller.run(this.spec.goal + handoffContext(this.spec.handoffSummary), this.lifetime.signal);
     } catch (error) {
