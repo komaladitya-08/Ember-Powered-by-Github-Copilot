@@ -1,6 +1,7 @@
 /** Disabled host-only standard streams. Native-owned pipes, launch provenance and stopped output are never model tools. */
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
+import path from "node:path/win32";
 import type * as Koffi from "koffi";
 import { HOST_ARCH, HOST_PLATFORM } from "../platform/os";
 import { loadWindowsCodingNative, WindowsCodingCleanupError } from "./windows-coding-native";
@@ -35,6 +36,7 @@ type Loader = (name: string) => { func(prototype: string): unknown };
 type NativeMemoryApi = Pick<typeof Koffi, "sizeof" | "address" | "alloc" | "free" | "encode" | "decode">;
 type Owned = { raw: bigint; attempted: boolean; closed: boolean };
 type Memory = { raw: unknown; address?: bigint; size: number; attempted: boolean; freed: boolean };
+type ProfilePath = { output: unknown[]; raw?: unknown; decoded?: unknown; attempted: boolean; freed: boolean };
 type Stream = { kind: "stdout" | "stderr"; server: Owned; writer: Owned; event: Owned; ov: Memory; bytes: Memory; count: number; pending: boolean; eof: boolean; cancelling: boolean };
 type Universe = { failure?: WindowsCommandOutputCleanupError; busy: boolean; owners: Set<State>; handles: Set<bigint> };
 type State = {
@@ -42,9 +44,10 @@ type State = {
   libraries: unknown[];
   inFlight?: { name: string; args: unknown[] }; creation?: unknown[];
   lastError?: number;
-  profile: WindowsCommandCreatorProfileRef; ownerSid: string; options: WindowsCommandOutputOptions;
+  profile: WindowsCommandCreatorProfileRef; borrowedSid: bigint; ownerSid: string; options: WindowsCommandOutputOptions;
   controller: AbortController; reason: WindowsCommandOutputReason; owned: Owned[]; buffers: Set<Buffer>; streams: Stream[];
   allocations: Set<Memory>;
+  profilePath?: ProfilePath;
   clock(): number;
   descriptor?: bigint; descriptorAttempted: boolean; root?: Readonly<WindowsSuspendedProcess>; launch?: WindowsCommandOutputLaunchRef;
   context?: WindowsCommandRootOnlyLaunchContext;
@@ -84,6 +87,8 @@ export const WINDOWS_COMMAND_OUTPUT_FUNCTIONS = {
   ],
   advapi32: ["int __stdcall ConvertStringSecurityDescriptorToSecurityDescriptorW(const char16_t *text, uint32_t revision, _Out_ void **descriptor, void *size)"],
   ntdll: ["int32_t __stdcall NtQueryObject(void *handle, uint32_t kind, void *information, uint32_t size, _Out_ uint32_t *returned)"],
+  userenv: ["int32_t __stdcall GetAppContainerFolderPath(const char16_t *sidText, _Out_ void **path)"],
+  ole32: ["void __stdcall CoTaskMemFree(void *memory)"],
 } as const;
 
 function stop(s: State, reason: WindowsCommandOutputReason): void {
@@ -175,6 +180,39 @@ function freeMemory(s: State, memory: Memory): void {
   writeMemory(s, memory, Buffer.alloc(memory.size)); memory.attempted = true;
   const result = nativeMemory(s, "free", [memory.raw], () => s.native.free(memory.raw));
   if (result !== undefined) return poison(s); memory.freed = true;
+}
+/** The OS owns this NUL-terminated string until a positive matching CoTaskMemFree; no host environment is consulted. */
+function profileLocalAppData(s: State, name: string, sidText: string): string {
+  if (s.profilePath) return poison(s);
+  const held: ProfilePath = { output: [undefined], attempted: false, freed: false }; s.profilePath = held;
+  const hr = call(s, "GetAppContainerFolderPath", [sidText, held.output]); held.raw = held.output[0];
+  if (hr !== 0 || !pointer(held.raw) || held.raw < 0x10000n || held.raw % 2n) return poison(s);
+  const raw = held.raw;
+  const unaliased = (size: number) => {
+    const end = raw + BigInt(size);
+    for (const owner of s.universe.owners) {
+      // The sealed factory fixes top-level package SIDs to 40 bytes. These are borrowed, never COM allocations.
+      if (raw < owner.borrowedSid + 40n && owner.borrowedSid < end || owner.universe.handles.has(raw)) return poison(s);
+      for (const memory of owner.allocations) if (!memory.freed && memory.address !== undefined && raw < memory.address + BigInt(memory.size) && memory.address < end) return poison(s);
+      const other = owner.profilePath;
+      if (other && other !== held && !other.freed && other.raw === raw) return poison(s);
+    }
+  };
+  unaliased(2);
+  // GetAppContainerFolderPath promises an allocated NUL-terminated PWSTR; string16 is Koffi's supported decoder.
+  held.decoded = nativeMemory(s, "decode.string16", [raw], () => s.native.decode.string16(raw));
+  const folder = held.decoded;
+  const ordinary = (value: string) => value.length > 3 && value.length <= 32767 && /^[A-Za-z]:\\/.test(value) &&
+    !value.includes("/") && !/[\p{Cc}\p{Cf}\p{Cs}]/u.test(value) && !/[:<>"|?*]/.test(value.slice(2)) && path.normalize(value) === value &&
+    value.slice(3).split("\\").every(part => !!part && part !== "." && part !== ".." && !/[. ]$/.test(part));
+  const suffix = `\\Packages\\${name}\\AC`;
+  if (typeof folder !== "string" || !ordinary(folder) || !folder.toLowerCase().endsWith(suffix.toLowerCase())) return poison(s);
+  const base = folder.slice(0, -suffix.length);
+  if (!ordinary(base)) return poison(s);
+  unaliased((folder.length + 1) * 2);
+  held.attempted = true;
+  if (call(s, "CoTaskMemFree", [raw]) !== undefined) return poison(s);
+  held.freed = true; return base;
 }
 function nullInput(s: State, input: Owned): void {
   if (call(s, "GetFileType", [input.raw]) !== 2) return poison(s); flags(s, input, 0);
@@ -319,7 +357,7 @@ export function bindWindowsCommandOutputNative(native: NativeMemoryApi, load: Lo
   if (!(options?.signal instanceof AbortSignal) || typeof options.output !== "function" || !Number.isInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > 20 * 60_000 || options.signal.aborted) throw refusal();
   const bound = windowsCommandCreatorProfile(profile), ownerSid = host.ownerSid;
   if (!/^S-1-5-(?:\d+-)*\d+$/.test(ownerSid)) throw refusal();
-  const s: State = { universe: u, fence, fn: {}, native, load, libraries: [], profile, ownerSid,
+  const s: State = { universe: u, fence, fn: {}, native, load, libraries: [], profile, borrowedSid: bound.sid, ownerSid,
     options: { signal: options.signal, timeoutMs: options.timeoutMs, output: options.output.bind(options) }, controller: new AbortController(), reason: "none",
     owned: [], buffers: new Set(), allocations: new Set(), streams: [], clock, descriptorAttempted: false, delegated: false, terminateAttempted: false, piReleased: false, creating: false, closed: false,
     abort: () => stop(s, "cancelled"), notify: new Set() };
@@ -382,7 +420,8 @@ export function bindWindowsCommandOutputNative(native: NativeMemoryApi, load: Lo
         const windows = freshBuffer(s, 32768 * 2), size = call(s, "GetWindowsDirectoryW", [windows, 32768]);
         if (!dword(size) || size < 3 || size >= 32768) return poison(s);
         const systemRoot = windows.subarray(0, size * 2).toString("utf16le"); if (!/^[A-Za-z]:\\/.test(systemRoot) || /[\0\r\n]/.test(systemRoot)) return poison(s);
-        const env = Buffer.from(`PATH=\0SystemRoot=${systemRoot}\0TEMP=${directory}\0TMP=${directory}\0\0`, "utf16le"); s.buffers.add(env);
+        const local = profileLocalAppData(s, bound.name, bound.sidText);
+        const env = Buffer.from(`LOCALAPPDATA=${local}\0PATH=\0SystemRoot=${systemRoot}\0TEMP=${directory}\0TMP=${directory}\0\0`, "utf16le"); s.buffers.add(env);
         const line = Buffer.from(command); s.buffers.add(line); const information = freshBuffer(s, 24);
         const result = createWithInheritance(s, inherited, [program, line, null, null, 1, 0x0008040c, env, directory, startup, information], information);
         const process = information.readBigUInt64LE(0), thread = information.readBigUInt64LE(8), pid = information.readUInt32LE(16);

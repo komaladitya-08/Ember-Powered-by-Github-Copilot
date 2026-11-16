@@ -8,7 +8,13 @@ The production factory accepts the sealed fresh profile and host output settings
 pipes with overlapped reads, remote clients refused, host/SYSTEM protected DACLs and a Low mandatory label. Only its
 own read-only null input and two synchronous write-only pipe clients enter the explicit inheritance list. The canonical null
 device's native object name and zero-byte read are checked before use. No caller handle list, host environment or
-credential is inherited; the environment contains only an empty PATH, system Windows directory and private TEMP/TMP.
+credential is inherited; the environment contains only the sealed profile's native LOCALAPPDATA base, an empty PATH,
+system Windows directory and private TEMP/TMP. GetAppContainerFolderPath must return exact HRESULT 0 and its own
+allocated NUL-terminated PWSTR. The owner retains the output slot before querying, rejects borrowed SID/handle/native
+allocation aliases, decodes through Koffi's supported string16 API and requires the exact profile-name suffix under
+Windows' case-insensitive path rules and an ordinary local path with a nonroot base. Positive CoTaskMemFree precedes
+environment construction. Unknown query,
+decode, free or reentry retains the pointer and permanently fences admissions; no caller or host environment supplies this path.
 The host still owns toolchain/image attestation and exact command policy; this is not an executable approval.
 
 The factory retains the actual positive returned PI in an opaque reference bound to the exact live launch context
@@ -41,8 +47,14 @@ non-disposing termination request. All unknown read/create/cancel/close ownershi
 arguments, buffers and native libraries behind a private permanent first-failure barrier. No ambiguous close retries.
 
 Portable tests use fixed injectable DLL boundaries and the real profile/native-tree/Stop/lifecycle owners. The exact
-corrected aggregate passed 1,766 cases across 23 suites with zero skips; the output unit passed 64 cases, with scoped
+corrected aggregate passed 1,801 cases across 23 suites with zero skips; the output unit passed 99 cases, with scoped
 lint and diff checks clean. Root source review and independent native ownership/ABI review closed clean after the
 writer, stable-memory and async-lease corrections; the exact-final full TypeScript check completed with exit 0.
 These are not actual Windows enforcement, Node compatibility or product acceptance. Native tests remain pending;
 no native execution or publication is authorised by this document.
+
+The additive LOCALAPPDATA correction addresses the known AppContainer environment requirement documented by the
+earlier native launcher. Its focused output tests include malformed HRESULT/pointer/path, allocation alias,
+swallowed reentry, host-environment exclusion, mixed-case path and uncertain-free cases. Root and independent
+source review closed clean, and the exact-final full TypeScript check completed with exit 0. This is not a new
+native reproduction or Windows acceptance result.

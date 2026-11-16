@@ -29,9 +29,12 @@ export function outputFake() {
     afterNative: undefined as ((name: string, args: unknown[], result: unknown) => unknown) | undefined,
     onOutput: undefined as (() => void) | undefined, deliveryReturn: undefined as unknown, deliveryFactory: undefined as (() => unknown) | undefined,
     inherited: [] as bigint[], environment: "", flags: 0,
+    profilePointer: 0x20000000n as unknown, profileResult: 0 as unknown, profileFrees: 0, profileDecodes: 0, handleBase: 0n,
+    profileText: `C:\\Users\\synthetic\\AppData\\Local\\Packages\\${windowsCommandCreatorProfile(profile).name}\\AC` as unknown,
+    onString: undefined as (() => void) | undefined,
     returnedProcess: 50001n, returnedThread: 50002n, returnedPid: 50003 };
   let next = 100n;
-  const own = (kind: "pipe" | "null" | "event", creationFlags = 0) => { const value = next++; handles.set(value, { kind, flags: 0, creationFlags, closed: false }); return value; };
+  const own = (kind: "pipe" | "null" | "event", creationFlags = 0) => { const value = state.handleBase + next++; handles.set(value, { kind, flags: 0, creationFlags, closed: false }); return value; };
   const memory = (value: unknown): Buffer => { if (Buffer.isBuffer(value)) return value;
     const allocation = allocations.get(value); if (!allocation || allocation.freed) throw Error("Invalid stable memory"); return allocation.bytes;
   };
@@ -41,6 +44,8 @@ export function outputFake() {
     if (name === "GetLastError") return state.error;
     if (name === "ConvertStringSecurityDescriptorToSecurityDescriptorW") { (args[2] as Buffer).writeBigUInt64LE(900n); return 1; }
     if (name === "LocalFree") return null;
+    if (name === "GetAppContainerFolderPath") { (args[1] as unknown[])[0] = state.profilePointer; return state.profileResult; }
+    if (name === "CoTaskMemFree") { if (args[0] !== state.profilePointer || state.profileFrees) throw Error("Invalid COM release"); state.profileFrees++; events.push("profile-free"); return undefined; }
     if (name === "CreateNamedPipeW") { const server = own("pipe", args[1] as number); pipes.push({ name: args[0] as string, server, connected: false, chunks: [], cancelled: false }); return server; }
     if (name === "CreateEventW") return own("event");
     if (name === "ResetEvent") return 1;
@@ -97,7 +102,10 @@ export function outputFake() {
     encode: (ref: unknown, _type: string, bytes: Buffer, size: number) => { trace.push("encode"); if (state.memoryFault === "encode") throw Error("PRIVATE encode failure");
       if (size !== bytes.length || size !== memory(ref).length) throw Error("Invalid stable encode"); bytes.copy(memory(ref));
     },
-    decode: (ref: unknown, _type: string, size: number) => { trace.push("decode"); if (state.memoryFault === "decode") throw Error("PRIVATE decode failure"); return Uint8Array.from(memory(ref).subarray(0, size)); },
+    decode: Object.assign((ref: unknown, _type: string, size: number) => { trace.push("decode"); if (state.memoryFault === "decode") throw Error("PRIVATE decode failure"); return Uint8Array.from(memory(ref).subarray(0, size)); }, {
+      string16: (ref: unknown) => { trace.push("decode.string16"); state.profileDecodes++; state.onString?.();
+        if (state.memoryFault === "string16" || ref !== state.profilePointer) throw Error("PRIVATE profile decode failure"); return state.profileText; },
+    }),
     address: (buffer: unknown) => { if (allocations.has(buffer)) return allocations.get(buffer)!.address;
       if (!Buffer.isBuffer(buffer)) throw Error("Invalid address"); const existing = reverseAddresses.get(buffer); if (existing) return existing;
       const value = BigInt(0xa00000 + addresses.size * 0x10000); addresses.set(value, buffer); reverseAddresses.set(buffer, value); return value; } };

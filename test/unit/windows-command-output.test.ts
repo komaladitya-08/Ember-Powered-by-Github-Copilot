@@ -1,9 +1,9 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { outputFake } from "../fixtures/windows-command-output-fake";
 import { requireWindowsCommandOutputClosed, requireWindowsCommandOutputLaunch, WindowsCommandOutputCleanupError,
   type WindowsCommandOutputLaunchRef } from "../../app/main/agent/windows-command-output";
 import { requireWindowsCommandRootOnlyCompleted, type WindowsCommandRootOnlyCompletedRef, type WindowsCommandRootOnlyRunRef } from "../../app/main/agent/windows-command-copy";
-import { closeWindowsCommandCreatorProfile } from "../../app/main/agent/windows-command-creator-profile";
+import { closeWindowsCommandCreatorProfile, windowsCommandCreatorProfile } from "../../app/main/agent/windows-command-creator-profile";
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 async function until(check: () => boolean) { const deadline = performance.now() + 4000; while (!check()) { if (performance.now() > deadline) throw Error("The bounded output condition was not observed."); await new Promise<void>(resolve => setTimeout(resolve, 5)); } }
@@ -20,7 +20,7 @@ it("uses only fresh owned standard handles and a fixed credential-free environme
   expect(s.state.flags).toBe(0x8040c); expect(s.state.inherited).toHaveLength(3); expect(new Set(s.state.inherited).size).toBe(3);
   expect(s.state.inherited.every(value => s.handles.get(value)!.closed && s.handles.get(value)!.flags === 0)).toBe(true);
   const directory = s.source.root().name;
-  expect(s.state.environment).toBe(`PATH=\0SystemRoot=C:\\Windows\0TEMP=${directory}\0TMP=${directory}\0\0`);
+  expect(s.state.environment).toBe(`LOCALAPPDATA=C:\\Users\\synthetic\\AppData\\Local\0PATH=\0SystemRoot=C:\\Windows\0TEMP=${directory}\0TMP=${directory}\0\0`);
   expect(s.command.equals(original)).toBe(true); expect(Object.keys(v.ref)).toEqual(["scope"]);
   expect(s.calls.filter(call => call.name === "ReadFile" && s.handles.get(call.args[0] as bigint)?.kind === "pipe").every(call => call.args[3] === null)).toBe(true);
   expect(s.events.indexOf("attest")).toBeLessThan(s.events.indexOf("resume"));
@@ -31,6 +31,73 @@ it("uses only fresh owned standard handles and a fixed credential-free environme
   expect(Object.isFrozen(finished.closed)).toBe(true); expect(Object.isFrozen(finished.facts)).toBe(true);
   expect([...s.handles.values()].every(value => value.closed)).toBe(true); expect(s.source.handles.size).toBe(0);
   expect([...s.allocations.values()].every(value => value.freed && value.bytes.every(byte => byte === 0))).toBe(true);
+});
+it("derives LOCALAPPDATA from the actual sealed profile query and positively frees its OS string before creation", async () => {
+  vi.stubEnv("LOCALAPPDATA", "PRIVATE host profile"); vi.stubEnv("NODE_OPTIONS", "PRIVATE host Node options");
+  try {
+    const s = outputFake(), v = await s.launch(), profile = windowsCommandCreatorProfile(s.profile);
+    const query = s.calls.find(call => call.name === "GetAppContainerFolderPath")!;
+    expect(query.args[0]).toBe(profile.sidText); expect(query.args[1]).toEqual([s.state.profilePointer]);
+    const free = s.calls.find(call => call.name === "CoTaskMemFree")!;
+    expect(free.args).toEqual([s.state.profilePointer]); expect(s.state.profileFrees).toBe(1); expect(s.state.profileDecodes).toBe(1);
+    expect(s.trace.indexOf("GetAppContainerFolderPath")).toBeLessThan(s.trace.indexOf("decode.string16"));
+    expect(s.trace.indexOf("decode.string16")).toBeLessThan(s.trace.indexOf("CoTaskMemFree"));
+    expect(s.trace.indexOf("CoTaskMemFree")).toBeLessThan(s.trace.indexOf("CreateProcessW"));
+    expect(s.state.environment).not.toContain("PRIVATE"); expect(s.state.environment.split("\0").filter(Boolean).map(value => value.split("=")[0])).toEqual(["LOCALAPPDATA", "PATH", "SystemRoot", "TEMP", "TMP"]);
+    await complete(s, v);
+  } finally { vi.unstubAllEnvs(); }
+});
+it("accepts OS path casing for the exact sealed profile suffix without substituting a different profile", async () => {
+  const s = outputFake(); s.state.profileText = (s.state.profileText as string).toUpperCase();
+  const v = await s.launch(); expect(s.state.environment.startsWith("LOCALAPPDATA=C:\\USERS\\SYNTHETIC\\APPDATA\\LOCAL\0")).toBe(true);
+  expect(s.state.profileFrees).toBe(1); await complete(s, v);
+});
+it.each([1, -1, "0", 0n, undefined])("a malformed profile-path HRESULT %# retains the actual output slot and never decodes or frees it", async hr => {
+  const s = outputFake(); s.state.profileResult = hr; await rejected(() => s.launch());
+  expect(s.state.creates).toBe(0); expect(s.state.profileDecodes).toBe(0); expect(s.state.profileFrees).toBe(0);
+  expect(s.calls.find(call => call.name === "GetAppContainerFolderPath")!.args[1]).toEqual([s.state.profilePointer]);
+  expect(s.fence.retained.length).toBeGreaterThan(0);
+});
+it.each([undefined, null, 0n, 1n, 0x10001n, "pointer"])("an invalid profile-path pointer %# cannot be decoded or passed to any disposer", async raw => {
+  const s = outputFake(); s.state.profilePointer = raw; await rejected(() => s.launch());
+  expect(s.state.creates).toBe(0); expect(s.state.profileDecodes).toBe(0); expect(s.calls.some(call => call.name === "CoTaskMemFree")).toBe(false);
+});
+it.each(["sid", "inside-sid", "handle", "allocation", "inside-allocation"])("a returned profile-path %s alias cannot free another owner", async kind => {
+  const s = outputFake(); s.state.handleBase = 0x30000000n;
+  s.state.onNative = name => { if (name === "GetAppContainerFolderPath") {
+    const sid = windowsCommandCreatorProfile(s.profile).sid, allocation = [...s.allocations.values()].find(value => !value.freed)!.address;
+    s.state.profilePointer = kind === "sid" ? sid : kind === "inside-sid" ? sid + 2n : kind === "handle" ? [...s.handles.keys()][0] : kind === "allocation" ? allocation : allocation + 2n;
+  } };
+  await rejected(() => s.launch()); expect(s.state.creates).toBe(0); expect(s.state.profileDecodes).toBe(0); expect(s.state.profileFrees).toBe(0);
+  expect([...s.handles.values()].every(value => !value.closed)).toBe(true); expect([...s.allocations.values()].every(value => !value.freed)).toBe(true);
+});
+it.each(["foreign", "root-base", "relative", "slash", "dot", "control", "surrogate", "colon", "long", "nonstring"])("a malformed sealed-profile folder %s cannot become environment authority", async kind => {
+  const s = outputFake(), name = windowsCommandCreatorProfile(s.profile).name, suffix = `\\Packages\\${name}\\AC`;
+  s.state.profileText = kind === "foreign" ? "C:\\Users\\synthetic\\Packages\\Other\\AC" : kind === "root-base" ? `C:${suffix}` : kind === "relative" ? `relative${suffix}` :
+    kind === "slash" ? `C:/Users/synthetic${suffix}` : kind === "dot" ? `C:\\Users\\..\\synthetic${suffix}` : kind === "control" ? `C:\\Users\\bad\0name${suffix}` :
+    kind === "surrogate" ? `C:\\Users\\bad\ud800name${suffix}` : kind === "colon" ? `C:\\Users\\bad:name${suffix}` : kind === "long" ? `C:\\${"a".repeat(32768)}${suffix}` : 7;
+  await rejected(() => s.launch()); expect(s.state.profileDecodes).toBe(1); expect(s.state.profileFrees).toBe(0); expect(s.state.creates).toBe(0);
+});
+it.each(["query", "decode", "free"])("swallowed profile %s reentry permanently retains the first error and never creates a root", async phase => {
+  const s = outputFake(), io = s.owner(), copy = await s.prepare(); let first: unknown;
+  const reenter = () => { try { io.closeUnused(); } catch (error) { first = error; } };
+  if (phase === "decode") s.state.onString = reenter;
+  else s.state.onNative = name => { if (name === (phase === "query" ? "GetAppContainerFolderPath" : "CoTaskMemFree")) reenter(); };
+  await rejected(() => copy.launchRootOnlyWithOutput(context => io.createSuspended(context, "C:\\trusted\\node.exe", s.command), () => undefined));
+  expect(first).toBeInstanceOf(WindowsCommandOutputCleanupError); expect(s.state.creates).toBe(0);
+  expect(s.state.profileFrees).toBe(phase === "free" ? 1 : 0); expect(s.state.profileDecodes).toBe(phase === "query" ? 0 : 1);
+  const before = s.calls.length; s.fence.failure = undefined; expect(() => s.owner()).toThrow(first as Error); expect(s.calls).toHaveLength(before);
+});
+it.each(["query-throw", "decode-throw", "free-throw", "free-abi"])("unknown profile %s preserves pointer ownership and never retries native cleanup", async kind => {
+  const s = outputFake();
+  if (kind === "decode-throw") s.state.memoryFault = "string16";
+  else if (kind === "query-throw") s.state.afterNative = (name, _args, result) => { if (name === "GetAppContainerFolderPath") throw Error("PRIVATE after output pointer"); return result; };
+  else if (kind === "free-throw") s.state.fault = "CoTaskMemFree";
+  else s.state.afterNative = (name, _args, result) => name === "CoTaskMemFree" ? 0 : result;
+  await rejected(() => s.launch()); expect(s.state.creates).toBe(0); expect(s.fence.retained.length).toBeGreaterThan(0);
+  if (kind === "query-throw") expect(s.calls.find(call => call.name === "GetAppContainerFolderPath")!.args[1]).toEqual([s.state.profilePointer]);
+  const before = s.calls.length, frees = s.state.profileFrees; s.fence.failure = undefined; s.state.fault = ""; s.state.memoryFault = "";
+  expect(() => s.owner()).toThrow(WindowsCommandOutputCleanupError); expect(s.calls).toHaveLength(before); expect(s.state.profileFrees).toBe(frees);
 });
 it("CRT-style synchronous writes use synchronous child clients while host readers remain overlapped", async () => {
   const s = outputFake(); s.state.synchronousWrite = true; const v = await s.launch();
