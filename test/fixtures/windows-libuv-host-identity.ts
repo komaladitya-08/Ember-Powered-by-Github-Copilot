@@ -12,21 +12,22 @@ type Reason = "native-false" | "abi" | "contract";
 const stages = new Set<Stage>(["binding", "host-handle", "current-process", "parent-open", "host-open", "parent-user", "host-user",
   "parent-restricted", "host-restricted", "parent-integrity", "host-integrity", "parent-app-container", "host-app-container"]);
 const reasons = new Set<Reason>(["native-false", "abi", "contract"]);
-const failureReceipts = new WeakMap<object, Readonly<{ stage: Stage; reason: Reason; code?: number }>>();
+const failureReceipts = new WeakMap<object, Readonly<{ stage: Stage; reason: Reason; code?: number; returnedBytes?: number }>>();
 export function windowsLibuvHostIdentityFailure(error: unknown) {
   return error !== null && typeof error === "object" ? failureReceipts.get(error) : undefined;
 }
-export interface WindowsLibuvTokenFacts { readonly restricted: boolean; readonly integrityRid: number; readonly appContainer: 0 | 1 }
+export interface WindowsLibuvTokenFacts { readonly hasRestrictions: number; readonly everFiltered: boolean; readonly integrityRid: number; readonly appContainer: 0 | 1 }
 export interface WindowsLibuvHostIdentity {
   readonly sameUser: boolean;
   readonly parent: Readonly<WindowsLibuvTokenFacts>;
   readonly host: Readonly<WindowsLibuvTokenFacts>;
 }
 export class WindowsLibuvHostIdentityError extends Error {
-  constructor(readonly stage: Stage, readonly reason: Reason, code?: number) {
+  constructor(readonly stage: Stage, readonly reason: Reason, code?: number, returnedBytes?: unknown) {
     super("The fixed suspended-host token facts failed their native contract."); this.name = "WindowsLibuvHostIdentityError";
     if (stages.has(stage) && reasons.has(reason)) failureReceipts.set(this, Object.freeze({ stage, reason,
-      ...(reason === "native-false" && typeof code === "number" && Number.isInteger(code) && code >= 0 && code <= 0xffffffff ? { code } : {}) }));
+      ...(reason === "native-false" && typeof code === "number" && Number.isInteger(code) && code >= 0 && code <= 0xffffffff ? { code } : {}),
+      ...(reason === "contract" && typeof returnedBytes === "number" && Number.isInteger(returnedBytes) && returnedBytes >= 0 && returnedBytes <= 0xffffffff ? { returnedBytes } : {}) }));
   }
 }
 export class WindowsLibuvHostIdentityCleanupError extends WindowsNodeHostCleanupError {
@@ -86,7 +87,7 @@ export function bindWindowsLibuvHostIdentity(koffi: Pick<typeof Koffi, "sizeof" 
     const owned = new Set<WindowsHandle>(), buffers: Buffer[] = [], outputs: unknown[][] = [];
     let uncertain = false, currentProcess: unknown, result: WindowsLibuvHostIdentity | undefined;
     let failure: WindowsLibuvHostIdentityError | undefined;
-    function fail(stage: Stage, reason: Reason, code?: number): never { throw new WindowsLibuvHostIdentityError(stage, reason, code); }
+    function fail(stage: Stage, reason: Reason, code?: number, returnedBytes?: unknown): never { throw new WindowsLibuvHostIdentityError(stage, reason, code, returnedBytes); }
     const lastError = () => { try { const value = fn.GetLastError(); return typeof value === "number" ? value : undefined; } catch { return undefined; } };
     const open = (process: unknown, stage: "parent-open" | "host-open"): WindowsHandle => {
       const output: unknown[] = [null]; outputs.push(output);
@@ -110,7 +111,7 @@ export function bindWindowsLibuvHostIdentity(koffi: Pick<typeof Koffi, "sizeof" 
       catch { fail(stage, "abi"); }
       if (!isBool(ok)) fail(stage, "abi");
       if (ok === 0) fail(stage, "native-false", lastError());
-      if (!isCount(returned[0], bytes.length) || (bytes.length === 4 && returned[0] !== 4)) fail(stage, "contract");
+      if (!isCount(returned[0], bytes.length) || (bytes.length === 4 && returned[0] !== 4)) fail(stage, "contract", undefined, returned[0]);
       return { bytes, returned: returned[0] };
     };
     const tokenSid = (token: WindowsHandle, kind: 1 | 25, stage: Stage): { bytes: Buffer; attributes: number } => {
@@ -119,18 +120,19 @@ export function bindWindowsLibuvHostIdentity(koffi: Pick<typeof Koffi, "sizeof" 
       try { address = koffi.address(value.bytes); } catch { fail(stage, "abi"); }
       return { bytes: sid(value.bytes, value.returned, address, stage), attributes: value.bytes.readUInt32LE(8) };
     };
-    const tokenBool = (token: WindowsHandle, kind: 21 | 29, stage: Stage): 0 | 1 => {
-      const value = query(token, kind, stage).bytes.readUInt32LE(0);
+    const tokenBool = (token: WindowsHandle, stage: Stage): 0 | 1 => {
+      const value = query(token, 29, stage).bytes.readUInt32LE(0);
       if (value !== 0 && value !== 1) fail(stage, "contract");
       return value;
     };
     const facts = (token: WindowsHandle, side: "parent" | "host"): Readonly<WindowsLibuvTokenFacts> => {
-      const restricted = tokenBool(token, 21, `${side}-restricted`) === 1;
+      // TokenHasRestrictions is a DWORD that is nonzero if the token has ever been filtered, not a canonical BOOL.
+      const hasRestrictions = query(token, 21, `${side}-restricted`).bytes.readUInt32LE(0);
       const integrity = tokenSid(token, 25, `${side}-integrity`);
       if (integrity.bytes[1] !== 1 || !integrity.bytes.subarray(2, 8).equals(Buffer.from([0, 0, 0, 0, 0, 16])) || (integrity.attributes & 0x20) === 0)
         fail(`${side}-integrity`, "contract");
-      const integrityRid = integrity.bytes.readUInt32LE(8), appContainer = tokenBool(token, 29, `${side}-app-container`);
-      return Object.freeze({ restricted, integrityRid, appContainer });
+      const integrityRid = integrity.bytes.readUInt32LE(8), appContainer = tokenBool(token, `${side}-app-container`);
+      return Object.freeze({ hasRestrictions, everFiltered: hasRestrictions !== 0, integrityRid, appContainer });
     };
     try {
       try { currentProcess = fn.GetCurrentProcess(); } catch { fail("current-process", "abi"); }

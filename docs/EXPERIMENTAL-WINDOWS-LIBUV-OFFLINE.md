@@ -44,7 +44,8 @@ current-directory query, its equality to the selected directory, an exact attrib
 ordinary non-reparse directory metadata, and successful handle close. The alternate open requests the same
 attributes access and read/write sharing as the retained parent pins; its result never authorizes useful work.
 The exact suspended host's token is also compared with the parent process token using query-only handles:
-receipts contain only user-equality, restriction/AppContainer booleans and integrity RIDs. SID pointers must be
+receipts contain only user-equality, the bounded `TokenHasRestrictions` DWORD and its ever-filtered predicate,
+AppContainer booleans and integrity RIDs. SID pointers must be
 wholly contained in their bounded token buffers; raw SIDs are never returned. Unknown token ownership or close
 failure quarantines the diagnostic. Facts are published only after native root/job stop and verified fixture cleanup.
 No path, SID, native text, ACL or privilege change is involved. The access-denial cause remains pending.
@@ -54,6 +55,16 @@ at `cb24de36f48538f36d3011f98faaa1719b7e761c` built both variants on both Window
 386 portable contracts with one privilege skip per image. Its new token inspector refused before host resume;
 neither C bootstrap facts nor LPAC work were observed. The inspector now returns only a branded closed stage/reason
 and immediate bounded Win32 error on native FALSE, after verified cleanup. Its acceptance predicates are unchanged.
+
+Run [43810605648](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43810605648)
+at `b73261c50be3a6c08c2a59095feaa79ed9499cf8` passed all 177 portable contracts on actual macOS, including all
+37 source cases. Both Windows images built both executables and passed 388 contracts with one privilege skip;
+their inspector refused at `parent-restricted / contract` before resume. The diagnostic had incorrectly treated
+`TokenHasRestrictions` as a canonical 0/1 value. Microsoft's [documented information-class contract](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ne-winnt-token_information_class)
+defines a nonzero DWORD predicate for whether a token has ever been filtered. The decoder now preserves that
+DWORD and derives the documented predicate; exact returned sizes, SID bounds and ordinary-AppContainer admission
+stay enforced. This changes no process token or access grant. A malformed returned count is reported only as a
+bounded numeric refusal. Actual token values and C directory facts remain pending.
 
 The official Node experiment identified `WSAStartup / 10107` on both pinned versions and both Windows Server images,
 with successful ordinary-host controls. See [the bounded native receipts](WINDOWS-NODE-LPAC-PROOF.md).
@@ -80,7 +91,7 @@ its out-of-tree build.
 The full PR test run at `f7a7bc3` exposed two macOS source-fixture failures at the strict destination check.
 The test now canonicalizes its host-owned temporary base before creating scratch, accounting for Darwin's normal
 `/var` alias. A local reproduction through an aliased temporary base and all 37 source contracts pass; the explicit
-extractor alias refusal stays intact. A new actual macOS run is still required for that fixture correction.
+extractor alias refusal stays intact. Run `43810605648` subsequently passed all 37 source cases on actual macOS.
 
 The new issuer is `ember-experimental-libuv-fixed-probe`. Its receipt binds the checked-out commit, fixed C program,
 preparer and CMake recipe, exact source/patch manifests, selected tools and both executable hashes. Both recipes select

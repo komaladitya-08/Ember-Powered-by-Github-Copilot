@@ -103,7 +103,7 @@ const fixedError = (error: unknown) => {
 
 it("queries the exact host and parent with TOKEN_QUERY only, returns fixed facts and closes only the two owned tokens", () => {
   const s = setup(), result = s.bind().inspect(HOST_PROCESS);
-  expect(result).toEqual({ sameUser: true, parent: { restricted: false, integrityRid: 0x3000, appContainer: 0 }, host: { restricted: false, integrityRid: 0x3000, appContainer: 0 } });
+  expect(result).toEqual({ sameUser: true, parent: { hasRestrictions: 0, everFiltered: false, integrityRid: 0x3000, appContainer: 0 }, host: { hasRestrictions: 0, everFiltered: false, integrityRid: 0x3000, appContainer: 0 } });
   expect(Object.isFrozen(result)).toBe(true); expect(Object.isFrozen(result.parent)).toBe(true); expect(Object.isFrozen(result.host)).toBe(true);
   expect(s.calls.filter(call => call.name === "OpenProcessToken").map(call => call.args.slice(0, 2))).toEqual([[PSEUDO_PROCESS, 8], [HOST_PROCESS, 8]]);
   expect(s.calls.filter(call => call.name === "GetTokenInformation").map(call => call.args.slice(0, 2))).toEqual([
@@ -116,7 +116,7 @@ it("queries the exact host and parent with TOKEN_QUERY only, returns fixed facts
 
 it("reports observed user difference, restrictions and integrity independently without granting or altering anything", () => {
   const s = setup(); Object.assign(s.control, { differentUser: true, parentRestricted: 1, hostRestricted: 0, parentIntegrity: 0x2000, hostIntegrity: 0x1000, hostAppContainer: 1 });
-  expect(s.bind().inspect(HOST_PROCESS)).toEqual({ sameUser: false, parent: { restricted: true, integrityRid: 0x2000, appContainer: 0 }, host: { restricted: false, integrityRid: 0x1000, appContainer: 1 } });
+  expect(s.bind().inspect(HOST_PROCESS)).toEqual({ sameUser: false, parent: { hasRestrictions: 1, everFiltered: true, integrityRid: 0x2000, appContainer: 0 }, host: { hasRestrictions: 0, everFiltered: false, integrityRid: 0x1000, appContainer: 1 } });
   expect(new Set(s.calls.map(call => call.name))).toEqual(new Set(["GetCurrentProcess", "OpenProcessToken", "GetTokenInformation", "CloseHandle"]));
 });
 
@@ -173,12 +173,27 @@ it.each(["integrity authority", "integrity count", "integrity attribute"])("requ
   expect(closes(s.calls)).toEqual([HOST_TOKEN, PARENT_TOKEN]); expect(s.fence.failure).toBeUndefined();
 });
 
-it.each(["parent-restricted", "host-restricted", "parent-app-container", "host-app-container"])("requires an exact four-byte 0/1 DWORD for %s", at => {
+it.each(["parent-app-container", "host-app-container"])("preserves the exact ordinary-AppContainer diagnostic contract for %s", at => {
   const s = setup(); Object.assign(s.control, { at, fault: "boolean invalid" });
   expect(() => s.bind().inspect(HOST_PROCESS)).toThrowError(expect.objectContaining({ stage: at, reason: "contract" }));
   expect(closes(s.calls)).toEqual([HOST_TOKEN, PARENT_TOKEN]); expect(s.fence.failure).toBeUndefined();
   s.control.fault = "boolean short";
   expect(() => s.bind().inspect(HOST_PROCESS)).toThrowError(expect.objectContaining({ stage: at, reason: "contract" }));
+});
+
+it.each([2, 16, 0xffffffff])("records the documented nonzero TokenHasRestrictions DWORD without treating it as a canonical BOOL (%i)", value => {
+  const s = setup(); Object.assign(s.control, { parentRestricted: value, hostRestricted: value });
+  const result = s.bind().inspect(HOST_PROCESS);
+  expect(result.parent).toMatchObject({ hasRestrictions: value, everFiltered: true, appContainer: 0 });
+  expect(result.host).toMatchObject({ hasRestrictions: value, everFiltered: true, appContainer: 0 });
+  expect(closes(s.calls)).toEqual([HOST_TOKEN, PARENT_TOKEN]); expect(s.fence.retained).toEqual([]);
+});
+
+it.each(["parent-restricted", "host-restricted"])("still refuses an incorrectly sized HasRestrictions DWORD and exposes only its bounded returned count (%s)", at => {
+  const s = setup(); Object.assign(s.control, { at, fault: "boolean short" }); let error: unknown;
+  try { s.bind().inspect(HOST_PROCESS); } catch (caught) { error = caught; }
+  expect(windowsLibuvHostIdentityFailure(error)).toEqual({ stage: at, reason: "contract", returnedBytes: 3 });
+  expect(closes(s.calls)).toEqual([HOST_TOKEN, PARENT_TOKEN]);
 });
 
 it.each(["open throw empty", "open ABI empty", "open zero", "open invalid", "open borrowed process", "open borrowed pseudo", "open duplicate", "open false with token", "open throw with token", "open ABI with token"])("retains and fences ambiguous token ownership, closing only known nonborrowed tokens once: %s", fault => {
