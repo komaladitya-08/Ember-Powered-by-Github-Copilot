@@ -8,6 +8,11 @@ export const WINDOWS_NODE_FATAL_MAX_BYTES = 64 * 1024;
 export type WindowsNodeFatalOutput =
   | { status: "location"; file: string; line: number; bytes: number }
   | { status: "no-location" | "oversize" | "unreadable" | "ambiguous"; bytes: number };
+export const WINDOWS_NODE_FATAL_REFUSALS = Object.freeze(["input", "release", "encoding", "newline", "header", "public-source", "line"] as const);
+export type WindowsNodeFatalInspection = {
+  output: WindowsNodeFatalOutput;
+  refusal?: { stage: (typeof WINDOWS_NODE_FATAL_REFUSALS)[number]; representation?: "utf16le-ascii" | "utf16be-ascii" | "other" };
+};
 
 type FilesByDirectory = Readonly<Record<string, readonly string[]>>;
 const knownFiles = (groups: FilesByDirectory): string[] => Object.entries(groups).flatMap(([directory, names]) =>
@@ -31,27 +36,46 @@ function publicSource(file: string, allowed: ReadonlySet<string>): string | unde
   return allowed.has(candidate) ? candidate : undefined;
 }
 
-/** Return only a pinned public source location, or a fixed status and byte count capped at the oversize sentinel. */
+/** Preserve the location parser's output contract; inspection adds only closed refusal facts, never captured text. */
 export function parseWindowsNodeFatalOutput(bytes: Buffer, version: string): WindowsNodeFatalOutput {
+  return inspectWindowsNodeFatalOutput(bytes, version).output;
+}
+
+/** This diagnostic does not accept additional encodings or infer a location from a rejected representation. */
+export function inspectWindowsNodeFatalOutput(bytes: Buffer, version: string): WindowsNodeFatalInspection {
   const count = Buffer.isBuffer(bytes) ? Math.min(bytes.length, WINDOWS_NODE_FATAL_MAX_BYTES + 1) : 0;
   const fixed = (status: "no-location" | "oversize" | "unreadable" | "ambiguous"): WindowsNodeFatalOutput => ({ status, bytes: count });
-  if (!Buffer.isBuffer(bytes)) return fixed("unreadable");
-  if (bytes.length > WINDOWS_NODE_FATAL_MAX_BYTES) return fixed("oversize");
+  const refuse = (stage: NonNullable<WindowsNodeFatalInspection["refusal"]>["stage"], representation?: NonNullable<WindowsNodeFatalInspection["refusal"]>["representation"]): WindowsNodeFatalInspection =>
+    ({ output: fixed("unreadable"), refusal: representation ? { stage, representation } : { stage } });
+  if (!Buffer.isBuffer(bytes)) return refuse("input");
+  if (bytes.length > WINDOWS_NODE_FATAL_MAX_BYTES) return { output: fixed("oversize") };
   const allowed = releases.get(version);
-  if (!allowed) return fixed("unreadable");
+  if (!allowed) return refuse("release");
   // ASCII plus ordinary text whitespace is also valid UTF8; reject binary/Unicode before decoding any text.
-  if (bytes.some(byte => byte !== 9 && byte !== 10 && byte !== 13 && (byte < 0x20 || byte > 0x7e))) return fixed("unreadable");
+  const ascii = (byte: number) => byte === 9 || byte === 10 || byte === 13 || byte >= 0x20 && byte <= 0x7e;
+  if (bytes.some(byte => !ascii(byte))) {
+    // Recognize only alternating ASCII/zero byte shapes. Do not decode their content or accept either as text.
+    const wideAscii = (little: boolean) => {
+      if (!bytes.length || bytes.length % 2) return false;
+      for (let index = 0; index < bytes.length; index += 2) {
+        if (!ascii(bytes[index + (little ? 0 : 1)]) || bytes[index + (little ? 1 : 0)] !== 0) return false;
+      }
+      return true;
+    };
+    return refuse("encoding", wideAscii(true) ? "utf16le-ascii" : wideAscii(false) ? "utf16be-ascii" : "other");
+  }
   const text = bytes.toString("utf8");
   const normalized = text.replaceAll("\r\n", "\n");
-  if (normalized.includes("\r")) return fixed("unreadable");
+  if (normalized.includes("\r")) return refuse("newline");
   const headers = normalized.split("\n").filter(line => line.startsWith("# Fatal error in "));
-  if (!headers.length) return fixed("no-location");
-  if (headers.length !== 1) return fixed("ambiguous");
+  if (!headers.length) return { output: fixed("no-location") };
+  if (headers.length !== 1) return { output: fixed("ambiguous") };
   const location = /^# Fatal error in (.*), line ([0-9]{1,6})$/.exec(headers[0]);
-  if (!location) return fixed("unreadable");
+  if (!location) return refuse("header");
   // Non-debug V8_Fatal explicitly prints an empty filename and line zero. Do not infer a location from its body.
-  if (location[1] === "" && location[2] === "0") return fixed("no-location");
+  if (location[1] === "" && location[2] === "0") return { output: fixed("no-location") };
   const line = Number(location[2]), file = publicSource(location[1], allowed);
-  if (!file || line < 1 || line > 100_000) return fixed("unreadable");
-  return { status: "location", file, line, bytes: count };
+  if (!file) return refuse("public-source");
+  if (line < 1 || line > 100_000) return refuse("line");
+  return { output: { status: "location", file, line, bytes: count } };
 }

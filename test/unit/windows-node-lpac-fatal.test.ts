@@ -1,10 +1,39 @@
 import { expect, it } from "vitest";
-import { parseWindowsNodeFatalOutput, WINDOWS_NODE_FATAL_MAX_BYTES } from "../fixtures/windows-node-lpac-fatal";
+import { inspectWindowsNodeFatalOutput, parseWindowsNodeFatalOutput, WINDOWS_NODE_FATAL_MAX_BYTES, WINDOWS_NODE_FATAL_REFUSALS } from "../fixtures/windows-node-lpac-fatal";
 import sources from "../../scripts/experimental/windows-node-lpac-sources.json";
 
 const version = "22.23.5", file = "deps/v8/src/base/platform/platform-win32.cc";
 const header = (source = file, line: string | number = 42) => `# Fatal error in ${source}, line ${line}\n`;
 const parse = (text: string, release = version) => parseWindowsNodeFatalOutput(Buffer.from(text), release);
+
+it.each([
+  ["private text\0", "encoding"], [header() + "raw\rprivate", "newline"],
+  ["# Fatal error in private malformed header\n", "header"], [header("C:\\private\\unknown.cc"), "public-source"],
+  [header(file, 100001), "line"],
+])("explains a refusal with a closed stage without exposing rejected content: %s", (text, stage) => {
+  const bytes = Buffer.from(text), inspection = inspectWindowsNodeFatalOutput(bytes, version);
+  expect(inspection.output).toEqual(parseWindowsNodeFatalOutput(bytes, version));
+  expect(inspection.refusal).toMatchObject({ stage });
+  expect(Object.keys(inspection.refusal!).every(key => ["stage", "representation"].includes(key))).toBe(true);
+  expect(JSON.stringify(inspection)).not.toMatch(/private|unknown|malformed|100001|Fatal|C:/);
+  expect(Buffer.byteLength(JSON.stringify(inspection))).toBeLessThan(256);
+});
+
+it.each(["utf16le-ascii", "utf16be-ascii"])("classifies only the bounded %s byte shape without accepting or decoding it", representation => {
+  const text = header() + "private-message\n", bytes = Buffer.from(text, "utf16le");
+  if (representation === "utf16be-ascii") bytes.swap16();
+  const inspection = inspectWindowsNodeFatalOutput(bytes, version);
+  expect(inspection).toEqual({ output: { status: "unreadable", bytes: bytes.length }, refusal: { stage: "encoding", representation } });
+  expect(JSON.stringify(inspection)).not.toMatch(/private|message|Fatal|logging|platform/);
+});
+
+it("keeps malformed wide data opaque and refuses unknown inputs/releases before representation inspection", () => {
+  const bytes = Buffer.from([0, 0, 65, 0, 0xff, 0]);
+  expect(inspectWindowsNodeFatalOutput(bytes, version)).toEqual({ output: { status: "unreadable", bytes: 6 }, refusal: { stage: "encoding", representation: "other" } });
+  expect(inspectWindowsNodeFatalOutput(bytes, "private-release")).toEqual({ output: { status: "unreadable", bytes: 6 }, refusal: { stage: "release" } });
+  expect(inspectWindowsNodeFatalOutput("private" as unknown as Buffer, version)).toEqual({ output: { status: "unreadable", bytes: 0 }, refusal: { stage: "input" } });
+  expect(Object.isFrozen(WINDOWS_NODE_FATAL_REFUSALS)).toBe(true);
+});
 
 it("returns only the pinned public filename and bounded line from a captured fatal header", () => {
   const text = "\n#\n" + header("C:\\private-user\\build-42\\node\\deps\\v8\\src\\base\\platform\\platform-win32.cc") +
