@@ -38,6 +38,26 @@ batch recorded 715 passes and an unchanged source-fixture subprocess returning n
 five-second bound; the complete affected 52-case suite passed alone, then the full 716 passed with no assertion or
 deadline change. An explicitly required Linux invocation failed before native binding, as intended.
 
-Actual Windows verification remains pending. Even successful fixed tests would only advance feasibility:
+The first [native run 43919095169](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43919095169)
+at head `969afb42d97dee156e8217ad3af1c4519c27971d` used runtime merge
+`71b5a17e448725372a3382dc4b4751b55007405e`. Both Server images passed 715 portable tests with one expected skip,
+authenticated the unchanged artifact and passed the ordinary-host native test. Each LPAC root exited 1 with no
+fixed report and 144 private stdout/stderr bytes. Both private jobs stopped and all known cleanup completed.
+The LPAC assertion failed on both images; no in-process compatibility or failing API was established. Neither raw
+output nor TAP was viewed.
+
+An evidence-only follow-up compares stopped output with the exact pinned Node CLI test-file discovery message
+against the already host-selected fixed filename, accepting only its exact UTF-8 LF/CRLF forms. It projects enum 1
+for a complete match and 0 for every other representation; it returns no text or path. Pinned
+[runner.js](https://github.com/nodejs/node/blob/60553651579ec33ca1aef9e1eedab2c3855f1f7e/lib/internal/test_runner/runner.js#L109)
+performs CLI glob discovery before importing any test, including with isolation disabled. A byte count alone does
+not identify that branch. Classification occurs only after the existing stop and output-ownership checks, its input
+is wiped in `finally`, and later cleanup uncertainty suppresses publication. Original arguments, test failures,
+ownership rules and cleanup acceptance remain unchanged. The follow-up passed all 734 affected tests across 18 files
+with zero skips, including 32 focused output/lifecycle cases, plus scoped lint, YAML and diff checks. Root independently
+reviewed the actual source and pinned Node implementation. The exact-final TypeScript check passed. The next native
+outcome remains pending.
+
+Even successful fixed tests would only advance feasibility:
 product work still needs root-only command ownership, canaries, bounded execution/output, stopped-tree transfer,
 policy and controller integration, review/erasure and real provider/native desktop acceptance.

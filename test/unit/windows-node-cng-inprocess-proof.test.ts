@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { WindowsLpacApi } from "../../app/main/agent/experimental-windows-lpac-api";
 
 const state = vi.hoisted(() => ({ files: new Map<string, Buffer>(), descriptors: new Map<number, string>(), events: [] as string[], readBuffers: [] as Buffer[],
-  nextHandle: 100n, nextFd: 10, statePath: "", fault: "", exit: 0, cleanup: () => new Error("unbound cleanup"),
+  nextHandle: 100n, nextFd: 10, statePath: "", toolsPath: "", outputBuffers: [] as Buffer[], fault: "", exit: 0, cleanup: () => new Error("unbound cleanup"),
   asset: Buffer.from("MZfixed-source-node"), bootstrap: Buffer.from("MZfixed-bootstrap"), receipt: Buffer.from("{}") }));
 vi.mock("node:path", async original => { const actual = await original<typeof import("node:path")>(); return { ...actual, default: actual.win32 }; });
 vi.mock("node:fs", () => {
@@ -70,16 +70,26 @@ vi.mock("../fixtures/windows-node-lpac-io", async original => {
     createHost(_program: string, command: Buffer) { state.events.push("host-create"); expect(command.toString("utf16le")).toContain('"--experimental-test-isolation=none"'); return { process: 20n, thread: 21n, pid: 22 }; },
     createLpac(_profile: unknown, _program: string, command: Buffer) {
       state.events.push("lpac-create"); expect(command.toString("utf16le")).toContain('"--experimental-test-isolation=none"');
-      state.files.set(state.statePath + "\\lpac-cng-inprocess-report.bin", state.fault === "report" ? Buffer.alloc(64) : report(1)); return { process: 40n, thread: 41n, pid: 42 };
+      if (!state.fault.startsWith("discovery")) state.files.set(state.statePath + "\\lpac-cng-inprocess-report.bin", state.fault === "report" ? Buffer.alloc(64) : report(1)); return { process: 40n, thread: 41n, pid: 42 };
     },
     acceptHostControl() { state.events.push("host-io-accepted"); },
-    readAfterStopped(stopped: () => void) { stopped(); state.events.push("output-writer-exclusion"); stopped(); return Buffer.alloc(0); },
+    readAfterStopped(stopped: () => void) {
+      stopped(); state.events.push("output-writer-exclusion"); stopped();
+      const bytes = state.fault.startsWith("discovery") ? Buffer.from(`Could not find '${state.toolsPath}\\lpac-cng-inprocess.test.cjs'\n`) : Buffer.alloc(0);
+      state.outputBuffers.push(bytes); return bytes;
+    },
     close() { state.events.push("io-close"); if (state.fault === "io-close") throw state.cleanup(); },
   }) };
 });
+vi.mock("../fixtures/windows-node-cng-inprocess-output", async original => {
+  const actual = await original<typeof import("../fixtures/windows-node-cng-inprocess-output")>();
+  return { ...actual, classifyWindowsNodeCngInprocessOutput(bytes: Buffer, file: string) {
+    state.events.push("output-classify"); return actual.classifyWindowsNodeCngInprocessOutput(bytes, file);
+  } };
+});
 beforeEach(() => {
   vi.resetModules(); state.files.clear(); state.descriptors.clear(); state.events.length = 0; state.readBuffers.length = 0;
-  state.nextHandle = 100n; state.nextFd = 10; state.statePath = ""; state.fault = ""; state.exit = 0;
+  state.nextHandle = 100n; state.nextFd = 10; state.statePath = ""; state.toolsPath = ""; state.outputBuffers.length = 0; state.fault = ""; state.exit = 0;
   state.files.set("C:\\Build\\build-receipt.json", Buffer.from(state.receipt)); state.files.set("C:\\Build\\source-node.exe", Buffer.from(state.asset)); state.files.set("C:\\Build\\bootstrap.exe", Buffer.from(state.bootstrap));
 });
 afterEach(() => vi.useRealTimers());
@@ -87,8 +97,8 @@ async function subject() {
   const proof = await import("../fixtures/windows-node-cng-inprocess-proof"); state.cleanup = () => new proof.WindowsNodeCngInprocessCleanupError();
   const api = { volumeFileSystem: () => "NTFS", windowsDirectory: () => "C:\\Windows", ownerSid: () => "S-1-5-21-123", profileLocalAppDataBase: () => "C:\\Profile",
     createProfile: (name: string) => ({ name, sid: 55n, sidText: "S-1-15-2-123" }),
-    deleteProfile() { state.events.push("profile-delete"); if (state.fault === "profile") throw new Error("private profile"); },
-    createDirectory(file: string) { if (file.endsWith("\\state")) state.statePath = file; },
+    deleteProfile() { state.events.push("profile-delete"); if (state.fault === "profile" || state.fault === "discovery-profile") throw new Error("private profile"); },
+    createDirectory(file: string) { if (file.endsWith("\\state")) state.statePath = file; if (file.endsWith("\\tools")) state.toolsPath = file; },
     writeNewFile(file: string, bytes: Buffer) { if (state.files.has(file)) throw new Error("duplicate"); state.files.set(file, Buffer.from(bytes)); },
     pinDirectory: () => state.nextHandle++, createJob: () => state.nextHandle++, assign() {}, resume() {}, verifyToken() { state.events.push("token"); },
     close() { state.events.push("owner-close"); }, exited() { state.events.push("root-exited"); return true; },
@@ -111,6 +121,21 @@ it("runs host before LPAC, pins stopped reports, clears read buffers and publish
 });
 it("does not reinterpret a naturally failed root as a passing in-process test", async () => {
   state.exit = 1; const value = await subject(), result = await value.run(); expect(result.lpac.exitCode).toBe(1); expect(result.cleanupComplete).toBe(true);
+});
+it("classifies exact known discovery output only after stop and releases its enum after complete cleanup", async () => {
+  state.exit = 1; state.fault = "discovery"; const value = await subject(), result = await value.run(); state.events.push("published");
+  expect(result.lpac).toMatchObject({ exitCode: 1, report: null, output: { empty: false, discovery: 1 } }); expect(result.cleanupComplete).toBe(true);
+  expect(state.events.indexOf("output-writer-exclusion")).toBeLessThan(state.events.indexOf("output-classify"));
+  expect(state.events.indexOf("output-classify")).toBeLessThan(state.events.indexOf("profile-delete"));
+  expect(state.events.indexOf("scratch-remove")).toBeLessThan(state.events.indexOf("published"));
+  expect(state.outputBuffers.length).toBe(1); expect(state.outputBuffers[0].every(byte => byte === 0)).toBe(true);
+  expect(JSON.stringify(result.lpac.output)).not.toMatch(/Could|find|Native|tools|test\.cjs/);
+});
+it("suppresses an otherwise exact discovery enum after later cleanup uncertainty", async () => {
+  state.exit = 1; state.fault = "discovery-profile"; const value = await subject();
+  await expect(value.run()).rejects.toBeInstanceOf(value.proof.WindowsNodeCngInprocessCleanupError);
+  expect(state.events).toContain("output-classify"); expect(state.events).not.toContain("scratch-remove");
+  expect(state.outputBuffers.length).toBe(1); expect(state.outputBuffers[0].every(byte => byte === 0)).toBe(true);
 });
 it.each(["receipt", "image", "coherent-image"])("refuses immutable-artifact %s forgery before launching a root", async fault => {
   const value = await subject(); state.fault = fault;

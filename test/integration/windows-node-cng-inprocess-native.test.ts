@@ -55,6 +55,6 @@ describe.skipIf(!required)("separate CNG source Node explicit in-process test pa
     const value = await result();
     expect(value.lpac.exitCode).toBe(0); expect(value.lpac.jobStopped).toBe(true); expect(value.cleanupComplete).toBe(true);
     expect(value.lpac.report).toMatchObject({ role: 1, status: 1, tests: 1, features: 15, moduleValue: 42, readBytes: 21, fsCallbacks: 1, timerCallbacks: 1 });
-    expect(value.lpac.output).toEqual({ bytes: 0, empty: true });
+    expect(value.lpac.output).toEqual({ bytes: 0, empty: true, discovery: 0 });
   }, 90_000);
 });

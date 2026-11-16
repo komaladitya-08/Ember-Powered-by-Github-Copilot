@@ -16,6 +16,7 @@ import { parseWindowsNodeSourceBuildReceipt } from "../../scripts/experimental/b
 // @ts-expect-error -- fixed literal programs shared with the trusted build/run recipe
 import { windowsNodeCngInprocessPrograms, windowsNodeCngInprocessProgramReceipts, WINDOWS_NODE_CNG_INPROCESS_ISSUER, WINDOWS_NODE_CNG_INPROCESS_MODULE } from "./windows-node-cng-inprocess-program.mjs";
 import artifactPin from "../../scripts/experimental/windows-node-cng-artifact-pin.json";
+import { classifyWindowsNodeCngInprocessOutput } from "./windows-node-cng-inprocess-output";
 
 export { parseWindowsNodeSourceBuildReceipt };
 
@@ -128,7 +129,7 @@ export async function runWindowsNodeCngInprocessProbe(input: { parent: string; b
   };
   const acquirePin = (file: string, maximum: number) => owned(() => native.pin(file, maximum));
   let result: { issuer: string; buildCommit: string; runCommit: string; programs: ReturnType<typeof windowsNodeCngInprocessProgramReceipts>; host: { exitCode: number; jobStopped: true; identity: WindowsLibuvHostIdentity; report: ReturnType<typeof parseWindowsNodeCngInprocessReport> };
-    lpac: { exitCode: number; jobStopped: true; report: ReturnType<typeof parseWindowsNodeCngInprocessReport> | null; output: Readonly<{ bytes: number; empty: boolean }> } } | undefined;
+    lpac: { exitCode: number; jobStopped: true; report: ReturnType<typeof parseWindowsNodeCngInprocessReport> | null; output: Readonly<{ bytes: number; empty: boolean; discovery: 0 | 1 }> } } | undefined;
   const checkPins = () => { for (const pin of pins) owned(() => pin.unchanged()); };
   const closePin = (pin: ReturnType<typeof native.pin>) => { if (attemptedPins.has(pin)) return; attemptedPins.add(pin); owned(() => pin.close()); };
   const controlled: WindowsLpacApi = { ...api,
@@ -254,8 +255,10 @@ export async function runWindowsNodeCngInprocessProbe(input: { parent: string; b
     const exitCode = prepared.exitCode();
     phase = "stopped-output";
     const outputBytes = ownedIo.readAfterStopped(() => { prepared.exitCode(); });
-    let output: Readonly<{ bytes: number; empty: boolean }>;
-    try { output = Object.freeze({ bytes: outputBytes.length, empty: outputBytes.length === 0 }); } finally { outputBytes.fill(0); }
+    let output: Readonly<{ bytes: number; empty: boolean; discovery: 0 | 1 }>;
+    try { output = Object.freeze({ bytes: outputBytes.length, empty: outputBytes.length === 0,
+      discovery: classifyWindowsNodeCngInprocessOutput(outputBytes, path.join(prepared.paths.tools, "lpac-cng-inprocess.test.cjs")) }); }
+    finally { outputBytes.fill(0); }
     const lpacReport = readReport(1);
     checkPins();
     result = { issuer: WINDOWS_NODE_CNG_INPROCESS_ISSUER, buildCommit: input.buildCommit, runCommit: input.runCommit, programs: windowsNodeCngInprocessProgramReceipts(),
