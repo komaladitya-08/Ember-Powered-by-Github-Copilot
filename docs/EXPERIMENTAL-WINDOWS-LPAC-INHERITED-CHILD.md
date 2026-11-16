@@ -70,6 +70,11 @@ decoding, 6 root/child set, 7 child open, 8 exact PID, 9 image query, 10 image c
 membership, 12 token witness, 13 final currency, 14 final process set, 15 acknowledgement and 16 handle close.
 Only explicit native FALSE/NULL captures immediate `GetLastError`; malformed ABI/error metadata stays domain 0.
 The snapshot contains no PID, image, token, raw native output or exception text. It adds no admission fallback.
+After a successful image-name query, `image` reports only returned-length validity/uint32 shape and count,
+path shape (0 other, 1 drive, 2 extended drive, 3 native device, 4 UNC), basename class (0 other, 1 `fixture.exe`,
+2 `conhost.exe`), presence of a DOS short-name component, exact spelling equality and extended-prefix equality.
+Those are diagnostic facts; only the original exact image comparison admits the child. No spelling class or
+prefix equivalence bypasses image verification.
 
 At `5dff8e203462e6f3f65ffcfc461cbc4013142f39`, [run 43819235798](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43819235798)
 passed 82 portable tests and the original explicit-attribute denial control on each Server image. Both inherited

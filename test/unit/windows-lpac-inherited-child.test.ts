@@ -40,6 +40,7 @@ type Call = { name: string; args: unknown[] };
 type Fault = "query-false" | "query-abi" | "query-throw" | "assigned" | "overflow" | "partial" | "pid-zero" | "pid-large" | "duplicate" |
   "open-null" | "open-zero" | "open-abi" | "open-invalid" | "open-root" | "open-job" | "open-throw" |
   "pid-mismatch" | "pid-throw" | "image-false" | "image-abi" | "image-empty" | "image-overflow" | "image-mismatch" | "image-throw" |
+  "image-extended" | "image-console" | "image-native" | "image-short" | "image-length-abi" |
   "job-false" | "job-abi" | "job-no" | "job-output-abi" | "job-throw" | "close-false" | "close-abi" | "close-throw";
 function setup(selectedFault?: Fault, lists: number[][] = [[ROOT_PID, CHILD_PID]], lastError: unknown = 5) {
   let fault = selectedFault, queries = 0, current = true;
@@ -74,8 +75,10 @@ function setup(selectedFault?: Fault, lists: number[][] = [[ROOT_PID, CHILD_PID]
       if (fault === "image-throw") throw new Error("private native path text");
       if (fault === "image-false") return 0;
       if (fault === "image-abi") return "success";
-      const actual = fault === "image-mismatch" ? "C:\\other\\fixture.exe" : IMAGE.toUpperCase();
-      Buffer.from(actual, "utf16le").copy(bytes); size[0] = fault === "image-empty" ? 0 : fault === "image-overflow" ? 32768 : actual.length;
+      const actual = fault === "image-mismatch" ? "C:\\other\\fixture.exe" : fault === "image-extended" ? "\\\\?\\" + IMAGE :
+        fault === "image-console" ? "C:\\Windows\\System32\\conhost.exe" : fault === "image-native" ? "\\Device\\HarddiskVolume3\\private\\tools\\fixture.exe" :
+        fault === "image-short" ? "C:\\PRIVAT~1\\tools\\fixture.exe" : IMAGE.toUpperCase();
+      Buffer.from(actual, "utf16le").copy(bytes); size[0] = fault === "image-empty" ? 0 : fault === "image-overflow" ? 32768 : fault === "image-length-abi" ? true : actual.length;
       return 1;
     }
     if (name === "IsProcessInJob") {
@@ -115,15 +118,32 @@ describe("inherited child native admission", () => {
     { fault: "close-false", operation: 16, native: "CloseHandle" },
   ] as const)("captures immediate bounded native failure metadata without exporting text ($fault)", ({ fault, operation, native }) => {
     const f = setup(fault); expect(() => f.observer.admit(f.input)).toThrow();
-    expect(f.observer.observation()).toEqual({ operation, domain: 2, code: 5 });
+    expect(f.observer.observation()).toMatchObject({ operation, domain: 2, code: 5 });
     const errorIndex = f.calls.findIndex(call => call.name === "GetLastError");
     expect(errorIndex).toBeGreaterThan(0); expect(f.calls[errorIndex - 1].name).toBe(native);
     expect(f.buffers.every(bytes => bytes.every(value => value === 0)) || f.fence.retained.length === 1).toBe(true);
   });
   it("distinguishes an image comparison refusal from a native image-query failure", () => {
     const f = setup("image-mismatch"); expect(() => f.observer.admit(f.input)).toThrow();
-    expect(f.observer.observation()).toEqual({ operation: 10, domain: 0, code: 0 });
+    expect(f.observer.observation()).toEqual({ operation: 10, domain: 0, code: 0,
+      image: { lengthValid: true, lengthUint32: true, characters: "C:\\other\\fixture.exe".length, shape: 1, basename: 1, shortComponent: false, exact: false, extendedExact: false } });
     expect(f.calls.some(call => call.name === "GetLastError")).toBe(false);
+  });
+  it.each([
+    { fault: "image-extended", shape: 2, basename: 1, shortComponent: false, extendedExact: true },
+    { fault: "image-console", shape: 1, basename: 2, shortComponent: false, extendedExact: false },
+    { fault: "image-native", shape: 3, basename: 1, shortComponent: false, extendedExact: false },
+    { fault: "image-short", shape: 1, basename: 1, shortComponent: true, extendedExact: false },
+  ] as const)("classifies only closed image spelling facts while keeping mismatch fatal ($fault)", ({ fault, ...facts }) => {
+    const f = setup(fault); expect(() => f.observer.admit(f.input)).toThrow();
+    expect(f.observer.observation()).toMatchObject({ operation: 10, domain: 0, code: 0, image: { ...facts, exact: false, lengthValid: true, lengthUint32: true } });
+    expect(f.grant).not.toHaveBeenCalled(); expect(closed(f)).toEqual([CHILD]);
+    expect(JSON.stringify(f.observer.observation())).not.toMatch(/private|Harddisk|System32|conhost|fixture|C:/i);
+  });
+  it.each([{ fault: "image-overflow", lengthUint32: true, characters: 32768 }, { fault: "image-length-abi", lengthUint32: false, characters: 0 }] as const)("distinguishes bounded native length from unknown ABI without decoding ($fault)", ({ fault, lengthUint32, characters }) => {
+    const f = setup(fault); expect(() => f.observer.admit(f.input)).toThrow();
+    expect(f.observer.observation()).toMatchObject({ operation: 10, image: { lengthValid: false, lengthUint32, characters, shape: 0, basename: 0, exact: false } });
+    expect(f.grant).not.toHaveBeenCalled();
   });
   it.each([true, -1, 0x100000000, NaN, new Error("private TLS error text")])("keeps unknown native error metadata unclassified (%#)", value => {
     const f = setup("query-false", undefined, value); expect(() => f.observer.admit(f.input)).toThrow();

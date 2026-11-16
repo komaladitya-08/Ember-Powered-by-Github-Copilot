@@ -71,6 +71,7 @@ export function bindInheritedChildObserver(koffi: Pick<typeof Koffi, "sizeof">, 
     }
   } catch { throw failure(); }
   let operation = 0, domain = 0, code = 0;
+  let imageObservation: { lengthValid: boolean; lengthUint32: boolean; characters: number; shape: number; basename: number; shortComponent: boolean; exact: boolean; extendedExact: boolean } | undefined;
   const at = (value: number) => { operation = value; domain = 0; code = 0; };
   const nativeRefusal = () => {
     // Capture only an explicit native FALSE/NULL's immediate error, before any later close/query changes TLS.
@@ -99,8 +100,8 @@ export function bindInheritedChildObserver(koffi: Pick<typeof Koffi, "sizeof">, 
       return result;
     } catch { throw failure(); } finally { bytes.fill(0); }
   };
-  return { members, observation: () => ({ operation, domain, code }), admit(input: InheritedChildAdmission): number | null {
-    usable(); at(1);
+  return { members, observation: () => ({ operation, domain, code, ...(imageObservation ? { image: { ...imageObservation } } : {}) }), admit(input: InheritedChildAdmission): number | null {
+    usable(); at(1); imageObservation = undefined;
     if (!input || !handle(input.job) || !handle(input.rootProcess) || input.rootProcess === input.job || !pid(input.rootPid) || typeof input.image !== "string" || !/^[A-Za-z]:\\/.test(input.image) || /[\p{Cc}\p{Cf}]/u.test(input.image) ||
       typeof input.current !== "function" || typeof input.verifyToken !== "function" || typeof input.grant !== "function") throw failure();
     let process: WindowsHandle | undefined, uncertain = false, failed = false, admitted: number | null = null;
@@ -126,7 +127,16 @@ export function bindInheritedChildObserver(koffi: Pick<typeof Koffi, "sizeof">, 
       const named = fn.QueryFullProcessImageNameW(process, 0, image, length);
       if (!bool(named)) throw failure(); if (named === 0) throw nativeRefusal();
       at(10);
-      if (!pid(length[0]) || length[0] > 32767 || image.toString("utf16le", 0, length[0] * 2).toLowerCase() !== input.image.toLowerCase()) throw failure();
+      const lengthValid = pid(length[0]) && length[0] <= 32767;
+      const observedImage = lengthValid ? image.toString("utf16le", 0, (length[0] as number) * 2).toLowerCase() : "";
+      const basename = observedImage.slice(observedImage.lastIndexOf("\\") + 1), expectedImage = input.image.toLowerCase();
+      const lengthUint32 = typeof length[0] === "number" && Number.isInteger(length[0]) && length[0] >= 0 && length[0] <= 0xffffffff;
+      imageObservation = { lengthValid, lengthUint32, characters: lengthUint32 ? length[0] as number : 0,
+        shape: /^[a-z]:\\/.test(observedImage) ? 1 : /^\\\\\?\\[a-z]:\\/.test(observedImage) ? 2 : observedImage.startsWith("\\device\\") ? 3 : observedImage.startsWith("\\\\") ? 4 : 0,
+        basename: basename === "fixture.exe" ? 1 : basename === "conhost.exe" ? 2 : 0,
+        shortComponent: /(?:^|\\)[^\\]*~\d+(?:\\|$)/.test(observedImage),
+        exact: observedImage === expectedImage, extendedExact: observedImage.startsWith("\\\\?\\") && observedImage.slice(4) === expectedImage };
+      if (!lengthValid || !imageObservation.exact) throw failure();
       at(11);
       const member: unknown[] = [0], contained = fn.IsProcessInJob(process, input.job, member);
       if (!bool(contained)) throw failure(); if (contained === 0) throw nativeRefusal();
