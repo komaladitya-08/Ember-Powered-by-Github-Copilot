@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "issuer": "ember-windows-node-toolchain-v1",
+  "platform": "win32",
+  "arch": "x64",
+  "version": "22.23.5",
+  "sourceCommit": "60553651579ec33ca1aef9e1eedab2c3855f1f7e",
+  "sourceArchiveSha256": "6cce7c58bf058700c643944903d60a325e8c9ceede1f5c2c088b435f2ada091a",
+  "producerCommit": "df3d273dc1028f2358a119db0719b4cf2cb471f9",
+  "producerRun": 43858256344,
+  "producerArtifact": 14224884648,
+  "scope": "offline-root-only-node",
+  "compatibility": {
+    "moduleResolutionFlags": ["--preserve-symlinks", "--preserve-symlinks-main"],
+    "testIsolationFlag": "--experimental-test-isolation=none",
+    "implicitArguments": false,
+    "shell": false,
+    "children": false,
+    "network": false,
+    "dependencyInstallation": false
+  },
+  "files": [
+    { "source": "source-node.exe", "name": "node.exe", "bytes": 120219136, "sha256": "d95bc2f8d456eb84306f54aa798c17ee21e5fd22591f943fc13c6adc8fd115db", "ship": true },
+    { "source": "LICENSE", "name": "LICENSE", "bytes": 145485, "sha256": "c738ae413cf561f174e34f6961f8ca458aae2369a73640dda6234c629b98bcc4", "ship": true },
+    { "source": "build-receipt.json", "name": "build-receipt.json", "bytes": 6035, "sha256": "f50e4859309b72dde505b99cd4c8edd926f2c55dc4aa74f035712d0d5323c9ad", "ship": true },
+    { "source": "bootstrap.exe", "name": "bootstrap.exe", "bytes": 2560, "sha256": "bb80548df91d6989305bfe6ed357cb21f47cef31af4a424ca4df5e598d3bcacc", "ship": false }
+  ]
+}
