@@ -84,6 +84,21 @@ it.skipIf(!available && !required)("verifies the extracted Windows ZIP launch an
     // Existing smoke proves ordinary launch/window/handover only; its force-stop is never a native cleanup receipt.
     const smoke = await run(process.execPath, [path.join(checkout, "test/smoke/launch.mjs"), "--exe", exe, "--forbid", "shortcut.unavailable", "--expect-auth-source", "none"],
       { ...env, EMBER_TEST_PROVIDER_URL: forbiddenUrl }, 90_000);
+    if (smoke.code !== 0 || smoke.signal !== null) {
+      // These labels are derived only from fixed smoke messages. Never print its captured app bodies or paths.
+      const failure = smoke.stderr;
+      console.info("Packaged launch smoke diagnostics:", {
+        code: smoke.code, signal: smoke.signal,
+        authSourceMismatch: failure.includes("used an unexpected auth source"), authSourceMissing: failure.includes("report its auth source"),
+        shortcutUnavailable: failure.includes("shortcut.unavailable"), appStartFailed: failure.includes('"msg":"app.start_failed"'),
+        runtimeMissing: failure.includes('"msg":"agent.runtime_missing"'), firstInstanceExited: /first instance (?:exited with|was killed)/.test(failure),
+        homeWindowMissing: failure.includes("waiting for home window"), handoverFailed: /(?:second instance|second launch|receive second-instance)/.test(failure),
+        askFailed: /(?:third instance|third launch|open the ask box|ask box for a start)/.test(failure),
+        jumpListFailed: /(?:Windows refused the jump list|put Ask Ember in its jump list)/.test(failure),
+        homeShown: smoke.stdout.includes("first instance showed its window"), handoverReceived: smoke.stdout.includes("second launch handed over"),
+        authSourceNone: smoke.stdout.includes("the first instance used auth source none"), askShown: smoke.stdout.includes("a start with --ask handed over"),
+      });
+    }
     expect(smoke.code, "The extracted packaged app must pass its normal launch/window/handover smoke").toBe(0); expect(smoke.signal).toBeNull();
     expect(smoke.stdout).toContain("the first instance used auth source none");
     expect(devRequests, "Packaged main must ignore the development model endpoint").toBe(0);
