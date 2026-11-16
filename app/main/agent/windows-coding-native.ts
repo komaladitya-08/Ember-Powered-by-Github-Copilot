@@ -278,7 +278,7 @@ export function bindWindowsCodingNative(native: Pick<typeof Koffi, "sizeof" | "a
     let raw: unknown;
     try { raw = functions.OpenFileById(selected.raw, identifier, access, 7, null, 0x02200000); }
     catch { throw cleanupFailure ??= new WindowsCodingCleanupError(); } // Native handle ownership is unknown.
-    if (typeof raw !== "bigint" || raw === 0n || raw === -1n || raw === INVALID_HANDLE) win("OpenFileById");
+    if (typeof raw !== "bigint" || raw === 0n || raw === -1n || raw === INVALID_HANDLE) return win("OpenFileById");
     const handle = nextLease++;
     pool.set(handle, { raw, kind: "directory", capability: "copy", root: selected.root, created: false, written: false, removed: false, poisoned: false });
     try {
