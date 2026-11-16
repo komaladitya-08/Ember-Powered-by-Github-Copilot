@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import http from "node:http";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
+import type { ChildProcess } from "node:child_process";
 import type { CopilotClient } from "@github/copilot-sdk";
 import { describe, expect, it } from "vitest";
 import { allocateWindowsControllerStorage } from "../../app/main/agent/windows-controller-storage";
@@ -60,6 +62,22 @@ function excludesSyntheticState(directory: string, values: readonly string[]): b
     const code = (error as { code?: unknown })?.code;
     return refuse("io", { code: typeof code === "string" && /^E[A-Z0-9]{1,24}$/.test(code) ? code : "unknown" });
   }
+}
+
+/** Fixture-only observation: the real SDK stops before its retained files are scanned, then normal native disposal resumes. */
+function scanStateAfterSdkStop(runtime: PrivateControllerRuntime, child: ChildProcess, values: readonly string[]): () => void {
+  const stop = runtime.client.stop.bind(runtime.client), root = path.dirname(runtime.workingDirectory);
+  let scans = 0, safe = false;
+  runtime.client.stop = async () => {
+    const errors = await stop();
+    if (errors.length) return errors;
+    if (child.exitCode === null && child.signalCode === null) await once(child, "exit", { signal: AbortSignal.timeout(5_000) });
+    expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+    expect(fs.existsSync(root)).toBe(true);
+    safe = excludesSyntheticState(root, values); scans++;
+    return errors;
+  };
+  return () => { expect(scans).toBe(1); expect(safe).toBe(true); };
 }
 const runtimePath = () => {
   const runtime = runtimeFor("win32", "x64"), located = locateRuntime({ appPath: process.cwd(), runtimeId: runtime.id, exe: runtime.exe });
@@ -214,8 +232,9 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")("native 
       positive = true;
       const { copy, controller } = await openController();
       const runtime = (controller as unknown as { runtime: PrivateControllerRuntime }).runtime;
-      const child = (runtime.client as unknown as { cliProcess: { pid?: number; exitCode: number | null; signalCode: string | null } }).cliProcess;
+      const child = (runtime.client as unknown as { cliProcess: ChildProcess }).cliProcess;
       expect(Number.isInteger(child.pid)).toBe(true);
+      const assertStoppedState = scanStateAfterSdkStop(runtime, child, synthetic);
       let before = model.requests.length;
       expect(await controller.run("Update only app.ts in the private copy and prepare the edit for review without running code.")).toEqual({ success: true,
         summary: "Updated the copied answer for review. No commands or tests were run." });
@@ -223,8 +242,7 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")("native 
       expect(fs.readFileSync(path.join(copy.directory, "app.ts"), "utf8")).toBe(edited);
       expect(fs.readFileSync(path.join(project, "app.ts"), "utf8")).toBe(original);
       const privateRoot = path.dirname(runtime.workingDirectory);
-      expect(excludesSyntheticState(privateRoot, synthetic)).toBe(true);
-      await controller.close(); await copy.close();
+      await controller.close(); assertStoppedState(); await copy.close();
       expect(child.exitCode !== null || child.signalCode !== null).toBe(true); expect(fs.existsSync(privateRoot)).toBe(false);
       positive = false;
       const attacks = [
@@ -249,9 +267,9 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")("native 
         expect(fs.readFileSync(path.join(project, "app.ts"), "utf8")).toBe(original);
         expect(fs.readFileSync(path.join(opened.copy.directory, "app.ts"), "utf8")).toBe(original);
         const ownedRuntime = (opened.controller as unknown as { runtime: PrivateControllerRuntime }).runtime;
-        const ownedRoot = path.dirname(ownedRuntime.workingDirectory), ownedChild = (ownedRuntime.client as unknown as { cliProcess: { exitCode: number | null; signalCode: string | null } }).cliProcess;
-        expect(excludesSyntheticState(ownedRoot, synthetic)).toBe(true);
-        await opened.controller.close(); await opened.copy.close();
+        const ownedRoot = path.dirname(ownedRuntime.workingDirectory), ownedChild = (ownedRuntime.client as unknown as { cliProcess: ChildProcess }).cliProcess;
+        const assertOwnedStoppedState = scanStateAfterSdkStop(ownedRuntime, ownedChild, synthetic);
+        await opened.controller.close(); assertOwnedStoppedState(); await opened.copy.close();
         expect(ownedChild.exitCode !== null || ownedChild.signalCode !== null).toBe(true); expect(fs.existsSync(ownedRoot)).toBe(false);
       }
 
