@@ -22,7 +22,8 @@ export function parseSourceArtifactExtractionRefusal(bytes) {
     if (!strict(value, ["schema", "status", "stage", "entryCount", "acceptedMask", "entries", "failure", "code", "identityMismatch"]) || value.schema !== 1 || value.status !== "refused" ||
       !uint(value.stage, 17) || !uint(value.entryCount, 65) || !uint(value.acceptedMask, 15) || !Array.isArray(value.entries) || value.entries.length !== Math.min(value.entryCount, 8) ||
       !uint(value.failure, 6) || value.failure === 0 || !uint(value.code, 65536) || !uint(value.identityMismatch, 63) ||
-      value.identityMismatch !== 0 && value.stage !== 4 && value.stage !== 16 || value.stage < 7 && (value.entryCount !== 0 || value.acceptedMask !== 0)) return undefined;
+      value.identityMismatch !== 0 && value.stage !== 4 && value.stage !== 16 || value.stage === 4 && (value.identityMismatch & 16) !== 0 ||
+      value.stage < 7 && (value.entryCount !== 0 || value.acceptedMask !== 0)) return undefined;
     let mask = 0;
     for (const item of value.entries) {
       if (!strict(item, ["member", "kind", "mode", "attributes", "compression", "flags", "bytes", "compressedBytes"]) ||

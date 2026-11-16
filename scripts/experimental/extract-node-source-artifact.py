@@ -67,11 +67,18 @@ def ancestry(path, leaf_exists=True):
 
 
 def identity(info):
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime, info.st_ctime, info.st_nlink)
+    # CPython3.12 Windows lstat ctime is creation time, while fstat ctime is change time.
+    # Only stable fields cross that API boundary; each API's ctime is guarded separately below.
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_nlink)
 
 
-def identity_mismatch(left, right):
-    return sum(1 << index for index, values in enumerate(zip(identity(left), identity(right))) if values[0] != values[1])
+def identity_mismatch(left, right, same_api=False):
+    # Keep the public six-bit mapping: dev, ino, size, mtime_ns, ctime_ns, nlink.
+    values = zip(identity(left), identity(right))
+    mismatch = sum(bit for bit, fields in zip((1, 2, 4, 8, 32), values) if fields[0] != fields[1])
+    if same_api and left.st_ctime_ns != right.st_ctime_ns:
+        mismatch |= 16
+    return mismatch
 
 
 def extract(archive, destination):
@@ -165,8 +172,10 @@ def extract(archive, destination):
                 files.append({'name': item.filename, 'bytes': count, 'sha256': digest.hexdigest()})
         at(16)
         after, named = os.fstat(source.fileno()), os.lstat(archive)
-        DIAGNOSTIC['identityMismatch'] = identity_mismatch(opened, after) | identity_mismatch(opened, named)
-        if identity(opened) != identity(after) or identity(opened) != identity(named):
+        DIAGNOSTIC['identityMismatch'] = identity_mismatch(opened, after, True) | identity_mismatch(before, named, True) | identity_mismatch(opened, named)
+        if (identity(opened) != identity(after) or opened.st_ctime_ns != after.st_ctime_ns or
+                identity(before) != identity(named) or before.st_ctime_ns != named.st_ctime_ns or
+                identity(opened) != identity(named)):
             refuse()
     at(17)
     canonical = ''.join('{sha256} {bytes} {name}\n'.format(**item) for item in files).encode('utf8')

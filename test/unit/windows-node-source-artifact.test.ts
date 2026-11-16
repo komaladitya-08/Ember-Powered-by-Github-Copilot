@@ -94,8 +94,10 @@ describe("closed extraction refusal metadata", () => {
     expect(sourceArtifactExtractionRefusal(Object.assign(new Error("forged"), { extraction: diagnostic() }))).toBeUndefined();
   });
   it("allows only closed mismatch bits at the actual stat comparison stages", () => {
-    const value = { ...diagnostic(), stage: 4, entryCount: 0, acceptedMask: 0, entries: [], identityMismatch: 16 };
+    const value = { ...diagnostic(), stage: 4, entryCount: 0, acceptedMask: 0, entries: [], identityMismatch: 8 };
     expect(parseSourceArtifactExtractionRefusal(Buffer.from(JSON.stringify(value)))).toEqual(value);
+    value.identityMismatch = 16; expect(parseSourceArtifactExtractionRefusal(Buffer.from(JSON.stringify(value)))).toBeUndefined();
+    value.stage = 16; expect(parseSourceArtifactExtractionRefusal(Buffer.from(JSON.stringify(value)))).toEqual(value);
     value.stage = 5; expect(parseSourceArtifactExtractionRefusal(Buffer.from(JSON.stringify(value)))).toBeUndefined();
   });
 });
@@ -213,6 +215,32 @@ if mode == 'growing':
                 with open(archive, 'ab') as appended: appended.write(b'x' * 2048)
             return self.source.read(count)
     module.os.fdopen = lambda *args: GrowingReader(original_fdopen(*args))
+clock_modes = ['clock-difference', 'held-clock-mutation', 'named-clock-mutation', 'different-device', 'different-inode', 'different-size', 'different-mtime', 'different-links']
+if mode in clock_modes:
+    original_fstat, original_lstat = module.os.fstat, module.os.lstat
+    observation = dict(fd=None, calls=0, named_mutation=False)
+    class StatView:
+        def __init__(self, info, changes): self.info, self.changes = info, changes
+        def __getattr__(self, key): return self.changes[key] if key in self.changes else getattr(self.info, key)
+    def clock_change(info, increment):
+        return dict(st_ctime=info.st_ctime + increment, st_ctime_ns=info.st_ctime_ns + increment * 1000000000)
+    def observed_fstat(fd):
+        info = original_fstat(fd)
+        if observation['fd'] is None: observation['fd'] = fd
+        if fd != observation['fd']: return info
+        observation['calls'] += 1
+        changes = {}
+        if mode == 'clock-difference': changes = clock_change(info, 7)
+        if mode == 'held-clock-mutation': changes = clock_change(info, observation['calls'])
+        if mode == 'named-clock-mutation' and observation['calls'] > 1: observation['named_mutation'] = True
+        field = dict([('different-device','st_dev'),('different-inode','st_ino'),('different-size','st_size'),('different-mtime','st_mtime_ns'),('different-links','st_nlink')]).get(mode)
+        if field: changes[field] = getattr(info, field) + 1
+        return StatView(info, changes)
+    def observed_lstat(file, *args, **kwargs):
+        info = original_lstat(file, *args, **kwargs)
+        if observation['named_mutation'] and os.path.normcase(os.path.abspath(file)) == os.path.normcase(archive): return StatView(info, clock_change(info, 1))
+        return info
+    module.os.fstat, module.os.lstat = observed_fstat, observed_lstat
 try:
     result = module.extract(archive, destination)
     print(json.dumps(dict(status='accepted', files=result['files'], pythonVersion=list(sys.version_info[:3]))))
@@ -233,6 +261,16 @@ describe("same-fd authenticated four-member ZIP boundary", () => {
   });
   it.each(["traversal", "case", "directory", "control", "duplicate", "symlink", "special", "privileged", "oversize", "crc", "encryption", "outerhash", "existing", "alias"])("refuses %s without weakening the production pin or CLI", mode => expect(run(mode).status).toBe("refused"));
   it("stops a growing archive after at most pinned bytes plus one, before any output directory", () => expect(run("growing")).toMatchObject({ status: "refused", boundedGrowth: true }));
+  it("accepts different cross-API ctime values only while both APIs' own snapshots and stable identities stay unchanged", () => expect(run("clock-difference").status).toBe("accepted"));
+  it.each(["held-clock-mutation", "named-clock-mutation"])("refuses same-API ctime_ns mutation: %s", mode => {
+    const result = run(mode); expect(result.status).toBe("refused");
+    expect(result.diagnostic).toMatchObject({ stage: 16, identityMismatch: 16, failure: 1 });
+    expect(parseSourceArtifactExtractionRefusal(Buffer.from(JSON.stringify(result.diagnostic)))).toEqual(result.diagnostic);
+  });
+  it.each([["different-device", 1], ["different-inode", 2], ["different-size", 4], ["different-mtime", 8], ["different-links", 32]])("refuses a stable cross-API field mismatch: %s", (mode, mask) => {
+    const result = run(mode as string); expect(result.status).toBe("refused"); expect(result.diagnostic).toMatchObject({ stage: 4, identityMismatch: mask, failure: 1 });
+    expect(parseSourceArtifactExtractionRefusal(Buffer.from(JSON.stringify(result.diagnostic)))).toEqual(result.diagnostic);
+  });
   it("emits inventory/type refusal metadata only after whole-ZIP authentication", () => {
     const early = run("outerhash").diagnostic, inventory = run("symlink").diagnostic;
     expect(early).toMatchObject({ stage: 5, entryCount: 0, acceptedMask: 0, entries: [], failure: 1 });

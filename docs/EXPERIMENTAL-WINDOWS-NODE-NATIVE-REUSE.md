@@ -29,8 +29,8 @@ The native-only workflow retains the original four controls and required LPAC us
 fatal observations remain pending. The [first reuse run43831268214](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43831268214)
 passed 194 portable contracts with one expected Windows privilege skip, authenticated the origin/download/ZIP
 digest, then refused during Python extraction before original-receipt verification or any native execution.
-The unchanged extractor's local success excludes an obvious ZIP-format incompatibility; a Windows-specific
-validation stage still needs its closed diagnostic witness. No acceptance rule is relaxed on that inference.
+The unchanged extractor's local success excluded an obvious ZIP-format incompatibility. The later closed
+Windows diagnostic and comparison correction are recorded below; no ZIP acceptance rule was relaxed.
 The workflow intentionally skips a fresh source compile only for the fixed
 `ember-improve/20261116-source-node-native-reuse` PR head; other source PRs and explicit build dispatch still
 compile normally. Skipping a fresh compile is not a new build
@@ -64,3 +64,25 @@ therefore uses `CREATE_UNICODE_ENVIRONMENT` by default, with null process/thread
 stdio metadata. `CREATE_NO_WINDOW` is conditional on explicit hiding; detached mode separately adds
 `DETACHED_PROCESS`, a new group and suspension. C results with explicit descriptors, `CREATE_NO_WINDOW` or
 detached flags do not establish this full Node path. Actual default child and test-runner proof remains required.
+
+## Windows clock mismatch
+
+[Run43835155592](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43835155592)
+passed 222 portable contracts with one expected privilege skip. On the exact original archive, extraction
+refused at stage 4 before hashing/extracting members, with identity mask 16: only the cross-API `ctime` field
+disagreed. No private timestamp or file identity was emitted.
+
+The pinned CPython 3.12.10 sources explain the mismatch. [Path stat/lstat](https://github.com/python/cpython/blob/v3.12.10/Modules/posixmodule.c#L2139)
+copies birth time into its legacy `ctime`, while [handle fstat](https://github.com/python/cpython/blob/v3.12.10/Python/fileutils.c#L1233)
+uses the Windows change-time field; its [wrapper](https://github.com/python/cpython/blob/v3.12.10/Modules/posixmodule.c#L11174)
+does not perform the path API's copy. Comparing those two `ctime` values therefore rejects an unchanged file.
+
+The corrected fence compares device, inode, byte length, `mtime_ns` and link count across path and descriptor.
+It separately compares path-before to path-after `ctime_ns`, and held-descriptor-before to held-descriptor-after
+`ctime_ns`, using one final snapshot pair. Both mutation clocks remain guarded; nanosecond comparisons replace
+floating timestamps. The exact hosted Python admission, archive hash/count, four fixed member hashes,
+exclusive extraction and original compile/source/tool/PE checks remain mandatory. No default clock or
+unsupported-interpreter fallback is added.
+
+Windows staging with this corrected comparison and subsequent native fatal classification remain pending.
+This repair does not establish useful LPAC Node or default child/test-runner execution.
