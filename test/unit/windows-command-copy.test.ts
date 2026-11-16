@@ -6,11 +6,14 @@ import { WindowsRootOnlyCommandCopy, WindowsRootOnlyCommandCopyCleanupError, typ
   type WindowsRootOnlyCommandCopyInput } from "../../app/main/agent/windows-command-copy";
 import { createWindowsCommandRootOnlyStopOwner, type WindowsCommandRootOnlyStopNative,
   type WindowsCommandRootOnlyStopFence, type WindowsCommandRootOnlyStoppedRef } from "../../app/main/agent/windows-command-stop";
+import { observeWindowsCommandCopyFailedUsefulExit } from "../fixtures/windows-command-copy-proof";
+import { WINDOWS_COMMAND_COPY_REPORT_MAGIC } from "../fixtures/windows-command-copy-report";
 
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 function setup() {
   const events: string[] = [], snapshots: Buffer[] = [];
   const state = { current: true, package: true, review: true, private: true, fault: "", grantGate: undefined as ReturnType<typeof deferred> | undefined,
+    revokeGate: undefined as ReturnType<typeof deferred> | undefined,
     afterSnapshot: undefined as (() => void) | undefined, onCurrent: undefined as (() => void) | undefined, onReview: undefined as (() => void) | undefined };
   let next = 10n;
   const jobs = new Map<bigint, { total: number; process?: bigint }>(), processes = new Map<bigint, { pid: number; thread: bigint; exited: boolean }>();
@@ -40,7 +43,8 @@ function setup() {
       if (state.grantGate) await state.grantGate.promise;
       check?.(); if (state.fault === "grant") throw Error("private raw native text");
     },
-    async revoke(sid) { events.push("revoke-" + sid); if (state.fault === "revoke") throw Error("private raw native text"); state.private = true; },
+    async revoke(sid) { events.push("revoke-" + sid); if (state.revokeGate) await state.revokeGate.promise;
+      if (state.fault === "revoke") throw Error("private raw native text"); state.private = true; },
     async snapshot(check) {
       events.push("snapshot"); check?.(); if (!state.private) throw Error("writer overlaps snapshot");
       if (state.fault === "snapshot") throw Error("private raw native text");
@@ -194,4 +198,27 @@ it("a work guard that synchronously poisons the shared fence cannot expose a com
   s.state.onCurrent = () => { if (s.snapshots.length) s.dependencies.fence!.failure = new WindowsRootOnlyCommandCopyCleanupError(); };
   await expect(owner.files(async () => { invoked = true; })).rejects.toBeInstanceOf(WindowsRootOnlyCommandCopyCleanupError);
   expect(invoked).toBe(false); expect(s.snapshots[0].every(value => value === 0)).toBe(true); expect(s.fence.retained).toContain(owner);
+});
+
+it.each([false, true])("failed-report observation waits for the real coordinator's closed job and fulfilled ACL revocation, refuses=%s", async refuses => {
+  const s = setup(), owner = await s.prepare(), original = new Error("Fixed natural-exit refusal"), report = Buffer.alloc(64);
+  [WINDOWS_COMMAND_COPY_REPORT_MAGIC, 1, 1, 2, 5, 0xf00, 5, 5, 5, 5, 0, 0, 0, 5, 0, 0].forEach((word, index) => report.writeUInt32LE(word, index * 4));
+  await owner.launchRootOnly(s.create, s.attest); s.state.revokeGate = deferred(); if (refuses) s.state.fault = "revoke";
+  const running = observeWindowsCommandCopyFailedUsefulExit(original, { phase: 1, code: 1 }, () => owner.stop(), () => { s.events.push("unchanged-pins"); },
+    () => { s.events.push("report-acquire"); expect(s.state.private).toBe(true); return {
+      read() { s.events.push("report-read"); return report; }, close() { s.events.push("report-close"); },
+    }; }, () => { s.events.push("report-observed"); });
+  const rejected = running.catch(error => error);
+  while (!s.events.some(event => event.startsWith("revoke-"))) await new Promise(resolve => setImmediate(resolve));
+  expect(s.events).toContain("job-close"); expect(s.events.indexOf("job-close")).toBeLessThan(s.events.findIndex(event => event.startsWith("revoke-")));
+  expect(s.events).not.toContain("unchanged-pins"); expect(s.events).not.toContain("report-acquire"); expect(s.state.private).toBe(false);
+  s.state.revokeGate.resolve(); expect(await rejected).toBe(original);
+  expect(s.events).not.toContain("snapshot");
+  if (refuses) {
+    expect(s.events).not.toContain("report-acquire"); expect(s.fence.retained).toContain(owner); expect(s.events).not.toContain("tree-close");
+  } else {
+    expect(s.events.slice(-5)).toEqual(["unchanged-pins", "report-acquire", "report-read", "report-close", "report-observed"]);
+    expect(report.every(byte => byte === 0)).toBe(true);
+    await expect(owner.launchRootOnly(s.create, s.attest)).rejects.toBeInstanceOf(ScopedCodingFileError); await owner.close();
+  }
 });

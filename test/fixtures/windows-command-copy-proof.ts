@@ -40,6 +40,28 @@ export function requireWindowsCommandCopyNaturalExit(query: () => unknown, obser
   }
   ensure(value === 0);
 }
+export interface WindowsCommandCopyFailedUsefulObservation {
+  readonly mode: 1; readonly status: 2; readonly operation: number; readonly features: number; readonly code: number;
+}
+/** Failed-report bytes carry no authority: positive real Stop/revoke and unchanged pins must precede acquisition.
+ * Every path still throws the initial natural-exit refusal; the caller retains the complete graph on uncertainty. */
+export async function observeWindowsCommandCopyFailedUsefulExit(error: unknown, exit: WindowsCommandCopyExitObservation | undefined,
+  stop: () => Promise<void>, unchanged: () => void, acquire: () => Pick<WindowsCommandCopyProofPin, "read" | "close">,
+  observed: (report: WindowsCommandCopyFailedUsefulObservation) => void): Promise<never> {
+  try {
+    if (exit?.phase === 1 && exit.code === 1) {
+      await stop(); unchanged();
+      const pin = acquire(), bytes = pin.read();
+      let report: WindowsCommandCopyFailedUsefulObservation;
+      try {
+        const parsed = parseWindowsCommandCopyReport(bytes, "useful"); ensure(parsed.status === 2);
+        report = Object.freeze({ mode: 1, status: 2, operation: parsed.operation, features: parsed.features, code: parsed.failedOperationError });
+      } finally { bytes.fill(0); pin.close(); }
+      observed(report);
+    }
+  } catch { /* No read/report/cleanup authority follows a diagnostic failure; the original refusal remains first. */ }
+  throw error;
+}
 const notifyFailure = (error: unknown, failed: (error: unknown) => void) => {
   try { failed(error); } catch { /* Diagnostic failure cannot replace the authoritative native error. */ }
 };
@@ -115,8 +137,9 @@ const command = (program: string, args: readonly string[]) => {
 /** Only phase numbers leave this fixture; all source/data/path/error material stays in its private retained graph. */
 export class WindowsCommandCopyObservationError extends Error {
   constructor(readonly phase: number, readonly subphase: number, readonly ownership: number, readonly native?: WindowsCommandCopyNativeFailure,
-    readonly boundary: WindowsCommandCopyBoundary = 0, readonly stop?: WindowsCommandRootOnlyFailure, readonly fileCode = 0, readonly exit?: WindowsCommandCopyExitObservation) {
-    super(`The root-only native observation was refused at phase ${phase}, subphase ${subphase}, ownership ${ownership}, boundary ${boundary}, fileCode ${fileCode}${native ? `, native ${JSON.stringify(native)}` : ""}${stop ? `, stop ${JSON.stringify(stop)}` : ""}${exit ? `, exit ${JSON.stringify(exit)}` : ""}.`);
+    readonly boundary: WindowsCommandCopyBoundary = 0, readonly stop?: WindowsCommandRootOnlyFailure, readonly fileCode = 0,
+    readonly exit?: WindowsCommandCopyExitObservation, readonly failedReport?: WindowsCommandCopyFailedUsefulObservation) {
+    super(`The root-only native observation was refused at phase ${phase}, subphase ${subphase}, ownership ${ownership}, boundary ${boundary}, fileCode ${fileCode}${native ? `, native ${JSON.stringify(native)}` : ""}${stop ? `, stop ${JSON.stringify(stop)}` : ""}${exit ? `, exit ${JSON.stringify(exit)}` : ""}${failedReport ? `, failedReport ${JSON.stringify(failedReport)}` : ""}.`);
     this.name = "WindowsCommandCopyObservationError"; this.stack = `${this.name}: ${this.message}`;
   }
 }
@@ -124,7 +147,8 @@ export class WindowsCommandCopyObservationError extends Error {
 /** Uses the actual emitted CJS default Koffi loaders/factories and a separately verified, host-built fixed C image. */
 export async function observeWindowsCommandCopy(asset: WindowsCommandCopyBuiltAsset, verifyBuild: () => void, scratchParent: string) {
   let phase = 1, subphase = 0, firstBoundary: WindowsCommandCopyBoundary = 0, stopFailure: WindowsCommandRootOnlyFailure | undefined,
-    lastExit: WindowsCommandCopyExitObservation | undefined, nativeFailure: WindowsCommandCopyNativeFailure | undefined, emitted: Emitted | undefined, native: WindowsCommandCopyProofNative | undefined, fixture: ExperimentalWindowsLpacFixture | undefined,
+    lastExit: WindowsCommandCopyExitObservation | undefined, failedReport: WindowsCommandCopyFailedUsefulObservation | undefined,
+    nativeFailure: WindowsCommandCopyNativeFailure | undefined, emitted: Emitted | undefined, native: WindowsCommandCopyProofNative | undefined, fixture: ExperimentalWindowsLpacFixture | undefined,
     copy: WindowsRootOnlyCommandCopy | undefined, profile: WindowsLpacProfile | undefined, profileDeleted = false, root = "";
   const owners: WindowsCommandRootOnlyStopOwner[] = [], pins: WindowsCommandCopyProofPin[] = [], issued: unknown[] = [];
   try {
@@ -214,7 +238,12 @@ export async function observeWindowsCommandCopy(asset: WindowsCommandCopyBuiltAs
       copy = actual.selected; return copy.launchRootOnly(() => process = create("useful", actual.directory, usefulReport, ready), attest);
     }, value => { subphase = value; });
     copy = current.selected;
-    ensure(process !== undefined); await waitExited(process!, 1);
+    ensure(process !== undefined);
+    try { await waitExited(process!, 1); }
+    catch (error) {
+      await observeWindowsCommandCopyFailedUsefulExit(error, lastExit, () => current.selected.stop(), recheck,
+        () => { const pin = guarded.pin(usefulReport, 64); pins.push(pin); return pin; }, report => { failedReport = report; });
+    }
     phase = 4; subphase = 0;
     await copy.files(async entries => {
       const expected = new Map([["seed.txt", "EMBER_COMMAND_EDITED\n"], ["created.txt", "EMBER_COMMAND_CREATED\n"], ["renamed.txt", "EMBER_COMMAND_MOVE\n"], ["replace.txt", "EMBER_COMMAND_REPLACED\n"]]);
@@ -279,6 +308,6 @@ export async function observeWindowsCommandCopy(asset: WindowsCommandCopyBuiltAs
       if (typeof constructor === "function" && error instanceof constructor) { ownership = index + 1; break; }
     }
     const fileCode = emitted && typeof emitted.ScopedCodingFileError === "function" ? classifyWindowsCommandCopyFileFailure(error, emitted.ScopedCodingFileError) : 0;
-    throw new WindowsCommandCopyObservationError(phase, subphase, ownership, nativeFailure, firstBoundary, stopFailure, fileCode, lastExit);
+    throw new WindowsCommandCopyObservationError(phase, subphase, ownership, nativeFailure, firstBoundary, stopFailure, fileCode, lastExit, failedReport);
   }
 }

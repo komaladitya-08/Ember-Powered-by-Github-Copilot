@@ -237,8 +237,6 @@ The closed `fileCode` mapping is:
 | 14 | not-empty |
 | 15 | io |
 
-A fifth native matrix has not run; the fourth failure's cause remains unclassified.
-
 Before publication, the diagnostic also captures only the validated DWORD returned by the same existing guarded
 `original.exitCode` call for the admitted fixed C image. Optional `exit.code` is an integer from 0 through
 `0xffffffff`; `exit.phase=1` means the useful root and `2` means the revoked-access control. The old exact-zero
@@ -250,4 +248,33 @@ natural-exit observation: a recorded zero can coexist with a later ACL, snapshot
 identify that failure's cause.
 
 The frozen classification/exit-observation candidate passes 697 focused contracts, final composed TypeScript,
-scoped lint and diff checks. Root's actual-file review closed. No fifth native result is claimed.
+scoped lint and diff checks. Root's actual-file review closed.
+
+The fifth manual matrix at `4e0ab2a8`,
+[run 43881092204](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43881092204),
+passed 696 portable cases per image plus the expected unsupported-host guard skip; its separate portable job
+passed all 697 cases. Both native cases failed at phase `3`, subphase `4`, ownership `0`, boundary `0`, fileCode
+`0`, with `exit={phase:1,code:1}`. The useful launch promise completed and the subsequent natural-exit exact-zero
+check refused code `1`. No native-tree or Stop failure was branded. This establishes neither the failed C operation
+nor positive Stop, revocation, useful edits or complete cleanup. The fixed C program uses code `1` for its failure
+path, which attempts a numeric failure report; no report was read in that matrix.
+
+The next diagnostic applies only to that first useful root's captured natural exit `1`. It awaits the actual
+coordinator's `stop()` fulfilment, whose existing quiescence path requires the positive root-only Stop receipt,
+closed job/handles and package-grant revocation. Only then does it recheck the existing build/image/source pins,
+acquire the same writer-excluding native pin on the fixed useful report and parse exactly 64 bytes with the
+existing useful-report decoder. Only `FAILED` status `2` can produce optional `failedReport` metadata: fixed mode
+`1`, status `2`, operation `0..12`, the validated prefix feature bits and the failed-operation DWORD as `code`.
+The bytes are wiped and the report pin must close positively before this metadata is recorded.
+
+The original exit-1 refusal remains the test failure on every path. The report grants no useful-completion,
+execution or cleanup authority. A refused Stop/revocation, changed pin, absent or malformed report, wrong mode,
+complete report, uncertain acquisition/read/close or diagnostic callback cannot replace that initial error;
+the existing outer failure path retains the complete graph and requests only non-disposing Stop of known roots.
+There is no work snapshot, `files()` call, C-image change, flag change, permission change or product enablement.
+The next Windows result remains pending.
+
+This candidate passes 717 focused contracts, final composed TypeScript, scoped lint and diff checks. Its real
+coordinator/Stop composition tests hold ACL revocation pending after job closure and verify that no report pin
+is acquired until revocation fulfils; a revocation refusal retains the owner and never reads the report. Root's
+actual-file review closed. These portable checks do not establish a sixth Windows result.

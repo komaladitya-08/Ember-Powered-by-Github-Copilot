@@ -1,11 +1,12 @@
 /** Regression for the actual global test teardown: uncertain native scratch must live outside its deletion tree. */
 import { describe, expect, it } from "vitest";
 import { beginWindowsCommandCopyProof, classifyWindowsCommandCopyFileFailure, observeWindowsCommandCopyBoundary, observeWindowsCommandCopyFactory, observeWindowsCommandCopyStopOwner,
-  observeWindowsCommandCopyTree, requireWindowsCommandCopyNaturalExit, requireWindowsCommandCopyScratchParent } from "../fixtures/windows-command-copy-proof";
+  observeWindowsCommandCopyTree, observeWindowsCommandCopyFailedUsefulExit, requireWindowsCommandCopyNaturalExit, requireWindowsCommandCopyScratchParent } from "../fixtures/windows-command-copy-proof";
 import type { FreshWindowsCommandTree, FreshWindowsCommandTreeInput } from "../../app/main/agent/windows-command-copy-native";
 import type { CodingExportEntry } from "../../app/main/agent/coding-result-export";
 import type { WindowsCommandRootOnlyStoppedRef, WindowsCommandRootOnlyStopOwner } from "../../app/main/agent/windows-command-stop";
 import { ScopedCodingFileError, type ScopedCodingFileFailure } from "../../app/main/agent/coding-platform";
+import { WINDOWS_COMMAND_COPY_REPORT_MAGIC } from "../fixtures/windows-command-copy-report";
 
 describe("native root-only witness scratch lifetime", () => {
   it.each([
@@ -170,6 +171,54 @@ describe("existing exact-zero natural exit gate", () => {
   it.each([0, 1])("diagnostic callback failure cannot change the zero gate for%s", value => {
     const run = () => requireWindowsCommandCopyNaturalExit(() => value, () => { throw new Error("Fixed observer failure"); });
     if (value === 0) expect(run).not.toThrow(); else expect(run).toThrow("fixed root-only observation");
+  });
+});
+
+describe("failed useful report has only post-Stop diagnostic authority", () => {
+  function failed(mode = 1, status = 2) {
+    const bytes = Buffer.alloc(64), words = [WINDOWS_COMMAND_COPY_REPORT_MAGIC, 1, mode, status, 5, 0xf00, 5, 5, 5, 5, 0, 0, 0, 5, 0, 0];
+    words.forEach((word, index) => bytes.writeUInt32LE(word, index * 4)); return bytes;
+  }
+  it("waits for fulfilled Stop/revoke before unchanged pins, acquisition, read and positive close before publishing", async () => {
+    const events: string[] = [], seen: unknown[] = [], bytes = failed(), original = new Error("Fixed natural-exit refusal");
+    let release!: () => void;
+    const stopped = new Promise<void>(resolve => { release = resolve; });
+    const running = observeWindowsCommandCopyFailedUsefulExit(original, { phase: 1, code: 1 }, async () => {
+      events.push("stop"); await stopped; events.push("revoked");
+    }, () => { events.push("unchanged"); }, () => { events.push("acquire"); return {
+      read() { events.push("read"); return bytes; }, close() { events.push("close"); expect(bytes.every(byte => byte === 0)).toBe(true); },
+    }; }, value => { events.push("observed"); seen.push(value); });
+    const rejection = running.catch(error => error);
+    await Promise.resolve(); expect(events).toEqual(["stop"]); release(); expect(await rejection).toBe(original);
+    expect(events).toEqual(["stop", "revoked", "unchanged", "acquire", "read", "close", "observed"]);
+    expect(seen).toEqual([{ mode: 1, status: 2, operation: 5, features: 0xf00, code: 5 }]); expect(Object.isFrozen(seen[0])).toBe(true);
+  });
+  it.each([undefined, { phase: 1 as const }, { phase: 2 as const, code: 1 }, ...[0, 101, 0xc0000142, 0xffffffff].map(code => ({ phase: 1 as const, code }))])(
+    "does not start Stop or a native report operation for an unmatched exit %#", async exit => {
+      const original = new Error("Fixed unmatched refusal"), calls: string[] = [];
+      await expect(observeWindowsCommandCopyFailedUsefulExit(original, exit, async () => { calls.push("stop"); }, () => { calls.push("unchanged"); },
+        () => { calls.push("acquire"); return { read: () => failed(), close() { calls.push("close"); } }; }, () => { calls.push("observed"); })).rejects.toBe(original);
+      expect(calls).toEqual([]);
+    });
+  it.each(["stop", "unchanged", "acquire", "read", "close", "observed"])("keeps the initial refusal and stops diagnostic work at %s uncertainty", async fault => {
+    const original = new Error("Fixed natural-exit refusal"), diagnostic = new Error("Fixed private diagnostic failure"), calls: string[] = [], bytes = failed();
+    const at = (stage: string) => { calls.push(stage); if (stage === fault) throw diagnostic; };
+    await expect(observeWindowsCommandCopyFailedUsefulExit(original, { phase: 1, code: 1 }, async () => { at("stop"); }, () => { at("unchanged"); },
+      () => { at("acquire"); return { read() { at("read"); return bytes; }, close() { at("close"); } }; }, () => { at("observed"); })).rejects.toBe(original);
+    expect(calls).toEqual(["stop", "unchanged", "acquire", "read", "close", "observed"].slice(0, ["stop", "unchanged", "acquire", "read", "close", "observed"].indexOf(fault) + 1));
+    if (["close", "observed"].includes(fault)) expect(bytes.every(byte => byte === 0)).toBe(true);
+  });
+  it.each(["complete", "wrong mode", "partial", "bad schema"])("refuses %s as failed-useful evidence, wipes bytes and keeps the initial failure", async fault => {
+    const original = new Error("Fixed natural-exit refusal"), calls: string[] = [];
+    let bytes = failed();
+    if (fault === "complete") {
+      bytes.writeUInt32LE(1, 12); bytes.writeUInt32LE(19, 16); bytes.writeUInt32LE(0xfff, 20); bytes.writeUInt32LE(0, 52);
+    } else if (fault === "wrong mode") bytes = failed(3);
+    else if (fault === "partial") bytes = bytes.subarray(0, 63);
+    else bytes.writeUInt32LE(2, 4);
+    await expect(observeWindowsCommandCopyFailedUsefulExit(original, { phase: 1, code: 1 }, async () => { calls.push("stop"); }, () => { calls.push("unchanged"); },
+      () => { calls.push("acquire"); return { read() { calls.push("read"); return bytes; }, close() { calls.push("close"); } }; }, () => { calls.push("observed"); })).rejects.toBe(original);
+    expect(calls).toEqual(["stop", "unchanged", "acquire", "read", "close"]); expect(bytes.every(byte => byte === 0)).toBe(true);
   });
 });
 
