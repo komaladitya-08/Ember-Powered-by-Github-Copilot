@@ -7,7 +7,8 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { ExperimentalWindowsLpacFixture } from "../../app/main/agent/experimental-windows-lpac";
 import { loadExperimentalWindowsLpacApi, type WindowsLpacProfile, type WindowsHandle, type WindowsSuspendedProcess } from "../../app/main/agent/experimental-windows-lpac-api";
-import { loadInheritedChildObserver, InheritedChildCleanupError, inheritedChildNumericFailure, inheritedChildCompilerFailure, inheritedChildVisualStudioRange } from "../fixtures/windows-lpac-inherited-child";
+import { loadInheritedChildObserver, InheritedChildCleanupError, inheritedChildNumericFailure, inheritedChildCompilerFailure, inheritedChildVisualStudioRange,
+  INHERITED_CHILD_VARIANTS, inheritedChildReadout, inheritedChildVariantDefine, type InheritedChildVariant } from "../fixtures/windows-lpac-inherited-child";
 import { nativeChecks, WindowsNodeProofCleanupError } from "../fixtures/windows-node-lpac-proof";
 
 const required = process.env.EMBER_LPAC_INHERITED_CHILD_TEST === "1", supported = process.platform === "win32";
@@ -56,7 +57,7 @@ function writeAdmission(file: string, child: number): void {
 
 describe.skipIf(!supported && !required)("separate LPAC inherited-token child experiment", () => {
   let root = "", safeToRemove = true;
-  const executables = new Map<"explicit" | "inherited", Buffer>();
+  const executables = new Map<InheritedChildVariant, Buffer>();
   beforeAll(() => {
     expect(process.platform).toBe("win32"); expect(process.arch).toBe("x64");
     let stage = 1, variantId = 0, status: number | null = null, diagnostic = { domain: 0, code: 0 };
@@ -78,11 +79,11 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
       const selected = execFileSync(vswhere, ["-latest", "-version", visualStudioRange, "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"],
         { encoding: "utf8", env, timeout: 15_000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 32 * 1024 }).trim();
       stage = 4; const installation = ordinary(selected);
-      for (const variant of ["explicit", "inherited"] as const) {
-        variantId = variant === "explicit" ? 1 : 2; stage = 5;
+      for (const variant of INHERITED_CHILD_VARIANTS) {
+        variantId = INHERITED_CHILD_VARIANTS.indexOf(variant) + 1; stage = 5;
         const source = ordinary(path.resolve("test/fixtures", variant === "explicit" ? "experimental-windows-lpac.c" : "experimental-windows-lpac-inherited.c"));
         const output = ordinary(path.join(build, `${variant}.exe`)), object = ordinary(path.join(build, `${variant}.obj`)), command = path.join(build, `${variant}.cmd`);
-        fs.writeFileSync(command, `@echo off\r\ncall "${path.join(installation, "VC", "Auxiliary", "Build", "vcvars64.bat")}" >nul\r\nif errorlevel 1 exit /b 1\r\ncl.exe /nologo /O1 /GS- /Zl /Fo"${object}" /Fe"${output}" "${source}" /link /NODEFAULTLIB /ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE kernel32.lib advapi32.lib\r\n`, { flag: "wx" });
+        fs.writeFileSync(command, `@echo off\r\ncall "${path.join(installation, "VC", "Auxiliary", "Build", "vcvars64.bat")}" >nul\r\nif errorlevel 1 exit /b 1\r\ncl.exe /nologo /O1 /GS- /Zl ${inheritedChildVariantDefine(variant)} /Fo"${object}" /Fe"${output}" "${source}" /link /NODEFAULTLIB /ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE kernel32.lib advapi32.lib\r\n`, { flag: "wx" });
         stage = 6;
         const built = spawnSync(env.ComSpec!, ["/d", "/s", "/c", `""${command}""`], { env, encoding: "utf8", timeout: 60_000,
           windowsHide: true, windowsVerbatimArguments: true, maxBuffer: 256 * 1024 });
@@ -101,14 +102,14 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
       // eslint-disable-next-line preserve-caught-error -- Compiler/native errors may contain private paths; only the closed numeric receipt may leave this fixture.
       throw new Error("The fixed inherited-child fixture compilation failed; synthetic build scratch retained.");
     }
-  }, 150_000);
+  }, 210_000); // Three independent compiler children retain their existing 60s limits, plus discovery/setup.
   afterAll(() => {
     for (const bytes of executables.values()) bytes.fill(0);
     if (root && safeToRemove) try { fs.rmSync(root, { recursive: true, force: true }); }
     catch { safeToRemove = false; throw new InheritedChildCleanupError(); }
   });
 
-  async function run(variant: "explicit" | "inherited") {
+  async function run(variant: InheritedChildVariant) {
     if (retainedOwners.length) throw new InheritedChildCleanupError();
     let api: ReturnType<typeof loadExperimentalWindowsLpacApi>, observer: ReturnType<typeof loadInheritedChildObserver>, native: ReturnType<typeof nativeChecks>;
     try { api = loadExperimentalWindowsLpacApi(); observer = loadInheritedChildObserver(); native = nativeChecks(api); }
@@ -136,13 +137,13 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
       });
     } catch (error) {
       safeToRemove = false; retainedOwners.push({ api, observer, parent, profile, job, process });
-      console.info("Inherited-child preparation refusal", JSON.stringify({ variant: variant === "explicit" ? 1 : 2,
+      console.info("Inherited-child preparation refusal", JSON.stringify({ variant: INHERITED_CHILD_VARIANTS.indexOf(variant) + 1,
         ...(preparationFailure ?? { operation: 0, ...inheritedChildNumericFailure(error) }), launchAttempted: false }));
       throw fixedFailure();
     }
     let unsafe = false, stopped = false, failed = false, child: number | null = null, descendantRemained = false, hostOperation = 0;
     let imagePin: ReturnType<ReturnType<typeof nativeChecks>["pin"]> | undefined;
-    let outcome: { mode: "explicit" | "inherited"; rootExit: number; report: number[] | null; failure: number[] | null; jobStopped: true; membersStopped: true; admitted: boolean; descendantRemained: boolean; profilePaths: boolean } | undefined;
+    let outcome: { mode: InheritedChildVariant; rootExit: number; report: number[] | null; failure: number[] | null; jobStopped: true; membersStopped: true; admitted: boolean; descendantRemained: boolean; profilePaths: boolean } | undefined;
     const previous = processEnvMarker();
     try {
       hostOperation = 1;
@@ -155,11 +156,12 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
       hostOperation = 2;
       await fixture.launch([String(globalThis.process.pid)]);
       if (!process || !job || !profile) throw fixedFailure();
-      if (variant === "inherited") {
+      if (variant !== "explicit") {
         const deadline = performance.now() + 10_000;
         while (child === null) {
           hostOperation = 3;
-          if (api.exited(process.process) || performance.now() >= deadline) throw fixedFailure();
+          if (api.exited(process.process)) break; // A natural C denial is returned for explicit assertions, never treated as a successful admission.
+          if (performance.now() >= deadline) throw fixedFailure();
           const exactProcess = process, exactJob = job, exactProfile = profile;
           hostOperation = 4;
           child = observer.admit({ job: exactJob, rootProcess: exactProcess.process, rootPid: exactProcess.pid, image: fixture.paths.program,
@@ -172,7 +174,7 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
       }
       hostOperation = 5;
       await fixture.waitRootExited(15_000);
-      if (variant === "inherited") {
+      if (child !== null) {
         hostOperation = 6;
         const deadline = performance.now() + 15_000;
         let observed = false;
@@ -195,6 +197,8 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
       try { const lease = await fixture.stop(15_000); lease.requireStopped(); observer.requireStopped(); stopped = true; } catch { unsafe = true; }
       if (stopped && !unsafe) try {
         imagePin?.unchanged();
+        const rootExit = fixture.exitCode();
+        outcome = inheritedChildReadout(rootExit, () => {
         const report = reportWords(path.join(fixture.paths.state, "report.bin"), 12), diagnostic = reportWords(path.join(fixture.paths.state, "failure.bin"), 25);
         let profilePaths = false;
         if (report) {
@@ -204,7 +208,8 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
             try { profilePaths &&= !!bytes && bytes.toString("utf16le").toLowerCase() === expected.toLowerCase(); } finally { bytes?.fill(0); }
           }
         }
-        outcome = { mode: variant, rootExit: fixture.exitCode(), report, failure: diagnostic, jobStopped: true, membersStopped: true, admitted: child !== null, descendantRemained, profilePaths };
+        return { mode: variant, rootExit, report, failure: diagnostic, jobStopped: true as const, membersStopped: true as const, admitted: child !== null, descendantRemained, profilePaths };
+        });
       } catch (error) { failed = true; if (error instanceof InheritedChildCleanupError) unsafe = true; }
       if (!unsafe) try { observer.closeStopped(); } catch { unsafe = true; }
       if (!unsafe && imagePin) try { imagePin.unchanged(); imagePin.close(); imagePin = undefined; } catch { unsafe = true; }
@@ -213,27 +218,30 @@ describe.skipIf(!supported && !required)("separate LPAC inherited-token child ex
     }
     if (unsafe) throw new InheritedChildCleanupError();
     if (!outcome) throw fixedFailure();
-    if (failed) {
+    if (failed || outcome.failure) {
       console.info("Stopped inherited-child refusal", JSON.stringify({ mode: variant, rootExit: outcome.rootExit, jobStopped: true, stage: outcome.failure?.[0] ?? null,
-        error: outcome.failure?.[1] ?? null, childNtStatus: outcome.failure?.[24] ?? null, hostOperation, observer: observer.observation() }));
-      throw fixedFailure();
+        error: outcome.failure?.[1] ?? null, childNtStatus: outcome.failure?.[24] ?? null, hostOperation, observer: observer.observation(),
+        ...(outcome.failure ? { checks: outcome.failure.slice(2, 11), childPidRecorded: outcome.failure[11] !== 0,
+          workAndTemp: outcome.failure.slice(12, 14), imageExecute: outcome.failure.slice(14, 16), selfCreateProcess: outcome.failure.slice(16, 18),
+          childPolicy: outcome.failure.slice(18, 20), defaultDaclAccess: outcome.failure.slice(20, 24) } : {}) }));
     }
+    if (failed) throw fixedFailure();
     return outcome;
   }
-  it("preserves the separately compiled original explicit-attribute denial as an observed control", async () => {
-    const result = await run("explicit"); expect(result.rootExit).toBe(18); expect(result.report === null).toBe(true);
+  it.each(["explicit", "inherited"] as const)("preserves the separately compiled %s denial as an observed control", async variant => {
+    const result = await run(variant); expect(result.rootExit).toBe(18); expect(result.report === null).toBe(true);
     expect(result.failure?.slice(0, 2)).toEqual([18, 5]); expect(result.failure?.[24]).toBe(0xc0000022);
     expect(result.failure?.slice(2, 11)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1]);
     expect(result.failure?.[11] === 0).toBe(true); expect(result.failure?.slice(12, 14)).toEqual([1, 0]);
-    console.info("Stopped explicit child control", JSON.stringify({ mode: "explicit", rootExit: 18, stage: 18, error: 5, childNtStatus: 0xc0000022, jobStopped: true }));
+    expect(result.admitted).toBe(false); expect(result.descendantRemained).toBe(false);
   }, 45_000);
-  it("admits only a suspended exact-package inherited child in the private job and observes it outlive the root before Stop", async () => {
-    const result = await run("inherited"); expect(result.rootExit).toBe(0); expect(result.failure === null).toBe(true);
+  it("admits only a suspended exact-package AAP-only inherited child and observes it outlive the root before Stop", async () => {
+    const result = await run("aap-only"); expect(result.rootExit).toBe(0); expect(result.failure === null).toBe(true);
     expect(result.report?.slice(0, 9)).toEqual([1, 1, 1, 1, 1, 1, 1, 1, 1]); expect((result.report?.[9] ?? 0) > 0).toBe(true);
     expect(result.report?.slice(10)).toEqual([1, 1]);
     expect({ admitted: result.admitted, descendantRemained: result.descendantRemained, profilePaths: result.profilePaths,
       jobStopped: result.jobStopped, membersStopped: result.membersStopped }).toEqual({ admitted: true, descendantRemained: true, profilePaths: true, jobStopped: true, membersStopped: true });
-    console.info("Stopped inherited child result", JSON.stringify({ mode: "inherited", rootExit: 0, jobStopped: true, membersStopped: true, admitted: true, descendantRemained: true, allChecks: true, profilePaths: true }));
+    console.info("Stopped inherited child result", JSON.stringify({ mode: "aap-only", rootExit: 0, jobStopped: true, membersStopped: true, admitted: true, descendantRemained: true, allChecks: true, profilePaths: true }));
   }, 45_000);
 });
 

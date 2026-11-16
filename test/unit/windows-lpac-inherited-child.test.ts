@@ -3,9 +3,24 @@ import fs from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { bindInheritedChildObserver, INHERITED_CHILD_FUNCTIONS, InheritedChildCleanupError,
   inheritedChildNumericFailure, inheritedChildCompilerFailure, inheritedChildVisualStudioRange,
+  INHERITED_CHILD_VARIANTS, INHERITED_CHILD_UNCERTAIN_CLEANUP_EXIT, inheritedChildReadout, inheritedChildVariantDefine,
   type InheritedChildAdmission, type InheritedChildFence } from "../fixtures/windows-lpac-inherited-child";
 
 describe("inherited-child closed setup diagnostics", () => {
+  it("isolates the two observed controls from the one fixed AAP-only compiler selection", () => {
+    expect(INHERITED_CHILD_VARIANTS).toEqual(["explicit", "inherited", "aap-only"]);
+    expect(inheritedChildVariantDefine("explicit")).toBe(""); expect(inheritedChildVariantDefine("inherited")).toBe("");
+    expect(inheritedChildVariantDefine("aap-only")).toBe("/DEMBER_LPAC_CHILD_AAP_ONLY=1");
+    for (const value of [null, {}, "aap-only /DPRIVATE=1", "other"]) expect(() => inheritedChildVariantDefine(value)).toThrow("fixed reviewed");
+  });
+  it.each([31, NaN, -1, 0x100000000])("fences terminal/unknown C cleanup before invoking any payload reader (%s)", code => {
+    const read = vi.fn(() => "synthetic private payload");
+    expect(INHERITED_CHILD_UNCERTAIN_CLEANUP_EXIT).toBe(31);
+    expect(() => inheritedChildReadout(code, read)).toThrow(InheritedChildCleanupError); expect(read).not.toHaveBeenCalled();
+  });
+  it.each([0, 18, 30, 32])("keeps ordinary stopped C outcomes available for explicit assertions (%s)", code => {
+    const read = vi.fn(() => 42); expect(inheritedChildReadout(code, read)).toBe(42); expect(read).toHaveBeenCalledOnce();
+  });
   it("accepts only the two reviewed compiler image ranges", () => {
     expect(inheritedChildVisualStudioRange(undefined)).toBe("[17.0,18.0)");
     expect(inheritedChildVisualStudioRange("windows-2022")).toBe("[17.0,18.0)");
@@ -294,13 +309,46 @@ describe("separate fixed inherited-child C fixture", () => {
     expect(body.indexOf("awaitInheritedChildAdmission(child.dwProcessId")).toBeLessThan(body.indexOf("ResumeThread(child.hThread)"));
   });
   it("uses plain inherited-token creation without capabilities, policy overrides or inherited handles", () => {
-    const spawn = inherited.slice(inherited.indexOf("static BOOL spawnInherited("), inherited.indexOf("static BOOL awaitInheritedChildAdmission("));
+    const wrapper = inherited.slice(inherited.indexOf("static BOOL spawnInherited("), inherited.indexOf("static BOOL awaitInheritedChildAdmission("));
+    const spawn = wrapper.slice(wrapper.indexOf("#else\n"), wrapper.indexOf("#endif"));
     expect(spawn).toContain("STARTUPINFOW startup;"); expect(spawn).toContain("startup.cb = sizeof(startup);");
     expect(spawn).toContain("CreateProcessW(selfPath, commandLine, &childAttributes, &childAttributes, FALSE,");
     expect(spawn).toContain("flags | CREATE_NO_WINDOW | CREATE_SUSPENDED,"); expect(spawn).toContain("NULL, NULL, &startup, process);");
     expect(spawn).not.toMatch(/STARTUPINFOEX|EXTENDED_STARTUPINFO|SECURITY_CAPABILITIES|UpdateProcThreadAttribute|SetTokenInformation|CREATE_BREAKAWAY_FROM_JOB/);
     const body = inherited.slice(inherited.indexOf(main)); expect(body).toContain("spawnInherited(CREATE_BREAKAWAY_FROM_JOB, &unexpected, &error)");
     expect(body).toContain("spawnInherited(0, &child, &error)");
+  });
+  it("adds exactly one AAP opt-out attribute in its separate fixed branch while preserving token/flags/security", () => {
+    const wrapper = inherited.slice(inherited.indexOf("static BOOL spawnInherited("), inherited.indexOf("static BOOL awaitInheritedChildAdmission("));
+    const policy = wrapper.slice(wrapper.indexOf("#if EMBER_LPAC_CHILD_AAP_ONLY"), wrapper.indexOf("#else\n"));
+    expect(inherited).toContain("#define EMBER_LPAC_CHILD_AAP_ONLY 0");
+    expect(inherited).toContain("#if EMBER_LPAC_CHILD_AAP_ONLY != 0 && EMBER_LPAC_CHILD_AAP_ONLY != 1");
+    expect(policy).toContain("STARTUPINFOEXW startup;"); expect(policy).toContain("DWORD policy = 1;");
+    expect(policy.match(/UpdateProcThreadAttribute\(/g)).toHaveLength(1);
+    expect(policy).toContain("InitializeProcThreadAttributeList(NULL, 1, 0, &bytes)");
+    expect(policy).toContain("InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &bytes)");
+    expect(policy).toContain("UpdateProcThreadAttribute(startup.lpAttributeList, 0, (DWORD_PTR)0x2000f,");
+    expect(policy).toContain("&policy, sizeof(policy), NULL, NULL)");
+    expect(policy).toContain("CreateProcessW(selfPath, commandLine, &childAttributes, &childAttributes, FALSE,");
+    expect(policy).toContain("flags | CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT,");
+    expect(policy).toContain("NULL, NULL, &startup.StartupInfo, process)");
+    expect(policy).not.toMatch(/SECURITY_CAPABILITIES|AppContainerSid|SetTokenInformation|CreateRestrictedToken|CHILD_PROCESS_OVERRIDE|SetSecurity/);
+    expect(policy.match(/if \(LocalFree\(startup\.lpAttributeList\) != NULL\)/g)).toHaveLength(3);
+  });
+  it("never returns a born child as a FALSE/expected-denial after attribute cleanup failure", () => {
+    const wrapper = inherited.slice(inherited.indexOf("static BOOL spawnInherited("), inherited.indexOf("static BOOL awaitInheritedChildAdmission("));
+    const policy = wrapper.slice(wrapper.indexOf("#if EMBER_LPAC_CHILD_AAP_ONLY"), wrapper.indexOf("#else\n"));
+    const postCreate = policy.slice(policy.indexOf("created = CreateProcessW("));
+    expect(postCreate).toContain("if (created) {");
+    expect(postCreate).toContain("if (!stopAapCreatedChild(process, &stopped)) aapCreationRefusal(31, stopped);");
+    expect(postCreate).toContain("aapCreationRefusal(30, failure);"); expect(postCreate).toContain("aapCreationRefusal(32, failure);");
+    expect(postCreate).not.toContain("return FALSE"); expect(postCreate).toContain("return created;");
+    const shutdown = inherited.slice(inherited.indexOf("static BOOL stopAapCreatedChild("), inherited.indexOf("static __declspec(noreturn) void aapCreationRefusal("));
+    expect(shutdown).toContain("TerminateProcess(process->hProcess, 125)"); expect(shutdown).toContain("WaitForSingleObject(process->hProcess, 5000)");
+    expect(shutdown).toContain("if (waited != WAIT_OBJECT_0)"); expect(shutdown).toContain("if (!CloseHandle(process->hThread))");
+    expect(shutdown).toContain("if (!CloseHandle(process->hProcess))"); expect(shutdown).toContain("return failure == 0;");
+    expect(inherited).toContain("static __declspec(noreturn) void aapCreationRefusal(DWORD stage, DWORD error)");
+    expect(inherited).toContain("ExitProcess(stage);");
   });
   it("accepts only a bounded fresh ordinary exact-PID acknowledgement with EOF and checked close", () => {
     const admission = inherited.slice(inherited.indexOf("static BOOL awaitInheritedChildAdmission("), inherited.indexOf(main));

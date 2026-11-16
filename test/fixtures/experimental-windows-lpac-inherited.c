@@ -7,9 +7,93 @@
 #include "experimental-windows-lpac.c"
 #undef mainCRTStartup
 
+#ifndef EMBER_LPAC_CHILD_AAP_ONLY
+#define EMBER_LPAC_CHILD_AAP_ONLY 0
+#endif
+#if EMBER_LPAC_CHILD_AAP_ONLY != 0 && EMBER_LPAC_CHILD_AAP_ONLY != 1
+#error The fixed child-creation probe accepts only its two reviewed variants.
+#endif
+
+#if EMBER_LPAC_CHILD_AAP_ONLY
+static DWORD aapNativeError(void)
+{
+    DWORD error = GetLastError();
+    return error ? error : ERROR_INVALID_DATA;
+}
+
+/* Only the exceptional attribute-cleanup path uses this stricter owned-child shutdown. */
+static BOOL stopAapCreatedChild(PROCESS_INFORMATION *process, DWORD *error)
+{
+    DWORD waited = WaitForSingleObject(process->hProcess, 0), failure = 0;
+    if (waited == WAIT_TIMEOUT) {
+        if (!TerminateProcess(process->hProcess, 125)) { *error = aapNativeError(); return FALSE; }
+        waited = WaitForSingleObject(process->hProcess, 5000);
+    }
+    if (waited != WAIT_OBJECT_0) {
+        *error = waited == WAIT_FAILED ? aapNativeError() : waited == WAIT_TIMEOUT ? ERROR_TIMEOUT : ERROR_INVALID_DATA;
+        return FALSE;
+    }
+    if (!CloseHandle(process->hThread)) failure = aapNativeError(); else process->hThread = NULL;
+    if (!CloseHandle(process->hProcess)) { if (!failure) failure = aapNativeError(); } else process->hProcess = NULL;
+    *error = failure;
+    return failure == 0;
+}
+
+static __declspec(noreturn) void aapCreationRefusal(DWORD stage, DWORD error)
+{
+    recordFailure(stage, error ? error : ERROR_INVALID_DATA);
+    ExitProcess(stage);
+}
+#endif
+
 /* Ordinary CreateProcess inherits the current token; suspended admission verifies the actual result, never an assumption. */
 static BOOL spawnInherited(DWORD flags, PROCESS_INFORMATION *process, DWORD *error)
 {
+#if EMBER_LPAC_CHILD_AAP_ONLY
+    STARTUPINFOEXW startup;
+    SIZE_T bytes = 0;
+    DWORD policy = 1;
+    BOOL created;
+    memset(&startup, 0, sizeof(startup));
+    memset(process, 0, sizeof(*process));
+    childNtStatus = MAXDWORD;
+    startup.StartupInfo.cb = sizeof(startup);
+    commandLine[0] = 0;
+    if (!append(commandLine, L"\"") || !append(commandLine, selfPath) || !append(commandLine, L"\" child")) {
+        aapCreationRefusal(32, ERROR_FILENAME_EXCED_RANGE);
+    }
+    if (InitializeProcThreadAttributeList(NULL, 1, 0, &bytes) || GetLastError() != ERROR_INSUFFICIENT_BUFFER
+        || bytes == 0 || bytes > 65536) aapCreationRefusal(32, ERROR_INVALID_DATA);
+    startup.lpAttributeList = (LPPROC_THREAD_ATTRIBUTE_LIST)LocalAlloc(LPTR, bytes);
+    if (startup.lpAttributeList == NULL) aapCreationRefusal(32, ERROR_NOT_ENOUGH_MEMORY);
+    if (!InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &bytes)) {
+        DWORD failure = aapNativeError();
+        if (LocalFree(startup.lpAttributeList) != NULL) failure = aapNativeError();
+        aapCreationRefusal(32, failure);
+    }
+    /* Inherit the existing token, adding only the documented AAP opt-out selection. No new lowbox/capabilities. */
+    if (!UpdateProcThreadAttribute(startup.lpAttributeList, 0, (DWORD_PTR)0x2000f,
+                                   &policy, sizeof(policy), NULL, NULL)) {
+        DWORD failure = aapNativeError(); DeleteProcThreadAttributeList(startup.lpAttributeList);
+        if (LocalFree(startup.lpAttributeList) != NULL) failure = aapNativeError();
+        aapCreationRefusal(32, failure);
+    }
+    created = CreateProcessW(selfPath, commandLine, &childAttributes, &childAttributes, FALSE,
+                             flags | CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT,
+                             NULL, NULL, &startup.StartupInfo, process);
+    *error = created ? ERROR_SUCCESS : GetLastError();
+    childNtStatus = created ? 0 : getLastNtStatus ? (DWORD)getLastNtStatus() : MAXDWORD;
+    DeleteProcThreadAttributeList(startup.lpAttributeList);
+    if (LocalFree(startup.lpAttributeList) != NULL) {
+        DWORD failure = aapNativeError(), stopped = 0;
+        if (created) {
+            if (!stopAapCreatedChild(process, &stopped)) aapCreationRefusal(31, stopped);
+            aapCreationRefusal(30, failure);
+        }
+        aapCreationRefusal(32, failure);
+    }
+    return created;
+#else
     STARTUPINFOW startup;
     BOOL created;
     memset(&startup, 0, sizeof(startup));
@@ -26,6 +110,7 @@ static BOOL spawnInherited(DWORD flags, PROCESS_INFORMATION *process, DWORD *err
     *error = created ? ERROR_SUCCESS : GetLastError();
     childNtStatus = created ? 0 : getLastNtStatus ? (DWORD)getLastNtStatus() : MAXDWORD;
     return created;
+#endif
 }
 
 /* No path, SID, text or report is returned. Only the host's exact eight-byte fresh acknowledgement can admit this PID. */

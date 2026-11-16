@@ -41,7 +41,7 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - name: Inherited-child admission and existing native fixture lifecycle contracts
         run: npm test -- test/unit/windows-lpac-inherited-child.test.ts test/unit/experimental-windows-lpac.test.ts test/unit/experimental-windows-lpac-api.test.ts --maxWorkers=1
-      - name: Independent original denial control and fully checked inherited-child experiment
+      - name: Original and plain denial controls plus fully checked AAP-only inherited child
         run: node scripts/run-integration.mjs test/integration/windows-lpac-inherited-child-native.test.ts
         env:
           EMBER_LPAC_INHERITED_CHILD_TEST: "1"

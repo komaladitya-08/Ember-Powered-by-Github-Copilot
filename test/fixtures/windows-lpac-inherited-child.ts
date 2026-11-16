@@ -4,6 +4,16 @@ import type * as Koffi from "koffi";
 import type { WindowsHandle } from "../../app/main/agent/experimental-windows-lpac-api";
 
 type NativeFunction = (...args: unknown[]) => unknown;
+export const INHERITED_CHILD_VARIANTS = ["explicit", "inherited", "aap-only"] as const;
+export type InheritedChildVariant = (typeof INHERITED_CHILD_VARIANTS)[number];
+/** The fixed C program could not prove an already-created child's termination/handle cleanup. Never read its payload. */
+export const INHERITED_CHILD_UNCERTAIN_CLEANUP_EXIT = 31;
+/** Fixed compiler selection only; no arbitrary definitions or command-line input are accepted. */
+export function inheritedChildVariantDefine(value: unknown): string {
+  if (value === "explicit" || value === "inherited") return "";
+  if (value === "aap-only") return "/DEMBER_LPAC_CHILD_AAP_ONLY=1";
+  throw new Error("Select one fixed reviewed LPAC child variant.");
+}
 /** Closed host-side diagnostics. No native text, path, SID or arbitrary errno string is returned. */
 export function inheritedChildNumericFailure(error: unknown): { domain: number; code: number } {
   const unknown = { domain: 0, code: 0 };
@@ -33,6 +43,11 @@ const MAX_PIDS = 8;
 const failure = () => new Error("The inherited-child probe could not verify its fixed native admission contract.");
 export class InheritedChildCleanupError extends Error {
   constructor() { super("The inherited-child probe could not verify handle cleanup; retain its private fixture."); this.name = "InheritedChildCleanupError"; }
+}
+/** This is an additional C-exit gate; the caller must already hold the whole-job and retained-handle Stop proof. */
+export function inheritedChildReadout<T>(rootExit: number, read: () => T): T {
+  if (!Number.isInteger(rootExit) || rootExit < 0 || rootExit > 0xffffffff || rootExit === INHERITED_CHILD_UNCERTAIN_CLEANUP_EXIT) throw new InheritedChildCleanupError();
+  return read();
 }
 export interface InheritedChildFence { failure?: InheritedChildCleanupError; retained: unknown[] }
 const processFence: InheritedChildFence = { retained: [] };

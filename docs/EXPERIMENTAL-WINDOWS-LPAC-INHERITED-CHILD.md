@@ -1,6 +1,6 @@
 # Separate inherited-token LPAC child experiment
 
-This fixture tests a specific child-creation hypothesis. It changes no product gate, process token, capability,
+This fixture tests a specific child-creation hypothesis. It changes no product gate, existing process token, capability,
 existing ACL, registry policy or desktop permission. The original explicit-attribute C fixture and acceptance test
 remain unchanged and are compiled as a separate observed failure control.
 
@@ -14,8 +14,8 @@ It separately restricts [NtCreateLowBoxToken callers](https://learn.microsoft.co
 to medium-or-higher integrity. Reconstructing an AppContainer from an already low-integrity LPAC is therefore a
 testable hypothesis, not an established explanation of the exact internal `CreateProcessW` branch.
 
-The separate fixture includes the original helpers and preserves its complete assertion body. It substitutes a plain
-`STARTUPINFOW` launch for the two child attempts and adds a host admission gate before resuming the ordinary child.
+The separate fixture includes the original helpers and preserves its complete assertion body. Its default branch
+substitutes a plain `STARTUPINFOW` launch for the two child attempts and adds a host admission gate before resuming the ordinary child.
 Image, writable command line, explicit new-process/thread security, current directory, environment, no-window and
 suspended creation, breakaway attempt and zero inherited handles remain the same. There is no runtime fallback to
 ordinary AppContainer, a different package or a broader capability set.
@@ -56,7 +56,7 @@ $env:EMBER_LPAC_INHERITED_CHILD_TEST = "1"
 node scripts/run-integration.mjs test/integration/windows-lpac-inherited-child-native.test.ts
 ```
 
-`experimental-windows-lpac-inherited-child.yml` runs both variants on Server 2022 and 2025. An explicitly configured
+`experimental-windows-lpac-inherited-child.yml` runs all three variants on Server 2022 and 2025. An explicitly configured
 unsupported host, missing compiler, unexpected original-control outcome or failed inherited assertion fails; none is
 converted into a skip. Native outcomes remain pending until an exact workflow commit completes. A positive result
 would establish this fixed inherited-child sequence, not arbitrary Node child-process, named-pipe or toolchain support.
@@ -68,7 +68,7 @@ The Server 2025 image's installed VS 2026 version is recorded in the runner mani
 
 Setup refusals print only fixed numeric operation/domain/code fields and `launchAttempted:false`. Build stages are
 1 scratch, 2 environment/image declaration, 3 compiler discovery, 4 discovery-path validation, 5 fixed batch creation,
-6 compiler child completion, and 7 executable readback. Variant 1 is the original control and 2 is inherited.
+6 compiler child completion, and 7 executable readback. Variant 1 is the original control, 2 plain inherited and 3 AAP-only.
 Preparation operation 1 is volume type, 2 ancestor pin, 3 profile creation, 4 owner query, 5 directory creation,
 6 fixed executable creation, 7 handle close and 8 profile removal; operation 0 means an unclassified host validation.
 Domain 0 is unknown, 1 is the fixed Node errno ordinal (EACCES, EPERM, ENOENT, EEXIST, ENOTDIR, ELOOP, ETIMEDOUT,
@@ -90,6 +90,31 @@ path shape (0 other, 1 drive, 2 extended drive, 3 native device, 4 UNC), basenam
 Those are diagnostic facts; only the original exact image comparison admits the child. No spelling class or
 prefix equivalence bypasses image verification.
 
+The third, separately compiled `aap-only` variant selects `EMBER_LPAC_CHILD_AAP_ONLY=1`. It uses `STARTUPINFOEXW`
+with exactly one AAP opt-out attribute set to 1, without a `SECURITY_CAPABILITIES` attribute or new token construction.
+All arguments, process/thread security, inherited-handle denial, current directory, environment, no-window/suspended
+flags, breakaway attempt, child attestations and Stop/readout rules remain the same. Both controls compile with no
+override: explicit uses the original source and plain uses the unchanged default branch. Only the AAP-only inherited
+build adds `EXTENDED_STARTUPINFO_PRESENT`.
+
+Microsoft documents [generic AppContainer child inheritance](https://learn.microsoft.com/en-us/windows/win32/secauthz/appcontainer-for-legacy-applications-)
+and the [separate LPAC AAP opt-out creation attribute](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer#launching-the-appcontainer-or-lpac).
+Neither establishes that an already-LPAC caller must repeat that attribute or that omission necessarily escalates a
+child. Microsoft's [OpenVMM implementation](https://github.com/microsoft/openvmm/blob/e6b458cc032208448d16c529ef973f0cee7c23e1/support/pal/src/windows/process.rs#L873)
+supports AAP opt-out independently of an existing/default token, without constructing security capabilities. This
+is precedent for the API combination, not a guarantee of LPAC-parent compatibility. The third variant tests that
+single remaining creation-policy combination; success or failure must be established by its exact native run.
+
+Attribute setup or cleanup cannot masquerade as a `CreateProcessW` denial. AAP-only setup failures terminate with
+stage 32. If process creation succeeds and later attribute memory cleanup fails, the fixture strictly terminates,
+waits for and closes that exact known child, then exits with refusal 30 instead of returning FALSE. This also keeps
+an unexpected breakaway creation from becoming an apparent access-denied control. Any unverified born-child stop
+or handle close exits 31; the host's additional readout gate blocks every report/path reader and retains all owners
+and pins on that status. The ordinary child never resumes after such a cleanup failure.
+
+Each of the three compiler children retains its 60-second bound. Setup allows their combined bounds plus discovery;
+root, acknowledgement, admission, independent-stop and runtime test deadlines remain unchanged.
+
 At `5dff8e203462e6f3f65ffcfc461cbc4013142f39`, [run 43819235798](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43819235798)
 passed 82 portable tests and the original explicit-attribute denial control on each Server image. Both inherited
 cases stopped cleanly after a host-side admission refusal, with no C result/failure report. That outcome establishes
@@ -100,3 +125,8 @@ passed 99 portable tests and both original controls. Both refused the first extr
 its closed basename class identified the Windows console helper. The bounded multi-member owner above preserves
 the actual launch flags and intended-child attestations while accounting for that helper. Native success for this
 owner remains pending until its exact workflow revision completes.
+At `c4fad9a996532703f29ad4f92def99d6937d9b47`, [run 43823916066](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43823916066)
+passed 108 portable tests per image and the original control. After accounting for auxiliary members, the plain
+inherited call itself exited naturally at stage 18 with error 5 and status `0xc0000022` on both images. All contained
+processes and retained handles stopped and closed before that receipt. Plain inheritance alone therefore did not
+resolve creation. The original and plain outcomes are retained as explicit negative controls for the AAP-only test.
