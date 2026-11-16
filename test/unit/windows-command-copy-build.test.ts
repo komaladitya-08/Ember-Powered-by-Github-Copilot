@@ -160,7 +160,7 @@ describe("bounded x64 console PE admission", () => {
   it("refuses concurrently mutable shared-backed PE input", () => { const shared = Buffer.from(new SharedArrayBuffer(1024)); pe().copy(shared); expect(() => validateWindowsCommandCopyProofPe(shared)).toThrow(); });
 });
 
-it("captures and reconciles the actual graph, excludes node_modules, and bundles the nine default CJS exports", async () => {
+it("captures and reconciles the actual graph, excludes node_modules, and bundles the ten default CJS exports", async () => {
   const repo = fs.realpathSync.native(fileURLToPath(new URL("../../", import.meta.url))), directory = fs.mkdtempSync(path.join(repo, ".ember-root-copy-build-unit-")), output = path.join(directory, "proof.cjs");
   try {
     const snapshot = (file: string) => { const bytes = fs.readFileSync(file); return { path: file, bytes, size: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") }; };
@@ -179,10 +179,13 @@ it("captures and reconciles the actual graph, excludes node_modules, and bundles
     expect(() => capture.reconcile(uncaptured)).toThrow(WindowsCommandCopyBuildError);
     expect(built.outputFiles).toHaveLength(1); fs.writeFileSync(output, built.outputFiles![0].contents, { flag: "wx" });
     const actual = createRequire(import.meta.url)(output);
-    expect(Object.keys(actual).sort()).toEqual(["WindowsCommandCopyCleanupError", "WindowsCommandRootOnlyCleanupError", "WindowsRootOnlyCommandCopy", "WindowsRootOnlyCommandCopyCleanupError", "createWindowsCommandRootOnlyStopOwner", "requireWindowsCommandRootOnlyStopped", "loadWindowsCommandCopyProofNative", "WindowsCommandCopyProofCleanupError", "createFreshWindowsCommandTree"].sort());
+    expect(Object.keys(actual).sort()).toEqual(["WindowsCommandCopyCleanupError", "WindowsCommandRootOnlyCleanupError", "WindowsRootOnlyCommandCopy", "WindowsRootOnlyCommandCopyCleanupError", "createWindowsCommandRootOnlyStopOwner", "requireWindowsCommandRootOnlyStopped", "loadWindowsCommandCopyProofNative", "WindowsCommandCopyProofCleanupError", "createFreshWindowsCommandTree", "windowsCommandCopyNativeFailure"].sort());
     expect(typeof actual.WindowsRootOnlyCommandCopy.create).toBe("function"); expect(typeof actual.createWindowsCommandRootOnlyStopOwner).toBe("function");
     expect(typeof actual.loadWindowsCommandCopyProofNative).toBe("function");
     expect(typeof actual.createFreshWindowsCommandTree).toBe("function");
+    expect(typeof actual.windowsCommandCopyNativeFailure).toBe("function");
+    expect(actual.windowsCommandCopyNativeFailure(new Error(SECRET))).toBeUndefined();
+    expect(actual.windowsCommandCopyNativeFailure(new actual.WindowsCommandCopyCleanupError())).toBeUndefined();
     expect(() => actual.requireWindowsCommandRootOnlyStopped({}, {})).toThrow();
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });

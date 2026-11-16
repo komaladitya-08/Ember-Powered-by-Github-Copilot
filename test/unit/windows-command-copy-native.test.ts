@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { runInNewContext } from "node:vm";
 import { transformSync } from "esbuild";
 import { expect, it } from "vitest";
-import { bindWindowsCommandCopyNative, createFreshWindowsCommandTree, WindowsCommandCopyCleanupError, type FreshWindowsCommandTreeInput } from "../../app/main/agent/windows-command-copy-native";
+import { bindWindowsCommandCopyNative, createFreshWindowsCommandTree, WindowsCommandCopyCleanupError, windowsCommandCopyNativeFailure, type FreshWindowsCommandTreeInput } from "../../app/main/agent/windows-command-copy-native";
 import { ScopedCodingFileError } from "../../app/main/agent/coding-platform";
 import type { CodingExportEntry } from "../../app/main/agent/coding-result-export";
 const OWNER = "S-1-5-21-1-2-3-1001", SYSTEM = "S-1-5-18", PACKAGE = "S-1-15-2-1234-5678";
@@ -99,8 +99,135 @@ function setup() {
   const load = () => ({ func(prototype: string) { const name = /\b(\w+)\s*\(/.exec(prototype)![1]; return (...args: unknown[]) => { calls.push({ name, args }); const handler = handlers[name]; if (!handler) throw new Error("unexpected native test call"); return handler(...args); }; } });
   const binding = bindWindowsCommandCopyNative(native, load, fence);
   const input = (entries: readonly CodingExportEntry[] = [{ path: "a.ts", kind: "file", bytes: Buffer.from("baseline"), executable: false }]): FreshWindowsCommandTreeInput => ({ parent: "C:\\scratch", protectedPaths: ["C:\\source"], entries, current: () => control.current });
-  return { binding, input, control, calls, handles, objects, opened, fence, add, sets: () => sets, root: () => [...objects.values()].find(row => path.basename(row.name).startsWith("ember-command-"))! };
+  return { binding, input, control, calls, handles, objects, opened, fence, add, handlers, native, sets: () => sets, root: () => [...objects.values()].find(row => path.basename(row.name).startsWith("ember-command-"))! };
 }
+
+async function rejected(work: Promise<unknown>): Promise<unknown> {
+  try { await work; } catch (error) { return error; }
+  throw new Error("Expected the fixed native fault to refuse.");
+}
+
+it("exposes only branded frozen first-failure numbers without reading foreign error properties", async () => {
+  const foreign = new Proxy({}, { get() { throw new Error("must not inspect foreign properties"); } });
+  for (const error of [undefined, null, 1, "private", {}, foreign, new Error("private"), new WindowsCommandCopyCleanupError()]) expect(windowsCommandCopyNativeFailure(error)).toBeUndefined();
+  const s = setup(); s.control.fault = "create status";
+  const error = await rejected(s.binding.createFreshWindowsCommandTree(s.input())), count = s.calls.length;
+  expect(error).toBeInstanceOf(WindowsCommandCopyCleanupError);
+  const observation = windowsCommandCopyNativeFailure(error);
+  expect(observation).toEqual({ stage: 3, operation: 1, predicate: 2, domain: 1, code: 0xc0000022 });
+  expect(Object.isFrozen(observation)).toBe(true);
+  expect(Object.keys(observation!)).toEqual(["stage", "operation", "predicate", "domain", "code"]);
+  expect(Object.values(observation!).every(value => Number.isInteger(value) && value >= 0 && value <= 0xffffffff)).toBe(true);
+  expect(windowsCommandCopyNativeFailure({ ...error as object })).toBeUndefined();
+  expect(windowsCommandCopyNativeFailure(JSON.parse(JSON.stringify(error)))).toBeUndefined();
+  expect(windowsCommandCopyNativeFailure(observation)).toBeUndefined();
+  expect(windowsCommandCopyNativeFailure(error)).toBe(observation);
+  expect(s.calls).toHaveLength(count); expect(s.calls.some(call => call.name === "GetLastError")).toBe(false);
+});
+
+it.each([-2147483648, -1073741790, -1, 1, 0x80000000, 0xffffffff])("normalizes only an already returned NTSTATUS %s", async status => {
+  const s = setup(); s.handlers.NtCreateFile = () => status;
+  const error = await rejected(s.binding.createFreshWindowsCommandTree(s.input()));
+  expect(windowsCommandCopyNativeFailure(error)).toEqual({ stage: 2, operation: 1, predicate: 2, domain: 1, code: status >>> 0 });
+  expect(s.calls.at(-1)?.name).toBe("NtCreateFile");
+  expect(s.calls.map(call => call.name)).toEqual(["GetCurrentProcess", "OpenProcessToken", "GetTokenInformation", "ConvertSidToStringSidW", "LocalFree", "CloseHandle", "GetDriveTypeW", "GetVolumeInformationW", "NtCreateFile"]);
+});
+
+it.each([-2147483648, -1, 0, 2, 0xffffffff])("records only a numeric failed BOOL return %s without an error query", async status => {
+  const s = setup(); s.handlers.OpenProcessToken = () => status;
+  const error = await rejected(s.binding.createFreshWindowsCommandTree(s.input()));
+  expect(windowsCommandCopyNativeFailure(error)).toEqual({ stage: 1, operation: 20, predicate: 2, domain: 2, code: status >>> 0 });
+  expect(s.calls.map(call => call.name)).toEqual(["GetCurrentProcess", "OpenProcessToken"]);
+});
+
+it.each([undefined, null, false, "private", 0n, 0.5, NaN, Infinity, -2147483649, 0x100000000, Buffer.from("private")])("never coerces or publishes malformed return data %#", async value => {
+  const s = setup(); s.handlers.NtCreateFile = () => value;
+  const error = await rejected(s.binding.createFreshWindowsCommandTree(s.input()));
+  expect(windowsCommandCopyNativeFailure(error)).toEqual({ stage: 2, operation: 1, predicate: 2, domain: 0, code: 0 });
+  expect(s.calls.at(-1)?.name).toBe("NtCreateFile");
+});
+
+it.each(["GetDriveTypeW", "GetFileType", "GetFinalPathNameByHandleW", "GetSecurityInfo"])('omits non-BOOL/non-NT return contents for %s', async name => {
+  const s = setup(); s.handlers[name] = () => 0x12345678;
+  const error = await rejected(s.binding.createFreshWindowsCommandTree(s.input()));
+  expect(windowsCommandCopyNativeFailure(error)).toMatchObject({ predicate: 2, domain: 0, code: 0 });
+  expect(s.calls.at(-1)?.name).toBe(name);
+});
+
+it("keeps pointer-valued LocalFree uncertainty private and preserves the exact native call suffix", async () => {
+  const s = setup(); s.control.fault = "free";
+  const error = await rejected(s.binding.createFreshWindowsCommandTree(s.input()));
+  expect(windowsCommandCopyNativeFailure(error)).toEqual({ stage: 1, operation: 10, predicate: 2, domain: 0, code: 0 });
+  expect(s.calls.map(call => call.name)).toEqual(["GetCurrentProcess", "OpenProcessToken", "GetTokenInformation", "ConvertSidToStringSidW", "LocalFree"]);
+});
+
+it.each([
+  ["not fresh", 3, 1, 3], ["create throw", 3, 1, 1], ["extra handle rights", 2, 8, 4],
+] as const)("classifies %s without exposing the rejected output", async (fault, stage, operation, predicate) => {
+  const s = setup(); s.control.fault = fault;
+  const error = await rejected(s.binding.createFreshWindowsCommandTree(s.input()));
+  expect(windowsCommandCopyNativeFailure(error)).toEqual({ stage, operation, predicate, domain: 0, code: 0 });
+});
+
+it("keeps the original observation across shared-fence failures and every later owner operation", async () => {
+  const s = setup(), first = await s.binding.createFreshWindowsCommandTree(s.input()), second = await s.binding.createFreshWindowsCommandTree(s.input());
+  s.control.fault = "close";
+  const error = await rejected(first.close()), observation = windowsCommandCopyNativeFailure(error), count = s.calls.length;
+  expect(observation).toEqual({ stage: 9, operation: 9, predicate: 2, domain: 2, code: 0 });
+  for (const work of [() => second.assertPrivate(), () => second.grant(PACKAGE), () => second.revoke(PACKAGE), () => second.snapshot(), () => second.close(), () => s.binding.createFreshWindowsCommandTree(s.input())]) {
+    expect(await rejected(work())).toBe(error); expect(windowsCommandCopyNativeFailure(error)).toBe(observation); expect(s.calls).toHaveLength(count);
+  }
+  expect(s.fence.retained).toHaveLength(2);
+});
+
+it("does not invent a native observation for an already failed foreign shared fence", async () => {
+  const s = setup(), tree = await s.binding.createFreshWindowsCommandTree(s.input()), foreign = new WindowsCommandCopyCleanupError();
+  s.fence.failure = foreign; const count = s.calls.length;
+  expect(await rejected(tree.snapshot())).toBe(foreign); expect(windowsCommandCopyNativeFailure(foreign)).toBeUndefined(); expect(s.calls).toHaveLength(count);
+});
+
+it.each(["assert", "grant", "revoke", "snapshot", "close"] as const)("attributes %s failure to its finite owner stage", async method => {
+  const s = setup(), tree = await s.binding.createFreshWindowsCommandTree(s.input());
+  if (method === "revoke") await tree.grant(PACKAGE);
+  s.handlers.GetFileInformationByHandle = () => 0;
+  const work = method === "assert" ? tree.assertPrivate() : method === "grant" ? tree.grant(PACKAGE) : method === "revoke" ? tree.revoke(PACKAGE) : method === "snapshot" ? tree.snapshot() : tree.close();
+  const error = await rejected(work);
+  expect(windowsCommandCopyNativeFailure(error)).toEqual({ stage: ({ assert: 5, grant: 6, revoke: 7, snapshot: 8, close: 9 })[method], operation: 14, predicate: 2, domain: 2, code: 0 });
+  expect(s.calls.at(-1)?.name).toBe("GetFileInformationByHandle");
+});
+
+it("attributes a staged write failure without forwarding its bytes or issuing another native call", async () => {
+  const s = setup(); s.handlers.NtWriteFile = () => -1073741790;
+  const error = await rejected(s.binding.createFreshWindowsCommandTree(s.input()));
+  expect(windowsCommandCopyNativeFailure(error)).toEqual({ stage: 4, operation: 5, predicate: 2, domain: 1, code: 0xc0000022 });
+  expect(s.calls.at(-1)?.name).toBe("NtWriteFile");
+});
+
+it.each(["stream", "owner", "metadata"] as const)("classifies %s predicate failure with no native payload", async kind => {
+  const s = setup(), tree = await s.binding.createFreshWindowsCommandTree(s.input());
+  if (kind === "stream") s.objects.get(path.join(tree.directory, "a.ts"))!.streams = true;
+  if (kind === "owner") s.control.owner = "S-1-5-21-9999";
+  if (kind === "metadata") s.root().id += 1000n;
+  const error = await rejected(tree.assertPrivate()), count = s.calls.length;
+  expect(windowsCommandCopyNativeFailure(error)).toMatchObject({ stage: 5, predicate: ({ stream: 6, owner: 7, metadata: 5 })[kind], domain: 0, code: 0 });
+  expect(await rejected(tree.close())).toBe(error); expect(s.calls).toHaveLength(count);
+});
+
+it("preserves a peer's first native observation when an admission callback swallows and rethrows unrelated data", async () => {
+  const s = setup(), first = await s.binding.createFreshWindowsCommandTree(s.input()), second = await s.binding.createFreshWindowsCommandTree(s.input());
+  let peerError: unknown, stoppedAt = 0;
+  const error = await rejected(first.grant(PACKAGE, () => {
+    s.handlers.GetFileInformationByHandle = () => 0;
+    // The async method performs its first native query synchronously before its first yield.
+    const work = second.close(); stoppedAt = s.calls.length;
+    void work.catch(error => { peerError = error; });
+    throw new Error("private callback detail");
+  }));
+  await Promise.resolve();
+  expect(error).toBe(peerError);
+  expect(windowsCommandCopyNativeFailure(error)).toEqual({ stage: 9, operation: 14, predicate: 2, domain: 2, code: 0 });
+  expect(s.calls).toHaveLength(stoppedAt);
+});
 
 it("stages only fresh owner-private LOW objects and retains metadata-only share7 pins before granting", async () => {
   const s = setup(), tree = await s.binding.createFreshWindowsCommandTree(s.input());

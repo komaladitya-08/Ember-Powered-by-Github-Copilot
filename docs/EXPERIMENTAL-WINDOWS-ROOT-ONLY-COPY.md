@@ -128,9 +128,29 @@ non-disposing Stop; it publishes no success and performs no recursive scratch cl
 Native scratch uses the canonical hosted `RUNNER_TEMP`, checked disjoint from Vitest's managed temporary tree.
 This prevents Vitest's unconditional teardown from recursively deleting a graph deliberately retained on failure.
 
-Local verification of this candidate passed 449 contracts across the root Stop owner (114), coordinator (23),
+Initial local verification at `d745b196` passed 449 contracts across the root Stop owner (114), coordinator (23),
 native tree binding (75), fixed build/CJS source graph (68), report decoder (47), strict proof-native helper (110)
 and scratch lifetime (12). The final composed TypeScript check, scoped lint, workflow parsing/dispatch checks and the app build passed. The ordinary
 Linux invocation skips the Windows case; an explicitly required Linux invocation fails the suite as intended.
 Neither result is Windows execution evidence. The real two-image matrix must complete before this prerequisite
 can be recorded as natively verified.
+
+The first manual matrix at `d745b196`,
+[run 43865163034](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43865163034),
+passed 448 portable contracts per image plus one expected unsupported-host guard skip. Both native cases failed
+with phase `3`, ownership `1`: the real emitted coordinator's cleanup error. The fixed C build/CJS setup completed,
+but that phase still includes fresh-tree construction, the initial private snapshot and first launch. It establishes
+neither useful native edits nor a particular NTFS/ACL failure. No second matrix has run.
+
+The follow-up preserves every native call, predicate, access mask, fence and cleanup rule while adding a first-error
+WeakMap receipt. It records only closed stage/operation/predicate IDs and already-returned, bounded NTSTATUS/BOOL
+facts. Pointer, size, name, path, identity, malformed ABI and unknown data stay absent; it performs no extra native
+query or `GetLastError`. The actual emitted getter is a fixed tenth CJS export. A catch-only wrapper around the
+real factory and its methods observes the original error before coordinator shaping; it preserves delegate arguments,
+resolved values and original error identity even if observation fails. The first-copy flow distinguishes factory,
+initial snapshot and launch without advancing its recorded boundary after rejection. These diagnostics grant no
+authority and cannot replace a successful Stop or a native acceptance result.
+
+The frozen diagnostic follow-up passes 507 focused contracts, final composed TypeScript, scoped lint and diff
+checks. Independent actual-file review closed after a regression proved that a throwing factory observer must
+preserve the original failure. The diagnostic native matrix is still pending.

@@ -26,6 +26,35 @@ export class WindowsCommandCopyCleanupError extends Error {
   readonly code = "windows-command-copy-cleanup-unverified";
   constructor() { super("Fresh Windows command-copy ownership is unverified; retain every native owner."); this.name = "WindowsCommandCopyCleanupError"; }
 }
+type FailureStage = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+type FailureOperation = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26 | 27;
+type FailurePredicate = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+type FailureDomain = 0 | 1 | 2;
+export interface WindowsCommandCopyNativeFailure {
+  readonly stage: FailureStage; readonly operation: FailureOperation; readonly predicate: FailurePredicate; readonly domain: FailureDomain; readonly code: number;
+}
+const nativeFailures = new WeakMap<object, WindowsCommandCopyNativeFailure>();
+/** Status-only first failure. Foreign errors and serialized copies carry no authority. */
+export function windowsCommandCopyNativeFailure(error: unknown): WindowsCommandCopyNativeFailure | undefined {
+  return typeof error === "object" && error !== null ? nativeFailures.get(error) : undefined;
+}
+// Closed diagnostic enums. Operations follow WINDOWS_COMMAND_COPY_FUNCTIONS below; zero means no known prototype.
+// Stages: owner-token, pin, create, stage, assert, grant, revoke, snapshot, close (1..9).
+// Predicates: call throw, status, ABI/decode, handle/rights, metadata/path, stream, ACL/owner/label, invariant (1..8).
+const OP: Readonly<Record<string, FailureOperation>> = Object.freeze({ NtCreateFile: 1, NtQueryDirectoryFile: 2, NtQueryInformationFile: 3,
+  NtReadFile: 4, NtWriteFile: 5, NtSetInformationFile: 6, NtSetSecurityObject: 7, NtQueryObject: 8, CloseHandle: 9,
+  LocalFree: 10, GetCurrentProcess: 11, GetFileType: 12, GetHandleInformation: 13, GetFileInformationByHandle: 14,
+  GetFileInformationByHandleEx: 15, GetFinalPathNameByHandleW: 16, GetDriveTypeW: 17, GetVolumeInformationW: 18,
+  FlushFileBuffers: 19, OpenProcessToken: 20, GetTokenInformation: 21, ConvertSidToStringSidW: 22,
+  ConvertStringSecurityDescriptorToSecurityDescriptorW: 23, GetSecurityInfo: 24, GetSecurityDescriptorControl: 25,
+  GetAclInformation: 26, GetAce: 27 });
+const NT_STATUS = new Set(["NtCreateFile", "NtQueryDirectoryFile", "NtQueryInformationFile", "NtReadFile", "NtWriteFile", "NtSetInformationFile", "NtSetSecurityObject", "NtQueryObject"]);
+const BOOL_STATUS = new Set(["CloseHandle", "GetHandleInformation", "GetFileInformationByHandle", "GetFileInformationByHandleEx", "GetVolumeInformationW", "FlushFileBuffers", "OpenProcessToken", "GetTokenInformation", "ConvertSidToStringSidW", "ConvertStringSecurityDescriptorToSecurityDescriptorW", "GetSecurityDescriptorControl", "GetAclInformation", "GetAce"]);
+function returnedStatus(name: string, value: unknown): { domain: FailureDomain; code: number } {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < -0x80000000 || value > 0xffffffff) return { domain: 0, code: 0 };
+  const domain = NT_STATUS.has(name) ? 1 : BOOL_STATUS.has(name) ? 2 : 0;
+  return { domain, code: domain ? value >>> 0 : 0 };
+}
 export interface WindowsCommandCopyNativeFence { failure?: WindowsCommandCopyCleanupError; retained: unknown[] }
 const processFence: WindowsCommandCopyNativeFence = { retained: [] };
 const liveOwners = new WeakMap<WindowsCommandCopyNativeFence, Set<object>>();
@@ -113,8 +142,11 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
     let rollbackKnown: (() => Promise<void>) | undefined;
     let terminal: WindowsCommandCopyCleanupError | undefined, closed = false, busy = false, retired = false, packageSid: string | undefined;
     let phase: "private" | "granting" | "granted" | "revoking" = "private", ticks = 0;
-    const poison = (): never => {
+    let stage: FailureStage = 1;
+    const poison = (predicate: FailurePredicate = 8, operation: FailureOperation = 0, status: { domain: FailureDomain; code: number } = { domain: 0, code: 0 }): never => {
+      const first = !terminal && !fence.failure;
       terminal ??= fence.failure ?? new WindowsCommandCopyCleanupError(); fence.failure ??= terminal;
+      if (first) nativeFailures.set(terminal, Object.freeze({ stage, operation, predicate, domain: status.domain, code: status.code }));
       for (const owner of peers) if (!retainedOwners.has(owner)) { fence.retained.push(owner); retainedOwners.add(owner); }
       throw terminal;
     };
@@ -128,37 +160,37 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
     };
     const invoke = (name: string, args: unknown[], accepted: (value: unknown) => boolean): unknown => {
       usable(); const call = { name, args }; pending.add(call); let value: unknown;
-      try { value = fn[name](...args); } catch { return poison(); }
-      if (!accepted(value)) return poison(); pending.delete(call); return value;
+      try { value = fn[name](...args); } catch { return poison(1, OP[name]); }
+      if (!accepted(value)) return poison(2, OP[name], returnedStatus(name, value)); pending.delete(call); return value;
     };
     const bool = (name: string, args: unknown[]) => invoke(name, args, value => value === 1 || value === true);
     const nt = (name: string, args: unknown[]) => invoke(name, args, value => value === 0);
-    const pointer = (value: unknown): bigint => { if (!valid(value)) poison(); return value as bigint; };
-    const closeRaw = (raw: bigint) => { usable(); if (!handles.has(raw)) poison(); bool("CloseHandle", [raw]); handles.delete(raw); serials.delete(raw); };
-    const free = (raw: bigint) => { usable(); if (!allocations.has(raw)) poison(); invoke("LocalFree", [raw], value => value === null || value === 0n); allocations.delete(raw); };
+    const pointer = (value: unknown): bigint => { if (!valid(value)) poison(4); return value as bigint; };
+    const closeRaw = (raw: bigint) => { usable(); if (!handles.has(raw)) poison(4, OP.CloseHandle); bool("CloseHandle", [raw]); handles.delete(raw); serials.delete(raw); };
+    const free = (raw: bigint) => { usable(); if (!allocations.has(raw)) poison(4, OP.LocalFree); invoke("LocalFree", [raw], value => value === null || value === 0n); allocations.delete(raw); };
     const allocated = (name: string, args: unknown[], out: unknown[]): bigint => {
       pending.add(out); let result: unknown;
-      try { result = fn[name](...args); } catch { if (valid(out[0])) allocations.add(out[0]); return poison(); }
+      try { result = fn[name](...args); } catch { if (valid(out[0])) allocations.add(out[0]); return poison(1, OP[name]); }
       if (valid(out[0])) allocations.add(out[0]);
-      if (result !== 1 && result !== true) return poison();
+      if (result !== 1 && result !== true) return poison(2, OP[name], returnedStatus(name, result));
       const raw = pointer(out[0]); pending.delete(out); return raw;
     };
     const textSid = (raw: bigint): string => {
       const out: unknown[] = [null], allocatedText = allocated("ConvertSidToStringSidW", [raw, out], out);
-      let text: unknown; try { text = native.decode.string16(allocatedText); } catch { return poison(); }
-      if (typeof text !== "string" || text.length > 184 || !/^S-\d+(?:-\d+)+$/.test(text)) return poison();
+      let text: unknown; try { text = native.decode.string16(allocatedText); } catch { return poison(3, OP.ConvertSidToStringSidW); }
+      if (typeof text !== "string" || text.length > 184 || !/^S-\d+(?:-\d+)+$/.test(text)) return poison(7, OP.ConvertSidToStringSidW);
       free(allocatedText); return text;
     };
     try {
     active();
     const tokenOut: unknown[] = [null]; pending.add(tokenOut); let tokenResult: unknown;
-    try { tokenResult = fn.OpenProcessToken(fn.GetCurrentProcess(), 8, tokenOut); } catch { if (valid(tokenOut[0])) handles.add(tokenOut[0]); return poison(); }
+    try { tokenResult = fn.OpenProcessToken(fn.GetCurrentProcess(), 8, tokenOut); } catch { if (valid(tokenOut[0])) handles.add(tokenOut[0]); return poison(1); }
     if (valid(tokenOut[0])) handles.add(tokenOut[0]);
-    if (tokenResult !== 1 && tokenResult !== true) return poison();
+    if (tokenResult !== 1 && tokenResult !== true) return poison(2, OP.OpenProcessToken, returnedStatus("OpenProcessToken", tokenResult));
     const token = pointer(tokenOut[0]); pending.delete(tokenOut);
     const tokenInfo = Buffer.alloc(4096), tokenLength = [0]; bool("GetTokenInformation", [token, 1, tokenInfo, tokenInfo.length, tokenLength]);
-    if (!Number.isInteger(tokenLength[0]) || tokenLength[0] < 16 || tokenLength[0] > tokenInfo.length) return poison();
-    const owner = textSid(tokenInfo.readBigUInt64LE(0)); if (!sidValid(owner) || owner === "S-1-5-18") return poison();
+    if (!Number.isInteger(tokenLength[0]) || tokenLength[0] < 16 || tokenLength[0] > tokenInfo.length) return poison(3, OP.GetTokenInformation);
+    const owner = textSid(tokenInfo.readBigUInt64LE(0)); if (!sidValid(owner) || owner === "S-1-5-18") return poison(7, OP.GetTokenInformation);
     tokenInfo.fill(0); closeRaw(token);
     type Admission = boolean | (() => void);
     const checkAdmission = (admission: Admission) => { usable(); if (typeof admission === "function") { admission(); usable(); } else if (admission) active(); };
@@ -168,72 +200,72 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       usable(); if (requireTask || check === undefined) active();
       if (check !== undefined) { let returned: unknown; try { returned = check(); } catch (error) { usable(); if (error instanceof WindowsCommandCopyCleanupError) return poison(); throw new ScopedCodingFileError("cancelled"); } usable(); if (returned !== undefined) throw new ScopedCodingFileError("cancelled"); }
     };
-    const address = (bytes: Buffer) => { try { return pointer(native.address(bytes)); } catch { return poison(); } };
+    const address = (bytes: Buffer) => { try { return pointer(native.address(bytes)); } catch { return poison(3); } };
     const acquire = (parent: bigint | null, name: string, kind: WindowsCodingKind | undefined, access: number, share: number, create = false, security: bigint | null = null): bigint => {
       if (handles.size >= 20000) return poison();
       const text = Buffer.from(name + "\0", "utf16le"), unicode = Buffer.alloc(16), attributes = Buffer.alloc(48), io = Buffer.alloc(16), output: unknown[] = [null];
-      if (text.length > 65534) return poison();
+      if (text.length > 65534) return poison(5, OP.NtCreateFile);
       unicode.writeUInt16LE(text.length - 2); unicode.writeUInt16LE(text.length, 2); unicode.writeBigUInt64LE(address(text), 8);
       attributes.writeUInt32LE(48); if (parent !== null) attributes.writeBigUInt64LE(parent, 8); attributes.writeBigUInt64LE(address(unicode), 16); attributes.writeUInt32LE(0x1040, 24); if (security !== null) attributes.writeBigUInt64LE(security, 32);
       const args = [output, access, attributes, io, null, create ? kind === "directory" ? 16 : 128 : 0, share, create ? 2 : 1, 0x200020 | (kind === "directory" ? 1 : kind === "file" ? 0x40 : 0), null, 0];
       pending.add(args); let status: unknown;
-      try { status = fn.NtCreateFile(...args); } catch { if (valid(output[0])) handles.add(output[0]); return poison(); }
-      if (valid(output[0])) { if (handles.has(output[0])) return poison(); handles.add(output[0]); }
-      if (status !== 0 || io.readUInt32LE(0) !== 0 || io.readBigUInt64LE(8) !== BigInt(create ? 2 : 1)) return poison(); const raw = pointer(output[0]); pending.delete(args); text.fill(0); unicode.fill(0);
-      const flags = [0], basic = Buffer.alloc(56), returned = [0]; bool("GetHandleInformation", [raw, flags]); if (flags[0] !== 0) return poison();
+      try { status = fn.NtCreateFile(...args); } catch { if (valid(output[0])) handles.add(output[0]); return poison(1, OP.NtCreateFile); }
+      if (valid(output[0])) { if (handles.has(output[0])) return poison(4, OP.NtCreateFile); handles.add(output[0]); }
+      if (status !== 0 || io.readUInt32LE(0) !== 0 || io.readBigUInt64LE(8) !== BigInt(create ? 2 : 1)) return poison(status !== 0 ? 2 : 3, OP.NtCreateFile, status !== 0 ? returnedStatus("NtCreateFile", status) : { domain: 0, code: 0 }); const raw = pointer(output[0]); pending.delete(args); text.fill(0); unicode.fill(0);
+      const flags = [0], basic = Buffer.alloc(56), returned = [0]; bool("GetHandleInformation", [raw, flags]); if (flags[0] !== 0) return poison(4, OP.GetHandleInformation);
       nt("NtQueryObject", [raw, 0, basic, basic.length, returned]); const rights = basic.readUInt32LE(4);
-      if (returned[0] !== 56 || (rights & access) !== access || (rights & ~(access | 0x80 | SYNC)) !== 0) return poison();
+      if (returned[0] !== 56 || (rights & access) !== access || (rights & ~(access | 0x80 | SYNC)) !== 0) return poison(4, OP.NtQueryObject);
       return raw;
     };
     const info = (raw: bigint): WindowsCodingInfo => {
-      if (!handles.has(raw) || invoke("GetFileType", [raw], value => value === 1) !== 1) return poison();
+      if (!handles.has(raw) || invoke("GetFileType", [raw], value => value === 1) !== 1) return poison(4, OP.GetFileType);
       const bytes = Buffer.alloc(52), basic = Buffer.alloc(40); bool("GetFileInformationByHandle", [raw, bytes]); bool("GetFileInformationByHandleEx", [raw, 0, basic, basic.length]);
-      const serial = bytes.readUInt32LE(28); if (serials.has(raw) && serials.get(raw) !== serial) return poison(); serials.set(raw, serial);
+      const serial = bytes.readUInt32LE(28); if (serials.has(raw) && serials.get(raw) !== serial) return poison(5, OP.GetFileInformationByHandle); serials.set(raw, serial);
       const attributes = bytes.readUInt32LE(0), size = bytes.readUInt32LE(32) * 0x100000000 + bytes.readUInt32LE(36), links = bytes.readUInt32LE(40);
-      if (attributes & SPECIAL || links !== 1 || !Number.isSafeInteger(size) || attributes !== basic.readUInt32LE(32) || bytes.readBigUInt64LE(4) !== basic.readBigUInt64LE(0) || bytes.readBigUInt64LE(20) !== basic.readBigUInt64LE(16)) return poison();
+      if (attributes & SPECIAL || links !== 1 || !Number.isSafeInteger(size) || attributes !== basic.readUInt32LE(32) || bytes.readBigUInt64LE(4) !== basic.readBigUInt64LE(0) || bytes.readBigUInt64LE(20) !== basic.readBigUInt64LE(16)) return poison(5, OP.GetFileInformationByHandleEx);
       const output = Buffer.alloc(65536), length = invoke("GetFinalPathNameByHandleW", [raw, output, 32768, 1], value => typeof value === "number" && Number.isInteger(value) && value > 0 && value < 32768) as number;
       const finalPath = output.toString("utf16le", 0, length * 2), volume = /^(\\\\\?\\Volume\{[0-9a-f-]{36}\}\\)/i.exec(finalPath)?.[1];
-      if (!volume || /[\p{Cc}\p{Cf}]/u.test(finalPath)) return poison();
-      const id = ((BigInt(bytes.readUInt32LE(44)) << 32n) | BigInt(bytes.readUInt32LE(48))).toString(16).padStart(16, "0"); if (id === "0000000000000000") return poison();
+      if (!volume || /[\p{Cc}\p{Cf}]/u.test(finalPath)) return poison(5, OP.GetFinalPathNameByHandleW);
+      const id = ((BigInt(bytes.readUInt32LE(44)) << 32n) | BigInt(bytes.readUInt32LE(48))).toString(16).padStart(16, "0"); if (id === "0000000000000000") return poison(5, OP.GetFileInformationByHandle);
       return { id, volume: volume.toLowerCase(), finalPath, kind: attributes & 16 ? "directory" : "file", attributes, links, size, created: basic.readBigUInt64LE(0).toString(), written: basic.readBigUInt64LE(16).toString(), changed: basic.readBigUInt64LE(24).toString() };
     };
     const same = (a: WindowsCodingInfo, b: WindowsCodingInfo, data = false) => a.id === b.id && a.volume === b.volume && a.kind === b.kind && a.created === b.created && windowsCodingFold(a.finalPath) === windowsCodingFold(b.finalPath) && (!data || a.size === b.size && a.written === b.written && a.changed === b.changed && a.attributes === b.attributes);
-    const metadata = (node: Node) => { const now = info(node.raw); if (!same(node.identity, now)) return poison(); return now; };
+    const metadata = (node: Node) => { const now = info(node.raw); if (!same(node.identity, now)) return poison(5); return now; };
     // NTFS stream enumeration has no data-read requirement; reject every named stream.
     // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_stream_information
     const streams = (raw: bigint, kind: WindowsCodingKind, expectedSize: number) => {
       const io = Buffer.alloc(16), bytes = Buffer.alloc(1024); nt("NtQueryInformationFile", [raw, io, bytes, bytes.length, 22]); const count = io.readBigUInt64LE(8);
-      if (io.readUInt32LE(0) !== 0) return poison();
+      if (io.readUInt32LE(0) !== 0) return poison(6, OP.NtQueryInformationFile);
       if (kind === "directory" && count === 0n) return;
-      if (count < 38n || count > BigInt(bytes.length) || bytes.readUInt32LE(0) !== 0 || bytes.readUInt32LE(4) !== 14 || bytes.toString("utf16le", 24, 38) !== "::$DATA" || bytes.readBigInt64LE(8) !== BigInt(expectedSize)) return poison();
+      if (count < 38n || count > BigInt(bytes.length) || bytes.readUInt32LE(0) !== 0 || bytes.readUInt32LE(4) !== 14 || bytes.toString("utf16le", 24, 38) !== "::$DATA" || bytes.readBigInt64LE(8) !== BigInt(expectedSize)) return poison(6, OP.NtQueryInformationFile);
     };
     const security = (node: Node, expected: "private" | "granted" | "inherited", detached = false) => {
       if (!detached) metadata(node);
       const descriptor: unknown[] = [null], own: unknown[] = [null], dacl: unknown[] = [null], sacl: unknown[] = [null];
       pending.add(descriptor); let status: unknown;
-      try { status = fn.GetSecurityInfo(node.raw, 1, 1 | 4 | LABEL, own, null, dacl, sacl, descriptor); } catch { if (valid(descriptor[0])) allocations.add(descriptor[0]); return poison(); }
-      if (valid(descriptor[0])) allocations.add(descriptor[0]); if (status !== 0) return poison();
+      try { status = fn.GetSecurityInfo(node.raw, 1, 1 | 4 | LABEL, own, null, dacl, sacl, descriptor); } catch { if (valid(descriptor[0])) allocations.add(descriptor[0]); return poison(1, OP.GetSecurityInfo); }
+      if (valid(descriptor[0])) allocations.add(descriptor[0]); if (status !== 0) return poison(2, OP.GetSecurityInfo);
       const sd = pointer(descriptor[0]); pending.delete(descriptor);
-      if (textSid(pointer(own[0])) !== owner) return poison();
+      if (textSid(pointer(own[0])) !== owner) return poison(7, OP.GetSecurityInfo);
       const controls = [0], revision = [0]; bool("GetSecurityDescriptorControl", [sd, controls, revision]);
-      if (!(controls[0] & 4) || !(controls[0] & 16) || (expected !== "inherited" && !(controls[0] & 0x1000))) return poison();
+      if (!(controls[0] & 4) || !(controls[0] & 16) || (expected !== "inherited" && !(controls[0] & 0x1000))) return poison(7, OP.GetSecurityDescriptorControl);
       const acl = pointer(dacl[0]), details = Buffer.alloc(12); bool("GetAclInformation", [acl, details, details.length, 2]);
       const expectedAces = [{ sid: owner, mask: ALL }, { sid: "S-1-5-18", mask: ALL }, ...(expected === "private" ? [] : [{ sid: packageSid!, mask: MODIFY }])];
-      if (details.readUInt32LE(0) !== expectedAces.length) return poison();
+      if (details.readUInt32LE(0) !== expectedAces.length) return poison(7, OP.GetAclInformation);
       const observed: string[] = [];
       for (let i = 0; i < expectedAces.length; i++) {
         const out: unknown[] = [null]; bool("GetAce", [acl, i, out]); const p = pointer(out[0]); let header: Buffer;
-        try { header = Buffer.from(native.decode(p, "uint8_t", 8) as Uint8Array); } catch { return poison(); }
+        try { header = Buffer.from(native.decode(p, "uint8_t", 8) as Uint8Array); } catch { return poison(3, OP.GetAce); }
         const flags = (node.kind === "directory" ? 3 : 0) | (expected === "inherited" ? 16 : 0);
-        if (header.length !== 8 || header[0] !== 0 || header[1] !== flags || header.readUInt16LE(2) < 12 || header.readUInt16LE(2) > 76) return poison();
+        if (header.length !== 8 || header[0] !== 0 || header[1] !== flags || header.readUInt16LE(2) < 12 || header.readUInt16LE(2) > 76) return poison(7, OP.GetAce);
         observed.push(`${textSid(p + 8n)}:${header.readUInt32LE(4)}`);
       }
-      if (observed.sort().join("|") !== expectedAces.map(ace => `${ace.sid}:${ace.mask}`).sort().join("|")) return poison();
-      const labelAcl = pointer(sacl[0]), labelInfo = Buffer.alloc(12); bool("GetAclInformation", [labelAcl, labelInfo, labelInfo.length, 2]); if (labelInfo.readUInt32LE(0) !== 1) return poison();
+      if (observed.sort().join("|") !== expectedAces.map(ace => `${ace.sid}:${ace.mask}`).sort().join("|")) return poison(7, OP.GetAce);
+      const labelAcl = pointer(sacl[0]), labelInfo = Buffer.alloc(12); bool("GetAclInformation", [labelAcl, labelInfo, labelInfo.length, 2]); if (labelInfo.readUInt32LE(0) !== 1) return poison(7, OP.GetAclInformation);
       const labelOut: unknown[] = [null]; bool("GetAce", [labelAcl, 0, labelOut]); const lp = pointer(labelOut[0]); let lh: Buffer;
-      try { lh = Buffer.from(native.decode(lp, "uint8_t", 8) as Uint8Array); } catch { return poison(); }
+      try { lh = Buffer.from(native.decode(lp, "uint8_t", 8) as Uint8Array); } catch { return poison(3, OP.GetAce); }
       const labelFlags = (node.kind === "directory" ? 3 : 0) | (expected === "inherited" ? 16 : 0);
-      if (lh.length !== 8 || lh[0] !== 17 || lh[1] !== labelFlags || lh.readUInt32LE(4) !== 1 || lh.readUInt16LE(2) < 12 || lh.readUInt16LE(2) > 76 || textSid(lp + 8n) !== "S-1-16-4096") return poison();
+      if (lh.length !== 8 || lh[0] !== 17 || lh[1] !== labelFlags || lh.readUInt32LE(4) !== 1 || lh.readUInt16LE(2) < 12 || lh.readUInt16LE(2) > 76 || textSid(lp + 8n) !== "S-1-16-4096") return poison(7, OP.GetAce);
       free(sd);
     };
     const withDescriptor = <T>(directory: boolean, granted: boolean, operation: (sd: bigint) => T): T => {
@@ -244,37 +276,39 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
     const pins: { raw: bigint; identity: WindowsCodingInfo }[] = [];
     const pin = async (name: string, directoryRequired = false) => {
       active();
-      const drive = name.slice(0, 3); invoke("GetDriveTypeW", [drive], value => value === 3); const fs = Buffer.alloc(64); bool("GetVolumeInformationW", [drive, null, 0, null, null, null, fs, 32]); if (fs.toString("utf16le").split("\0")[0] !== "NTFS") return poison();
+      const drive = name.slice(0, 3); invoke("GetDriveTypeW", [drive], value => value === 3); const fs = Buffer.alloc(64); bool("GetVolumeInformationW", [drive, null, 0, null, null, null, fs, 32]); if (fs.toString("utf16le").split("\0")[0] !== "NTFS") return poison(5, OP.GetVolumeInformationW);
       let raw = acquire(null, `\\??\\${drive}`, "directory", 0x1200a0, 3), identity = info(raw); pins.push({ raw, identity });
       let relativeParent: bigint | null = null, componentName = `\\??\\${drive}`;
       const parts = name.slice(3).split("\\").filter(Boolean);
       for (let i = 0; i < parts.length; i++) { relativeParent = raw; componentName = parts[i]; const directory = i < parts.length - 1 || directoryRequired; raw = acquire(raw, componentName, directory ? "directory" : undefined, directory ? 0x1200a0 : 0x120080, 3); identity = info(raw); pins.push({ raw, identity }); await tick(true); active(); }
       return { raw, identity, relativeParent, componentName };
     };
-    const parent = await pin(selected.parent, true); if (parent.identity.kind !== "directory") return poison();
+    stage = 2;
+    const parent = await pin(selected.parent, true); if (parent.identity.kind !== "directory") return poison(5);
     const protectedPins: Awaited<ReturnType<typeof pin>>[] = []; for (const name of selected.protectedPaths) protectedPins.push(await pin(name));
-    for (const protectedPin of protectedPins) if (windowsCodingWithin(parent.identity.finalPath, protectedPin.identity.finalPath) || windowsCodingWithin(protectedPin.identity.finalPath, parent.identity.finalPath)) return poison();
+    for (const protectedPin of protectedPins) if (windowsCodingWithin(parent.identity.finalPath, protectedPin.identity.finalPath) || windowsCodingWithin(protectedPin.identity.finalPath, parent.identity.finalPath)) return poison(5);
+    stage = 3;
     const rootName = `ember-command-${randomUUID()}`;
-    const creatorParent = acquire(parent.relativeParent, parent.componentName, "directory", 0x1200a6, 3); if (!same(parent.identity, info(creatorParent))) return poison();
+    const creatorParent = acquire(parent.relativeParent, parent.componentName, "directory", 0x1200a6, 3); if (!same(parent.identity, info(creatorParent))) return poison(5);
     const make = (parentNode: Node | undefined, name: string, kind: WindowsCodingKind, relative: string, executable = false): { node: Node; creator: bigint } => {
       const parentRaw = parentNode ? acquire(parentNode.parent?.raw ?? parent.raw, parentNode.name, "directory", LIST | 2 | 4, 7) : creatorParent;
-      if (parentNode && !same(parentNode.identity, info(parentRaw))) return poison();
+      if (parentNode && !same(parentNode.identity, info(parentRaw))) return poison(5);
       const creator = withDescriptor(kind === "directory", false, sd => acquire(parentRaw, name, kind, kind === "directory" ? 0x1f01ff : ALL, 7, true, sd));
-      const identity = info(creator); if (identity.kind !== kind || identity.volume !== parent.identity.volume) return poison();
-      const raw = acquire(parentRaw, name, kind, META | (kind === "directory" ? TRAVERSE : 0), 7); if (!same(identity, info(raw))) return poison();
+      const identity = info(creator); if (identity.kind !== kind || identity.volume !== parent.identity.volume) return poison(5);
+      const raw = acquire(parentRaw, name, kind, META | (kind === "directory" ? TRAVERSE : 0), 7); if (!same(identity, info(raw))) return poison(5);
       const node: Node = { raw, kind, relative, parent: parentNode, name, identity, acl: "private", executable }; nodes.add(node); security(node, "private"); streams(raw, kind, identity.size); if (parentNode) closeRaw(parentRaw); return { node, creator };
     };
     active(); const createdRoot = make(undefined, rootName, "directory", ""); const root = createdRoot.node; closeRaw(createdRoot.creator); closeRaw(creatorParent);
     const rootIdentity = { ...root.identity }, directory = path.join(selected.parent, rootName);
-    const checkRoot = () => { usable(); if (!same(rootIdentity, info(root.raw)) || !same(parent.identity, info(parent.raw))) return poison(); };
+    const checkRoot = () => { usable(); if (!same(rootIdentity, info(root.raw)) || !same(parent.identity, info(parent.raw))) return poison(5); };
     verifyRoot = checkRoot;
-    const checkPins = async (admission: Admission) => { for (const p of pins) { if (!same(p.identity, info(p.raw))) return poison(); await tick(admission); } checkRoot(); };
+    const checkPins = async (admission: Admission) => { for (const p of pins) { if (!same(p.identity, info(p.raw))) return poison(5); await tick(admission); } checkRoot(); };
     const byPath = new Map<string, Node>([["", root]]);
     /** Only the same still-held fresh object can be treated as removed. A failed name query is never deletion proof.
      * https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_standard_info
      */
     const detached = (node: Node): boolean => {
-      if (!handles.has(node.raw) || node === root) return poison();
+      if (!handles.has(node.raw) || node === root) return poison(4);
       invoke("GetFileType", [node.raw], value => value === 1);
       const named = Buffer.alloc(52), standard = Buffer.alloc(24), basic = Buffer.alloc(40);
       bool("GetFileInformationByHandle", [node.raw, named]);
@@ -285,14 +319,14 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       if (id !== node.identity.id || named.readUInt32LE(28) !== serials.get(node.raw) || attributes & SPECIAL ||
           (attributes & 16 ? "directory" : "file") !== node.kind || links > 1 || links !== standard.readUInt32LE(16) || pendingDelete > 1 ||
           standard[21] !== (node.kind === "directory" ? 1 : 0) || named.readBigUInt64LE(4).toString() !== node.identity.created ||
-          named.readBigUInt64LE(4) !== basic.readBigUInt64LE(0) || attributes !== basic.readUInt32LE(32)) return poison();
+          named.readBigUInt64LE(4) !== basic.readBigUInt64LE(0) || attributes !== basic.readUInt32LE(32)) return poison(5, OP.GetFileInformationByHandleEx);
       if (links === 1 && pendingDelete === 0) return false;
       // Zero links alone is deliberately insufficient until the supported NTFS kernel behavior has native evidence.
-      if (pendingDelete !== 1) return poison();
+      if (pendingDelete !== 1) return poison(5, OP.GetFileInformationByHandleEx);
       if (links === 1) {
         const output = Buffer.alloc(65536), length = invoke("GetFinalPathNameByHandleW", [node.raw, output, 32768, 1], value => typeof value === "number" && Number.isInteger(value) && value > 0 && value < 32768) as number;
         const finalPath = output.toString("utf16le", 0, length * 2);
-        if (!windowsCodingWithin(finalPath, root.identity.finalPath) || /[\p{Cc}\p{Cf}]/u.test(finalPath)) return poison();
+        if (!windowsCodingWithin(finalPath, root.identity.finalPath) || /[\p{Cc}\p{Cf}]/u.test(finalPath)) return poison(5, OP.GetFinalPathNameByHandleW);
       }
       security(node, node.acl, true); return true;
     };
@@ -306,32 +340,32 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       checkAdmission(admission); await checkPins(admission); checkRoot(); const known = new Map([...nodes].map(node => [node.identity.id, node])); const found: Node[] = [root], queue = [root], seen = new Set<string>([root.identity.id]), foldedPaths = new Set<string>(); let total = 0;
       for (let index = 0; index < queue.length; index++) {
         const parentNode = queue[index], before = metadata(parentNode);
-        const listing = acquire(parentNode.parent?.raw ?? parent.raw, parentNode.name, "directory", LIST, 7); if (!same(before, info(listing))) return poison();
+        const listing = acquire(parentNode.parent?.raw ?? parent.raw, parentNode.name, "directory", LIST, 7); if (!same(before, info(listing))) return poison(5);
         let restart = 1, pages = 0;
         for (;;) {
           if (++pages > MAX_ENTRIES + 3) return poison();
           const buffer = Buffer.alloc(1024), io = Buffer.alloc(16); const status = invoke("NtQueryDirectoryFile", [listing, null, null, null, io, buffer, buffer.length, 37, 1, null, restart], value => value === 0 || value === -2147483642 || value === 0x80000006); restart = 0;
           if (status !== 0) break;
-          if (io.readUInt32LE(0) !== 0) return poison();
-          const count = io.readBigUInt64LE(8); if (count < 1n || count > BigInt(buffer.length)) return poison();
-          let children; try { children = decodeWindowsCodingDirectoryBatch(buffer, Number(count), 1); } catch { return poison(); }
+          if (io.readUInt32LE(0) !== 0) return poison(3, OP.NtQueryDirectoryFile);
+          const count = io.readBigUInt64LE(8); if (count < 1n || count > BigInt(buffer.length)) return poison(3, OP.NtQueryDirectoryFile);
+          let children; try { children = decodeWindowsCodingDirectoryBatch(buffer, Number(count), 1); } catch { return poison(3, OP.NtQueryDirectoryFile); }
           for (const child of children) {
             if (found.length > MAX_ENTRIES) return poison(); const relative = parentNode.relative ? `${parentNode.relative}/${child.name}` : child.name;
-            if (relative.split("/").length > MAX_DEPTH || foldedPaths.has(windowsCodingFold(relative)) || seen.has(child.id)) return poison(); foldedPaths.add(windowsCodingFold(relative)); seen.add(child.id);
+            if (relative.split("/").length > MAX_DEPTH || foldedPaths.has(windowsCodingFold(relative)) || seen.has(child.id)) return poison(5, OP.NtQueryDirectoryFile); foldedPaths.add(windowsCodingFold(relative)); seen.add(child.id);
             const kind = child.attributes & 16 ? "directory" : "file", raw = acquire(parentNode.raw, child.name, kind, META | (kind === "directory" ? TRAVERSE : 0), 7), identity = info(raw);
-            if (identity.size > MAX_FILE && kind === "file" || identity.id !== child.id || identity.kind !== kind || identity.attributes !== child.attributes || identity.size !== child.size || identity.volume !== root.identity.volume || !windowsCodingWithin(identity.finalPath, root.identity.finalPath)) return poison();
+            if (identity.size > MAX_FILE && kind === "file" || identity.id !== child.id || identity.kind !== kind || identity.attributes !== child.attributes || identity.size !== child.size || identity.volume !== root.identity.volume || !windowsCodingWithin(identity.finalPath, root.identity.finalPath)) return poison(5);
             const previous = known.get(identity.id), node: Node = { raw, kind, relative, parent: parentNode, name: child.name, identity, acl: previous?.acl ?? "inherited", executable: previous?.executable ?? false };
             if (previous) { closeRaw(previous.raw); nodes.delete(previous); }
             nodes.add(node); streams(raw, kind, identity.size); if (kind === "file" && (total += identity.size) > MAX_BYTES) return poison(); found.push(node); if (kind === "directory") queue.push(node);
           }
           await tick(admission); checkRoot();
         }
-        if (!same(before, metadata(parentNode), true)) return poison(); closeRaw(listing);
+        if (!same(before, metadata(parentNode), true)) return poison(5); closeRaw(listing);
       }
       return found;
     };
     const verify = (node: Node) => security(node, node.acl);
-    const begin = (admission: boolean) => { if (admission) active(); else usable(); if (busy) throw boundary(); busy = true; };
+    const begin = (admission: boolean, nextStage: FailureStage) => { const previous = stage; stage = nextStage; try { if (admission) active(); else usable(); if (busy) throw boundary(); busy = true; } catch (error) { stage = previous; throw error; } };
     const end = () => { busy = false; };
     const setAcl = (node: Node, granted: boolean) => {
       // SetSecurityInfo propagates inheritance recursively; this held-handle native operation stays inside our bounded walk.
@@ -340,12 +374,12 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/nf-ntifs-zwsetsecurityobject#remarks
       withDescriptor(node.kind === "directory", granted, sd => nt("NtSetSecurityObject", [node.raw, (4 | LABEL | PROTECTED_DACL) >>> 0, sd])); node.acl = granted ? "granted" : "private"; security(node, node.acl); node.identity = info(node.raw);
     };
-    const retireOldPins = async (keep: readonly Node[], admission: Admission) => { const current = new Set(keep.map(node => node.raw)); for (const node of [...nodes]) { if (!current.has(node.raw)) { if (!detached(node)) return poison(); closeRaw(node.raw); nodes.delete(node); } await tick(admission); } };
+    const retireOldPins = async (keep: readonly Node[], admission: Admission) => { const current = new Set(keep.map(node => node.raw)); for (const node of [...nodes]) { if (!current.has(node.raw)) { if (!detached(node)) return poison(5); closeRaw(node.raw); nodes.delete(node); } await tick(admission); } };
     const tree: FreshWindowsCommandTree = {
       directory,
-      async assertPrivate() { begin(true); try { if (phase !== "private") throw boundary(); for (const node of await walk(true)) { security(node, "private"); await tick(true); } } finally { end(); } },
+      async assertPrivate() { begin(true, 5); try { if (phase !== "private") throw boundary(); for (const node of await walk(true)) { security(node, "private"); await tick(true); } } finally { end(); } },
       async grant(sid, check) {
-        begin(true); try {
+        begin(true, 6); try {
           if (phase !== "private" || !sidValid(sid, true) || check !== undefined && typeof check !== "function") throw boundary(); const admit = guard(check, true); admit();
           const current = await walk(admit); for (const node of current) { security(node, "private"); await tick(admit); }
           await retireOldPins(current, admit);
@@ -356,7 +390,7 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
         } finally { end(); }
       },
       async revoke(sid) {
-        begin(false); try {
+        begin(false, 7); try {
           if (!sidValid(sid, true) || sid !== packageSid || phase === "private") throw boundary(); phase = "revoking";
           await releaseDeleted(false); const current = await walk(false); for (const node of current) { verify(node); await tick(false); }
           await retireOldPins(current, false);
@@ -364,17 +398,17 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
         } finally { end(); }
       },
       async snapshot(check) {
-        begin(false); const result: CodingExportEntry[] = []; try {
+        begin(false, 8); const result: CodingExportEntry[] = []; try {
           if (phase !== "private" || check !== undefined && typeof check !== "function") throw boundary(); const admit = guard(check); admit(); const current = await walk(admit); await retireOldPins(current, admit);
           for (const node of current) {
             admit(); security(node, "private"); if (!node.relative) continue;
             if (node.kind === "directory") result.push({ path: node.relative, kind: "directory" });
             else {
-              const before = metadata(node), raw = acquire(node.parent!.raw, node.name, "file", READ, 1); if (!same(before, info(raw), true)) return poison();
+              const before = metadata(node), raw = acquire(node.parent!.raw, node.name, "file", READ, 1); if (!same(before, info(raw), true)) return poison(5);
               const bytes = Buffer.alloc(before.size); pending.add(bytes);
               try {
-                for (let offset = 0; offset < bytes.length;) { const count = Math.min(CHUNK, bytes.length - offset), io = Buffer.alloc(16), position = Buffer.alloc(8); position.writeBigInt64LE(BigInt(offset)); nt("NtReadFile", [raw, null, null, null, io, bytes.subarray(offset, offset + count), count, position, null]); if (io.readBigUInt64LE(8) !== BigInt(count)) return poison(); offset += count; await tick(admit); checkRoot(); }
-                const io = Buffer.alloc(16), eof = Buffer.alloc(1), position = Buffer.alloc(8); position.writeBigInt64LE(BigInt(before.size)); invoke("NtReadFile", [raw, null, null, null, io, eof, 1, position, null], value => value === -1073741807 || value === 0xc0000011 || value === 0); if (io.readBigUInt64LE(8) !== 0n || !same(before, info(raw), true) || !same(before, metadata(node), true)) return poison();
+                for (let offset = 0; offset < bytes.length;) { const count = Math.min(CHUNK, bytes.length - offset), io = Buffer.alloc(16), position = Buffer.alloc(8); position.writeBigInt64LE(BigInt(offset)); nt("NtReadFile", [raw, null, null, null, io, bytes.subarray(offset, offset + count), count, position, null]); if (io.readBigUInt64LE(8) !== BigInt(count)) return poison(3, OP.NtReadFile); offset += count; await tick(admit); checkRoot(); }
+                const io = Buffer.alloc(16), eof = Buffer.alloc(1), position = Buffer.alloc(8); position.writeBigInt64LE(BigInt(before.size)); invoke("NtReadFile", [raw, null, null, null, io, eof, 1, position, null], value => value === -1073741807 || value === 0xc0000011 || value === 0); if (io.readBigUInt64LE(8) !== 0n || !same(before, info(raw), true) || !same(before, metadata(node), true)) return poison(5, OP.NtReadFile);
                 closeRaw(raw); pending.delete(bytes); result.push({ path: node.relative, kind: "file", bytes, executable: false });
               } catch (error) { bytes.fill(0); pending.delete(bytes); if (!terminal && !fence.failure && handles.has(raw)) closeRaw(raw); throw error; }
             }
@@ -385,14 +419,14 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       },
       async close() {
         if (closed) return;
-        begin(false); try {
+        begin(false, 9); try {
           if (phase !== "private") return poison(); await releaseDeleted(false); const current = await walk(false); for (const node of current) { security(node, "private"); await tick(false); }
           await retireOldPins(current, false);
           for (const node of current.slice().reverse()) {
-            const before = metadata(node), raw = acquire(node.parent?.raw ?? parent.raw, node.name, node.kind, DELETE | 0x1200a0, 7); if (!same(before, info(raw), true)) return poison(); security(node, "private");
+            const before = metadata(node), raw = acquire(node.parent?.raw ?? parent.raw, node.name, node.kind, DELETE | 0x1200a0, 7); if (!same(before, info(raw), true)) return poison(5); security(node, "private");
             const disposition = Buffer.alloc(4), io = Buffer.alloc(16); disposition.writeUInt32LE(1); nt("NtSetInformationFile", [raw, io, disposition, disposition.length, 64]); closeRaw(raw); closeRaw(node.raw); nodes.delete(node); if (node === root) verifyRoot = () => {}; await tick(false);
           }
-          for (const node of [...nodes]) { closeRaw(node.raw); nodes.delete(node); await tick(false); } for (const p of pins.slice().reverse()) { if (!same(p.identity, info(p.raw))) return poison(); closeRaw(p.raw); await tick(false); } closed = true; peers.delete(ownerRecord);
+          for (const node of [...nodes]) { closeRaw(node.raw); nodes.delete(node); await tick(false); } for (const p of pins.slice().reverse()) { if (!same(p.identity, info(p.raw))) return poison(5); closeRaw(p.raw); await tick(false); } closed = true; peers.delete(ownerRecord);
         } finally { end(); }
       },
     };
@@ -401,15 +435,16 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       for (const raw of [...handles]) if (!metadataPins.has(raw)) { closeRaw(raw); await tick(false); }
       await tree.close(); for (const entry of selected.entries) if (entry.kind === "file") entry.bytes.fill(0);
     };
+    stage = 4;
     for (const entry of selected.entries) {
       active(); checkRoot(); const parts = entry.path.split("/"), name = parts.pop()!, parentNode = byPath.get(windowsCodingFold(parts.join("/"))); if (!parentNode) return poison();
       const made = make(parentNode, name, entry.kind, entry.path, entry.kind === "file" && entry.executable); byPath.set(windowsCodingFold(entry.path), made.node);
       if (entry.kind === "file") {
         for (let offset = 0; offset < entry.bytes.length;) {
           const size = Math.min(CHUNK, entry.bytes.length - offset), io = Buffer.alloc(16), position = Buffer.alloc(8); position.writeBigInt64LE(BigInt(offset)); nt("NtWriteFile", [made.creator, null, null, null, io, entry.bytes.subarray(offset, offset + size), size, position, null]);
-          const written = io.readBigUInt64LE(8); if (written !== BigInt(size)) return poison(); offset += size; await tick(true); checkRoot();
+          const written = io.readBigUInt64LE(8); if (written !== BigInt(size)) return poison(3, OP.NtWriteFile); offset += size; await tick(true); checkRoot();
         }
-        bool("FlushFileBuffers", [made.creator]); if (info(made.creator).size !== entry.bytes.length) return poison(); made.node.identity = info(made.node.raw); entry.bytes.fill(0);
+        bool("FlushFileBuffers", [made.creator]); if (info(made.creator).size !== entry.bytes.length) return poison(5); made.node.identity = info(made.node.raw); entry.bytes.fill(0);
       }
       closeRaw(made.creator); await tick(true);
     }

@@ -9,7 +9,7 @@ import type { WindowsLpacApi, WindowsLpacProfile, WindowsSuspendedProcess } from
 import { loadExperimentalWindowsLpacApi } from "../../app/main/agent/experimental-windows-lpac-api";
 import { ExperimentalWindowsLpacFixture, experimentalWindowsEnvironment, experimentalWindowsSddl } from "../../app/main/agent/experimental-windows-lpac";
 import type { WindowsCommandCopyProofNative, WindowsCommandCopyProofPin } from "./windows-command-copy-proof-native";
-import type { FreshWindowsCommandTreeInput } from "../../app/main/agent/windows-command-copy-native";
+import type { FreshWindowsCommandTree, FreshWindowsCommandTreeInput, WindowsCommandCopyNativeFailure } from "../../app/main/agent/windows-command-copy-native";
 import type { WindowsCommandRootOnlyStopOwner } from "../../app/main/agent/windows-command-stop";
 import type { WindowsRootOnlyCommandCopy } from "../../app/main/agent/windows-command-copy";
 import { parseWindowsCommandCopyReport, WINDOWS_COMMAND_COPY_HEARTBEAT_MAGIC, type WindowsCommandCopyProofMode } from "./windows-command-copy-report";
@@ -18,6 +18,37 @@ type Emitted = typeof import("../../app/main/agent/windows-command-copy") & type
   typeof import("../../app/main/agent/windows-command-copy-native") & typeof import("./windows-command-copy-proof-native");
 export interface WindowsCommandCopyBuiltAsset { readonly executable: string; readonly module: string }
 const retained: unknown[] = [];
+const notifyFailure = (error: unknown, failed: (error: unknown) => void) => {
+  try { failed(error); } catch { /* Diagnostic failure cannot replace the authoritative native error. */ }
+};
+/** Catch-only observation of actual native methods; arguments, result/error identity and native-call counts are preserved. */
+export function observeWindowsCommandCopyTree(tree: FreshWindowsCommandTree, failed: (error: unknown) => void): FreshWindowsCommandTree {
+  const observe = <T>(operation: () => Promise<T>): Promise<T> => {
+    try { return operation().catch(error => { notifyFailure(error, failed); throw error; }); }
+    catch (error) { notifyFailure(error, failed); throw error; }
+  };
+  return Object.freeze({ directory: tree.directory,
+    assertPrivate: () => observe(() => tree.assertPrivate()),
+    grant: (sid: string, check?: () => void) => observe(() => tree.grant(sid, check)),
+    revoke: (sid: string) => observe(() => tree.revoke(sid)),
+    snapshot: (check?: () => void) => observe(() => tree.snapshot(check)),
+    close: () => observe(() => tree.close()),
+  });
+}
+/** The actual factory's error remains authoritative even when the diagnostic observer fails. */
+export async function observeWindowsCommandCopyFactory(input: FreshWindowsCommandTreeInput,
+  factory: (input: FreshWindowsCommandTreeInput) => Promise<FreshWindowsCommandTree>, failed: (error: unknown) => void): Promise<FreshWindowsCommandTree> {
+  try { return observeWindowsCommandCopyTree(await factory(input), failed); }
+  catch (error) { notifyFailure(error, failed); throw error; }
+}
+/** The first actual copy phase stops at its original failed boundary; later phases cannot overwrite its witness. */
+export async function beginWindowsCommandCopyProof<T extends { selected: Pick<WindowsRootOnlyCommandCopy, "files"> }>(
+  create: () => Promise<T>, launch: (copy: T) => Promise<unknown>, entered: (subphase: 1 | 2 | 3) => void,
+): Promise<T> {
+  entered(1); const copy = await create();
+  entered(2); await copy.selected.files(async entries => { ensure(entries.length === 6); });
+  entered(3); await launch(copy); return copy;
+}
 /** Native quarantine must not sit in a tree that the test framework recursively removes on exit. */
 export function requireWindowsCommandCopyScratchParent(parent: string, managed: string): void {
   const within = (selected: string, base: string) => { const relative = path.win32.relative(base.toLowerCase(), selected.toLowerCase()); return relative === "" || !relative.startsWith("..\\") && relative !== ".." && !path.win32.isAbsolute(relative); };
@@ -42,12 +73,15 @@ const command = (program: string, args: readonly string[]) => {
 };
 /** Only phase numbers leave this fixture; all source/data/path/error material stays in its private retained graph. */
 export class WindowsCommandCopyObservationError extends Error {
-  constructor(readonly phase: number, readonly ownership: number) { super(`The root-only native observation was refused at phase ${phase}, ownership ${ownership}.`); this.name = "WindowsCommandCopyObservationError"; this.stack = `${this.name}: ${this.message}`; }
+  constructor(readonly phase: number, readonly subphase: number, readonly ownership: number, readonly native?: WindowsCommandCopyNativeFailure) {
+    super(`The root-only native observation was refused at phase ${phase}, subphase ${subphase}, ownership ${ownership}${native ? `, native ${JSON.stringify(native)}` : ""}.`);
+    this.name = "WindowsCommandCopyObservationError"; this.stack = `${this.name}: ${this.message}`;
+  }
 }
 
 /** Uses the actual emitted CJS default Koffi loaders/factories and a separately verified, host-built fixed C image. */
 export async function observeWindowsCommandCopy(asset: WindowsCommandCopyBuiltAsset, verifyBuild: () => void, scratchParent: string) {
-  let phase = 1, emitted: Emitted | undefined, native: WindowsCommandCopyProofNative | undefined, fixture: ExperimentalWindowsLpacFixture | undefined,
+  let phase = 1, subphase = 0, nativeFailure: WindowsCommandCopyNativeFailure | undefined, emitted: Emitted | undefined, native: WindowsCommandCopyProofNative | undefined, fixture: ExperimentalWindowsLpacFixture | undefined,
     copy: WindowsRootOnlyCommandCopy | undefined, profile: WindowsLpacProfile | undefined, profileDeleted = false, root = "";
   const owners: WindowsCommandRootOnlyStopOwner[] = [], pins: WindowsCommandCopyProofPin[] = [], issued: unknown[] = [];
   try {
@@ -56,7 +90,7 @@ export async function observeWindowsCommandCopy(asset: WindowsCommandCopyBuiltAs
     emitted = createRequire(asset.module)(asset.module) as Emitted;
     const loaded = emitted;
     for (const key of ["WindowsRootOnlyCommandCopy", "createWindowsCommandRootOnlyStopOwner", "requireWindowsCommandRootOnlyStopped", "createFreshWindowsCommandTree",
-      "loadWindowsCommandCopyProofNative", "WindowsCommandCopyProofCleanupError", "WindowsCommandCopyCleanupError", "WindowsCommandRootOnlyCleanupError", "WindowsRootOnlyCommandCopyCleanupError"] as const)
+      "loadWindowsCommandCopyProofNative", "WindowsCommandCopyProofCleanupError", "WindowsCommandCopyCleanupError", "WindowsCommandRootOnlyCleanupError", "WindowsRootOnlyCommandCopyCleanupError", "windowsCommandCopyNativeFailure"] as const)
       ensure(typeof loaded[key] === "function");
     native = loaded.loadWindowsCommandCopyProofNative();
     const guarded = native;
@@ -96,12 +130,15 @@ export async function observeWindowsCommandCopy(asset: WindowsCommandCopyBuiltAs
       guarded.guard(() => original.verifyToken(profile!, selected.process)); guarded.image(selected.process, selected.pid, paths.program); recheck();
     };
     const createOwner = (binding: object) => { const selected = loaded.createWindowsCommandRootOnlyStopOwner(binding, api); owners.push(selected); return selected; };
+    const captureNative = (error: unknown) => { nativeFailure ??= loaded.windowsCommandCopyNativeFailure(error); };
     const makeCopy = async () => {
+      subphase = 1;
       let directory = "";
       const selected = await loaded.WindowsRootOnlyCommandCopy.create({ parent: treeParent, protectedPaths: [source, canary, paths.root, path.win32.dirname(asset.module)],
         entries: initial(), packageSid: profile!.sidText, current: () => true, packageCurrent: () => !profileDeleted, reviewCurrent: () => !profileDeleted },
       { api, createStopOwner: createOwner, createTree: async (input: FreshWindowsCommandTreeInput) => {
-        const tree = await loaded.createFreshWindowsCommandTree(input); directory = tree.directory; return tree;
+        const tree = await observeWindowsCommandCopyFactory(input, actual => loaded.createFreshWindowsCommandTree(actual), captureNative);
+        directory = tree.directory; return tree;
       } });
       issued.push(selected); ensure(directory.length > 0); return { selected, directory };
     };
@@ -120,13 +157,14 @@ export async function observeWindowsCommandCopy(asset: WindowsCommandCopyBuiltAs
       finally { bytes.fill(0); pin.close(); pins.splice(pins.indexOf(pin), 1); }
     };
     phase = 3;
-    let current = await makeCopy(); copy = current.selected;
-    await copy.files(async entries => { ensure(entries.length === 6); });
     const usefulReport = path.win32.join(paths.state, "useful.bin"), ready = path.win32.join(paths.state, "ready");
     let process: WindowsSuspendedProcess | undefined;
-    await copy.launchRootOnly(() => process = create("useful", current.directory, usefulReport, ready), attest);
+    let current = await beginWindowsCommandCopyProof(makeCopy, actual => {
+      copy = actual.selected; return copy.launchRootOnly(() => process = create("useful", actual.directory, usefulReport, ready), attest);
+    }, value => { subphase = value; });
+    copy = current.selected;
     ensure(process !== undefined); await waitExited(process!);
-    phase = 4;
+    phase = 4; subphase = 0;
     await copy.files(async entries => {
       const expected = new Map([["seed.txt", "EMBER_COMMAND_EDITED\n"], ["created.txt", "EMBER_COMMAND_CREATED\n"], ["renamed.txt", "EMBER_COMMAND_MOVE\n"], ["replace.txt", "EMBER_COMMAND_REPLACED\n"]]);
       ensure(entries.length === 4);
@@ -134,16 +172,16 @@ export async function observeWindowsCommandCopy(asset: WindowsCommandCopyBuiltAs
     });
     // The callback above can run only after exact root Stop/job closure and all package-grant revocations.
     const useful = readReport(usefulReport, "useful"); ensure(useful.features === 0xfff);
-    phase = 5;
+    phase = 5; subphase = 0;
     const binding = Object.freeze({}), negative = createOwner(binding), revokedReport = path.win32.join(paths.state, "revoked.bin");
     await negative.launch(() => process = create("revoked", current.directory, revokedReport, ready), attest, () => !profileDeleted);
     await waitExited(process!); loaded.requireWindowsCommandRootOnlyStopped(await negative.stop(15_000), binding);
     const revoked = readReport(revokedReport, "revoked"); ensure(revoked.features === 0xf07);
     const firstDirectory = current.directory; await copy.close(); copy = undefined; ensure(!fs.existsSync(firstDirectory));
-    phase = 6;
+    phase = 6; subphase = 0;
     current = await makeCopy(); copy = current.selected;
     const writerReport = path.win32.join(paths.state, "writer.bin"), writerReady = path.win32.join(paths.state, "writer-ready");
-    await copy.launchRootOnly(() => process = create("writer", current.directory, writerReport, writerReady), attest);
+    subphase = 3; await copy.launchRootOnly(() => process = create("writer", current.directory, writerReport, writerReady), attest);
     const until = performance.now() + 15_000;
     for (;;) {
       // Metadata-only readiness: never read writer/report contents while the root owns the work grant.
@@ -153,7 +191,7 @@ export async function observeWindowsCommandCopy(asset: WindowsCommandCopyBuiltAs
       ensure(!guarded.guard(() => original.exited(process!.process)) && performance.now() < until); await delay();
     }
     ensure(!guarded.guard(() => original.exited(process!.process)));
-    phase = 7; await copy.stop();
+    phase = 7; subphase = 0; await copy.stop();
     const writer = readReport(writerReport, "writer"); ensure(writer.features === 0xf01);
     let heartbeat: Buffer | undefined;
     await copy.review(async entries => {
@@ -171,7 +209,7 @@ export async function observeWindowsCommandCopy(asset: WindowsCommandCopyBuiltAs
     // A later healthy review also proves the rejected admission did not create a hidden run/cleanup uncertainty.
     await copy.review(async entries => { ensure(entries.length === 7); });
     const writerDirectory = current.directory; await copy.close(); copy = undefined; ensure(!fs.existsSync(writerDirectory));
-    phase = 8; recheck();
+    phase = 8; subphase = 0; recheck();
     ensure(sourcePin.read().equals(fixed("EMBER_FIXED_SOURCE\n")) && canaryPin.read().equals(fixed("EMBER_FIXED_CANARY\n")));
     // Complete known-owner closure precedes removal of the fresh fixture tree and its profile.
     for (const pin of pins.slice().reverse()) pin.close(); pins.length = 0;
@@ -189,6 +227,6 @@ export async function observeWindowsCommandCopy(asset: WindowsCommandCopyBuiltAs
       emitted.WindowsCommandCopyCleanupError, emitted.WindowsCommandCopyProofCleanupError].entries()) {
       if (typeof constructor === "function" && error instanceof constructor) { ownership = index + 1; break; }
     }
-    throw new WindowsCommandCopyObservationError(phase, ownership);
+    throw new WindowsCommandCopyObservationError(phase, subphase, ownership, nativeFailure);
   }
 }
