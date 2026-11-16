@@ -24,6 +24,10 @@ import { startMockLlm } from "../mock-llm/server.mjs";
 
 function deferred() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 const samePath = (a: string, b: string) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+const sameExistingPath = (a: string, b: string) => {
+  try { return fs.realpathSync.native(a).toLowerCase() === fs.realpathSync.native(b).toLowerCase(); }
+  catch { return false; }
+};
 /** Scan only this fixture's fresh controller tree; never follow links or inspect an ambient credential file. */
 function excludesSyntheticState(directory: string, values: readonly string[]): boolean {
   let count = 0, bytes = 0;
@@ -294,8 +298,13 @@ describe.skipIf(process.platform !== "win32" || process.arch !== "x64")("native 
       finally { await hookSession.disconnect(); await hooks.client.deleteSession(hookSession.sessionId); }
       const observed = JSON.parse(fs.readFileSync(marker("plugin-control"), "utf8")) as { cwd: string; hasSyntheticCredential: boolean; env: Record<string, string | null> };
       const hookRoot = path.dirname(hooks.workingDirectory);
+      console.info("Windows native plugin control directory facts:", {
+        lexicalPlugin: samePath(observed.cwd, plugin), canonicalPlugin: sameExistingPath(observed.cwd, plugin),
+        canonicalPrivate: sameExistingPath(observed.cwd, hooks.workingDirectory), canonicalHome: sameExistingPath(observed.cwd, path.join(hookRoot, "home")),
+        canonicalFixture: sameExistingPath(observed.cwd, f.root),
+      });
       // Native plugin hooks run from their explicitly opted-in plugin root; the native-create control proves process cwd.
-      expect(samePath(observed.cwd, plugin)).toBe(true);
+      expect(sameExistingPath(observed.cwd, plugin)).toBe(true);
       expect(["HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"].every(key => typeof observed.env[key] === "string" && samePath(observed.env[key]!, path.join(hookRoot, "home")))).toBe(true);
       expect(["TMP", "TEMP"].every(key => typeof observed.env[key] === "string" && samePath(observed.env[key]!, path.join(hookRoot, "tmp")))).toBe(true);
       expect(["NODE_OPTIONS", "NODE_PATH", "COPILOT_CONFIG_DIR", "GH_TOKEN", "GITHUB_TOKEN", "OPENAI_API_KEY"].every(key => observed.env[key] === null)).toBe(true);
