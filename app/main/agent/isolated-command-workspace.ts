@@ -11,6 +11,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { StringDecoder } from "node:string_decoder";
 import { setImmediate as yieldToLoop } from "node:timers/promises";
 import { HOST_ARCH, HOST_PLATFORM } from "../platform/os";
+import type { ShellId } from "../commands/types";
 import { createCodingSnapshot, type CodingSnapshot } from "./coding-snapshot";
 import { createCodingReviewExport, type CodingExportBinding, type CodingExportEntry, type CodingExportTree, type CodingReviewExport } from "./coding-result-export";
 import { ExperimentalNamespaceReceipt } from "./experimental-stop-receipt";
@@ -262,7 +263,8 @@ export class IsolatedCommandWorkspace {
     return this.queue(async () => { this.check(); const value = await operation(this.snapshot.directory); this.check(); return value; });
   }
 
-  run(command: string, cwd: string, onOutput: (bytes: Uint8Array, stream: "stdout" | "stderr") => void, signal: AbortSignal): Promise<IsolatedCommandResult> {
+  run(command: string, cwd: string, onOutput: (bytes: Uint8Array, stream: "stdout" | "stderr") => void, signal: AbortSignal, shell: ShellId): Promise<IsolatedCommandResult> {
+    if (shell !== "bash") return Promise.reject(new Error("The isolated workspace supports only its advertised bash shell."));
     if (typeof command !== "string" || !command.trim() || command.includes("\0") || Buffer.byteLength(command) > this.limits.commandBytes) return Promise.reject(new Error("The isolated command is empty, invalid or too long."));
     if (typeof cwd !== "string" || (cwd !== "/work" && !cwd.startsWith("/work/")) || cwd.length > 4096 || cwd.split("/").some(p => p === "." || p === "..") || /[\\\p{Cc}\p{Cf}]/u.test(cwd)) return Promise.reject(new Error("Choose a directory inside the isolated workspace."));
     return this.queue(() => this.execute(command, cwd, onOutput, signal));

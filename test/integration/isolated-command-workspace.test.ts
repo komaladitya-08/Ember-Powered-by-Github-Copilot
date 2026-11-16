@@ -8,6 +8,7 @@ import { codingTestIsolationSupported, trustedCodingTestNodeOrSkip } from "../fi
 import { IsolatedCommandWorkspace, type IsolatedCommandWorkspaceInput } from "../../app/main/agent/isolated-command-workspace";
 import { ExperimentalNamespaceReceipt } from "../../app/main/agent/experimental-stop-receipt";
 import { linuxKeyringProbe } from "../fixtures/coding/linux-keyring-probe";
+import type { ShellId } from "../../app/main/commands/types";
 
 const roots: string[] = [];
 afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
@@ -24,6 +25,20 @@ async function fixture(extra: Partial<IsolatedCommandWorkspaceInput> = {}) {
 const signal = () => new AbortController().signal;
 function deferred<T>() { let resolve!: (v: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 
+it.skipIf(process.platform !== "linux" || process.arch !== "x64")("refuses unsupported or missing grammars before they can write and retains valid bash admission", async ctx => {
+  if (!supported()) { ctx.skip(); return; }
+  const f = await fixture(), workspace = await IsolatedCommandWorkspace.create(f.input);
+  try {
+    for (const shell of ["sh", "zsh", "powershell", "cmd", undefined] as const) {
+      await expect(workspace.run("printf forbidden > /work/grammar-marker", "/work", () => undefined, signal(), shell as ShellId)).rejects.toThrow("advertised bash shell");
+    }
+    expect(await workspace.files(async root => fs.existsSync(path.join(root, "grammar-marker")))).toBe(false);
+    expect(await workspace.run("printf admitted > /work/grammar-marker", "/work", () => undefined, signal(), "bash")).toMatchObject({ exitCode: 0, observed: true });
+    expect(await workspace.files(async root => fs.readFileSync(path.join(root, "grammar-marker"), "utf8"))).toBe("admitted");
+    expect(fs.existsSync(path.join(f.source, "grammar-marker"))).toBe(false);
+  } finally { await workspace.close(); }
+}, 30_000);
+
 it.skipIf(process.platform !== "linux" || process.arch !== "x64")("denies direct kernel key APIs in a real command while copied Node and Bash remain usable", async ctx => {
   if (!supported()) { ctx.skip(); return; }
   const asset = await trustedCodingTestNodeOrSkip(ctx), f = await fixture({ nodePath: asset.nodePath }), probe = linuxKeyringProbe();
@@ -31,12 +46,12 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("denies direct
   const workspace = await IsolatedCommandWorkspace.create(f.input);
   try {
     const chunks: Uint8Array[] = [];
-    const result = await workspace.run("./keyring-probe", "/work", bytes => chunks.push(Uint8Array.from(bytes)), signal());
+    const result = await workspace.run("./keyring-probe", "/work", bytes => chunks.push(Uint8Array.from(bytes)), signal(), "bash");
     expect(result).toMatchObject({ exitCode: 0, observed: true, stopped: false, outputLimited: false });
     const values = Buffer.concat(chunks); expect(values.length).toBe(24);
     expect([0, 8, 16].map(offset => values.readBigInt64LE(offset))).toEqual([-1n, -1n, -1n]); // EPERM
     // The ambient container may already refuse these APIs. Independent BPF semantics prove Ember's own denial.
-    expect(await workspace.run("test 2 -gt 1 && node -p '6 * 7'", "/work", () => undefined, signal())).toMatchObject({ exitCode: 0, output: "42\n", observed: true });
+    expect(await workspace.run("test 2 -gt 1 && node -p '6 * 7'", "/work", () => undefined, signal(), "bash")).toMatchObject({ exitCode: 0, output: "42\n", observed: true });
     expect(fs.readFileSync(path.join(f.source, "keyring-probe"))).toEqual(probe);
   } finally { await workspace.close(); }
 }, 30_000);
@@ -50,16 +65,16 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("runs useful c
   try {
     expect(workspace.executionRoot).toBe("/work"); expect(workspace.nodeAvailable).toBe(true);
     const chunks: Uint8Array[] = [];
-    const tested = await workspace.run("node --test test.cjs", "/work", bytes => chunks.push(Uint8Array.from(bytes)), signal());
+    const tested = await workspace.run("node --test test.cjs", "/work", bytes => chunks.push(Uint8Array.from(bytes)), signal(), "bash");
     expect(tested).toMatchObject({ exitCode: 0, observed: true, stopped: false });
     expect(Buffer.concat(chunks).toString()).toContain("sum");
     const command = "if (: <&3) 2>/dev/null || (: >&3) 2>/dev/null || (: <&4) 2>/dev/null || (: >&4) 2>/dev/null; then printf inherited > host-fds; else printf closed > host-fds; fi; " +
       "node -e \"const f=require('fs');f.writeFileSync('probe.json',JSON.stringify({env:process.env.EMBER_COMMAND_CANARY,private:f.existsSync('" + path.join(f.privateDir, "private.txt") + "'),source:f.existsSync('" + f.source + "')}));f.writeFileSync('project.txt','proposed');\"";
-    expect((await workspace.run(command, "/work", () => undefined, signal())).exitCode).toBe(0);
+    expect((await workspace.run(command, "/work", () => undefined, signal(), "bash")).exitCode).toBe(0);
     const probe = await workspace.files(async root => JSON.parse(fs.readFileSync(path.join(root, "probe.json"), "utf8")));
     expect(probe).toEqual({ private: false, source: false });
     expect(await workspace.files(async root => fs.readFileSync(path.join(root, "host-fds"), "utf8"))).toBe("closed");
-    const net = await workspace.run("if (: > /dev/tcp/127.0.0.1/9) 2>/dev/null; then printf bad; else printf blocked; fi", "/work", () => undefined, signal());
+    const net = await workspace.run("if (: > /dev/tcp/127.0.0.1/9) 2>/dev/null; then printf bad; else printf blocked; fi", "/work", () => undefined, signal(), "bash");
     expect(net.output).toBe("blocked");
     expect(fs.existsSync(path.join(f.source, "project.txt"))).toBe(false);
     const exported = await workspace.exportReview(f.exports);
@@ -81,7 +96,7 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("serialises fi
     const first = workspace.files(async root => { entered.resolve(); await release.promise; fs.writeFileSync(path.join(root, "first"), "done"); });
     await entered.promise;
     let began = false;
-    const command = workspace.run("printf started; (while :; do printf x >> /work/heartbeat; sleep 0.02; done) >/dev/null 2>&1 & sleep 0.1; printf last > /work/last", "/work", () => { began = true; }, signal());
+    const command = workspace.run("printf started; (while :; do printf x >> /work/heartbeat; sleep 0.02; done) >/dev/null 2>&1 & sleep 0.1; printf last > /work/last", "/work", () => { began = true; }, signal(), "bash");
     let fileRan = false;
     const after = workspace.files(async root => {
       fileRan = true; expect(fs.readFileSync(path.join(root, "last"), "utf8")).toBe("last");
@@ -99,7 +114,7 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("serialises fi
 it.skipIf(process.platform !== "linux" || process.arch !== "x64")("Stop cancels a running namespace and queued file callbacks, then permits an inert review", async ctx => {
   if (!supported()) { ctx.skip(); return; }
   const f = await fixture(), workspace = await IsolatedCommandWorkspace.create(f.input), begun = deferred<void>();
-  const running = workspace.run("printf started; sleep 10; printf forbidden > /work/late", "/work", () => begun.resolve(), signal());
+  const running = workspace.run("printf started; sleep 10; printf forbidden > /work/late", "/work", () => begun.resolve(), signal(), "bash");
   try {
     await begun.promise;
     let read = false;
@@ -107,7 +122,7 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("Stop cancels 
     await workspace.stop();
     expect(await running).toMatchObject({ stopped: true, observed: true });
     expect(await queued).toBeInstanceOf(Error); expect(read).toBe(false);
-    await expect(workspace.run("printf later", "/work", () => undefined, signal())).rejects.toThrow("stopped or closed");
+    await expect(workspace.run("printf later", "/work", () => undefined, signal(), "bash")).rejects.toThrow("stopped or closed");
     const exported = await workspace.exportReview(f.exports);
     expect(exported.review.proposed.some(e => e.path === "late")).toBe(false);
   } finally { await workspace.close(); }
@@ -117,7 +132,7 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("cancels one c
   if (!supported()) { ctx.skip(); return; }
   const f = await fixture(), workspace = await IsolatedCommandWorkspace.create(f.input), begun = deferred<void>(), command = new AbortController();
   try {
-    const running = workspace.run("(while :; do printf x >> /work/heartbeat; sleep 0.02; done) >/dev/null 2>&1 & while test ! -s /work/heartbeat; do sleep 0.01; done; printf started; sleep 10; printf forbidden > /work/late", "/work", () => begun.resolve(), command.signal);
+    const running = workspace.run("(while :; do printf x >> /work/heartbeat; sleep 0.02; done) >/dev/null 2>&1 & while test ! -s /work/heartbeat; do sleep 0.01; done; printf started; sleep 10; printf forbidden > /work/late", "/work", () => begun.resolve(), command.signal, "bash");
     await begun.promise;
     const diagnostics = workspace.files(async root => {
       expect(fs.existsSync(path.join(root, "late"))).toBe(false);
@@ -145,10 +160,10 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("checks host a
     const receipt = await capture(file); admitted = false; return receipt;
   });
   try {
-    expect(await workspace.run("printf forbidden > /work/command-marker", "/work", () => undefined, signal())).toMatchObject({ stopped: true, observed: true });
+    expect(await workspace.run("printf forbidden > /work/command-marker", "/work", () => undefined, signal(), "bash")).toMatchObject({ stopped: true, observed: true });
     await expect(workspace.files(async () => "forbidden")).rejects.toThrow("stopped or closed");
     admitted = true;
-    await expect(workspace.run("printf forbidden", "/work", () => undefined, signal())).rejects.toThrow("stopped or closed");
+    await expect(workspace.run("printf forbidden", "/work", () => undefined, signal(), "bash")).rejects.toThrow("stopped or closed");
     const result = await workspace.exportReview(f.exports);
     expect(result.review.proposed.some(file => file.path === "command-marker")).toBe(false);
   } finally { await workspace.close(); }
@@ -180,11 +195,11 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("bounds output
   const workspace = await IsolatedCommandWorkspace.create(f.input);
   try {
     const raw: Uint8Array[] = [];
-    expect(await workspace.run("printf '\\000\\377A'", "/work", bytes => raw.push(Uint8Array.from(bytes)), signal())).toMatchObject({ exitCode: 0, observed: true });
+    expect(await workspace.run("printf '\\000\\377A'", "/work", bytes => raw.push(Uint8Array.from(bytes)), signal(), "bash")).toMatchObject({ exitCode: 0, observed: true });
     expect(Buffer.concat(raw)).toEqual(Buffer.from([0, 255, 65]));
-    const noisy = await workspace.run("while :; do printf abcdefghijklmnopqrstuvwxyz; done", "/work", () => undefined, signal());
+    const noisy = await workspace.run("while :; do printf abcdefghijklmnopqrstuvwxyz; done", "/work", () => undefined, signal(), "bash");
     expect(noisy.outputLimited).toBe(true); expect(noisy.observed).toBe(true); expect(Buffer.byteLength(noisy.output)).toBeLessThanOrEqual(128);
-    const slow = await workspace.run("sleep 10", "/work", () => undefined, signal());
+    const slow = await workspace.run("sleep 10", "/work", () => undefined, signal(), "bash");
     expect(slow).toMatchObject({ timedOut: true, observed: true });
   } finally { await workspace.close(); }
 }, 30_000);
@@ -200,7 +215,7 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("refuses known
   const workspace = await IsolatedCommandWorkspace.create(f.input);
   try {
     await workspace.files(async root => { fs.writeFileSync(path.join(root, ".env"), "ordinary=value"); });
-    await expect(workspace.run("cat .env > encoded", "/work", () => undefined, signal())).rejects.toThrow("credential");
+    await expect(workspace.run("cat .env > encoded", "/work", () => undefined, signal(), "bash")).rejects.toThrow("credential");
     await expect(workspace.exportReview(f.exports)).rejects.toThrow("credential");
     expect(fs.readdirSync(f.exports)).toEqual([]);
   } finally { await workspace.close(); }
@@ -245,7 +260,7 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("fences all fu
   const realProof = ExperimentalNamespaceReceipt.prototype.requireExited;
   const failure = vi.spyOn(ExperimentalNamespaceReceipt.prototype, "requireExited").mockRejectedValue(new Error("Unavailable stop witness"));
   try {
-    await expect(workspace.run("printf done", "/work", () => undefined, signal())).rejects.toThrow("retained");
+    await expect(workspace.run("printf done", "/work", () => undefined, signal(), "bash")).rejects.toThrow("retained");
     const receipt = failure.mock.contexts[0] as ExperimentalNamespaceReceipt;
     failure.mockRestore(); await realProof.call(receipt);
     await expect(workspace.files(async () => true)).rejects.toThrow("retained");

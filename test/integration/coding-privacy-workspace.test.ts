@@ -129,7 +129,7 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("project publi
     await continuing.files(async root => { fs.writeFileSync(path.join(root, "kept.js"), "export const kept = 2;\n"); });
     await forgotten.stop(); reviewCurrent = false; input.reviewCurrent = () => true;
     await expect(forgotten.exportReview(first.reviews)).rejects.toMatchObject({ code: "stale" });
-    expect(await continuing.run("printf allowed", "/work", () => undefined, new AbortController().signal)).toMatchObject({ exitCode: 0, output: "allowed", observed: true });
+    expect(await continuing.run("printf allowed", "/work", () => undefined, new AbortController().signal, "bash")).toMatchObject({ exitCode: 0, output: "allowed", observed: true });
     expect(fs.readdirSync(first.reviews)).toEqual([]);
   } finally { await forgotten.close(); await continuing.close(); }
 }, 10_000);

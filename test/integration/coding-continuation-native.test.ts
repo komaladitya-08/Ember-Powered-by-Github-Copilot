@@ -33,7 +33,7 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("continues rea
   f.input.nodePath = asset.nodePath; f.input.scope = { excludeRoots: [".git", "node_modules"], dependencies: { path: modules, current: () => true } };
   const first = await IsolatedCommandWorkspace.create(f.input); let second: IsolatedCommandWorkspace | undefined;
   try {
-    expect(await first.run("node -e \"require('fs').writeFileSync('value.cjs','module.exports=2;\\n')\"", "/work", () => undefined, signal())).toMatchObject({ exitCode: 0, observed: true });
+    expect(await first.run("node -e \"require('fs').writeFileSync('value.cjs','module.exports=2;\\n')\"", "/work", () => undefined, signal(), "bash")).toMatchObject({ exitCode: 0, observed: true });
     const result = await first.exportReview(f.exports); await first.close();
     const decoded = decodeCodingReviewExport(fs.readFileSync(path.join(result.directory, "review.json")), f.input.binding);
     fs.writeFileSync(path.join(modules, "example", "index.js"), "module.exports=2;\n");
@@ -44,9 +44,9 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("continues rea
       binary: fs.readFileSync(path.join(root, "binary")), executable: fs.statSync(path.join(root, "run.sh")).mode & 0o777, empty: fs.readdirSync(path.join(root, "empty")) }));
     expect(seeded).toMatchObject({ text: "module.exports=2;\n", binary: Buffer.from([0, 255, 7]), executable: 0o700, empty: [] });
     expect(seeded.inode).not.toBe(fs.statSync(path.join(f.source, "value.cjs")).ino);
-    expect(await second.run("node -p \"require('example')\"", "/work", () => undefined, signal())).toMatchObject({ exitCode: 0, output: "2\n" });
-    expect(await second.run("node check.cjs", "/work", () => undefined, signal())).toMatchObject({ exitCode: 1, observed: true });
-    expect(await second.run("node -e \"require('fs').writeFileSync('value.cjs','module.exports=3;\\n')\" && node check.cjs", "/work", () => undefined, signal())).toMatchObject({ exitCode: 0, observed: true });
+    expect(await second.run("node -p \"require('example')\"", "/work", () => undefined, signal(), "bash")).toMatchObject({ exitCode: 0, output: "2\n" });
+    expect(await second.run("node check.cjs", "/work", () => undefined, signal(), "bash")).toMatchObject({ exitCode: 1, observed: true });
+    expect(await second.run("node -e \"require('fs').writeFileSync('value.cjs','module.exports=3;\\n')\" && node check.cjs", "/work", () => undefined, signal(), "bash")).toMatchObject({ exitCode: 0, observed: true });
     const final = await second.exportReview(f.exports);
     expect(final.review.binding).toEqual(freshBinding);
     expect(final.review.baseline.find(entry => entry.path === "value.cjs")).toMatchObject({ base64: Buffer.from("module.exports=1;\n").toString("base64") });

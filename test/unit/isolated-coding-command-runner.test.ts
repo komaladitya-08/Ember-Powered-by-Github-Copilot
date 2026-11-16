@@ -1,21 +1,21 @@
 import { createHash } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import { IsolatedCodingCommandRunner, type ObservedCodingCommand } from "../../app/main/agent/isolated-coding-command-runner";
-import type { RunnerFacts, RunSpec } from "../../app/main/commands/types";
+import type { RunnerFacts, RunSpec, ShellId } from "../../app/main/commands/types";
 
 const facts: RunnerFacts = { os: "linux", shells: ["bash"], shellPaths: { bash: "/usr/bin/bash" }, script: null,
   home: "/state", user: "fixture", privileged: false, pty: false, ember: { paths: ["/host/private"], pids: [123], names: /ember/i }, extraPath: [] };
 const observed: ObservedCodingCommand = { observed: true, exitCode: 0, signal: null, stopped: false, timedOut: false, outputLimited: false };
-const spec = (command = "node --test"): RunSpec => ({ runId: "0123456789abcdef", taskId: "fixture-task", shell: "bash", command, cwd: "/work", timeoutMs: 1000, cols: 80, rows: 24,
-  stamp: { taskId: "fixture-task", sha256: createHash("sha256").update(`local\0bash\0/work\0${command}`).digest("hex"), verdict: "run", classes: [], rules: [], approval: null } });
+const spec = (command = "node --test", shell: ShellId = "bash"): RunSpec => ({ runId: "0123456789abcdef", taskId: "fixture-task", shell, command, cwd: "/work", timeoutMs: 1000, cols: 80, rows: 24,
+  stamp: { taskId: "fixture-task", sha256: createHash("sha256").update(`local\0${shell}\0/work\0${command}`).digest("hex"), verdict: "run", classes: [], rules: [], approval: null } });
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { resolve, promise }; }
-function setup() {
+function setup(runnerFacts: RunnerFacts = facts) {
   const owner = new AbortController();
   const state = { current: true };
-  const run = vi.fn(async (_command: string, _cwd: string, output: (bytes: Uint8Array, stream: "stdout" | "stderr") => void, _signal: AbortSignal) => { output(Buffer.from("passed\n"), "stdout"); return observed; });
+  const run = vi.fn(async (_command: string, _cwd: string, output: (bytes: Uint8Array, stream: "stdout" | "stderr") => void, _signal: AbortSignal, _shell: ShellId) => { output(Buffer.from("passed\n"), "stdout"); return observed; });
   const stop = vi.fn(async () => undefined);
   const inspect = vi.fn(async (paths: string[]) => paths.map(() => ({ exists: true, real: "/work/file.ts" })));
-  const runner = new IsolatedCodingCommandRunner({ workspace: { executionRoot: "/work", run, stop }, facts, inspect,
+  const runner = new IsolatedCodingCommandRunner({ workspace: { executionRoot: "/work", run, stop }, facts: runnerFacts, inspect,
     current: () => state.current, signal: owner.signal });
   return { runner, run, stop, inspect, state, owner };
 }
@@ -27,8 +27,9 @@ it("binds decided bytes before yielding and exposes only observed exit metadata"
   const command = runner.start(input);
   input.command = "different command";
   input.cwd = "/elsewhere";
+  input.shell = "powershell";
   expect(await command.done).toMatchObject({ code: 0, ended: "exit" });
-  expect(run).toHaveBeenCalledWith("node --test", "/work", expect.any(Function), expect.any(AbortSignal));
+  expect(run).toHaveBeenCalledWith("node --test", "/work", expect.any(Function), expect.any(AbortSignal), "bash");
   expect(runner.exitsAfter(0)).toMatchObject([{ sequence: 1, runId: input.runId, exit: { code: 0, ended: "exit" } }]);
   expect(JSON.stringify(runner.exitsAfter(0))).not.toContain("node --test");
   expect(command.interactive).toBe(false);
@@ -38,9 +39,20 @@ it("rejects changed stamps or unsupported shells before executing without disabl
   const { runner, run } = setup();
   const changed = spec(); changed.command = "modified after approval";
   expect(await runner.start(changed).done).toMatchObject({ ended: "failed-to-start" });
-  expect(await runner.start({ ...spec(), shell: "powershell" }).done).toMatchObject({ ended: "failed-to-start" });
+  expect(await runner.start(spec("Write-Output safe", "powershell")).done).toMatchObject({ ended: "failed-to-start" });
   expect(run).not.toHaveBeenCalled();
   expect(await runner.start(spec()).done).toMatchObject({ ended: "exit", code: 0 });
+});
+
+it("preserves the decided grammar and literal bytes for a port advertising another shell", async () => {
+  const { runner, run } = setup({ ...facts, os: "win32", shells: ["powershell"], shellPaths: { powershell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" } });
+  const text = "Write-Output 'literal $HOME; & | ` value'";
+  const input = spec(text, "powershell");
+  const command = runner.start(input);
+  input.shell = "bash";
+  input.command = "printf substituted";
+  expect(await command.done).toMatchObject({ ended: "exit", code: 0 });
+  expect(run).toHaveBeenCalledWith(text, "/work", expect.any(Function), expect.any(AbortSignal), "powershell");
 });
 
 it("returns a failed observation for malformed requests without throwing or starting a process", async () => {

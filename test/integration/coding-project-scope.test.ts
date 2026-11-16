@@ -36,9 +36,9 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("runs a real d
     await expect(broker.writeText("node_modules/picocolors/picocolors.js", "forbidden")).rejects.toThrow("privacy");
     expect(await broker.inspect(["node_modules/picocolors/picocolors.js"], "/work")).toEqual([{ exists: null, real: null }]);
     await broker.replaceText("index.cjs", "old-value", "new-value");
-    const output = await workspace.run("node --test test.cjs", "/work", () => undefined, task.signal);
+    const output = await workspace.run("node --test test.cjs", "/work", () => undefined, task.signal, "bash");
     expect(output).toMatchObject({ exitCode: 0, observed: true }); expect(output.output).toContain("dependency-backed result");
-    const guard = await workspace.run("node -e \"const f=require('fs');for(const p of ['node_modules/picocolors/picocolors.js','.git/new']){let blocked=false;try{f.writeFileSync(p,'forbidden')}catch(e){blocked=e.code==='EROFS'||e.code==='EACCES'}if(!blocked)process.exit(12)}console.log(JSON.stringify({ino:f.statSync('node_modules/picocolors/picocolors.js').ino,metadata:f.existsSync('.git/HEAD')}))\"", "/work", () => undefined, task.signal);
+    const guard = await workspace.run("node -e \"const f=require('fs');for(const p of ['node_modules/picocolors/picocolors.js','.git/new']){let blocked=false;try{f.writeFileSync(p,'forbidden')}catch(e){blocked=e.code==='EROFS'||e.code==='EACCES'}if(!blocked)process.exit(12)}console.log(JSON.stringify({ino:f.statSync('node_modules/picocolors/picocolors.js').ino,metadata:f.existsSync('.git/HEAD')}))\"", "/work", () => undefined, task.signal, "bash");
     expect(guard.exitCode).toBe(0); const probed = JSON.parse(guard.output);
     expect(probed.metadata).toBe(false); expect(probed.ino).not.toBe(fs.statSync(path.join(source, "node_modules", "picocolors", "picocolors.js")).ino);
     await broker.close(); broker = undefined;
