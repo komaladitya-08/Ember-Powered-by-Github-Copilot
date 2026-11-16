@@ -1,15 +1,17 @@
 # Windows project file resources
 
 `WindowsProjectCodingResources` is a host resource owner for fresh Windows copied-file sessions. It mirrors the
-project folder, account, task, result publication and Forget interfaces used by the Linux owner. It does not select
-a production backend, enable a product gate, discover a toolchain, execute a command or supply Windows SDK/controller
-storage isolation. The mode is always `files-only`; availability explicitly reports `canContinue: false`.
+project folder, account, task, result publication and Forget interfaces used by the Linux owner. The owner itself
+does not select a backend, discover a toolchain or execute a command. The mode is always `files-only`; commands,
+tests and dependency installation remain unavailable. Public `7eabd077` availability reports `canContinue: true`
+after the real Home continuation proof below. The legacy native-SDK gate remains false.
 
 The development product candidate connects this owner through `project-coding-backend.ts` and the ordinary main/Host
 interfaces. Selection is fixed by platform, captures no model-supplied mode, and never falls back after initialization
 failure. Only workspaces minted by that selector may open its file broker. The live review-base getter survives
 asynchronous initialization. Windows uses the separately protected trusted controller; Linux keeps its command
-backend. This wiring needs the dedicated Windows SDK/native and real Electron tests before merge or client acceptance.
+backend. Current consent version 14 describes copied-folder review and retention. Native SDK tools/configuration
+loading remain disabled; trusted controller storage has its separate Windows native ownership checks.
 
 Source capture uses the native NTFS read-only boundary and excludes `.git` and `node_modules`. File tools operate
 only in the fresh owner/SYSTEM copy. The host must finish controller disposal and close the file broker before
@@ -36,14 +38,35 @@ through its original COPY handle. A successful final close leaves the common pat
 to allocate there. An unknown namespace or unverifiable cleanup retains private data and refuses further coding;
 there is no path-based recovery or best-effort recursive deletion.
 
-The host-only continuation handoff reads a complete verified predecessor artifact through the same Windows store,
-bound to the selected project's original source identity before loading. It passes baseline, proposal and scope to
-the fresh-file materializer and wipes every caller-owned decoded buffer after admission or failure. The predecessor
-must stay current until the fresh copy has been accepted. An admitted independent copy then survives deletion of its
-predecessor; account, project, original source, privacy and task revocation still apply. Invalid, forgotten, mismatched
-or malformed predecessor capabilities are refused without falling back to a fresh capture of the original folder.
-The exposed `canContinue` capability remains false pending integrated native proof and the production controller
-boundary. Implementing this internal handoff does not enable the Home continuation action.
+The implemented continuation foundation captures the original same-store source boundary before loading the complete
+prior artifact. Copy creation compares a fresh native source identity with that exact receipt while the original
+source pin remains held. An opaque predecessor reference stays current through copy admission. Both complete trees are cloned,
+rebound, checked against current Windows limits and fully privacy-scanned before fresh owner/SYSTEM descendants are
+materialised under the held new copy root. Executable/dependency metadata and invalid names, aliases or exclusions are
+refused. The cumulative original baseline is retained; proposed clones and decoded caller buffers are cleared. After
+admission the new copy is independent of predecessor Forget. Account/project/privacy/global erasure still revoke it.
+A new source capture cannot silently replace a missing or revoked predecessor. See
+[continuation materialisation](CODING-CONTINUATION-MATERIALIZATION.md).
+
+At public `7eabd077`, [run 43813240393](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43813240393)
+passed on Server 2022 and Server 2025: 147 portable, 30 artifact, 23 sealed-copy/review and five resource cases per
+server, 410 total with zero skips. This is actual native continuation evidence, not a public Continue-control pass.
+
+The separate controller/product head `0f70a7f7` passed
+[run 43812314219](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43812314219) on both
+servers: 97 portable, three native controller cases including the actual SDK contract, and one real Electron journey
+per server, zero skips. Two fresh sessions verified zero checks, source preservation, export, selective/global Forget
+and normal exit in 13.267/14.744 seconds. Actual process metrics confirmed the normal OS sandbox and absent Node
+globals; no bypass was supplied. The provider and picker answers are fixtures.
+
+The actual Home continuation form and three fresh sessions at `fac7c0a3` passed
+[run 43812927368](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43812927368) on both
+servers: 97 portable, three native controller and one actual Electron case per image, zero skips/failures. Electron
+completed in 16.393/15.970 seconds with the normal OS sandbox, sender guards and unforced exit `0`. Continue read
+prior proposal `43`, produced `44` with cumulative baseline/current `41`, survived predecessor Forget and preserved
+completed `42`/`44` exports after global erasure. Public PR #223 advanced to `7eabd077` with the same production
+source and `canContinue: true`. Its exact-head native matrix above is green; ordinary full CI remains in progress.
+These results do not certify a merge, live provider, native picker UI or Windows 10/11 laptop.
 
 Portable resource tests exercise the host ledgers and lifecycle using a native model that distinguishes drive paths
 from GUID receipts and BASE/read handles from COPY handles. The real suite uses actual project folder binding,

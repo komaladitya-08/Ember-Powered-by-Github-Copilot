@@ -1,7 +1,9 @@
 # Conductor progress and remaining work
 
-Reviewed 16 November 2026. Baseline: `audit/beta-readiness` at `76d0a2c9`, the most recently submitted remote branch;
-main was `85b5bd56`. This follow-up deliberately retains the native coding gate and is not a release certification.
+Reviewed 16 November 2026. The original submitted baseline was `audit/beta-readiness` at `76d0a2c9`;
+main was `85b5bd56`. The follow-up now includes a Windows files-only product candidate and native continuation
+implementation. Its completed native/product proofs are distinguished below; ordinary full CI is still running. The legacy native-SDK coding
+gate remains false. This is not a merge or release certification.
 
 ## What was already implemented
 
@@ -20,8 +22,9 @@ main was `85b5bd56`. This follow-up deliberately retains the native coding gate 
   prevents forgetting its project. Records remain bounded and in memory unless the user explicitly saves a checkpoint.
 - Save/Open/Forget saved projects use an encrypted, account-and-provider-bound checkpoint with no plaintext fallback.
   Restoring replaces old task references and marks interrupted sessions stopped; it never resumes actions. A different
-  provider credential cannot read the saved goals/outcomes. Forget everything removes the checkpoint. Consent version
-  13 explains this retention and returning users agree again. Changing the board does not automatically save it.
+  provider credential cannot read the saved goals/outcomes. Forget everything removes the checkpoint. Current consent
+  version 14 describes saved records and copied-folder reviews; returning users agree again. Changing the board does
+  not automatically save it.
 - The conductor can create/select/list projects and name each delegated desktop session. Project selection is captured
   when a request arrives, so switching projects while the conductor responds cannot misattribute its eventual tasks.
   The existing scheduler, approvals and original user words remain the execution authority.
@@ -53,7 +56,7 @@ main was `85b5bd56`. This follow-up deliberately retains the native coding gate 
 - The cursor companion identifies a single task, differentiates queued/running/waiting/stopping work, and exposes
   fuller task progress through its existing menu description and hover text without taking keyboard focus.
 - Native coding cleanup callers share the actual teardown promise, including failures. Coding work also has host-owned
-  limits of 150 tools and 20 active minutes; permission/clarification waits pause the time budget. None enables coding.
+  limits of 150 tools and 20 active minutes; permission/clarification waits pause the time budget. The legacy native-SDK gate stays closed.
 - [Primary-source research](COMPANION_RESEARCH.md) compares Tiki, HeyClicky, Conductor and related projects.
 
 ## Custom-tool coding follow-up
@@ -106,13 +109,13 @@ trusted controller sessions. Failed older connection cleanup remains a barrier a
 disposal-only receipts. Per-result Forget revokes pending access to that review without changing project history or
 completed exports.
 
-The disabled [Windows file foundation](EXPERIMENTAL-WINDOWS-CODING-FILES.md) and separate
-[direct Node LPAC diagnostic](WINDOWS-NODE-LPAC-PROOF.md) now have actual Windows Server 2022/2025 CI evidence.
-At `7942e554`, file ABI/cleanup units passed seven cases on each server and native files passed 27 of 29 cases on each;
-both remaining failures involve atomic replacement. The drive-root bootstrap passed. All twelve Node workload cases
-across versions 22/24 and both servers exited with `0x80000003`; useful Node compatibility was not established.
-Bounded native rename status and independent fixed-eval host/LPAC startup diagnostics are the next investigation steps.
-Neither experiment supplies or enables a production Windows adapter, and server evidence does not certify client Windows.
+The [Windows file foundation](EXPERIMENTAL-WINDOWS-CODING-FILES.md) now underpins the separate files-only candidate
+below. Its earlier native replacement failures have subsequent native coverage; they are not evidence that the host
+resources are still absent. The separate [direct Node LPAC diagnostic](WINDOWS-NODE-LPAC-PROOF.md) still does not
+establish useful Node compatibility: zero-capability LPAC startup reaches a libuv `WSAStartup` failure with code
+`10107` and exits `0x80000003`, including with validated private standard handles. The compile-time
+fixed libuv probe is a separate bounded experiment, not a Node runtime or
+command backend. Windows commands and toolchains remain software work; server evidence does not certify client Windows.
 
 The follow-up also includes the temporary coding store in desktop command, GUI and integration own-data protection,
 and denies Linux key-management syscalls in project commands. The latter closes a potential inherited-session-keyring
@@ -125,16 +128,33 @@ The development candidate now selects an explicit Windows copied-file backend th
 `project-coding-backend.ts`. It does not require a local command service and never substitutes for a failed command
 backend. Project/account/source grants, task disposal, private controller storage, native file tools, sealed review,
 explicit export and Forget are connected. The controller exposes seven file tools, completion and the existing
-optional clarification tool; native SDK execution and configuration loading remain disabled. Commands, test execution,
-dependency installation and result continuation are unavailable in this mode and are disclosed in the UI/tool metadata.
+optional clarification tool; native SDK execution and configuration loading remain disabled. Commands, test execution
+and dependency installation are unavailable in this mode and are disclosed in the UI/tool metadata.
 Linux retains its existing command backend. The legacy `codingAvailable()` remains false.
 
-Exact head `e1e90907` passed the Server 2022/2025 artifact workflow (`43806345002`): 78 portable contracts, 30 native
-artifact cases and 23 native review/adapter cases on each server, with zero skips. The new resource owner adds 20
-portable tests and four actual NTFS cases. The private controller adds its separate SDK/native contract, and a real
-Windows Electron journey covers two fresh sessions, zero checks, source preservation, export, selective/global Forget
-and normal shutdown with local commands off. Those newly composed native/product cases still require their own run;
-writing a test or collecting a Linux platform skip is not Windows evidence. The candidate is not ready to merge.
+Exact head `0f70a7f7` passed the separate controller/product
+[run 43812314219](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43812314219) on both
+Server 2022 and Server 2025: 97 portable cases, three native controller cases including the actual pinned-SDK contract,
+and one real Electron journey per server, with zero skips. The journey used two fresh sessions and verified zero checks, unchanged source, explicit
+export, selective/global Forget and normal exit in 13.267 and 14.744 seconds respectively. Actual Electron process
+metrics confirmed the normal OS sandbox and absent Node globals; no sandbox bypass was used. Its provider and
+picker selections are fixtures, so this does not establish live-provider or physical picker behaviour.
+
+Native continuation at public head `7eabd077` passed
+[run 43813240393](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43813240393): 147
+portable cases, 30 artifact cases, 23 sealed-copy/review cases and five resource cases on each server, 410 total
+with zero skips. Complete prior files become fresh native inodes while retaining the original cumulative baseline;
+source identity, account/project/privacy revocation, erasure and predecessor independence remain checked.
+
+Continuation head `fac7c0a3` passed the real Home form and three fresh sessions in
+[run 43812927368](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43812927368).
+Both Server images passed 97 portable and three native controller cases plus one actual Electron case, with zero
+skips or failures. Electron completed in 16.393/15.970 seconds. Continue first read the prior proposal `43`, changed
+it to `44`, and retained cumulative baseline/current `41`. Predecessor Forget preserved the independent `44` copy;
+global erasure retained only completed `42`/`44` user exports. The normal OS sandbox, sender guards and unforced
+exit `0` remained verified. Public PR #223 advanced to `7eabd077` with the same production source and
+`canContinue: true`. The exact-head native matrix above is green; the ordinary full CI run is still in progress.
+Commands, live-provider and physical Windows acceptance remain separate; the candidate is not ready to merge.
 
 ## What still needs implementation or verification
 

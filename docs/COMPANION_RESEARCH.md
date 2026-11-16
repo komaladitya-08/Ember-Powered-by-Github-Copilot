@@ -28,7 +28,7 @@ These are product recommendations, not new approval rules. Ember's current modes
 
 ## Work order and release evidence
 
-The existing desktop conductor and workers can support project organisation and clearer session progress now. Keep native coding unavailable until the credential and filesystem isolation issues in [HYBRID-CODING-STATUS.md](HYBRID-CODING-STATUS.md) have an enforced, tested solution. A copied workspace or a successful mock run alone cannot establish that boundary.
+The desktop conductor now connects projects, named sessions, bounded ordered work and companion progress. The custom-tool coding candidate adds isolated Linux commands and explicit Windows copied-file editing, review and continuation, as recorded in [current progress](CONDUCTOR-PROGRESS.md). Windows commands and tests remain unavailable. The older native-SDK execution path stays disabled until its credential and filesystem issues in [HYBRID-CODING-STATUS.md](HYBRID-CODING-STATUS.md) have an enforced solution. Hosted native and development-app evidence remains separate from live-provider and physical desktop acceptance.
 
 The first useful acceptance story is: create a project, ask the conductor to split a goal into two sessions, inspect each status and result, interrupt one, restart Ember and find an accurate project history. Exercise this with deterministic offline workers before testing a real provider.
 

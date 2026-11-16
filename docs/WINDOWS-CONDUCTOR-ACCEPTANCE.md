@@ -7,11 +7,23 @@ not certify real app focus, microphone quality, cursor ownership or a coding exe
 The Projects & sessions board groups desktop tasks. Explicit Save projects keeps an encrypted checkpoint; Open
 saved projects restores inert records, ordered goals and observed outcomes and marks interrupted work stopped.
 Review remaining steps prepares a fresh editable request without replaying actions. Save again to retain later progress.
-It never resumes model sessions. Windows coding remains unavailable; do not remove its gate to perform this acceptance
-pass. The custom-tool coding flow has Linux command-isolation and project-folder/review integration; Windows still
-needs an enforced command/file/export backend. Native CI currently exposes child creation and PowerShell ETW startup
-failures, described in [the Windows proof](ISOLATED-WINDOWS-COMMAND-PROOF.md). Those are software requirements, rather
-than laptop tests waiting to be checked off. Automatic crash checkpointing is not implemented.
+It never resumes model sessions. Current consent version 14 covers saved records and copied-folder reviews. The
+Windows development candidate now offers explicit files-only copied edits, sealed review, export and Forget through
+the ordinary Host. Commands, tests and dependency installation remain unavailable, and the legacy native-SDK gate
+stays false. Do not change those execution gates to perform acceptance. Public `7eabd077` now reports
+`canContinue: true` after the separate real Home continuation proof. Automatic crash checkpointing is not implemented.
+
+Hosted Server 2022/2025 evidence now includes the following exact heads; record it separately from laptop results:
+
+| Candidate proof | Completed evidence | Remaining limit |
+|---|---|---|
+| Controller/product `0f70a7f7`, [run 43812314219](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43812314219) | Per server: 97 portable cases, three native controller cases including the actual SDK contract, and one genuine Electron journey with two fresh sessions. Zero skips; Electron 13.267/14.744 seconds, normal exit, normal OS sandbox verified by process metrics, absent Node globals and no bypass. | Mock provider and supplied picker answers; no live authentication or native picker UI proof. |
+| Native continuation `7eabd077`, [run 43813240393](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43813240393) | Per server: 147 portable, 30 artifact, 23 sealed-copy/review and five resource cases; 410 total, zero skips. | Establishes native fresh-file continuation, not the public Home control. |
+| Continuation/product `fac7c0a3`, [run 43812927368](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43812927368) | Per server: 97 portable, three native controller and one genuine Electron three-session case; zero skips/failures. Electron 16.393/15.970 seconds; Continue first read `43`, produced `44` against original baseline/current `41`, survived predecessor Forget and preserved completed `42`/`44` exports after global erasure. Normal OS sandbox, sender guards and unforced exit `0` verified. | Public #223 advanced to `7eabd077` with the same production source and `canContinue: true`. Its native matrix above is green; ordinary full CI, live provider and laptop checks remain. |
+
+Windows command execution remains separate software work. Native child creation/PowerShell failures are recorded in
+[the command proof](ISOLATED-WINDOWS-COMMAND-PROOF.md); stock Node LPAC startup still fails at `WSAStartup` with code
+`10107`. Neither a fixed C/libuv experiment nor a successful files-only laptop story supplies that command boundary.
 
 ## Prepare the checkout
 
@@ -52,7 +64,9 @@ prompt, fixture or screenshot.
 | Forget and identity | Try forgetting a project with active work; then stop it and forget it. Sign out and reconnect. | Active work cannot be silently orphaned by forgetting. Forgotten records disappear; another account sees none of the previous account's project records. |
 | Quit and reopen | Quit normally, then reopen Ember. | The live board is empty. Open saved projects restores an explicitly saved checkpoint, with interrupted sessions stopped and no executable old task references. No old task resumes with old authority. |
 | Review interrupted goals | Save a plan after its first completed step and during its next step, restart, open it, and review remaining steps. Repeat with a long plan and an existing unsent request. | Full goals and outcomes remain visible. Only the contiguous completed prefix is omitted. Partial effects are called out. Review does not execute or silently replace a draft; edit/use the request, then explicitly Send with current approvals. Oversized goals are not truncated and can be reviewed one step at a time. |
-| Coding refusal | Ask for autonomous file editing or a coding-to-desktop sequence. | Ember explains coding is unavailable and does not launch native coding tools or claim the coding part completed. Selected-file review and patch drafting retain their separate existing flow. |
+| Files-only coding | Bind a disposable project folder and ask for a harmless copied-file edit. Review/export it, then forget the result and all private work. | Ember edits only its private copy; original files remain unchanged. Review/export and erasure agree with session state. The summary records zero commands/tests and explains the limit. Selected-file review keeps its separate grants. |
+| Execution limits | Ask the files-only session to run a test, install dependencies or use a native SDK shell/edit tool. | No execution capability appears and no command/test success is claimed. The legacy native-SDK gate remains false. |
+| Reviewed continuation | Open a completed review, choose Continue and send a new request that first reads the reviewed value. Forget the predecessor after the new copy is admitted. | The fresh session starts from the complete reviewed proposal and retains the cumulative original baseline. Earlier task permissions/conversation are not resumed. Predecessor Forget preserves the admitted copy; global Forget still erases its private work. |
 
 ## Check native laptop behaviour
 
