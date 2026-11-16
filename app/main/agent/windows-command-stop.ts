@@ -39,9 +39,9 @@ const remember = (error: unknown, failure: WindowsCommandRootOnlyFailure) => {
 const refused = (stage: FailureStage, predicate: FailurePredicate, operation: FailureOperation = 0, constraint: FailureConstraint = 0, status?: unknown) => {
   const error = refuse(); remember(error, observation(stage, predicate, operation, constraint, status)); return error;
 };
-// Constraints 1..14: process/job time, flags, padding20, min/max workset, active limit, padding44,
-// affinity, priority, scheduling, process/job memory, UI. These existing spans never expose values.
-const LIMIT_SPANS = [[0, 8], [8, 16], [16, 20], [20, 24], [24, 32], [32, 40], [40, 44], [44, 48], [48, 56], [56, 60], [60, 64]] as const;
+// Constraints 1..9: process/job time, flags, padding20, min/max workset, active limit, padding44,
+// affinity. Historical 10/11 are reserved; 12/13/14 remain process/job memory/UI. No values leave here.
+const LIMIT_SPANS = [[0, 8], [8, 16], [16, 20], [20, 24], [24, 32], [32, 40], [40, 44], [44, 48], [48, 56]] as const;
 export class WindowsCommandRootOnlyCleanupError extends WindowsCodingCleanupError {
   constructor() { super(); this.name = "WindowsCommandRootOnlyCleanupError"; this.message = "Windows root-only command writer cleanup could not be verified."; }
 }
@@ -108,9 +108,11 @@ export function bindWindowsCommandRootOnlyStopNative(koffi: Pick<typeof Koffi, "
     },
     assertLimits(job) {
       const observed = query(job, 9, 144, 3), ui = query(job, 4, 4, 3);
-      // Accounting/peak usage is dynamic; all limit fields must remain exactly the configured zero/one values.
-      const expected = Buffer.alloc(64); expected.writeUInt32LE(LIMITS, 16); expected.writeUInt32LE(1, 40);
-      if (!observed.subarray(0, 64).equals(expected) || observed.readBigUInt64LE(112) !== 0n || observed.readBigUInt64LE(120) !== 0n || ui.readUInt32LE(0) !== 0) {
+      // PriorityClass/SchedulingClass (56..64) are ignored without their flags; exact LIMITS rejects those flags.
+      // Accounting/peak usage is dynamic. Every other compared field remains exact.
+      // https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_limit_information
+      const expected = Buffer.alloc(56); expected.writeUInt32LE(LIMITS, 16); expected.writeUInt32LE(1, 40);
+      if (!observed.subarray(0, 56).equals(expected) || observed.readBigUInt64LE(112) !== 0n || observed.readBigUInt64LE(120) !== 0n || ui.readUInt32LE(0) !== 0) {
         // Observation only, after the complete original predicate refused. No field value leaves this module.
         const first = LIMIT_SPANS.findIndex(([start, end]) => !observed.subarray(start, end).equals(expected.subarray(start, end)));
         const constraint = first >= 0 ? first + 1 : observed.readBigUInt64LE(112) !== 0n ? 12 : observed.readBigUInt64LE(120) !== 0n ? 13 : ui.readUInt32LE(0) !== 0 ? 14 : 0;

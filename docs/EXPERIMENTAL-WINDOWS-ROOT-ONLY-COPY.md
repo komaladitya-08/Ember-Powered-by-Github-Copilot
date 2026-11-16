@@ -163,15 +163,36 @@ phase `3`, subphase `3`, ownership `1`, without a branded native-tree failure. T
 and initial private six-entry snapshot completed on both images, but the first launch failed. No useful edits,
 successful native Stop/revoke or completed scratch/profile cleanup were established.
 
-The next code-only diagnostic follows the actual Stop constructor/launch and guarded creator/attester boundaries.
+The launch-boundary diagnostic follows the actual Stop constructor/launch and guarded creator/attester boundaries.
 It preserves their original return/receipt/error identity and retains the first branded Stop failure. A closed
 constraint ID may identify the first mismatching span only after the existing complete limit predicate failed;
 no value, process ID, pointer, count, access mask or additional native query is exposed. In particular, Microsoft's
 [basic limit contract](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_basic_limit_information)
 says SchedulingClass is ignored without its flag and defaults to `5`. This is a possible explanation for a
-whole-buffer zero comparison, not an observed cause. Every acceptance predicate remains unchanged pending
-actual boundary evidence; a third native matrix has not run.
+whole-buffer zero comparison, not an observed cause. That diagnostic candidate preserved every acceptance
+predicate pending the actual boundary evidence recorded below.
 
 The frozen launch-boundary diagnostic passes 576 focused contracts, final composed TypeScript, scoped lint and
 diff checks. Root's independent actual-file review closed without an acceptance, call-order or retention change.
-No third native result or successful whole-copy lifecycle is claimed by those portable checks.
+No successful whole-copy lifecycle is claimed by those portable checks.
+
+The third manual matrix at `885b2e4a`,
+[run 43871588608](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43871588608),
+passed 575 portable cases per image plus the expected unsupported-host guard skip. Both images reported
+phase `3`, subphase `3`, ownership `1`, boundary `1`, with Stop stage `3`, operation `2`, predicate `4`, domain
+`0`, code `0`, constraint `10`. This identifies the actual Stop constructor's readback refusal at the PriorityClass
+span, bytes 56–60. It occurred before package grant or the creator callback. The actual priority value was not
+published; no scheduling mismatch or default value was established. Useful work, a successful Stop receipt and
+complete scratch/profile cleanup remain unverified.
+
+The primary contract says both PriorityClass and SchedulingClass are ignored when their respective job flags
+are absent. The surgical repair therefore compares basic-limit bytes 0–56 exactly and ignores only bytes 56–64;
+it does not replace either field with a guessed default. The exact `LIMITS=0x2008` readback still excludes the
+priority (`0x20`) and scheduling (`0x80`) flags, and every other time, workset, active-count, affinity, padding,
+memory and UI check remains in place. No native query, access mask, Stop deadline or positive completion proof
+changes. Constraint IDs 10/11 remain historical reservations; current remaining constraints retain their IDs.
+Varying ignored fields are accepted only with the flags absent, while each remaining limit byte and forbidden
+flag, memory and UI mutation must still refuse. A fourth native matrix has not run.
+
+The reviewed repair passes 644 focused contracts, including 240 Stop cases, final composed TypeScript,
+scoped lint and diff checks. Native useful-work and complete cleanup acceptance remain pending.

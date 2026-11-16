@@ -289,8 +289,37 @@ describe("root-only Win64 FFI contracts", () => {
     const f = ffi(), native = f.bind(); native.configure(10n); f.limits().writeBigUInt64LE(9n, 64); f.limits().writeBigUInt64LE(8n, 128); native.assertLimits(10n);
     f.limits().writeBigUInt64LE(1n, 112); expect(() => native.assertLimits(10n)).toThrow();
   });
-  it.each([[16, 0x2000], [16, 0x2808], [16, 0x3008], [40, 0], [40, 2], [56, 1]])("refuses altered limit field %s/%s", (offset, value) => {
+  it.each([[16, 0x2000], [16, 0x2808], [16, 0x3008], [40, 0], [40, 2]])("refuses altered limit field %s/%s", (offset, value) => {
     const f = ffi(), native = f.bind(); native.configure(10n); f.limits().writeUInt32LE(value, offset); expect(() => native.assertLimits(10n)).toThrow();
+  });
+  it.each([[0, 0], [0x20, 5], [0xffffffff, 0xffffffff], [0x80000000, 0x12345678], [0x12345678, 0]])("accepts ignored priority/scheduling fixture %s/%s only while their flags are absent", (priority, scheduling) => {
+    const f = ffi(), original = f.functions.QueryInformationJobObject, queries: unknown[][] = [];
+    f.functions.QueryInformationJobObject = (...args) => { queries.push(args); return original(...args); };
+    const native = f.bind(); native.configure(10n); queries.length = 0;
+    f.limits().writeUInt32LE(priority, 56); f.limits().writeUInt32LE(scheduling, 60);
+    expect(() => native.assertLimits(10n)).not.toThrow();
+    expect(queries.map(args => [args[0], args[1], args[3], args[4]])).toEqual([[10n, 9, 144, null], [10n, 4, 4, null]]);
+    expect(f.limits().readUInt32LE(16)).toBe(0x2008); expect(f.limits().readUInt32LE(40)).toBe(1);
+    expect(f.prototypes).toEqual(WINDOWS_COMMAND_ROOT_ONLY_STOP_FUNCTIONS);
+    expect(f.prototypes.some(prototype => prototype.includes("GetLastError"))).toBe(false);
+  });
+  it.each(Array.from({ length: 8 }, (_, index) => index + 56))("accepts arbitrary bytes in only ignored basic-limit byte %s", offset => {
+    const f = ffi(), native = f.bind(); native.configure(10n); f.limits()[offset] = 0xa5;
+    expect(() => native.assertLimits(10n)).not.toThrow();
+  });
+  it.each(Array.from({ length: 56 }, (_, offset) => offset))("still rejects every changed protected basic-limit byte %s", offset => {
+    const f = ffi(), original = f.functions.QueryInformationJobObject, queries: unknown[][] = [];
+    f.functions.QueryInformationJobObject = (...args) => { queries.push(args); return original(...args); };
+    const native = f.bind(); native.configure(10n); queries.length = 0;
+    f.limits().fill(0xa5, 56, 64); f.limits()[offset] ^= 1;
+    const failure = windowsCommandRootOnlyFailure(caught(() => native.assertLimits(10n)));
+    const spanEnds = [8, 16, 20, 24, 32, 40, 44, 48, 56];
+    expect(failure).toEqual({ stage: 3, operation: 2, predicate: 4, domain: 0, code: 0, constraint: spanEnds.findIndex(end => offset < end) + 1 });
+    expect(queries.map(args => args[1])).toEqual([9, 4]);
+  });
+  it.each([0x20, 0x80])("refuses enabling priority/scheduling flag %s regardless of ignored field contents", flag => {
+    const f = ffi(), native = f.bind(); native.configure(10n); f.limits().writeUInt32LE(0x2008 | flag, 16); f.limits().fill(0xa5, 56, 64);
+    expect(windowsCommandRootOnlyFailure(caught(() => native.assertLimits(10n)))).toEqual({ stage: 3, operation: 2, predicate: 4, domain: 0, code: 0, constraint: 3 });
   });
   it.each([false, undefined, 0, "1", NaN])("refuses non-BOOL or FALSE SetInformation result %s", result => {
     const f = ffi(); f.functions.SetInformationJobObject = () => result; expect(() => f.bind().configure(10n)).toThrow();
@@ -357,7 +386,7 @@ describe("root-only first-failure observations", () => {
     expect(windowsCommandRootOnlyFailure(failure)).toBeUndefined(); expect(windowsCommandRootOnlyFailure(error)).toBe(failure);
     expect(f.prototypes).toEqual(WINDOWS_COMMAND_ROOT_ONLY_STOP_FUNCTIONS); expect(f.prototypes.some(value => value.includes("GetLastError"))).toBe(false);
   });
-  it.each([[0, 1], [8, 2], [16, 3], [20, 4], [24, 5], [32, 6], [40, 7], [44, 8], [48, 9], [56, 10], [60, 11], [112, 12], [120, 13], [-1, 14]])("labels only existing mismatching limit span %s as constraint %s", (offset, constraint) => {
+  it.each([[0, 1], [8, 2], [16, 3], [20, 4], [24, 5], [32, 6], [40, 7], [44, 8], [48, 9], [112, 12], [120, 13], [-1, 14]])("labels only existing mismatching limit span %s as constraint %s", (offset, constraint) => {
     const f = ffi(), original = f.functions.QueryInformationJobObject, calls: unknown[][] = []; let armed = false;
     f.functions.QueryInformationJobObject = (...args) => { calls.push(args); original(...args); if (armed && offset === -1 && args[1] === 4) (args[2] as Buffer).writeUInt32LE(1); return 1; };
     const native = f.bind(); native.configure(10n); armed = true; calls.length = 0;
@@ -366,10 +395,12 @@ describe("root-only first-failure observations", () => {
     expect(failure).toEqual({ stage: 3, operation: 2, predicate: 4, domain: 0, code: 0, constraint });
     expect(calls.map(args => [args[0], args[1], args[3], args[4]])).toEqual([[10n, 9, 144, null], [10n, 4, 4, null]]);
   });
-  it("reports the first existing mismatching span and keeps scheduling values private", () => {
+  it("never classifies ignored priority/scheduling fields and preserves later constraint IDs", () => {
     const f = ffi(), native = f.bind(); native.configure(10n);
-    f.limits().writeUInt32LE(5, 60);
-    expect(windowsCommandRootOnlyFailure(caught(() => native.assertLimits(10n)))).toEqual({ stage: 3, operation: 2, predicate: 4, domain: 0, code: 0, constraint: 11 });
+    f.limits().writeUInt32LE(0x20, 56); f.limits().writeUInt32LE(5, 60);
+    expect(() => native.assertLimits(10n)).not.toThrow();
+    f.limits().writeBigUInt64LE(1n, 112);
+    expect(windowsCommandRootOnlyFailure(caught(() => native.assertLimits(10n)))).toEqual({ stage: 3, operation: 2, predicate: 4, domain: 0, code: 0, constraint: 12 });
     f.limits().writeUInt32LE(1, 20);
     expect(windowsCommandRootOnlyFailure(caught(() => native.assertLimits(10n)))?.constraint).toBe(4);
   });
@@ -379,13 +410,13 @@ describe("root-only first-failure observations", () => {
       original(...args); const bytes = args[2] as Buffer;
       if (armed && args[1] === 9) {
         const subarray = bytes.subarray.bind(bytes), read = bytes.readBigUInt64LE.bind(bytes);
-        vi.spyOn(bytes, "subarray").mockImplementation((...args) => { reads.push("prefix"); return subarray(...args); });
+        vi.spyOn(bytes, "subarray").mockImplementation((...args) => { reads.push(`prefix:${args[0]}:${args[1]}`); return subarray(...args); });
         vi.spyOn(bytes, "readBigUInt64LE").mockImplementation(offset => { reads.push(`memory:${offset}`); return read(offset); });
       } else if (armed && args[1] === 4) { const read = bytes.readUInt32LE.bind(bytes); vi.spyOn(bytes, "readUInt32LE").mockImplementation(offset => { reads.push(`ui:${offset}`); return read(offset); }); }
       return 1;
     };
     const native = f.bind(); native.configure(10n); armed = true;
-    native.assertLimits(10n); expect(reads).toEqual(["prefix", "memory:112", "memory:120", "ui:0"]);
+    native.assertLimits(10n); expect(reads).toEqual(["prefix:0:56", "memory:112", "memory:120", "ui:0"]);
   });
   it.each([undefined, false, null, PRIVATE, NaN, Infinity, 0.5, 0n, -2147483649, 0x100000000, Buffer.from(PRIVATE)])("does not coerce malformed BOOL return %#", result => {
     const f = ffi(); f.functions.SetInformationJobObject = () => result;
@@ -432,10 +463,10 @@ describe("root-only first-failure observations", () => {
   });
   it("copies the precise failed readback constraint into the first owner error without another query or release", () => {
     const f = ffi(), set = f.functions.SetInformationJobObject, query = f.functions.QueryInformationJobObject, queries: unknown[][] = [];
-    f.functions.SetInformationJobObject = (...args) => { const result = set(...args); f.limits().writeUInt32LE(5, 60); return result; };
+    f.functions.SetInformationJobObject = (...args) => { const result = set(...args); f.limits().writeUInt32LE(0x20, 56); f.limits().writeUInt32LE(5, 60); f.limits().writeUInt32LE(2, 40); return result; };
     f.functions.QueryInformationJobObject = (...args) => { queries.push(args); return query(...args); };
     const h = harness(), error = caught(() => createWindowsCommandRootOnlyStopOwner(h.binding, h.api, f.bind(), h.clock, h.fence));
-    expect(windowsCommandRootOnlyFailure(error)).toEqual({ stage: 3, operation: 2, predicate: 4, domain: 0, code: 0, constraint: 11 });
+    expect(windowsCommandRootOnlyFailure(error)).toEqual({ stage: 3, operation: 2, predicate: 4, domain: 0, code: 0, constraint: 7 });
     expect(queries.map(args => args[1])).toEqual([9, 4]); expect(h.fence.retained).toHaveLength(1);
     expect(h.api.terminateJob).toHaveBeenCalledTimes(1); expect(h.api.close).not.toHaveBeenCalled();
     const before = queries.length; expect(caught(h.owner)).toBe(error); expect(queries).toHaveLength(before);
