@@ -2,7 +2,6 @@
 import fs from "node:fs/promises";
 import { constants, type BigIntStats } from "node:fs";
 import path from "node:path";
-import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { HOST_ARCH, HOST_PLATFORM } from "../platform/os";
 import { ProjectCodingWorkspaces } from "./project-coding-workspaces";
@@ -15,6 +14,7 @@ import type { ScopedCodingChecks } from "./scoped-coding-worker";
 import { titleOf } from "./tasks";
 import { CodingPrivacyCleanupError, captureCodingPrivacyScope, retireCodingPrivacyScanners, codingPrivacyCleanupFailure, type CodingPrivacyScope } from "./coding-privacy-scanner";
 import type { CodingProjectScope, CodingExcludedRoot } from "./coding-project-scope";
+import { selectCodingStorageBase, type CodingStorageBase } from "./coding-storage";
 
 export interface ProjectCodingResourcesOptions {
   userData: string;
@@ -27,6 +27,8 @@ export interface ProjectCodingResourcesOptions {
   changed?(): void;
   /** Main may create this synchronously while these filesystem resources initialize asynchronously. */
   folders?: ProjectCodingWorkspaces;
+  /** Main shares this immutable selection with every desktop self-protection gate before allocation. */
+  storage?: CodingStorageBase;
 }
 export type CodingResultsAccess = Pick<CodingResultRegistry, "state" | "review" | "export" | "reset" | "forgetProject" | "forgetResult">;
 interface Pin { path: string; handle: fs.FileHandle; stat: BigIntStats; mount: string }
@@ -62,6 +64,7 @@ export class ProjectCodingResources {
   #options: ProjectCodingResourcesOptions;
   #roots: string[] = [];
   #common: string;
+  #storage: CodingStorageBase;
   #pins: Pin[] = [];
   #private: string | null = null;
   #copies = "";
@@ -95,7 +98,8 @@ export class ProjectCodingResources {
   private constructor(options: ProjectCodingResourcesOptions) {
     this.#options = { ...options, env: { PATH: options.env.PATH }, protectedPaths: [...options.protectedPaths] };
     this.folders = options.folders ?? new ProjectCodingWorkspaces({ currentOwner: options.currentOwner, projectExists: options.projectExists });
-    this.#common = path.join(os.tmpdir(), `ember-coding-${process.getuid?.() ?? "unsupported"}`);
+    this.#storage = options.storage ?? selectCodingStorageBase();
+    this.#common = this.#storage.common ?? this.#storage.protectedPaths[0];
     this.#results = Object.freeze({
       state: projectId => this.#registry?.state(projectId) ?? [],
       review: id => this.#registry?.review(id) ?? Promise.resolve(null),
@@ -117,8 +121,7 @@ export class ProjectCodingResources {
     try {
       if (!path.isAbsolute(options.userData) || !options.protectedPaths.length || options.protectedPaths.some(value => !path.isAbsolute(value))) throw fixed("Protected coding paths could not be verified.");
       owner.#roots = [...new Set(await Promise.all([options.userData, ...options.protectedPaths].map(value => fs.realpath(value))))];
-      const temporary = await fs.realpath(os.tmpdir());
-      owner.#common = path.join(temporary, `ember-coding-${process.getuid?.() ?? "unsupported"}`);
+      if (!owner.#storage.common) throw fixed("Private coding storage could not be resolved.");
       if (!owner.#supported) { owner.#message = "Isolated coding commands currently require Linux x64. Folder choices are metadata only here."; return owner; }
       if (owner.#roots.some(root => overlap(owner.#common, root))) throw fixed("Private coding storage must be outside protected data.");
       try { await fs.mkdir(owner.#common, { mode: 0o700 }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }

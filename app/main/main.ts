@@ -84,6 +84,7 @@ import { CodingWorkspaceStore, codingBranch, type CodingWorkspace } from "./agen
 import { ProjectSessionStore } from "./agent/project-session-store";
 import { ProjectCodingWorkspaces } from "./agent/project-coding-workspaces";
 import { ProjectCodingResources } from "./agent/coding-resources";
+import { selectCodingStorageBase } from "./agent/coding-storage";
 import { registerProjectCodingIpc, type ProjectCodingIpc } from "./project-coding-ipc";
 import { memoryRefusal } from "./memory/guard";
 import { correctMemoryRequest } from "./memory/correction";
@@ -217,6 +218,8 @@ app.setPath("userData", process.env.EMBER_USER_DATA ?? sys.paths.userData(app.ge
 // Windows toasts need the app's AppUserModelId, set before ready.
 if (sys.lifecycle.appUserModelId) app.setAppUserModelId(sys.lifecycle.appUserModelId);
 const userData = app.getPath("userData");
+// One immutable logical/canonical selection feeds allocation and all local desktop self-protection gates.
+const codingStorage = selectCodingStorageBase();
 // Private: settings, logs and the audit trail mention the user's apps and windows.
 try { fs.mkdirSync(userData, { recursive: true, mode: 0o700 }); fs.chmodSync(userData, 0o700); } catch { /* reported when used */ }
 
@@ -1845,7 +1848,7 @@ function start(): void {
   // Extensions (app/main/extensions/, docs/DEVELOPING.md "Extensions"): plugins' MCP tools, used only while the user has
   // them on and agreed, and the organisation allows them. Home's Extensions section calls this (ExtensionsApi).
   const extensions = new ExtensionsService({
-    dir: path.join(userData, "extensions"), copilotHome: path.join(userData, "copilot"),
+    dir: path.join(userData, "extensions"), copilotHome: path.join(userData, "copilot"), emberPaths: codingStorage.protectedPaths,
     settings, admin: () => policy, client: () => agent?.copilotClient ?? null, confirmer: () => confirmer, audit: () => audit,
     // Autopilot: a call the gate would ask about is said in the conversation's bubble instead (never unsaid: it asks).
     autopilot: () => approvalsNow().autopilot, announce: words => agent?.announceUnasked(words) ?? false,
@@ -2389,7 +2392,7 @@ function start(): void {
   let codingCleanupAttempt = 0;
   const projectCodingChanged = () => tasksShown();
   const codingResourcesReady = ProjectCodingResources.create({
-    userData, folders: projectCodingFolders,
+    userData, folders: projectCodingFolders, storage: codingStorage,
     protectedPaths: [userData, app.getAppPath(), process.resourcesPath],
     currentOwner: () => agent?.projectWorkspaceScope() ?? null,
     projectExists: id => agent?.projectSessionsState().projects.some(project => project.id === id) === true,
@@ -3908,7 +3911,7 @@ function start(): void {
         // On macOS also by the installed app with that name's bundle id (Terminal renamed is still Terminal); a WSLg
         // app's also as a Linux app (§4.5).
         isTerminalApp: name => privacy.isTerminalApp({ id: name, name }),
-        keys: sys.keys, os: platform.os, isSecurityWindow: privacy.isSecurityWindow,
+        keys: sys.keys, os: platform.os, isSecurityWindow: privacy.isSecurityWindow, emberPaths: codingStorage.protectedPaths,
       }),
       // The window system's units to Electron's DIP (X11: ÷ the primary scale factor).
       flyTo: b => setState({ focus: b && b.width > 2 && b.height > 2 ? wsSeen.toDip(b) : null }),
@@ -3975,7 +3978,7 @@ function start(): void {
     });
     let elevatedNow: boolean | undefined;
     targets = createTargets({
-      log: log.child("targets"), os: platform.os, sys, userData, appDir: __dirname, resourcesPath: process.resourcesPath,
+      log: log.child("targets"), os: platform.os, sys, userData, emberPaths: codingStorage.protectedPaths, appDir: __dirname, resourcesPath: process.resourcesPath,
       execPath: process.execPath, packaged: app.isPackaged, settings, admin: () => admin, audit: () => audit, confirmer: () => confirmer,
       // The user's own model provider's host while it is in force: the consent cards say what is read goes there.
       ownService: () => { const p = providerNow(); return p?.kind === "user" ? endpointHost(p.config.baseUrl) : null; },

@@ -172,6 +172,8 @@ export interface TargetsDeps {
   os: OS;
   sys: SystemPlatform;
   userData: string;
+  /** Exact local private-data roots selected before allocation; also mapped into host-aware WSL facts. */
+  emberPaths?: readonly string[];
   /** dist/app (askpass.cjs, remote-link.cjs, job-host.cjs). */
   appDir: string;
   resourcesPath: string;

@@ -25,7 +25,7 @@ import { KEYS, SHORTCUTS, type KeyConventions, type OS } from "../../shared/shor
 import { ADMIN_APP, OFFICE_APP, OPENS_PROGRAMS, PLAIN_EDITOR, PROMPT_APP, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, SETTINGS_APP, TABBED_APP, TYPING_REFUSED, WEB_APP, placeName, type OpensPrograms, type TypingRefusal } from "./vocabulary";
 import { isRemoteSurface, REMOTE_SURFACE_REASON } from "./remote-surface";
 import { targetRules } from "./target-rules";
-import { emberPathReach, plainPath } from "./ember-paths";
+import { emberPathReach, plainPath, type EmberPlace } from "./ember-paths";
 import { covers, movingWords, type AutonomyScope, type AutonomyScopes } from "./autonomy";
 import type { StepChecker, StepVerdict } from "../commands/review";
 import { SECRET_PARTS, savedPart, siteOrigin, vaultAppKey, type VaultDestination, type VaultKind, type VaultPart } from "../../shared/vault";
@@ -319,6 +319,8 @@ export interface PolicyInputs {
   keys?: KeyConventions;
   /** Which OS's vocabulary judges windows and labels (default "linux"). */
   os?: OS;
+  /** Local host-owned data roots outside the built-in data/install paths; never inferred for remote targets. */
+  emberPaths?: readonly string[];
   /** Is this window an authentication or security prompt (default: isSecurityWindow with `os`)? */
   isSecurityWindow?: (w: { app?: string; title?: string; name?: string }) => boolean;
   /**
@@ -841,15 +843,17 @@ const titleName = (title: string): string => title.replace(/\s+[-—–]\s+.*$/,
  * step asks every time in every mode that asks, is never announced, waived or checked, and Autopilot, which has no
  * question to put, refuses it.
  */
-export function mayReachEmberData(r: ReachRequest, os: OS = "linux"): boolean {
-  return emberDataReach(r, os) !== null;
+export function mayReachEmberData(r: ReachRequest, os: OS = "linux", emberPaths: readonly string[] = []): boolean {
+  return emberDataReach(r, os, emberPaths) !== null;
 }
 /**
  * How a step may reach Ember's own files (mayReachEmberData): "file", by what it names or where it is; "unread", only
  * because a file dialog's name or folder couldn't be read whole as its Save or Open is pressed; null, it doesn't.
  */
-function emberDataReach(r: ReachRequest, os: OS): "file" | "unread" | null {
+function emberDataReach(r: ReachRequest, os: OS, emberPaths: readonly string[]): "file" | "unread" | null {
   if (r.kind === "read") return null;
+  const place = { os, ember: emberPaths };
+  if (emberPaths.length && [...heldTexts(r), r.window ?? "", ...(r.dialog?.fields ?? []), ...(r.dialog?.selected ?? [])].some(text => emberPathReach(text, place) !== null)) return "file";
   const title = r.window ?? "";
   const name = titleName(title);
   if (!/[/\\]/.test(title) && (EMBER_FILE.test(name) || EMBER_FOLDER.test(name))) return "file";
@@ -919,12 +923,13 @@ function heldTexts(r: ReachRequest): string[] {
   return out;
 }
 /** Does any of what the step leaves a field holding, or a dialog's fields and folder show, name Ember's data or policy folder? */
-function namesEmberDataHeld(r: ReachRequest, os: OS): boolean {
-  const named = (t: string) => namesEmberData(t) || emberPathReach(t, { os }) === "names";
+function namesEmberDataHeld(r: ReachRequest, place: EmberPlace): boolean {
+  const named = (t: string) => namesEmberData(t) || emberPathReach(t, place) === "names";
   if (heldTexts(r).some(named)) return true;
   const d = r.dialog;
   if (!d || r.kind === "read") return false;
-  return (d.fields ?? []).some(named) || namesEmberData(d.text) || (d.items ?? []).some(t => namesEmberData(t)) || (d.controls ?? []).some(c => namesEmberData(c.name));
+  const dialogNamed = (t: string) => namesEmberData(t) || (!!place.ember?.length && emberPathReach(t, place) === "names");
+  return (d.fields ?? []).some(named) || dialogNamed(d.text) || (d.items ?? []).some(dialogNamed) || (d.selected ?? []).some(t => !!place.ember?.length && named(t)) || (d.controls ?? []).some(c => dialogNamed(c.name));
 }
 /** A file dialog's own title (whole): "Save As", "Open File", Kate's "Save File — Kate". */
 const FILE_DIALOG_NAME = /^(?:save|save as|save file|save file as|save a copy|save copy|save image|export|export as|export file|open|open file|open files|open folder|select file|select files|select folder|select a file|choose file|choose files|choose a file|choose folder|browse|browse for folder|insert file|insert image|insert picture|upload|upload file|file upload|attach|attach file|attach files)$/i;
@@ -3168,7 +3173,9 @@ export class PolicyEngine {
   /** When the last minute's actions happened, every task's together: the limit is on Ember, not on each task. */
   private recent: number[] = [];
 
-  constructor(private o: PolicyInputs) {}
+  private readonly emberPaths: readonly string[];
+
+  constructor(private o: PolicyInputs) { this.emberPaths = Object.freeze([...(o.emberPaths ?? [])]); }
 
   /** The OS's key conventions (Linux's unless given). */
   private get keys(): KeyConventions { return this.o.keys ?? KEYS.linux; }
@@ -3196,11 +3203,11 @@ export class PolicyEngine {
    * refuses it. A refusal stays a refusal.
    */
   private ownDataDoubt(r: ActionRequest, d: Decision): Decision {
-    if (d.verdict === "deny" || d.tier === "read" || !mayReachEmberData(r, this.os)) return d;
+    if (d.verdict === "deny" || d.tier === "read" || !mayReachEmberData(r, this.os, this.emberPaths)) return d;
     if (this.autopilot) return { tier: "never", verdict: "deny", reason: `${EMBER_DATA_DOUBT}; Autopilot has no question to put, so Ember doesn't do it`, prompt: d.prompt };
     const { autonomy: _a, announce: _n, mode: _m, waivable: _w, needsGrant: _g, stepPrompt: _s, ...rest } = d;
     // The question says so, in Ember's words (safety-privacy-r11-3).
-    const line = emberDataReach(r, this.os) === "unread" ? EMBER_DATA_UNREAD_QUESTION : EMBER_DATA_QUESTION;
+    const line = emberDataReach(r, this.os, this.emberPaths) === "unread" ? EMBER_DATA_UNREAD_QUESTION : EMBER_DATA_QUESTION;
     const prompt = d.prompt.includes(line) ? d.prompt : `${d.prompt} ${line}`;
     return { ...rest, tier: "confirm", verdict: "confirm", risky: true, everyTime: true, remember: false, prompt, reason: d.verdict === "confirm" ? `${d.reason}; ${EMBER_DATA_DOUBT}` : EMBER_DATA_DOUBT };
   }
@@ -3263,7 +3270,7 @@ export class PolicyEngine {
   autopilotStep(r: ActionRequest, d: Decision): Decision {
     if (d.verdict !== "confirm" || !this.autopilot) return d;
     // Never a step that may reach Ember's own settings, audit log or policy: refused (ownDataDoubt).
-    if (mayReachEmberData(r, this.os)) return this.ownDataDoubt(r, d);
+    if (mayReachEmberData(r, this.os, this.emberPaths)) return this.ownDataDoubt(r, d);
     return { ...d, verdict: "allow", remember: false, autonomy: true, mode: "autopilot", reason: `${d.reason}; ${AUTOPILOT_REASON}`, announce: this.announcement(r, d, "autopilot") };
   }
 
@@ -3343,7 +3350,7 @@ export class PolicyEngine {
     const may = () => (this.o.assisted?.() ?? false) && !this.o.confirmEveryAction?.() && (this.o.actionsAllowed?.() ?? true);
     if (!steps.some(s => s.d.verdict === "confirm") || steps.some(s => s.d.verdict === "deny" || s.r.kind === "read")) return asIs();
     // Never a step that may reach Ember's own settings, audit log or policy (ownDataDoubt): the user answers it.
-    if (steps.some(s => mayReachEmberData(s.r, this.os))) return asIs();
+    if (steps.some(s => mayReachEmberData(s.r, this.os, this.emberPaths))) return asIs();
     // (Nor the user's words: a request too long to show whole could lose the "but don't…" at its end.)
     if (!may() || !o.words.trim() || o.words.trim().length > CHECK_LIMITS.words || o.signal.aborted) return asIs();
     const parts = steps.map(s => stepForCheck(s.r, s.d, this.keys));
@@ -3705,12 +3712,12 @@ export class PolicyEngine {
     // Ember's own windows: a task could answer its own (or another task's) question, or change consent or the never-look list.
     if (r.kind !== "read" && isEmberWindow({ app: r.app, name: r.window, pid: r.windowId?.pid }, this.o.ownPid)) return never("Ember's own windows are for the user only");
     // Ember's settings, audit log and policy, open in another app: a task could forge the mode's agreement or weaken a setting there.
-    if (r.kind !== "read" && showsEmberData(r.window)) return never("Ember's settings, audit log and policy are for the user only");
+    if (r.kind !== "read" && (showsEmberData(r.window) || (this.emberPaths.length > 0 && emberPathReach(r.window ?? "", { os, ember: this.emberPaths }) === "names"))) return never("Ember's settings, audit log and policy are for the user only");
     // Or their folder typed into an Open dialog or an address bar: the way to open them there (safety-privacy-r10-1),
     // also as a pattern that reaches it ("~/.config/emb?r/settings.json", integ-y-1), as the classifier's `ember.path` is.
     // And what a field holds once the step is taken (typed in pieces, key by key, finished by what it held) or a dialog's
     // fields and folder show when its Save or Open is pressed (safety-privacy-r11-1).
-    if (namesEmberDataHeld(r, os)) return never("Ember's settings, audit log and policy are for the user only");
+    if (namesEmberDataHeld(r, { os, ember: this.emberPaths })) return never("Ember's settings, audit log and policy are for the user only");
     // (The vault's fill is the one step that may reach a password field: decided below, in Autopilot only.)
     if (r.element?.role === "password text" && r.kind !== "vault_fill") return never("password fields are for the user only");
     if (r.element?.role === "terminal") return never("Ember doesn't type into terminal windows; it runs commands in its own command window when Commands is on");

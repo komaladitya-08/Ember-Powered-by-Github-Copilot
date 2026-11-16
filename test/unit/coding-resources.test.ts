@@ -13,6 +13,7 @@ const sim = vi.hoisted(() => ({ discover: vi.fn(), create: vi.fn() }));
 vi.mock("../../app/main/agent/coding-toolchain", () => ({ discoverCodingToolchain: sim.discover }));
 vi.mock("../../app/main/agent/isolated-command-workspace", () => ({ IsolatedCommandWorkspace: { create: sim.create } }));
 import { ProjectCodingResources, type ProjectCodingResourcesOptions } from "../../app/main/agent/coding-resources";
+import { selectCodingStorageBase } from "../../app/main/agent/coding-storage";
 import { CodingPrivacyCleanupError, CodingPrivacyScanError } from "../../app/main/agent/coding-privacy-scanner";
 
 const A = "a".repeat(64), B = "b".repeat(64), P = "11111111-1111-4111-8111-111111111111", Q = "22222222-2222-4222-8222-222222222222";
@@ -393,4 +394,20 @@ it("keeps unsupported-platform folder metadata and empty result reset usable wit
   expect(results.state(P)).toEqual([]); expect(await results.review("unknown")).toBeNull();
   expect((await results.export("unknown", source, () => true)).ok).toBe(false);
   expect(sim.discover).not.toHaveBeenCalled(); expect(sim.create).not.toHaveBeenCalled();
+});
+
+resourceIt("allocates only in the same selected storage base already registered with desktop gates", async () => {
+  const storage = selectCodingStorageBase();
+  const replacement = path.join(temp, "other-temporary"); await fs.mkdir(replacement, { mode: 0o700 });
+  vi.mocked(os.tmpdir).mockReturnValue(replacement);
+  const value = await open({ storage }); await ready(value);
+  expect(value.reviewBase.startsWith(storage.common! + path.sep)).toBe(true);
+  expect(await fs.readdir(replacement)).toEqual([]);
+});
+
+resourceIt("does not allocate storage if the shared canonical selection was unavailable", async () => {
+  const value = await open({ storage: Object.freeze({ common: null, protectedPaths: Object.freeze([path.join(temporary, "unresolved-coding")]) }) });
+  expect(value.availability().available).toBe(false);
+  expect(sim.discover).not.toHaveBeenCalled();
+  expect(await fs.readdir(temporary)).toEqual([]);
 });

@@ -212,9 +212,9 @@ const CLOSE_ID = "conn:close";
 const CARD_UNSHOWN = "Ember couldn't show the card that asks you first, so nothing changed.";
 
 /** Ember's own paths on this computer (§3.6.2): its data, its install, the administrator's policy folder. */
-export function emberPathsOf(o: { os: OS; userData: string; resourcesPath: string; packaged: boolean; env: NodeJS.ProcessEnv }): string[] {
+export function emberPathsOf(o: { os: OS; userData: string; resourcesPath: string; packaged: boolean; env: NodeJS.ProcessEnv; emberPaths?: readonly string[] }): string[] {
   const p = o.os === "win32" ? pathWin32 : pathPosix;
-  const out = [o.userData];
+  const out = [o.userData, ...(o.emberPaths ?? [])];
   if (o.packaged) out.push(o.os === "darwin" ? p.resolve(o.resourcesPath, "..", "..") : p.dirname(o.resourcesPath));
   if (o.os === "linux") {
     out.push("/opt/ember", "/etc/ember");
@@ -555,7 +555,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   const promptWindow = parts.promptWindow({ create: deps.windows.prompt, ipc: deps.ipc, log: log.child("prompt-window"), os: deps.os, notify: deps.notify });
 
   // ── This computer's commands ──
-  const emberPaths = emberPathsOf({ os: deps.os, userData: deps.userData, resourcesPath: deps.resourcesPath, packaged: deps.packaged, env: parts.env });
+  const emberPaths = emberPathsOf({ os: deps.os, userData: deps.userData, resourcesPath: deps.resourcesPath, packaged: deps.packaged, env: parts.env, emberPaths: deps.emberPaths });
   const emberPids = (): number[] => [...new Set([...safeList(deps.emberPids), ...safeList(parts.ownPids), ...safeList(parts.wslHelpers.pids)].filter(p => Number.isInteger(p) && p > 0))];
   let extraPath: string[] = [];
   try { extraPath = deps.extraPath(); } catch (err) { log.warn("targets.extra_path_failed", { err }); }

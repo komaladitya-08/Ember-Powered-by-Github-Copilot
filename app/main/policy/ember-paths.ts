@@ -27,8 +27,11 @@ export type PathReach = "names" | "holds" | null;
  * A typed path as the dialog or the program will read it (r10-safety-y10-2): a percent-escaped letter, digit or dot
  * decoded ("%65mber"), an escaped space unescaped ("Application\ Support"), and doubled separators and "/./" parts dropped.
  */
-export const plainPath = (text: string): string => text
-  .replace(/%([0-9a-f]{2})/gi, (all, hex: string) => { const c = String.fromCharCode(parseInt(hex, 16)); return /[a-z0-9.]/i.test(c) ? c : all; })
+export const plainPath = (text: string): string => literalPath(text
+  .replace(/%([0-9a-f]{2})/gi, (all, hex: string) => { const c = String.fromCharCode(parseInt(hex, 16)); return /[a-z0-9.]/i.test(c) ? c : all; }));
+
+/** URI path characters have already been decoded once; only normalize literal separators from here. */
+const literalPath = (text: string): string => text
   .replace(/\\ /g, " ")
   .replace(/([/\\])(?:\.[/\\])+/g, "$1")
   .replace(/([/\\])[/\\]+/g, "$1");
@@ -49,12 +52,9 @@ function homeIn(abs: string, flavour: PathFlavour): string | null {
   return m ? m[0] : null;
 }
 
-/** `text` with a `file:` address, `~`, `$HOME`, `$XDG_CONFIG_HOME`, `%USERPROFILE%`, `%LOCALAPPDATA%` and `%APPDATA%` written out. */
+/** `text` with `~`, `$HOME`, `$XDG_CONFIG_HOME`, `%USERPROFILE%`, `%LOCALAPPDATA%` and `%APPDATA%` written out. */
 function expanded(text: string, posixHome: string, winHome: string): string {
-  let t = text;
-  const file = /^file:\/\/(?:localhost)?(\/.*)$/i.exec(t);
-  if (file) t = /^\/[A-Za-z]:[\\/]/.test(file[1]) ? file[1].slice(1) : file[1];
-  return t
+  return text
     .replace(/^\$\{?HOME\}?(?=$|\/)/, posixHome)
     .replace(/^\$\{?XDG_CONFIG_HOME\}?(?=$|\/)/, `${posixHome}/.config`)
     .replace(/^%(?:USERPROFILE|HOME)%(?=$|[\\/])/i, winHome)
@@ -69,11 +69,27 @@ function expanded(text: string, posixHome: string, winHome: string): string {
  * path with nowhere to be relative to reach nothing here.
  */
 export function emberPathReach(text: string, place: EmberPlace): PathReach {
-  if (!text || text.length > PATH_MAX || text.includes("\0") || (/^[a-z][a-z0-9+.-]+:\/\//i.test(text) && !/^file:/i.test(text))) return null;
+  if (!text || text.length > PATH_MAX || text.includes("\0")) return /^\s*file:/i.test(text) ? "names" : null;
+  if (/^[a-z][a-z0-9+.-]+:\/\//i.test(text) && !/^file:/i.test(text)) return null;
   const home = place.home || null;
   const posixHome = home && home.startsWith("/") ? home : ANY_POSIX_HOME;
   const winHome = home && /^[A-Za-z]:[\\/]/.test(home) ? home : ANY_WIN_HOME;
-  const t = expanded(plainPath(text.normalize("NFKC").replace(HIDDEN, "")), posixHome, winHome);
+  let local = text.normalize("NFKC").replace(HIDDEN, "");
+  const fileUri = /^\s*file:/i.test(local);
+  if (fileUri) {
+    try {
+      // Decode only local file URIs, before literal separator normalization. The target OS chooses path rules,
+      // so file:///C:/ also works when the host judging a Windows target is POSIX. Non-local file hosts are not
+      // local data; malformed local URI paths cannot be proved clear of Ember's data and fail closed.
+      const uri = new URL(local);
+      if (uri.hostname && uri.hostname.toLowerCase() !== "localhost") return null;
+      if (/%(?:2f|5c)/i.test(uri.pathname)) return "names";
+      local = decodeURIComponent(uri.pathname);
+      if (local.includes("\0")) return "names";
+      if (/^\/[A-Za-z]:[\\/]/.test(local)) local = local.slice(1);
+    } catch { return "names"; }
+  }
+  const t = expanded(fileUri ? literalPath(local) : plainPath(local), posixHome, winHome);
   const own = place.own || null;
   let flavour: PathFlavour;
   if (/^[A-Za-z]:[\\/]/.test(t) || /^\\\\/.test(t)) flavour = "win32";
@@ -85,7 +101,10 @@ export function emberPathReach(text: string, place: EmberPlace): PathReach {
   const os: OS = flavour === "win32" ? "win32" : place.os === "linux" ? "linux" : "darwin";
   const ownHome = flavour === "win32" ? winHome : posixHome;
   const abs = resolveTargetPath(t, { os, home: ownHome, cwd: own ?? (flavour === "win32" ? winHome : posixHome) });
-  const ember = (place.ember ?? []).filter(p => (flavour === "win32" ? /^[A-Za-z]:[\\/]/.test(p) : p.startsWith("/")));
+  // Keep exact supplied roots as well as the spelling the same legacy literal normalizer gives them.
+  // A real directory containing e.g. "%65" must remain protected both literally and through a file URI.
+  const ember = [...new Set((place.ember ?? []).flatMap(p => [p, plainPath(p.normalize("NFKC").replace(HIDDEN, ""))]))]
+    .filter(p => (flavour === "win32" ? /^[A-Za-z]:[\\/]/.test(p) : p.startsWith("/")));
   const homes = [...new Set([ownHome, homeIn(abs, flavour)].filter((h): h is string => !!h))];
   const envs: PathEnv[] = homes.map(h => pathEnv({ flavour, os, home: h, cwd: null, windows: flavour === "win32" ? windowsContextOf(h, ember) : null, ember }));
   // A distro's home that isn't known: Ember's folders in any home, and the folders above them (the classifier's own rule).

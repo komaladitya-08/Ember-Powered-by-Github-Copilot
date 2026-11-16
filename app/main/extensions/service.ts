@@ -49,6 +49,8 @@ export interface ExtensionsDeps {
   dir: string;
   /** `<userData>/copilot` (the runtime's home: its marketplace cache and plugin installs). */
   copilotHome: string;
+  /** Exact host-owned data roots outside userData (selected before any coding allocation). */
+  emberPaths?: readonly string[];
   settings: { get(): Settings; update?(patch: SettingsPatch): unknown; onChange?(fn: () => void): () => void };
   admin: () => AdminPolicy;
   /** The connected runtime, for marketplaces (null while Ember isn't connected). */
@@ -292,6 +294,7 @@ export class ExtensionsService implements ExtensionsApi {
   readonly sealed: Promise<void>;
 
   constructor(private o: ExtensionsDeps) {
+    this.o = { ...o, emberPaths: Object.freeze([...(o.emberPaths ?? [])]) };
     this.store = new ExtensionStore(o.dir);
     this.items = this.store.read();
     // Each item's digest as the file holds it, before anything here changes it (the off marks below).
@@ -1216,7 +1219,7 @@ export class ExtensionsService implements ExtensionsApi {
     let home: string | null = null;
     try { home = this.o.home ?? homedir(); } catch { /* no home known: any user's is judged */ }
     const own = e?.server.spec?.type === "stdio" ? this.store.pluginDir(e.item.id) : null;
-    const emberData = emberReachOf(input.toolArgs, { os: this.o.os, home, ember: [path.dirname(this.o.dir)], own });
+    const emberData = emberReachOf(input.toolArgs, { os: this.o.os, home, ember: [path.dirname(this.o.dir), ...(this.o.emberPaths ?? [])], own });
     let { verdict, reason } = this.gateInput(gate, input.toolName, shownAsPinned, generation, emberData);
     // Assisted: a call that would ask because its tool changes things or its server is on the internet is checked
     // first against the user's own words for this turn (integrations-r12-1, -c12-1). Never after a no (said-no, and a
