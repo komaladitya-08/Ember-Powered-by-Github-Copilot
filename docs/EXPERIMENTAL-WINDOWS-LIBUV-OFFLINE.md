@@ -33,7 +33,21 @@ directory `GetFileAttributesW` returned `INVALID_FILE_ATTRIBUTES`, after the syn
 No LPAC process launched. Its immediate Win32 error is now encoded as `0xe1010000 | error` for work or
 `0xe1020000 | error` for state when the error fits 16 bits; larger errors produce the fixed `0xe1ffffff` or
 `0xe2ffffff` refusal. These stopped numeric bootstrap diagnostics expose no path or native message and do not
-change any acceptance check. The native error and its cause remain pending.
+change any acceptance check.
+
+Probe-only run [43808299610](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43808299610)
+at `0aa005e26b64f460e7299840bdca8acb237d6e2d` returned `0xe1010005` for all four ordinary-host variants:
+the immediate work-directory error is `ERROR_ACCESS_DENIED` (5). Both images built successfully and each passed
+318 contracts with one privilege skip. No LPAC process launched. Subsequent diagnostics preserve that refusal
+and add only fixed token predicates and failure-path directory facts. Exit bits 18 through 22 record successful
+current-directory query, its equality to the selected directory, an exact attributes-only directory open,
+ordinary non-reparse directory metadata, and successful handle close. The alternate open requests the same
+attributes access and read/write sharing as the retained parent pins; its result never authorizes useful work.
+The exact suspended host's token is also compared with the parent process token using query-only handles:
+receipts contain only user-equality, restriction/AppContainer booleans and integrity RIDs. SID pointers must be
+wholly contained in their bounded token buffers; raw SIDs are never returned. Unknown token ownership or close
+failure quarantines the diagnostic. Facts are published only after native root/job stop and verified fixture cleanup.
+No path, SID, native text, ACL or privilege change is involved. The access-denial cause remains pending.
 
 The official Node experiment identified `WSAStartup / 10107` on both pinned versions and both Windows Server images,
 with successful ordinary-host controls. See [the bounded native receipts](WINDOWS-NODE-LPAC-PROOF.md).

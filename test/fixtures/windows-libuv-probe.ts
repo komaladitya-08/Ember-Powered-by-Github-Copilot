@@ -11,6 +11,8 @@ import { runWindowsNodeHostStartup, WindowsNodeHostCleanupError } from "./window
 import { inspectWindowsNodeFatalOutput } from "./windows-node-lpac-fatal";
 import { parseWindowsLibuvProbeReport } from "./windows-libuv-probe-report";
 import { disposeWindowsLibuvProbe } from "./windows-libuv-probe-disposal";
+import { windowsLibuvBootstrapFacts } from "./windows-libuv-bootstrap";
+import { loadWindowsLibuvHostIdentity, type WindowsLibuvHostIdentity } from "./windows-libuv-host-identity";
 // @ts-expect-error -- fixed trusted-host JavaScript build recipe
 import { selectedWindowsLibuvBuildPin, windowsLibuvRecipe } from "../../scripts/experimental/build-windows-libuv-probe.mjs";
 import sourcePin from "../../scripts/experimental/windows-libuv-source-pin.json";
@@ -49,6 +51,8 @@ const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex
 const quarantinedProbeOwners: unknown[] = [];
 type FixedFailureReceipt = Readonly<{ variant: "stock" | "offline"; phase: string;
   host?: Readonly<{ exitCode: number; jobStopped: true; reportState: "not-read" | "valid" | "absent" | "refused";
+    identity?: WindowsLibuvHostIdentity;
+    bootstrap?: ReturnType<typeof windowsLibuvBootstrapFacts>;
     report: ReturnType<typeof parseWindowsLibuvProbeReport> | null }> }>;
 const failureReceipts = new WeakMap<object, FixedFailureReceipt>();
 export function windowsLibuvProbeFailureReceipt(error: unknown): FixedFailureReceipt | undefined {
@@ -108,9 +112,10 @@ export async function runWindowsLibuvFixedProbe(input: { parent: string; buildRo
   let io: ReturnType<typeof loadWindowsNodeIo> | undefined, program = "", environment: Buffer | undefined;
   let phase = "receipt";
   let stoppedHost: { exitCode: number; jobStopped: true } | undefined, hostReportFact: ReturnType<typeof parseWindowsLibuvProbeReport> | null = null;
+  let hostIdentity: WindowsLibuvHostIdentity | undefined;
   let hostReportState: "not-read" | "valid" | "absent" | "refused" = "not-read";
   let unsafe = false, failure: { error: unknown } | undefined;
-  let result: { issuer: string; variant: "stock" | "offline"; host: { exitCode: number; jobStopped: true; report: ReturnType<typeof parseWindowsLibuvProbeReport> };
+  let result: { issuer: string; variant: "stock" | "offline"; host: { exitCode: number; jobStopped: true; identity: WindowsLibuvHostIdentity; report: ReturnType<typeof parseWindowsLibuvProbeReport> };
     lpac: { exitCode: number; jobStopped: true; report: ReturnType<typeof parseWindowsLibuvProbeReport> | null; output: ReturnType<typeof inspectWindowsNodeFatalOutput> } } | undefined;
   const checkPins = () => { for (const pin of pins) pin.unchanged(); };
   const closePin = (pin: ReturnType<typeof native.pin>) => { if (attemptedPins.has(pin)) return; attemptedPins.add(pin); pin.close(); };
@@ -173,13 +178,19 @@ export async function runWindowsLibuvFixedProbe(input: { parent: string; buildRo
     const host = await runWindowsNodeHostStartup({ program, command: windowsNodeProofCommand(program, []), cwd: prepared.paths.work, environment,
       unchanged: checkPins }, api, {
       create(...args) { phase = "host-create"; const created = ownedIo.createHost(...args); phase = "host-created"; return created; },
-      verify(created, expected) { phase = "host-image"; native.image(created.process, created.pid, expected); phase = "host-token"; native.verifyHost(created.process); phase = "host-running"; },
+      verify(created, expected) {
+        phase = "host-image"; native.image(created.process, created.pid, expected);
+        phase = "host-token"; native.verifyHost(created.process);
+        phase = "host-identity"; hostIdentity = loadWindowsLibuvHostIdentity().inspect(created.process);
+        if (hostIdentity.parent.appContainer !== 0 || hostIdentity.host.appContainer !== 0) throw new Error("The fixed host control requires ordinary parent and child tokens.");
+        phase = "host-running";
+      },
     });
     stoppedHost = host; phase = "host-report"; hostReportState = "refused";
     const hostReport = readReport(0);
     hostReportFact = hostReport; hostReportState = hostReport ? "valid" : "absent";
     phase = "host-outcome";
-    if (host.exitCode !== 0 || !hostReport || hostReport.status !== 1) throw new Error("The fixed libuv host supplied no complete useful-work witness.");
+    if (host.exitCode !== 0 || !hostIdentity || !hostReport || hostReport.status !== 1) throw new Error("The fixed libuv host supplied no complete useful-work witness.");
     phase = "host-stdio"; ownedIo.acceptHostControl();
     // The same suspended handle is checked for exact image/PID before the fixture can resume it.
     phase = "lpac";
@@ -195,7 +206,7 @@ export async function runWindowsLibuvFixedProbe(input: { parent: string; buildRo
     const lpacReport = readReport(1);
     checkPins();
     result = { issuer: "ember-experimental-libuv-fixed-probe", variant: input.variant,
-      host: { ...host, report: hostReport }, lpac: { exitCode, jobStopped: true, report: lpacReport, output } };
+      host: { ...host, identity: hostIdentity, report: hostReport }, lpac: { exitCode, jobStopped: true, report: lpacReport, output } };
   } catch (error) {
     if (uncertain(error) || phase === "prepare" && !fixture) unsafe = true;
     failure = { error: uncertain(error) ? error : new Error(`The fixed libuv probe failed during ${phase}.`) };
@@ -211,7 +222,8 @@ export async function runWindowsLibuvFixedProbe(input: { parent: string; buildRo
   if (unsafe) throw new WindowsLibuvProbeCleanupError();
   if (failure) {
     if (failure.error !== null && typeof failure.error === "object") failureReceipts.set(failure.error, Object.freeze({ variant: input.variant, phase,
-      ...(stoppedHost ? { host: Object.freeze({ ...stoppedHost, reportState: hostReportState, report: hostReportFact }) } : {}) }));
+      ...(stoppedHost ? { host: Object.freeze({ ...stoppedHost, ...(hostIdentity ? { identity: hostIdentity } : {}), bootstrap: windowsLibuvBootstrapFacts(stoppedHost.exitCode),
+        reportState: hostReportState, report: hostReportFact }) } : {}) }));
     throw failure.error;
   }
   if (!result) throw new Error("The fixed libuv probe returned no stopped numeric result.");

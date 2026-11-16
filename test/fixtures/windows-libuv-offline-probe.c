@@ -82,8 +82,31 @@ static DWORD fixedChecksum(void)
   return value;
 }
 
+/* Diagnostic predicates only: a failed ordinary attributes query always remains a refusal. */
+static DWORD refusedDirectoryFacts(const WCHAR *directory)
+{
+  static WCHAR current[PROBE_PATH_CHARS];
+  DWORD flags = 0, count = GetCurrentDirectoryW(PROBE_PATH_CHARS, current);
+  BY_HANDLE_FILE_INFORMATION information;
+  HANDLE handle;
+  if (count > 0 && count < PROBE_PATH_CHARS) {
+    flags |= 1;
+    if (_wcsicmp(current, directory) == 0) flags |= 2;
+  }
+  handle = CreateFileW(directory, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                       OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+  if (handle != INVALID_HANDLE_VALUE) {
+    flags |= 4;
+    if (GetFileInformationByHandle(handle, &information) &&
+        (information.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) == FILE_ATTRIBUTE_DIRECTORY)
+      flags |= 8;
+    if (CloseHandle(handle)) flags |= 16;
+  }
+  return flags;
+}
+
 /* No untrusted pathname or argument is accepted. These are exact host-owned scratch environment values. */
-static int localDirectory(const WCHAR *name, WCHAR *output, DWORD *nativeError)
+static int localDirectory(const WCHAR *name, WCHAR *output, DWORD *nativeError, DWORD *refusalFacts)
 {
   DWORD count = GetEnvironmentVariableW(name, output, PROBE_PATH_CHARS);
   DWORD index, start = 3, attributes, driveType;
@@ -108,7 +131,11 @@ static int localDirectory(const WCHAR *name, WCHAR *output, DWORD *nativeError)
   driveType = GetDriveTypeW(drive);
   if (driveType != DRIVE_FIXED) return (int)(16 + (driveType <= 6 ? driveType : 15));
   attributes = GetFileAttributesW(output);
-  if (attributes == INVALID_FILE_ATTRIBUTES) { *nativeError = GetLastError(); return 32; }
+  if (attributes == INVALID_FILE_ATTRIBUTES) {
+    *nativeError = GetLastError();
+    *refusalFacts = refusedDirectoryFacts(output);
+    return 32;
+  }
   if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) return 33;
   if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) return 34;
   return 0;
@@ -350,7 +377,7 @@ static void removeWorkFile(void)
 int main(int argc, char **argv)
 {
   HANDLE token = NULL;
-  DWORD appContainer = 0, bytes = 0, bootstrapError = 0;
+  DWORD appContainer = 0, bytes = 0, bootstrapError = 0, bootstrapFacts = 0;
   BY_HANDLE_FILE_INFORMATION information;
   int rc, exitCode;
   (void)argv;
@@ -358,11 +385,11 @@ int main(int argc, char **argv)
   record[R_LOOP_INIT] = PROBE_UNOBSERVED; record[R_LOOP_RUN] = PROBE_UNOBSERVED; record[R_LOOP_CLOSE] = PROBE_UNOBSERVED;
   /* Bootstrap failures have fixed numeric exits; paths, arguments and native text are never printed. */
   if (argc != 1) return 10;
-  rc = localDirectory(L"EMBER_LPAC_WORK", workPath, &bootstrapError);
-  if (rc == 32) return (int)(bootstrapError <= 0xffffu ? 0xe1010000u | bootstrapError : 0xe1ffffffu);
+  rc = localDirectory(L"EMBER_LPAC_WORK", workPath, &bootstrapError, &bootstrapFacts);
+  if (rc == 32) return (int)(bootstrapError <= 0xffffu ? 0xe1010000u | (bootstrapFacts << 18) | bootstrapError : 0xe1ffffffu);
   if (rc != 0) return 100 + rc;
-  rc = localDirectory(L"EMBER_LPAC_STATE", statePath, &bootstrapError);
-  if (rc == 32) return (int)(bootstrapError <= 0xffffu ? 0xe1020000u | bootstrapError : 0xe2ffffffu);
+  rc = localDirectory(L"EMBER_LPAC_STATE", statePath, &bootstrapError, &bootstrapFacts);
+  if (rc == 32) return (int)(bootstrapError <= 0xffffu ? 0xe1020000u | (bootstrapFacts << 18) | bootstrapError : 0xe2ffffffu);
   if (rc != 0) return 200 + rc;
   if (_wcsicmp(workPath, statePath) == 0) return 300;
   if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return 11;
