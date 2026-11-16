@@ -8,9 +8,9 @@
 #include <wchar.h>
 #include <string.h>
 
-static const char output[] = "EMBER_ASSET_ACCESS_V1:255:511:1\n";
-static const char errorOutput[] = "EMBER_ASSET_ACCESS_STDERR\n";
-static const char controlBytes[] = "EMBER_ASSET_CONTROL_CREATED\n";
+static const char output[] = "EMBER_ASSET_ACCESS_V2:131071:2047:17:11:2:1\n";
+static const char errorOutput[] = "EMBER_ASSET_ACCESS_STDERR_V2\n";
+static const char controlBytes[] = "EMBER_ASSET_CONTROL_CREATED_V2\n";
 static int lastProbeOutcome = 4;
 
 static void uncertain(void) { for (;;) Sleep(1000); }
@@ -36,26 +36,26 @@ static int errorOutcome(DWORD error) {
 }
 static int allowed(const WCHAR *file, DWORD access, int directory);
 static int failedProbe(HANDLE err, int object, int right, WCHAR **targets) {
-  char frame[] = "EMBER_ASSET_PROBE_V1:0:0:0\n";
-  char matrix[] = "EMBER_ASSET_MATRIX_V1:000000000000000000\n";
-  const size_t prefix = sizeof("EMBER_ASSET_PROBE_V1:") - 1;
-  const size_t matrixPrefix = sizeof("EMBER_ASSET_MATRIX_V1:") - 1;
+  char frame[] = "EMBER_ASSET_PROBE_V2:0:0:0\n";
+  char matrix[] = "EMBER_ASSET_MATRIX_V2:000000000000000000000000\n";
+  const size_t prefix = sizeof("EMBER_ASSET_PROBE_V2:") - 1;
+  const size_t matrixPrefix = sizeof("EMBER_ASSET_MATRIX_V2:") - 1;
   const DWORD rights[] = { READ_CONTROL, WRITE_DAC, WRITE_OWNER };
   const int originalOutcome = lastProbeOutcome;
   int objectIndex, rightIndex;
-  if (object < 1 || object > 3 || right < 1 || right > 3 || originalOutcome < 1 || originalOutcome > 5) return 205;
+  if (object < 1 || object > 8 || right < 1 || right > 3 || originalOutcome < 1 || originalOutcome > 5) return 305;
   /* Failure-only measurements use existing opens without changing ACLs, file contents or the first failure. */
-  for (objectIndex = 1; objectIndex <= 6; objectIndex++) {
+  for (objectIndex = 1; objectIndex <= 8; objectIndex++) {
     for (rightIndex = 0; rightIndex < 3; rightIndex++) {
-      (void)allowed(targets[objectIndex], rights[rightIndex], objectIndex != 3 && objectIndex != 6);
-      if (lastProbeOutcome < 1 || lastProbeOutcome > 5) return 205;
+      (void)allowed(targets[objectIndex], rights[rightIndex], objectIndex != 3 && objectIndex != 6 && objectIndex != 8);
+      if (lastProbeOutcome < 1 || lastProbeOutcome > 5) return 305;
       matrix[matrixPrefix + (objectIndex - 1) * 3 + rightIndex] = (char)('0' + lastProbeOutcome);
     }
   }
   /* Both frames wait for every acquired query handle to close positively. Unknown close emits nothing. */
   frame[prefix] = (char)('0' + object); frame[prefix + 2] = (char)('0' + right); frame[prefix + 4] = (char)('0' + originalOutcome);
   if (writeAll(err, frame, (DWORD)(sizeof(frame) - 1))) (void)writeAll(err, matrix, (DWORD)(sizeof(matrix) - 1));
-  return 205;
+  return 305;
 }
 static int allowed(const WCHAR *file, DWORD access, int directory) {
   HANDLE owned = CreateFileW(file, access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -92,23 +92,30 @@ static int createProbe(const WCHAR *directory, int expected) {
 int wmain(int argc, WCHAR **argv) {
   HANDLE input = GetStdHandle(STD_INPUT_HANDLE), out = GetStdHandle(STD_OUTPUT_HANDLE), err = GetStdHandle(STD_ERROR_HANDLE);
   DWORD count = 1; char byte = 0; int index;
-  /* parent, actual asset root, actual Node image, Low host-only directory, Low full-package directory/file. */
-  if (argc != 7) return 201;
-  for (index = 1; index < argc; index++) if (!ordinary(argv[index])) return 202;
+  const DWORD rights[] = { READ_CONTROL, WRITE_DAC, WRITE_OWNER };
+  const int positive[8][3] = { { 0, 0, 0 }, { 1, 0, 0 }, { 1, 0, 0 }, { 0, 0, 0 },
+    { 1, 1, 1 }, { 1, 1, 1 }, { 1, 0, 0 }, { 1, 0, 0 } };
+  int rightIndex, positiveCount = 0, deniedCount = 0;
+  /* parent, asset root/image, Low host-only, Low full-package dir/file, Medium full-package dir/file. */
+  if (argc != 9) return 301;
+  for (index = 1; index < argc; index++) if (!ordinary(argv[index])) return 302;
   if (!input || input == INVALID_HANDLE_VALUE || !out || out == INVALID_HANDLE_VALUE || !err || err == INVALID_HANDLE_VALUE ||
-      GetFileType(input) != FILE_TYPE_CHAR || GetFileType(out) != FILE_TYPE_PIPE || GetFileType(err) != FILE_TYPE_PIPE) return 203;
-  if (!ReadFile(input, &byte, 1, &count, NULL) || count != 0) return 204;
-  for (index = 1; index <= 3; index++) {
-    int directory = index != 3;
-    if (!allowed(argv[index], READ_CONTROL, directory)) return failedProbe(err, index, 1, argv);
-    if (!denied(argv[index], WRITE_DAC, directory)) return failedProbe(err, index, 2, argv);
-    if (!denied(argv[index], WRITE_OWNER, directory)) return failedProbe(err, index, 3, argv);
+      GetFileType(input) != FILE_TYPE_CHAR || GetFileType(out) != FILE_TYPE_PIPE || GetFileType(err) != FILE_TYPE_PIPE) return 303;
+  if (!ReadFile(input, &byte, 1, &count, NULL) || count != 0) return 304;
+  for (index = 1; index <= 8; index++) {
+    const int directory = index != 3 && index != 6 && index != 8;
+    for (rightIndex = 0; rightIndex < 3; rightIndex++) {
+      if (positive[index - 1][rightIndex]) {
+        if (!allowed(argv[index], rights[rightIndex], directory)) return failedProbe(err, index, rightIndex + 1, argv);
+        positiveCount++;
+      } else {
+        if (!denied(argv[index], rights[rightIndex], directory)) return failedProbe(err, index, rightIndex + 1, argv);
+        deniedCount++;
+      }
+    }
   }
-  /* Same owner and host-only DACL as the Medium parent; only this known control is Low. */
-  if (!allowed(argv[4], WRITE_DAC, 1)) return 206;
-  if (!allowed(argv[5], WRITE_DAC, 1) || !allowed(argv[5], WRITE_OWNER, 1) ||
-      !allowed(argv[6], WRITE_DAC, 0) || !allowed(argv[6], WRITE_OWNER, 0)) return 207;
-  if (!createProbe(argv[1], 0) || !createProbe(argv[2], 0) || !createProbe(argv[5], 1)) return 208;
-  if (!writeAll(out, output, (DWORD)(sizeof(output) - 1)) || !writeAll(err, errorOutput, (DWORD)(sizeof(errorOutput) - 1))) return 209;
-  return 19;
+  if (positiveCount != 10 || deniedCount != 14) return 307;
+  if (!createProbe(argv[1], 0) || !createProbe(argv[2], 0) || !createProbe(argv[7], 0) || !createProbe(argv[5], 1)) return 308;
+  if (!writeAll(out, output, (DWORD)(sizeof(output) - 1)) || !writeAll(err, errorOutput, (DWORD)(sizeof(errorOutput) - 1))) return 309;
+  return 29;
 }

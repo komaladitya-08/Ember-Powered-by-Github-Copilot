@@ -33,7 +33,7 @@ function clocks(fault = "") {
 }
 it("requires its own issuer and exact fixed producer, production graph and acquisition/build recipes", async () => {
   const run = await load(), facts = run.verifyWindowsNodeAssetEnforcementRun(repository, expected), paths = run.WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS.map(pin => pin.path);
-  expect(facts).toMatchObject({ issuer: "ember-windows-node-asset-enforcement-run-v1", compiledIssuer: "ember-windows-node-asset-enforcement-build-v1", image: 2022,
+  expect(facts).toMatchObject({ schema: 2, scope: 2, kind: "fixed-native-node-asset-enforcement-v2", issuer: "ember-windows-node-asset-enforcement-run-v2", compiledIssuer: "ember-windows-node-asset-enforcement-build-v2", image: 2022,
     compileCommit: expected.commit, producerRun: 43858256344, producerArtifact: 14224884648, producerZipBytes: 38424638 });
   expect(facts.sourceManifestSha256).toMatch(/^[a-f0-9]{64}$/); expect(facts.cases).toEqual(["natural", "natural-default", "overflow", "cancel", "precreate", "preresume", "sharedcreate"]);
   expect(paths.length).toBeGreaterThanOrEqual(80); expect(new Set(paths).size).toBe(paths.length);

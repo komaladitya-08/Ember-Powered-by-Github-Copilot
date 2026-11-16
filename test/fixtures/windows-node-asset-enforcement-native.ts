@@ -25,6 +25,7 @@ export interface WindowsNodeAssetEnforcementNativeFence { failure?: WindowsNodeA
 /** Fixed paths selected by the trusted witness, with identities obtained from its genuine profile and host API. */
 export interface WindowsNodeAssetEnforcementTargets {
   parent: string; root: string; image: string; lowOwner: string; lowFullDirectory: string; lowFullFile: string;
+  mediumFullDirectory: string; mediumFullFile: string;
   ownerSid: string; packageSid: string; parentLabel: "explicit" | "default";
 }
 /** No pin or security readback is a process Stop or publication receipt. */
@@ -204,7 +205,7 @@ export function bindWindowsNodeAssetEnforcementNative(native: Pick<typeof Koffi,
     const freed = call("LocalFree", [sd.raw]); if (freed !== null && freed !== 0n) return fail(); shared.allocations.delete(sd.raw);
     return result;
   };
-  const expectedKinds = ["private", "asset", "asset", "private", "full", "full"] as const;
+  const expectedKinds = ["private", "asset", "asset", "private", "full", "full", "full", "full"] as const;
   const sameSecurity = (a: Security, b: Security) => a.control === b.control && a.owner.equals(b.owner) && a.dacl.equals(b.dacl) && a.sacl.equals(b.sacl);
   try {
     if (shared.operation || shared.guarding) return fail();
@@ -237,8 +238,8 @@ export function bindWindowsNodeAssetEnforcementNative(native: Pick<typeof Koffi,
     pinTargets(input: WindowsNodeAssetEnforcementTargets): WindowsNodeAssetEnforcementPins {
       return operation(() => {
         const pins: Pin[] = [], record = { input, pins, binding }; owners.add(record); shared.owners.add(record);
-        if (!input || typeof input !== "object" || Object.keys(input).sort().join(",") !== "image,lowFullDirectory,lowFullFile,lowOwner,ownerSid,packageSid,parent,parentLabel,root") return fail();
-        const names = ["parent", "root", "image", "lowOwner", "lowFullDirectory", "lowFullFile"] as const;
+        if (!input || typeof input !== "object" || Object.keys(input).sort().join(",") !== "image,lowFullDirectory,lowFullFile,lowOwner,mediumFullDirectory,mediumFullFile,ownerSid,packageSid,parent,parentLabel,root") return fail();
+        const names = ["parent", "root", "image", "lowOwner", "lowFullDirectory", "lowFullFile", "mediumFullDirectory", "mediumFullFile"] as const;
         const files = names.map(key => own(input, key)); const ownerSid = own(input, "ownerSid"), packageSid = own(input, "packageSid"), parentLabel = own(input, "parentLabel");
         if (parentLabel !== "explicit" && parentLabel !== "default") return fail();
         const validSid = (value: unknown, prefix: string) => typeof value === "string" && value.length <= 184 && value.startsWith(prefix) &&
@@ -249,17 +250,18 @@ export function bindWindowsNodeAssetEnforcementNative(native: Pick<typeof Koffi,
               /[\p{Cc}\p{Cf}]/u.test(file) || file.slice(3).split("\\").some(part => !part || /[:<>"|?*]/.test(part) || /[. ]$/.test(part))) return fail();
           return file;
         });
-        if (new Set(checked.map(file => file.toLowerCase())).size !== 6 || path.dirname(checked[1]).toLowerCase() !== checked[0].toLowerCase() ||
+        if (new Set(checked.map(file => file.toLowerCase())).size !== 8 || path.dirname(checked[1]).toLowerCase() !== checked[0].toLowerCase() ||
             checked[2].toLowerCase() !== path.join(checked[1], "node.exe").toLowerCase() || checked.some(file => file.slice(0, 2).toLowerCase() !== checked[0].slice(0, 2).toLowerCase())) return fail();
         let closed = false;
         for (let i = 0; i < checked.length; i++) {
-          const directory = i !== 2 && i !== 5, handle = acquire(checked[i], directory, RC | 0x80, directory ? 3 : 1);
+          const directory = i !== 2 && i !== 5 && i !== 7, handle = acquire(checked[i], directory, RC | 0x80, directory ? 3 : 1);
           const pin = { file: checked[i], directory, handle, metadata: metadata(handle, checked[i], directory), security: undefined as unknown as Security };
-          pins.push(pin); pin.security = security(pin, ownerSid as string, packageSid as string, expectedKinds[i], i === 0, i === 0 && parentLabel === "default");
+          pins.push(pin); pin.security = security(pin, ownerSid as string, packageSid as string, expectedKinds[i], i === 0 || i >= 6, i === 0 && parentLabel === "default");
           if (pins.slice(0, -1).some(other => other.metadata.readUInt32LE(28) !== pin.metadata.readUInt32LE(28) ||
               other.metadata.subarray(44, 52).equals(pin.metadata.subarray(44, 52)))) return fail();
         }
-        if (!pins[0].security.owner.equals(pins[3].security.owner) || !pins[0].security.dacl.equals(pins[3].security.dacl)) return fail();
+        for (const [first, second] of [[0, 3], [4, 6], [5, 7]])
+          if (!pins[first].security.owner.equals(pins[second].security.owner) || !pins[first].security.dacl.equals(pins[second].security.dacl)) return fail();
         // Attribute reads let each host security-access positive prove its own ordinary identity as well.
         for (const pin of pins.slice(0, 3)) for (const access of [0x40080, 0x80080]) {
           const probe = acquire(pin.file, pin.directory, access, 7);
@@ -269,7 +271,7 @@ export function bindWindowsNodeAssetEnforcementNative(native: Pick<typeof Koffi,
           if (closed) return fail();
           for (let i = 0; i < pins.length; i++) {
             const pin = pins[i]; if (!same(pin.metadata, metadata(pin.handle, pin.file, pin.directory), i === 4) ||
-                !sameSecurity(pin.security, security(pin, ownerSid as string, packageSid as string, expectedKinds[i], i === 0, i === 0 && parentLabel === "default"))) return fail();
+                !sameSecurity(pin.security, security(pin, ownerSid as string, packageSid as string, expectedKinds[i], i === 0 || i >= 6, i === 0 && parentLabel === "default"))) return fail();
           }
         };
         return Object.freeze({ recheck() { operation(recheck); }, close() {

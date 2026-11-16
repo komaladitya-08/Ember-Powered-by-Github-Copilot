@@ -7,9 +7,10 @@ import { bindWindowsNodeAssetEnforcementNative, WindowsNodeAssetEnforcementNativ
 const ownerSid = "S-1-5-21-100-200-300-1000", packageSid = "S-1-15-2-123-456-789";
 const input: WindowsNodeAssetEnforcementTargets = { parent: "C:\\case\\assets", root: "C:\\case\\assets\\ember-node-fresh",
   image: "C:\\case\\assets\\ember-node-fresh\\node.exe", lowOwner: "C:\\case\\low-owner", lowFullDirectory: "C:\\case\\low-full",
-  lowFullFile: "C:\\case\\low-full\\full-file.txt", ownerSid, packageSid, parentLabel: "explicit" };
-const paths = [input.parent, input.root, input.image, input.lowOwner, input.lowFullDirectory, input.lowFullFile];
-type Row = { file: string; index: number; directory: boolean; identity: bigint; write: bigint; creation: bigint; size: number; security: Buffer };
+  lowFullFile: "C:\\case\\low-full\\full-file.txt", mediumFullDirectory: "C:\\case\\medium-full", mediumFullFile: "C:\\case\\medium-full\\full-file.txt",
+  ownerSid, packageSid, parentLabel: "explicit" };
+const paths = [input.parent, input.root, input.image, input.lowOwner, input.lowFullDirectory, input.lowFullFile, input.mediumFullDirectory, input.mediumFullFile];
+type Row = { file: string; index: number; directory: boolean; identity: bigint; volume: number; write: bigint; creation: bigint; size: number; security: Buffer };
 type Call = { name: string; args: unknown[] };
 function sid(text: string): Buffer {
   const parts = text.split("-"), subs = parts.slice(3).map(Number), bytes = Buffer.alloc(8 + subs.length * 4);
@@ -24,18 +25,18 @@ function acl(rows: readonly { sid: string; mask: number; type?: number }[], flag
   let offset = 8; for (const ace of aces) { ace.copy(bytes, offset); offset += ace.length; } return bytes;
 }
 function descriptor(index: number, parentLabel: "explicit" | "absent" | "empty" = "explicit"): Buffer {
-  const flags = index === 2 || index === 5 ? 0 : 3;
+  const flags = index === 2 || index === 5 || index === 7 ? 0 : 3;
   const rows = [{ sid: ownerSid, mask: 0x1f01ff }, { sid: "S-1-5-18", mask: 0x1f01ff },
     ...([0, 3].includes(index) ? [] : [{ sid: packageSid, mask: index === 1 || index === 2 ? 0x1200a9 : 0x1f01ff }]),
     ...(index === 1 || index === 2 ? [{ sid: "S-1-3-4", mask: 0x20000 }] : [])];
-  const owner = sid(ownerSid), dacl = acl(rows, flags), sacl = parentLabel === "absent" ? Buffer.alloc(0) : acl(parentLabel === "empty" ? [] : [{ sid: `S-1-16-${index === 0 ? 8192 : 4096}`, mask: 1, type: 17 }], flags);
+  const owner = sid(ownerSid), dacl = acl(rows, flags), sacl = parentLabel === "absent" ? Buffer.alloc(0) : acl(parentLabel === "empty" ? [] : [{ sid: `S-1-16-${index === 0 || index >= 6 ? 8192 : 4096}`, mask: 1, type: 17 }], flags);
   const bytes = Buffer.alloc(20 + owner.length + dacl.length + sacl.length); bytes[0] = 1; bytes.writeUInt16LE(parentLabel === "absent" ? 0x9004 : 0x9014, 2);
   bytes.writeUInt32LE(20, 4); bytes.writeUInt32LE(20, 8); bytes.writeUInt32LE(20 + owner.length, 16); bytes.writeUInt32LE(parentLabel === "absent" ? 0 : 20 + owner.length + dacl.length, 12);
   owner.copy(bytes, 20); dacl.copy(bytes, 20 + owner.length); sacl.copy(bytes, 20 + owner.length + dacl.length); return bytes;
 }
 function setup(fault = "") {
   const calls: Call[] = [], handles = new Map<bigint, { row: Row; access: number }>(), allocations = new Map<bigint, Buffer>(), closed: bigint[] = [], freed: bigint[] = [];
-  const rows = paths.map((file, index): Row => ({ file, index, directory: index !== 2 && index !== 5, identity: BigInt(index + 100),
+  const rows = paths.map((file, index): Row => ({ file, index, directory: index !== 2 && index !== 5 && index !== 7, identity: BigInt(index + 100), volume: 7,
     write: 3000n, creation: 1000n, size: 512, security: descriptor(index) }));
   const control = { fault, faultIndex: 0, reenter: undefined as (() => void) | undefined, mutateSecurity: undefined as ((bytes: Buffer) => void) | undefined,
     threwOutput: undefined as unknown[] | undefined, freedReentry: false, decoded: 0 };
@@ -50,6 +51,7 @@ function setup(fault = "") {
         if (control.fault === "invalid handle") return 0xffffffffffffffffn;
         const row = rows.find(row => row.file === args[0])!;
         if (control.fault === "aliased handle" && handles.size) return [...handles.keys()][0];
+        if (control.fault === "target handle alias" && row.index === control.faultIndex && handles.size) return [...handles.keys()][0];
         const raw = control.fault === "reuse resources" && closed.length ? closed[closed.length - 1] : nextHandle++;
         handles.set(raw, { row, access: args[1] as number }); return raw;
       }
@@ -58,7 +60,7 @@ function setup(fault = "") {
       if (name === "GetFileInformationByHandle") {
         const { row, access } = handles.get(args[0] as bigint)!, bytes = args[1] as Buffer;
         bytes.writeUInt32LE(row.directory ? 16 : 128, 0); bytes.writeBigUInt64LE(row.creation, 4); bytes.writeBigUInt64LE(row.write, 20);
-        bytes.writeUInt32LE(control.fault === "wrong volume" && row.index === 1 ? 8 : 7, 28); bytes.writeUInt32LE(row.size, 36); bytes.writeUInt32LE(control.fault === "hard link" ? 2 : 1, 40);
+        bytes.writeUInt32LE(control.fault === "wrong volume" && row.index === 1 ? 8 : row.volume, 28); bytes.writeUInt32LE(row.size, 36); bytes.writeUInt32LE(control.fault === "hard link" ? 2 : 1, 40);
         bytes.writeBigUInt64LE(control.fault === "probe wrong identity" && (access === 0x40080 || access === 0x80080) ? 999n : row.identity, 44);
         if (control.fault === "reparse") bytes.writeUInt32LE(bytes.readUInt32LE(0) | 0x400, 0);
         if (control.fault === "metadata reentry") { try { control.reenter?.(); } catch { /* Model a swallowed native callback failure. */ } }
@@ -71,7 +73,7 @@ function setup(fault = "") {
       if (name === "GetSecurityInfo") {
         const { row } = handles.get(args[0] as bigint)!, bytes = Buffer.from(row.security);
         if (row.index === control.faultIndex) control.mutateSecurity?.(bytes);
-        const raw = control.fault === "allocation handle alias" ? args[0] as bigint : control.fault === "reuse resources" ? 0x100000n : nextAllocation; nextAllocation += 0x10000n;
+        const raw = control.fault === "allocation handle alias" || control.fault === "target allocation handle alias" && row.index === control.faultIndex ? args[0] as bigint : control.fault === "reuse resources" ? 0x100000n : nextAllocation; nextAllocation += 0x10000n;
         allocations.set(raw, bytes); (args[3] as unknown[])[0] = raw + BigInt(bytes.readUInt32LE(4));
         (args[5] as unknown[])[0] = raw + BigInt(bytes.readUInt32LE(16)); (args[6] as unknown[])[0] = bytes.readUInt32LE(12) ? raw + BigInt(bytes.readUInt32LE(12)) : null; (args[7] as unknown[])[0] = raw;
         if (control.fault === "foreign owner pointer") (args[3] as unknown[])[0] = raw + 65536n;
@@ -111,17 +113,20 @@ function setup(fault = "") {
   return { api, calls, handles, allocations, closed, freed, rows, control, fence, native, load };
 }
 
-it("pins the exact six objects, proves host WDAC/WOWNER and preserves Low/Medium owner/DACL controls without mutation", () => {
+it("pins the exact eight objects, proves host WDAC/WOWNER and preserves Low/Medium owner/DACL controls without mutation", () => {
   const s = setup(), pins = s.api.pinTargets(input);
+  const held = [...s.handles.keys()]; expect(held).toHaveLength(8);
   const opens = s.calls.filter(call => call.name === "CreateFileW");
-  expect(opens.slice(6).map(call => [call.args[0], call.args[1], call.args[2]])).toEqual(paths.slice(0, 3).flatMap(file => [[file, 0x40080, 7], [file, 0x80080, 7]]));
+  expect(opens.slice(0, 8).map(call => call.args[0])).toEqual(paths);
+  expect(opens.slice(8).map(call => [call.args[0], call.args[1], call.args[2]])).toEqual(paths.slice(0, 3).flatMap(file => [[file, 0x40080, 7], [file, 0x80080, 7]]));
   expect(s.calls.filter(call => call.name === "GetSecurityInfo").every(call => call.args[1] === 1 && call.args[2] === 0x15 && call.args[4] === null)).toBe(true);
   expect(s.calls.filter(call => call.name === "CreateFileW").every(call => call.args[4] === 3 && call.args[3] === null && call.args[6] === null)).toBe(true);
   // The full-package directory's successful CREATE_NEW control changes its timestamps and size, not its identity.
   s.rows[4].write++; s.rows[4].size++; pins.recheck(); pins.close(); pins.close();
   expect(s.api.unsafe).toBe(false); expect(s.handles.size).toBe(0); expect(s.allocations.size).toBe(0);
-  expect(s.closed).toHaveLength(12); expect(new Set(s.closed).size).toBe(12);
-  expect(s.freed).toHaveLength(18); expect(new Set(s.freed).size).toBe(18);
+  expect(s.closed).toHaveLength(14); expect(new Set(s.closed).size).toBe(14);
+  expect(s.closed.slice(-8)).toEqual(held.reverse());
+  expect(s.freed).toHaveLength(24); expect(new Set(s.freed).size).toBe(24);
   expect(Object.keys(pins).sort()).toEqual(["close", "recheck"]);
   expect(Object.values(WINDOWS_NODE_ASSET_ENFORCEMENT_FUNCTIONS).flat().join("\n")).not.toMatch(/SetSecurity|WriteFile|Impersonate|CreateProcess|DeleteFile/);
 });
@@ -239,11 +244,11 @@ it("refuses result-inspection Proxy reentry before it can issue native work", ()
 
 it("permits numeric reuse only after the prior handle or allocation was positively released", () => {
   const s = setup("reuse resources"), pins = s.api.pinTargets(input); pins.recheck(); pins.close();
-  expect(s.api.unsafe).toBe(false); expect(s.closed).toHaveLength(12); expect(new Set(s.closed).size).toBe(7);
-  expect(s.freed).toHaveLength(18); expect(new Set(s.freed).size).toBe(1); expect(s.handles.size).toBe(0); expect(s.allocations.size).toBe(0);
+  expect(s.api.unsafe).toBe(false); expect(s.closed).toHaveLength(14); expect(new Set(s.closed).size).toBe(9);
+  expect(s.freed).toHaveLength(24); expect(new Set(s.freed).size).toBe(1); expect(s.handles.size).toBe(0); expect(s.allocations.size).toBe(0);
 });
 
-it.each([[1, packageSid, 0x1f01ff], [2, "S-1-3-4", 0x40000], [4, packageSid, 0x1200a9], [5, packageSid, 0x1200a9]] as const)("requires the exact asset/control principal rights for object %i", (index, principal, mask) => {
+it.each([[1, packageSid, 0x1f01ff], [2, "S-1-3-4", 0x40000], [4, packageSid, 0x1200a9], [5, packageSid, 0x1200a9], [6, packageSid, 0x1200a9], [7, packageSid, 0x1200a9]] as const)("requires the exact asset/control principal rights for object %i", (index, principal, mask) => {
   const s = setup(); s.control.faultIndex = index; s.control.mutateSecurity = bytes => {
     const at = bytes.indexOf(sid(principal), bytes.readUInt32LE(16)); expect(at).toBeGreaterThan(0); bytes.writeUInt32LE(mask, at - 4);
   };
@@ -290,3 +295,70 @@ it.each([1, 2, 3, 4, 5])("still requires the explicit Low label on object %i bes
   const s = setup(); s.rows[0].security = descriptor(0, "absent"); s.rows[index].security = descriptor(index, "empty");
   expect(() => s.api.pinTargets({ ...input, parentLabel: "default" })).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
 });
+
+it.each(["mediumFullDirectory", "mediumFullFile"] as const)("requires the fixed %s target before entering any native API", key => {
+  const s = setup(), omitted: Partial<WindowsNodeAssetEnforcementTargets> = { ...input }; delete omitted[key];
+  expect(() => s.api.pinTargets(omitted as WindowsNodeAssetEnforcementTargets)).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+  expect(s.calls).toHaveLength(0);
+});
+
+it.each(["mediumFullDirectory", "mediumFullFile"] as const)("rejects case aliases and foreign drives for %s before native entry", key => {
+  for (const file of [input.lowFullFile.toUpperCase(), "D:\\case\\medium-control"]) {
+    const s = setup(); expect(() => s.api.pinTargets({ ...input, [key]: file })).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+    expect(s.calls).toHaveLength(0);
+  }
+});
+
+it.each([6, 7].flatMap(index => ["Low", "absent", "empty", "policy", "flags", "owner", "extra label"].map(fault => ({ index, fault }))))(
+  "requires the exact explicit Medium/NW control on object $index for $fault", ({ index, fault }) => {
+    const s = setup();
+    if (fault === "absent" || fault === "empty") s.rows[index].security = descriptor(index, fault);
+    else { s.control.faultIndex = index; s.control.mutateSecurity = bytes => {
+      const at = bytes.readUInt32LE(12);
+      if (fault === "Low") bytes.writeUInt32LE(4096, at + 24);
+      else if (fault === "policy") bytes.writeUInt32LE(3, at + 12);
+      else if (fault === "flags") bytes[at + 9] = index === 6 ? 0 : 3;
+      else if (fault === "owner") bytes.writeUInt32LE(9999, bytes.readUInt32LE(4) + sid(ownerSid).length - 4);
+      else bytes.writeUInt16LE(2, at + 4);
+    }; }
+    expect(() => s.api.pinTargets(input)).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+    expect(s.api.unsafe).toBe(true);
+  });
+
+it.each([6, 7])("requires exact Low/Medium full-package DACL bytes for object %i", index => {
+  const s = setup(); s.control.faultIndex = index; s.control.mutateSecurity = bytes => {
+    const at = bytes.readUInt32LE(16), first = at + 8, second = first + bytes.readUInt16LE(first + 2), third = second + bytes.readUInt16LE(second + 2);
+    const owner = Buffer.from(bytes.subarray(first, second)), system = Buffer.from(bytes.subarray(second, third));
+    system.copy(bytes, first); owner.copy(bytes, first + system.length);
+  };
+  expect(() => s.api.pinTargets(input)).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+  // Both orderings individually satisfy the bounded principal/rights parser; only pair equality rejects this one.
+  expect(s.freed).toHaveLength(8); expect(s.closed).toHaveLength(0);
+});
+
+it.each([6, 7].flatMap(index => ["identity", "volume"].map(field => ({ index, field }))))(
+  "requires distinct same-volume object $index $field", ({ index, field }) => {
+    const s = setup(); if (field === "identity") s.rows[index].identity = s.rows[4].identity; else s.rows[index].volume++;
+    expect(() => s.api.pinTargets(input)).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+  });
+
+it.each([6, 7].flatMap(index => ["target handle alias", "target allocation handle alias"].map(fault => ({ index, fault }))))(
+  "retains and permanently fences object $index after $fault", ({ index, fault }) => {
+    const s = setup(fault); s.control.faultIndex = index;
+    expect(() => s.api.pinTargets(input)).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+    const count = s.calls.length; expect(s.handles.size).toBeGreaterThanOrEqual(6); expect(s.fence.retained.length).toBeGreaterThan(0);
+    s.fence.failure = undefined;
+    expect(() => s.api.pinTargets(input)).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+    expect(() => s.api.guard(() => undefined)).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+    expect(s.calls).toHaveLength(count);
+  });
+
+it.each([6, 7].flatMap(index => ["identity", "creation", "write", "size", "security"].map(field => ({ index, field }))))(
+  "rechecks the immutable Medium control object $index $field", ({ index, field }) => {
+    const s = setup(), pins = s.api.pinTargets(input), row = s.rows[index];
+    if (field === "identity") row.identity++; else if (field === "creation") row.creation++;
+    else if (field === "write") row.write++; else if (field === "size") row.size++;
+    else row.security.writeUInt32LE(4096, row.security.readUInt32LE(12) + 24);
+    expect(() => pins.recheck()).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+    const count = s.calls.length; expect(() => pins.close()).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(s.calls).toHaveLength(count);
+  });

@@ -1,4 +1,4 @@
-name: Experimental fixed Windows Node asset enforcement
+name: Experimental fixed Windows Node asset enforcement V2
 on:
   workflow_dispatch:
   pull_request:

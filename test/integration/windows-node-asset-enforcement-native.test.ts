@@ -17,7 +17,7 @@ describe.skipIf(!required)("fixed production Node asset enforcement", () => {
   const expected = { image: process.env.EMBER_WINDOWS_NODE_ASSET_ENFORCEMENT_IMAGE, commit: process.env.GITHUB_SHA };
   const verify = () => {
     const identity = verifyWindowsNodeAssetEnforcementRun(repository, expected), receipt = verifyWindowsNodeAssetEnforcement(asset, expected);
-    if (receipt.issuer !== run.compiledIssuer || receipt.scope !== 1) throw new Error("The native asset witness requires its own compiled issuer.");
+    if (receipt.issuer !== run.compiledIssuer || receipt.scope !== 2) throw new Error("The native asset witness requires its own compiled issuer.");
     return identity;
   };
   // Full producer/package scans run only when no native child is held. Pre-Resume checks remain bounded.
@@ -52,8 +52,8 @@ describe.skipIf(!required)("fixed production Node asset enforcement", () => {
     try {
       if (!scratch) throw new Error(); const identity = verify();
       const result = await observeWindowsNodeAssetEnforcement(asset, () => { verify(); }, resources, scratch, mode);
-      expect(result).toMatchObject({ schema: 1, scope: 1, mode, rootOnlyStop: 1, snapshot: 1, seedUnchanged: 1, assetCleanup: 1, privateCleanup: 1, profileCleanup: 1, emittedCjs: 1 });
-      if (mode === "natural" || mode === "natural-default") expect(result).toMatchObject({ exitCode: 17, complete: true, reason: "none", prelude: 1, deniedAccess: 255, positiveAccess: 511, actualNode: 1, parentDefault: mode === "natural-default" ? 1 : 0 });
+      expect(result).toMatchObject({ schema: 2, scope: 2, mode, rootOnlyStop: 1, snapshot: 1, seedUnchanged: 1, assetCleanup: 1, privateCleanup: 1, profileCleanup: 1, emittedCjs: 1 });
+      if (mode === "natural" || mode === "natural-default") expect(result).toMatchObject({ exitCode: 17, complete: true, reason: "none", prelude: 1, deniedAccess: 131071, positiveAccess: 2047, deniedChecks: 17, positiveChecks: 11, integrityPairs: 2, actualNode: 1, parentDefault: mode === "natural-default" ? 1 : 0 });
       else expect(result).toMatchObject({ exitCode: null, complete: false, reason: mode === "overflow" ? "overflow" : "cancelled", prelude: 0 });
       expect(result.rootPresent).toBe(mode === "precreate" ? 0 : 1); expect(result.actualNode).toBe(mode === "precreate" || mode === "preresume" || mode === "sharedcreate" ? 0 : 1);
       expect(result.outputClosed).toBe(mode === "precreate" ? 0 : 1); expect(result.stdinEof).toBe(result.actualNode);
