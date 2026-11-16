@@ -14,7 +14,7 @@ it.each([
   const bytes = Buffer.from(text), inspection = inspectWindowsNodeFatalOutput(bytes, version);
   expect(inspection.output).toEqual(parseWindowsNodeFatalOutput(bytes, version));
   expect(inspection.refusal).toMatchObject({ stage });
-  expect(Object.keys(inspection.refusal!).every(key => ["stage", "representation"].includes(key))).toBe(true);
+  expect(Object.keys(inspection.refusal!).every(key => ["stage", "representation", "newlines"].includes(key))).toBe(true);
   expect(JSON.stringify(inspection)).not.toMatch(/private|unknown|malformed|100001|Fatal|C:/);
   expect(Buffer.byteLength(JSON.stringify(inspection))).toBeLessThan(256);
 });
@@ -33,6 +33,27 @@ it("keeps malformed wide data opaque and refuses unknown inputs/releases before 
   expect(inspectWindowsNodeFatalOutput(bytes, "private-release")).toEqual({ output: { status: "unreadable", bytes: 6 }, refusal: { stage: "release" } });
   expect(inspectWindowsNodeFatalOutput("private" as unknown as Buffer, version)).toEqual({ output: { status: "unreadable", bytes: 0 }, refusal: { stage: "input" } });
   expect(Object.isFrozen(WINDOWS_NODE_FATAL_REFUSALS)).toBe(true);
+});
+
+it.each([
+  ["private\r\r\n", { crlf: 0, doubledCrlf: 1, bareCr: 0, lf: 0 }],
+  ["private\r", { crlf: 0, doubledCrlf: 0, bareCr: 1, lf: 0 }],
+  ["private\r\r\ntext\r\nmore\nlast\r", { crlf: 1, doubledCrlf: 1, bareCr: 1, lf: 1 }],
+  ["private\r\r\r\n", { crlf: 0, doubledCrlf: 1, bareCr: 1, lf: 0 }],
+])("counts only bounded newline structures without returning their surrounding text: %s", (text, newlines) => {
+  const bytes = Buffer.from(text as string), inspection = inspectWindowsNodeFatalOutput(bytes, version);
+  expect(inspection).toEqual({ output: { status: "unreadable", bytes: bytes.length }, refusal: { stage: "newline", newlines } });
+  expect(JSON.stringify(inspection)).not.toMatch(/private|more|last|text/);
+  expect(Object.values(inspection.refusal!.newlines!).every(count => Number.isInteger(count) && count >= 0 && count <= WINDOWS_NODE_FATAL_MAX_BYTES)).toBe(true);
+});
+
+it("caps newline inspection at the existing input bound and preserves refusal of double-CR source headers", () => {
+  const text = header().replaceAll("\n", "\r\r\n");
+  expect(parse(text)).toEqual({ status: "unreadable", bytes: Buffer.byteLength(text) });
+  const bytes = Buffer.alloc(WINDOWS_NODE_FATAL_MAX_BYTES, 13), inspection = inspectWindowsNodeFatalOutput(bytes, version);
+  expect(inspection.refusal).toEqual({ stage: "newline", newlines: { crlf: 0, doubledCrlf: 0, bareCr: WINDOWS_NODE_FATAL_MAX_BYTES, lf: 0 } });
+  const oversized = inspectWindowsNodeFatalOutput(Buffer.concat([bytes, Buffer.from([13])]), version);
+  expect(oversized).toEqual({ output: { status: "oversize", bytes: WINDOWS_NODE_FATAL_MAX_BYTES + 1 } });
 });
 
 it("returns only the pinned public filename and bounded line from a captured fatal header", () => {
