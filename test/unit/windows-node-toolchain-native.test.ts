@@ -6,9 +6,9 @@ const hashing = vi.hoisted(() => ({ completed: [] as { marker: number; bytes: nu
 vi.mock("node:crypto", async original => {
   const actual = await original<typeof Crypto>();
   const fixed = new Map([
-    [78, { bytes: 120219136, sha256: "d95bc2f8d456eb84306f54aa798c17ee21e5fd22591f943fc13c6adc8fd115db" }],
+    [78, { bytes: 120220672, sha256: "a4ed4d41331cd7886a67aedf1ecc1e8b389f8a48b5f862464eabd123c62ca8d1" }],
     [76, { bytes: 145485, sha256: "c738ae413cf561f174e34f6961f8ca458aae2369a73640dda6234c629b98bcc4" }],
-    [82, { bytes: 6035, sha256: "f50e4859309b72dde505b99cd4c8edd926f2c55dc4aa74f035712d0d5323c9ad" }],
+    [82, { bytes: 7669, sha256: "cb5f649e1f17a1d025cf98ccc99f65a28e1068934cb1c9c59171341e20584916" }],
   ]);
   const chunks = new Map([...fixed.keys()].map(marker => [marker, Buffer.alloc(65536, marker)]));
   return { ...actual, createHash(algorithm: string) {
@@ -50,8 +50,8 @@ async function refused(action: () => unknown) { try { await action(); } catch (e
 it("streams the fixed 120 MB image into only a fresh RX/Low owner and closes an unused owner without touching packaged originals", async () => {
   const s = nodeAssetFake(), source = [...s.nodes.values()].filter(row => row.name.includes("\\resources\\coding\\")), before = source.map(row => ({ row, size: row.size, written: row.written, security: { ...row.security } }));
   let yielded = false; setImmediate(() => { yielded = true; }); const owner = await s.prepare();
-  expect(yielded).toBe(true); expect(s.state.maximumRead).toBe(65536); expect(s.state.maximumWrite).toBe(65536); expect(s.state.copiedBytes).toBe(120219136);
-  expect(hashing.completed.some(value => value.marker === 78 && value.bytes === 120219136 && value.exact)).toBe(true);
+  expect(yielded).toBe(true); expect(s.state.maximumRead).toBe(65536); expect(s.state.maximumWrite).toBe(65536); expect(s.state.copiedBytes).toBe(120220672);
+  expect(hashing.completed.some(value => value.marker === 78 && value.bytes === 120220672 && value.exact)).toBe(true);
   expect(s.opened.filter(open => open.fresh)).toHaveLength(2); expect(s.assets()).toHaveLength(2);
   for (const row of s.assets()) { expect(row.security).toMatchObject({ rx: true, ownerRights: true, ownerMask: 0x20000, packageMask: 0x1200a9, low: true }); }
   expect(s.opened.filter(open => open.row.kind === "file" && open.row.name.includes("\\resources\\")).every(open => open.access === 0x120089 && open.share === 1)).toBe(true);
@@ -196,7 +196,7 @@ it("hashes the exact runtime pin after a same-identity byte mutation at readonly
     }
     return result;
   };
-  await refused(() => s.prepare()); expect(mutated).toBe(true); expect(s.state.copiedBytes).toBe(120219136); expect(s.state.readCalls).toBeGreaterThan(readsAtMutation);
+  await refused(() => s.prepare()); expect(mutated).toBe(true); expect(s.state.copiedBytes).toBe(120220672); expect(s.state.readCalls).toBeGreaterThan(readsAtMutation);
   const image = s.assets().find(row => row.kind === "file")!;
   expect({ id: image.id, size: image.size, written: image.written, changed: image.changed }).toEqual(metadata);
   expect(image.damaged).toBe(true); expect(s.io.events).not.toContain("native-create"); expect(s.io.events).not.toContain("resume");

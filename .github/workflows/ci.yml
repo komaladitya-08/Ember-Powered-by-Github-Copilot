@@ -82,7 +82,10 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm test
+      - name: Fixed C witness model and bounded compiler outcome
+        run: npm test -- test/unit/windows-node-asset-enforcement-c.test.ts --maxWorkers=1
+      - name: Remaining unit tests
+        run: npm test -- --exclude test/unit/windows-node-asset-enforcement-c.test.ts
       - name: Kill switch real-time deadline (isolated from parallel unit tests)
         run: npm run test:integration -- test/integration/killswitch-deadline.test.ts
       - name: The npm launcher's package files (packages/npm, published by npm.yml)
@@ -560,7 +563,10 @@ jobs:
           cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
-      - run: npm test
+      - name: Fixed C witness model and bounded compiler outcome
+        run: npm test -- test/unit/windows-node-asset-enforcement-c.test.ts --maxWorkers=1
+      - name: Remaining unit tests
+        run: npm test -- --exclude test/unit/windows-node-asset-enforcement-c.test.ts
       - name: Kill switch real-time deadline (isolated from parallel unit tests)
         run: npm run test:integration -- test/integration/killswitch-deadline.test.ts
       - run: npm run build
@@ -786,7 +792,10 @@ jobs:
           cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
-      - run: npm test
+      - name: Fixed C witness model and bounded compiler outcome
+        run: npm test -- test/unit/windows-node-asset-enforcement-c.test.ts --maxWorkers=1
+      - name: Remaining unit tests
+        run: npm test -- --exclude test/unit/windows-node-asset-enforcement-c.test.ts
       - name: Kill switch real-time deadline (isolated from parallel unit tests)
         run: npm run test:integration -- test/integration/killswitch-deadline.test.ts
       - id: build

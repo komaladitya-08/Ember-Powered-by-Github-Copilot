@@ -27,6 +27,20 @@ const cases = {
   source: "test/integration/project-coding-windows-node-electron.test.ts",
   packaged: "test/integration/windows-node-packaged-product.test.ts",
 } as const;
+
+it("requires the bounded C model once before all remaining units in each ordinary platform job", () => {
+  const model = "test/unit/windows-node-asset-enforcement-c.test.ts";
+  const steps = "      - name: Fixed C witness model and bounded compiler outcome\n" +
+    `        run: npm test -- ${model} --maxWorkers=1\n` +
+    "      - name: Remaining unit tests\n" + `        run: npm test -- --exclude ${model}\n`;
+  for (const name of ["checks", "windows", "macos"]) {
+    const start = ci.indexOf(`\n  ${name}:\n`); expect(start).toBeGreaterThan(0);
+    const after = ci.slice(start + 1), end = after.search(/\n {2}[a-z][\w-]*:/);
+    const job = end < 0 ? after : after.slice(0, end);
+    expect(job).toContain(steps);
+    expect(job.match(/run: npm test(?:\s|$)/g)).toHaveLength(2);
+  }
+});
 type Journey = keyof typeof cases;
 function passing(journey: Journey) {
   return { success: true, numTotalTests: 1, numPassedTests: 1, numFailedTests: 0, numPendingTests: 0, numTodoTests: 0,
