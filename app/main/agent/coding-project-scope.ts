@@ -22,6 +22,8 @@ export interface CodingProjectManifest {
   version: 1;
   source: { excludedRoots: CodingExcludedRoot[]; omitted: CodingScopeOmission[]; byteLimit: number };
   dependencies: CodingDependencyManifest | null;
+  /** Host-captured disclosure metadata only; this grants no execution authority. */
+  executionProfile?: "wsl-offline";
 }
 const root = z.enum([".git", "node_modules"]);
 const portable = z.string().min(1).max(4096).refine(value => Buffer.byteLength(value) <= 4096 && Buffer.from(value).toString("utf8") === value && value.split("/").length <= 64 && value === value.normalize("NFC") && !/[\\:<>"|?*\p{Cc}\p{Cf}]/u.test(value) &&
@@ -32,6 +34,7 @@ const schema = z.object({
   dependencies: z.object({ access: z.literal("copied-read-only"), mount: z.literal("/work/node_modules"), files: z.number().int().min(0).max(50_000),
     bytes: z.number().int().min(0).max(128 * 1024 * 1024), sha256: z.string().regex(/^[0-9a-f]{64}$/),
     materializedLinks: z.array(z.object({ path: portable, target: portable }).strict()).max(1000) }).strict().nullable(),
+  executionProfile: z.literal("wsl-offline").optional(),
 }).strict();
 
 /** Clone and validate the manifest before putting any claim about omitted data into a standalone review. */
@@ -46,9 +49,11 @@ export function codingProjectManifest(input: unknown): CodingProjectManifest {
 }
 
 /** Fixed, bounded disclosure; the host must show it before starting an explicitly scoped task. */
-export function codingProjectScopeDisclosure(excludeRoots: readonly CodingExcludedRoot[], dependencies: boolean): string {
-  if (!excludeRoots.length) return "The complete accepted source tree is copied; unsupported links and oversized trees are refused.";
+export function codingProjectScopeDisclosure(excludeRoots: readonly CodingExcludedRoot[], dependencies: boolean, executionProfile?: "wsl-offline"): string {
+  if (executionProfile !== undefined && executionProfile !== "wsl-offline") throw new Error("Invalid coding execution profile.");
+  const offline = executionProfile === "wsl-offline" ? " Local, offline package installation is available inside the isolated WSL copy. Network access and public package downloads are unavailable." : "";
+  if (!excludeRoots.length) return "The complete accepted source tree is copied; unsupported links and oversized trees are refused." + offline;
   if (excludeRoots.length > 2 || new Set(excludeRoots).size !== excludeRoots.length || excludeRoots.some(name => name !== ".git" && name !== "node_modules")) throw new Error("Invalid coding project scope.");
   return `Excluded source roots: ${[...excludeRoots].sort().join(", ")}. Those paths are omitted from source captures and review exports. ` +
-    (dependencies ? "A separate fresh dependency copy is available to commands at /work/node_modules, read-only. Dependencies are not automatically archived; copied or derived source outputs can contain dependency bytes and are included in review exports." : "No dependencies are installed or downloaded; excluded dependency contents are unavailable.");
+    (dependencies ? "A separate fresh dependency copy is available to commands at /work/node_modules, read-only. Dependencies are not automatically archived; copied or derived source outputs can contain dependency bytes and are included in review exports." : executionProfile === "wsl-offline" ? "Excluded dependency contents from the original project are unavailable." : "No dependencies are installed or downloaded; excluded dependency contents are unavailable.") + offline;
 }

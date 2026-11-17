@@ -1,3 +1,19 @@
+/** A saved choice prepares coding work; readiness and command approval are checked again for each request. */
+export interface ProjectCodingExecutionChoice {
+  id: string;
+  label: string;
+  selectable: boolean;
+  ready: boolean;
+  message: string;
+}
+
+export interface ProjectCodingExecutionState {
+  selected: string;
+  canSelect: boolean;
+  choices: ProjectCodingExecutionChoice[];
+  message: string;
+}
+
 /** Local project folder grants and reviewable coding outcomes; no field grants permission to execute work. */
 export interface ProjectCodingWorkspaceState {
   projectId: string;
@@ -7,6 +23,8 @@ export interface ProjectCodingWorkspaceState {
   canContinue?: boolean;
   canChoose: boolean;
   message: string;
+  /** Present only on computers offering an explicit command environment choice. */
+  execution?: ProjectCodingExecutionState;
 }
 
 export interface CodingResultSummary {

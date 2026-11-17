@@ -665,3 +665,87 @@ it("retires pending coding permission before the model turn starts when approval
   expect(await h.tool("start_coding", { goal: "Repair source" })).toMatch(/choose its coding folder/);
   expect(sim.workers).toHaveLength(0);
 });
+
+function useWsl(h: Awaited<ReturnType<typeof setup>>) {
+  const options = (h.host as unknown as { o: HostOptions }).o;
+  const target = { id: "wsl:Ubuntu", kind: "wsl", label: "Ubuntu (WSL)", screenOs: "win32", shellOs: "linux", desktop: "none" } as const;
+  const state = { live: true, changedBinding: false }, requested: string[] = [];
+  const service = { ...h.service, binding: target } as CommandService;
+  const platform = { facts: (_workspace: unknown, facts: unknown) => facts, files: vi.fn() } as CodingPlatformAdapter;
+  const capture = vi.fn((_projectId: string | null = null): ScopedCodingCapability => ({ mode: "commands", target, platform,
+    current: () => state.live, createWorkspace: h.createWorkspace }));
+  options.scopedCoding!.captureCapability = capture;
+  Object.assign(options.targets!, { handsFor: (id: string) => {
+    requested.push(id);
+    if (id === target.id) {
+      const binding = state.changedBinding ? { ...target, label: "Changed target" } : target;
+      return { ok: true, hands: { binding, commands: { ...service, binding } } as never };
+    }
+    return { ok: false, why: "The local service must not be selected for WSL coding." };
+  } });
+  return { options, target, state, service, capture, requested };
+}
+it("captures the project's exact WSL backend before a queued turn and passes only its command service to the worker", async () => {
+  const h = await setup(), wsl = useWsl(h), project = h.create("WSL project"); sim.holdTurns = true;
+  await h.host.ask("Fix and check the parser in the selected project copy");
+  expect(wsl.capture).toHaveBeenCalledExactlyOnceWith(project);
+  h.session.nextTurn(); expect(await h.tool("start_coding", { goal: "Fix copied parser" })).toMatch(/started/);
+  expect(h.host.tasks!.list().map(task => task.result?.summary)).toEqual([undefined]);
+  const worker = sim.workers[0]; expect(worker.spec.targetId).toBe(wsl.target.id); expect(worker.options.target).toEqual(wsl.target);
+  expect(worker.options.commandService.binding).toEqual(wsl.target); expect(wsl.requested).toContain(wsl.target.id); expect(wsl.requested).not.toContain("local");
+  expect(h.createWorkspace).not.toHaveBeenCalled(); expect(wsl.capture).toHaveBeenCalledTimes(1);
+});
+it.each(["retired", "binding", "closed"])("refuses changed or closed captured WSL authority without local fallback (%s)", async kind => {
+  const h = await setup(), wsl = useWsl(h); h.create("WSL project"); sim.holdTurns = true;
+  if (kind === "closed") wsl.options.scopedCoding!.captureCapability = vi.fn(() => null);
+  await h.host.ask("Fix the selected copied project");
+  if (kind === "retired") wsl.state.live = false;
+  if (kind === "binding") wsl.state.changedBinding = true;
+  h.session.nextTurn(); await h.tool("start_coding", { goal: "Fix copied code" });
+  await vi.waitFor(() => expect(h.host.tasks!.list().every(task => !["queued", "running"].includes(task.status))).toBe(true));
+  expect(sim.workers).toEqual([]); expect(h.createWorkspace).not.toHaveBeenCalled(); expect(wsl.requested).not.toContain("local");
+});
+it.each([false, true])("joins WSL coding only with the original target binding still current (changed=%s)", async changed => {
+  const h = await setup(), wsl = useWsl(h); h.settings.update({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }); h.create("WSL project");
+  await h.host.ask("Check the selected copy and report its result"); await h.tool("start_coding", { goal: "Check copied parser" });
+  const worker = sim.workers[0]; worker.complete({ success: true, summary: "Observed isolated WSL check" });
+  await vi.waitFor(() => expect(h.host.tasks!.get(worker.spec.id)?.status).toBe("done"));
+  wsl.state.changedBinding = changed;
+  const output = await h.tool("wait_for_tasks", { ids: [worker.spec.id] });
+  expect(output).toMatch(changed ? /request changed|wait ended/ : /"dependentSuccess":true/);
+});
+it("uses the captured project availability after selecting an unrelated blocked project", async () => {
+  const h = await setup(), wsl = useWsl(h), project = h.create("Accepted project"); sim.holdTurns = true;
+  const available = vi.fn((id?: string | null) => id === project);
+  wsl.options.scopedCoding!.available = available;
+  await h.host.ask("Fix this project's copied parser");
+  const other = h.create("Blocked WSL project"); expect(other).not.toBe(project);
+  h.session.nextTurn(); expect(await h.tool("start_coding", { goal: "Fix copied parser" })).toMatch(/started/);
+  expect(sim.workers[0].spec.codingWorkspace.projectId).toBe(project); expect(available.mock.calls.every(([id]) => id === project)).toBe(true);
+});
+it.each([false, true])("summarizes parallel WSL outcomes once only after cleanup and while the exact target remains current (changed=%s)", async changed => {
+  const h = await setup(), wsl = useWsl(h), completion = vi.fn();
+  const oneShot = await import("../../app/main/agent/one-shot"), original = oneShot.copilotOneShot;
+  const model = vi.fn(async (_system: string, _prompt: string, _signal: AbortSignal) => "Both isolated WSL sessions finished their checks.");
+  const factory = vi.spyOn(oneShot, "copilotOneShot").mockImplementation(input => input.purpose === "coordination" ? model : original(input));
+  wsl.options.onTaskCompletion = completion;
+  h.settings.update({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }); h.create("Parallel WSL"); sim.holdCleanup = true;
+  try {
+    await h.host.ask("Check both copied packages and report their combined results");
+    await h.tool("start_coding", { goal: "Check copied parser" }); await h.tool("start_coding", { goal: "Check copied formatter" });
+    expect(sim.workers).toHaveLength(2);
+    for (const worker of sim.workers) worker.complete({ success: true, summary: "Observed isolated copy checks" });
+    await vi.waitFor(() => expect(sim.workers.every(worker => worker.result?.success === true)).toBe(true));
+    h.session.emit("assistant.message", { content: "The checks are still being cleaned up." }); h.session.emit("session.idle");
+    await Promise.resolve(); expect(model).not.toHaveBeenCalled();
+    wsl.state.changedBinding = changed; sim.holdCleanup = false; for (const worker of sim.workers) worker.releaseCleanup();
+    await vi.waitFor(() => expect(sim.workers.every(worker => worker.cleanupDone)).toBe(true));
+    if (changed) { await Promise.resolve(); expect(model).not.toHaveBeenCalled(); expect(completion).not.toHaveBeenCalled(); }
+    else {
+      await vi.waitFor(() => expect(completion).toHaveBeenCalledExactlyOnceWith("Both isolated WSL sessions finished their checks."));
+      expect(model).toHaveBeenCalledTimes(1); expect(model.mock.calls[0][0]).toContain("You have no tools");
+      expect(h.host.getTranscript().filter(entry => entry.who === "you")).toHaveLength(1);
+      expect(h.host.getTranscript().filter(entry => entry.text === "Both isolated WSL sessions finished their checks.")).toHaveLength(1);
+    }
+  } finally { factory.mockRestore(); }
+});

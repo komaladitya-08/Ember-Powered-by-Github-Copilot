@@ -9,6 +9,27 @@ it("validates and clones an explicit source/dependency scope without retaining h
   expect(codingProjectScopeDisclosure(result.source.excludedRoots, true)).toContain("read-only");
   expect(codingProjectScopeDisclosure(result.source.excludedRoots, false)).toContain("unavailable");
 });
+it("preserves native/default scope bytes and disclosure while validating the closed offline profile", () => {
+  const input = manifest(), result = codingProjectManifest(input);
+  expect(JSON.stringify(result)).toBe(JSON.stringify(input)); expect(Object.hasOwn(result, "executionProfile")).toBe(false);
+  expect(codingProjectScopeDisclosure([], false)).toBe("The complete accepted source tree is copied; unsupported links and oversized trees are refused.");
+  expect(codingProjectScopeDisclosure([".git", "node_modules"], false)).toBe("Excluded source roots: .git, node_modules. Those paths are omitted from source captures and review exports. No dependencies are installed or downloaded; excluded dependency contents are unavailable.");
+  expect(codingProjectScopeDisclosure([".git", "node_modules"], true)).toBe("Excluded source roots: .git, node_modules. Those paths are omitted from source captures and review exports. A separate fresh dependency copy is available to commands at /work/node_modules, read-only. Dependencies are not automatically archived; copied or derived source outputs can contain dependency bytes and are included in review exports.");
+  expect(codingProjectManifest({ ...input, executionProfile: "wsl-offline" }).executionProfile).toBe("wsl-offline");
+});
+it.each(["online-host", "native", "wsl", "", null, true, { name: "wsl-offline" }])("rejects an unknown execution profile: %j", executionProfile => {
+  expect(() => codingProjectManifest({ ...manifest(), executionProfile })).toThrow();
+  expect(() => codingProjectScopeDisclosure([".git", "node_modules"], false, executionProfile as never)).toThrow("execution profile");
+});
+it("describes offline installs without granting access to excluded original dependencies or network downloads", () => {
+  const disclosure = codingProjectScopeDisclosure(["node_modules", ".git"], false, "wsl-offline");
+  expect(disclosure).toContain("Excluded source roots: .git, node_modules.");
+  expect(disclosure).toContain("Excluded dependency contents from the original project are unavailable.");
+  expect(disclosure).toContain("Local, offline package installation is available inside the isolated WSL copy.");
+  expect(disclosure).toContain("Network access and public package downloads are unavailable.");
+  expect(disclosure).not.toContain("No dependencies are installed");
+  expect(codingProjectScopeDisclosure(["node_modules"], true, "wsl-offline")).toContain("read-only");
+});
 it.each([
   { ...manifest(), source: { excludedRoots: ["dist"], omitted: [], byteLimit: 1 } },
   { ...manifest(), source: { excludedRoots: [".git", ".git"], omitted: [], byteLimit: 1 } },

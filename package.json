@@ -27,7 +27,7 @@
     "test:sidecar": "python3 -B sidecar/atspi/test_ember_atspi.py",
     "package": "npm run build && node scripts/package/remote-parts.mjs && node scripts/voice/fetch-capi.mjs && node scripts/package/stage.mjs && scripts/package/rpm.sh && scripts/package/appimage.sh",
     "package:rpm": "npm run build && node scripts/package/remote-parts.mjs && node scripts/voice/fetch-capi.mjs && node scripts/package/stage.mjs && scripts/package/rpm.sh",
-    "package:win": "npm run build && node scripts/package/remote-parts.mjs && node scripts/package/stage.mjs --with-windows-node-toolchain && node scripts/package/archive.mjs",
+    "package:win": "npm run build && node scripts/package/remote-parts.mjs && node scripts/package/wsl-coding-tools.mjs && node scripts/package/stage.mjs --with-windows-node-toolchain --with-wsl-coding-tools && node scripts/package/archive.mjs",
     "package:mac": "npm run build && node scripts/package/remote-parts.mjs && node scripts/package/stage.mjs && node scripts/package/archive.mjs",
     "doctor": "node scripts/build-app.mjs && electron . --doctor",
     "eval": "node eval/run.mjs",

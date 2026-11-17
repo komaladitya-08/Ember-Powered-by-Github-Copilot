@@ -1,5 +1,6 @@
 /** CommandRunner bridge: the existing command flow owns policy; this bridge owns an isolated run's observations. */
 import { createHash } from "node:crypto";
+import { parseTargetId, type TargetId } from "../../shared/targets";
 import type { CommandRunner, GitFacts, PathFact, RunnerFacts, RunningCommand, RunExit, RunSpec, ShellId } from "../commands/types";
 import { copyNodeArgv, nodeInvocationSha256, type NodeRunSpec } from "../commands/node-invocation";
 
@@ -24,6 +25,8 @@ export interface IsolatedCodingCommandPort {
 }
 
 export interface IsolatedCodingCommandRunnerOptions {
+  /** Exact host-captured command target. This never chooses an ordinary target runner. */
+  target?: TargetId;
   workspace: IsolatedCodingCommandPort;
   facts: RunnerFacts;
   /** These inspect the isolated copy under the backend's exclusive file lease, never the source folder. */
@@ -39,7 +42,7 @@ const MAX_RUNS = 200;
 
 /** Does not classify, approve or rewrite commands. Only run_command/flow.ts should call start(). */
 export class IsolatedCodingCommandRunner implements CommandRunner {
-  readonly target = "local" as const;
+  readonly target: TargetId;
   #workspace: IsolatedCodingCommandPort;
   #runNode: IsolatedCodingCommandPort["runNode"];
   #facts: RunnerFacts;
@@ -55,6 +58,9 @@ export class IsolatedCodingCommandRunner implements CommandRunner {
   #ownerAbort: () => void;
 
   constructor(options: IsolatedCodingCommandRunnerOptions) {
+    const target = options.target ?? "local", parsed = parseTargetId(target);
+    if (!parsed || !["local", "wsl"].includes(parsed.kind)) throw new Error("The isolated coding target is invalid.");
+    this.target = target;
     this.#workspace = options.workspace;
     this.#runNode = options.workspace.nodeAvailable === true && typeof options.workspace.runNode === "function"
       ? options.workspace.runNode.bind(options.workspace) : undefined;

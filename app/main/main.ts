@@ -84,6 +84,11 @@ import { CodingWorkspaceStore, codingBranch, type CodingWorkspace } from "./agen
 import { ProjectSessionStore } from "./agent/project-session-store";
 import { ProjectCodingWorkspaces } from "./agent/project-coding-workspaces";
 import { createProjectCodingBackend, type ProjectCodingResourcesPort } from "./agent/project-coding-backend";
+import { ProjectCodingExecution } from "./agent/project-coding-execution";
+import { readWslCodingTypeScriptArchive } from "./agent/wsl-coding-archive";
+import { connectWslCodingHelper, resolveWslCodingHelperPath } from "./agent/wsl-coding-transport";
+import { WslCodingCleanupError } from "./agent/wsl-coding-workspace";
+import type { WslFacts } from "./wsl/types";
 import { selectCodingStorageBase } from "./agent/coding-storage";
 import { registerProjectCodingIpc, type ProjectCodingIpc } from "./project-coding-ipc";
 import { memoryRefusal } from "./memory/guard";
@@ -2393,22 +2398,57 @@ function start(): void {
   const codingCleanupReceiptsByHost = new WeakMap<AgentHost, Set<CodingCleanupReceipt>>();
   let codingCleanupAttempt = 0;
   const projectCodingChanged = () => tasksShown();
+  let codingWslFacts: WslFacts | null = null;
+  const codingExecution = platform.os === "win32" ? new ProjectCodingExecution({
+    owner: () => agent?.projectWorkspaceScope() ?? null,
+    projectExists: id => agent?.projectSessionsState().projects.some(project => project.id === id) === true,
+    facts: () => codingWslFacts,
+    commands: id => { const selected = targets?.agent.handsFor(id); return selected?.ok ? selected.hands.commands : null; },
+    policy: () => ({ wsl: settings.get().targets.wsl, commands: settings.get().commands, features: policy.features, commandPolicy: policy.commands }),
+    open: async (distro, wslExe, current) => {
+      const missing = () => new Error("The installed WSL coding helper or offline tools are unavailable. Reinstall Ember.");
+      const scriptWindowsPath = path.join(__dirname, "wsl-coding.cjs"), jobHost = { execPath: process.execPath, script: path.join(__dirname, "job-host.cjs") };
+      const archivePath = app.isPackaged ? path.join(process.resourcesPath, "wsl-coding", "typescript-5.9.3.tgz")
+        : path.resolve(__dirname, "..", "wsl-coding-tools", "typescript-5.9.3.tgz");
+      let archive: Buffer | undefined;
+      try {
+        if (!current()) throw missing();
+        const st = fs.lstatSync(scriptWindowsPath); if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1 || st.size < 1 || st.size > 8 * 1024 * 1024) throw missing();
+        archive = readWslCodingTypeScriptArchive(archivePath);
+        if (!current()) throw missing();
+        const scriptLinuxPath = await resolveWslCodingHelperPath({ wslExe, distro, scriptWindowsPath, jobHost, env: process.env, current });
+        if (!current()) throw missing();
+        const connection = await connectWslCodingHelper({ wslExe, distro, scriptLinuxPath, jobHost, env: process.env, current });
+        const typescriptArchive = archive; archive = undefined; return { connection, typescriptArchive };
+      } catch (error) { if (error instanceof WslCodingCleanupError) throw error; throw missing(); }
+      finally { archive?.fill(0); }
+    },
+  }) : null;
+  // A settings change retires captured authority immediately, including change-and-restore.
+  settings.onChange(() => codingExecution?.refresh());
   const codingBackend = createProjectCodingBackend({
     userData, folders: projectCodingFolders, storage: codingStorage,
     protectedPaths: [userData, app.getAppPath(), process.resourcesPath],
     currentOwner: () => agent?.projectWorkspaceScope() ?? null,
     projectExists: id => agent?.projectSessionsState().projects.some(project => project.id === id) === true,
     env: process.env, execPath: process.execPath, resourcesPath: process.resourcesPath, isElectron: true, changed: projectCodingChanged,
-  });
+  }, { capture: projectId => codingExecution?.capture(projectId) });
   const codingResourcesReady = codingBackend.ready.then(resources => { codingResources = resources; projectCodingChanged(); return resources; });
   // Keep initialization errors private; availability describes the failure without exposing storage paths.
   void codingResourcesReady.catch(() => { codingCleanupFailed = true; projectCodingChanged(); });
-  const scopedCodingAvailability = () => vaultRedactor.active
-    ? { available: false, message: "Coding is unavailable after a vault fill until Ember restarts." }
-    : codingCleanupPending || codingCleanupFailed
-      ? { available: false, message: "Coding cleanup could not finish yet. Forget everything tries again before new coding work." }
-      : codingResources?.availability(settings.get().commands.local?.on === true ? "commands" : "files-only") ?? { available: false, message: "Checking the isolated coding tools on this computer." };
+  const scopedCodingAvailability = (projectId?: string | null) => {
+    if (vaultRedactor.active) return { available: false, message: "Coding is unavailable after a vault fill until Ember restarts." };
+    if (codingCleanupPending || codingCleanupFailed) return { available: false, message: "Coding cleanup could not finish yet. Forget everything tries again before new coding work." };
+    const selectedProject = projectId === undefined ? agent?.projectSessionsState().selectedProjectId ?? null : projectId;
+    const target = codingExecution?.selected(selectedProject) ?? "local";
+    const base = codingResources?.availability(target !== "local" || settings.get().commands.local?.on !== true ? "files-only" : "commands")
+      ?? { available: false, message: "Checking the isolated coding tools on this computer." };
+    if (!base.available || target === "local" || !selectedProject) return base;
+    const execution = codingExecution!.state(selectedProject), choice = execution.choices.find(value => value.id === target);
+    return { ...base, available: choice?.ready === true, message: choice?.message ?? execution.message };
+  };
   const resetProjectCoding = (): Promise<void> => {
+    codingExecution?.reset();
     const attempt = ++codingCleanupAttempt;
     const host = agent;
     const failed = () => Promise.reject(new Error("Ember couldn't finish clearing its private coding work. Try Forget everything again."));
@@ -2725,6 +2765,7 @@ function start(): void {
     results: async () => (await codingResourcesReady).results(),
     canUse: () => projectAvailable() === true && codingCleanupPending === 0 && !codingCleanupFailed,
     availability: scopedCodingAvailability,
+    ...(codingExecution ? { executionState: (id: string) => codingExecution.state(id), chooseExecution: (id: string, target: string) => codingExecution.choose(id, target) } : {}),
     continueResult: (id, projectId, request) => {
       if (!agent || projectAvailable() !== true || codingCleanupPending !== 0 || codingCleanupFailed) throw new Error("Open Projects and reconnect Ember before continuing a coding result.");
       // This method captures the reviewed result and selected folder before its first conversation wait.
@@ -4043,6 +4084,13 @@ function start(): void {
       settingsKey: () => keyName("settings"),
       stopKey: () => keyName("stop"),
     });
+    if (codingExecution && targets.wsl) {
+      const wsl = targets.wsl, owner = targets;
+      const observe = (facts: WslFacts) => { if (targets !== owner) return; codingWslFacts = facts; codingExecution.refresh(); projectCodingChanged(); };
+      const off = wsl.onChange(observe);
+      void wsl.facts().then(observe, () => { if (targets === owner) { codingWslFacts = null; codingExecution.refresh(); projectCodingChanged(); } });
+      app.on("will-quit", off);
+    }
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });
     // The saved copy of the conversation, only while the person keeps it (Home › Conversation); off by default.
@@ -4057,11 +4105,11 @@ function start(): void {
     agent = new AgentHost({
       history,
       scopedCoding: codingBackend.host({
-        available: () => consented() && screenLock?.locked === false && policy.features.actions !== false &&
-          scopedCodingAvailability().available,
-        unavailable: () => !consented() ? "Finish setup before starting coding work." : screenLock?.locked !== false
+        available: projectId => consented() && screenLock?.locked === false && policy.features.actions !== false &&
+          scopedCodingAvailability(projectId).available,
+        unavailable: projectId => !consented() ? "Finish setup before starting coding work." : screenLock?.locked !== false
           ? "Unlock the screen before starting coding work." : policy.features.actions === false
-            ? "Your organisation has turned off Ember's actions." : scopedCodingAvailability().message,
+            ? "Your organisation has turned off Ember's actions." : scopedCodingAvailability(projectId).message,
         workspace: id => id ? codingResources?.workspace(id) ?? null : null,
         captureContinuation: (id, projectId) => codingResources?.captureContinuation(id, projectId) ?? null,
         continuationCurrent: (ref, projectId) => codingResources?.continuationCurrent(ref, projectId) === true,

@@ -55,7 +55,7 @@ describe("the Linux layout", () => {
   });
 
   it("leaves out the Windows and macOS accessibility host, so the RPM doesn't change when it is built", () => {
-    expect(linux.excludeDist).toEqual(["ax-sidecar.cjs"]);
+    expect(linux.excludeDist).toEqual(["ax-sidecar.cjs", "wsl-coding.cjs"]);
     expect(linux.requiredDist).not.toContain("ax-sidecar.cjs");
   });
 
@@ -145,7 +145,7 @@ describe("the macOS layout", () => {
     it(`ships no sidecar files besides the accessibility host in dist/app (${arch})`, () => {
       expect(mac.sidecarFiles).toEqual([]);
       expect(mac.sidecarDist).toEqual(["ax-sidecar.cjs"]);
-      expect(mac.excludeDist).toEqual(["desk-agent.cjs"]);
+      expect(mac.excludeDist).toEqual(["desk-agent.cjs", "wsl-coding.cjs"]);
       expect(mac.platformPackages).toEqual([`@github/copilot-sdk-darwin-${arch}`, `@img/sharp-darwin-${arch}`, `@img/sharp-libvips-darwin-${arch}`, `@koromix/koffi-darwin-${arch}`, `sherpa-onnx-darwin-${arch}`]);
       expect(mac.prune.filter(p => p.startsWith("sherpa-onnx-"))).toEqual([`sherpa-onnx-darwin-${arch}/libsherpa-onnx-cxx-api.dylib`]);
     });

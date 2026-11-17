@@ -1,14 +1,56 @@
 # Conductor progress and remaining work
 
-Reviewed checkpoint `b294347e0e244ae95c46dc9f5989147722843d14` on 17 November 2026. The original submitted
+Software progress updated on 17 November 2026, following published checkpoint `fe2406f4`. The original submitted
 baseline was `audit/beta-readiness` at `76d0a2c9`; main was `85b5bd56` at that audit. The native-proof baseline is
 `546793a3f94d89ae2ed2593727d9c35aa5571831`;
 [draft #262](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/262) targets main and records
-the latest head and its exact checks. The integration includes the conductor/project/session work and Windows
-Node-only resource/coordinator implementation. The checkpoint below does not establish merge readiness.
+the latest head and its exact checks. The candidate includes conductor/project/session work, the Windows
+Node resource/coordinator implementation and a disabled optional WSL coding backend. This is not merge readiness.
 The legacy native-SDK `codingAvailable()` gate remains false.
 
-## Current status
+## Current software work on 17 November 2026
+
+Draft #262 records the current published head and exact hosted checks. The latest published checkpoint here is
+`fe2406f4`: both native coding leaves passed two cases and both source Home leaves passed seven cases, zero skips,
+on Windows Server 2022 and 2025. Both packaged leaves now complete UIA readiness, then fail on the consent
+memory-row path: 18 of 20 required cases passed. A built Home witness shows the rows begin below the default
+760 by 640 viewport and ordinary keyboard navigation reveals them. The packaged fixture navigation correction
+is being checked separately; this witness does not by itself prove the hosted failure's cause.
+
+Automatic combined completion was published at `7830febd`. Two to eight tasks from the current request can produce
+one tool-free synthesis after terminal results and cleanup settle. New intake, Stop and captured ownership/context
+changes retire it. Settled foreground joins suppress duplication; existing questions and replies retain priority.
+The feature passed affected units, two real pinned-SDK/local-provider cases and normal-sandbox app smoke.
+
+This candidate adds explicit per-project WSL2 coding selection and its credential-free isolated helper. Windows
+retains source custody, account/model access and final review artifacts. The guest receives copied source and
+verified offline Node/npm/TypeScript; Stop requires a matching drained-queue/namespace-exit receipt. Unknown host
+or guest cleanup retains the owner and blocks further work. Actual helper UID must match the user captured before
+any awaited handshake. Native Windows and default Linux behavior remain separate. See
+[the WSL backend boundary and verification plan](WSL-CODING-BACKEND.md).
+
+WSL admission remains `false` with null proof metadata. Its first toolchain supports offline TypeScript projects
+without external dependencies; public dependency acquisition is still separate work. The fixed native asset bundle
+now has 104 inputs and its catalog expands from 125 to 131 files (4,131,699 bytes), manifest `3b1f1c4b…`.
+The previous `c1fa3b27` proof qualifies the old 125-file graph only. Both Node product proof gates have therefore
+been closed with null proof identities pending fresh seven-mode qualification on both Windows images.
+The merged candidate passed full TypeScript over 1,515 unchanged inputs, an app build, 256 C-contract cases and
+867 source/workflow cases. Full lint and normal-sandbox launcher/Ask smoke also passed; its helper was restored exactly.
+Both real Linux helper cases passed, including npm/TypeScript repair, child-process Stop and artifact cleanup.
+Actual Windows-to-WSL and final product proofs remain required.
+Earlier failed compile/check attempts remain recorded; later passes do not establish their cause.
+
+Explicit encrypted coding-draft Save/Open/Forget is being integrated in a separate worktree. The reviewed
+foundation passed 29 cases, but that is not a completed product flow. Opening saved context is inert; using it
+requires a newly selected folder, fresh source checks, conflict review and a new explicit request. Stored code or
+context cannot restore an old task, source grant or continuation identity. Consent disclosure and Forget/cleanup
+checks are part of that implementation.
+
+The product is not merge-ready. Software work remains before laptop acceptance, including packaged navigation,
+broader repository dependencies and durable coding context. No accepted live-provider credential is available;
+no live request or chosen-account acceptance is claimed. Main remains unchanged; no merge, tag or release.
+
+## Historical checkpoint at `b294347e`
 
 The following results belong to their named immutable heads. Use #262's completed checks for later product and
 platform outcomes, rather than treating this checkpoint as a pass for a newer head.

@@ -21,6 +21,13 @@ declare global { interface Window { __codingBoard: CodingHarness } }
 
 const workspace = (projectId: string, extra: Partial<ProjectCodingWorkspaceState> = {}): ProjectCodingWorkspaceState => ({ projectId, folder: null, available: false, canChoose: true, message: "Coding is unavailable on this computer. Folder preparation is available.", ...extra });
 const availableWorkspace = (projectId = "one") => workspace(projectId, { available: true, folder: { path: "/work/original-app", label: "Original app", valid: true }, message: "Isolated coding is ready." });
+const executionWorkspace = (projectId = "one"): ProjectCodingWorkspaceState => ({ ...availableWorkspace(projectId), execution: {
+  selected: "local", canSelect: true, message: "WSL coding is waiting for verification on Windows.", choices: [
+    { id: "local", label: "Windows", selectable: true, ready: true, message: "Uses the built-in Windows coding environment." },
+    { id: "wsl:Ubuntu", label: "WSL · Ubuntu", selectable: true, ready: false, message: "Waiting for Windows verification. WSL consent and command approval are also required." },
+    { id: "wsl:Debian", label: "WSL · Debian", selectable: false, ready: false, message: "Choose a WSL 2 distribution in Computers & apps." },
+  ],
+} });
 const result = (projectId = "one", id = "result-one"): CodingResultReview => ({
   id, projectId, taskId: `task-${id}`, title: "Improve the app", sourcePath: "/work/original-app", status: "done", files: 1, conflicts: 1, patchComplete: false,
   checks: { ran: 2, passed: 1, failed: 1 }, message: "Review the proposed changes.",
@@ -56,6 +63,10 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Project coding folders and
           h.calls.push({ method, args });
           if (method === "projectCodingWorkspaceState") return answer(`workspace:${args[0]}`, h.workspaces[args[0]]);
           if (method === "projectCodingWorkspaceChoose" || method === "projectCodingWorkspaceForget") return answer(method, h.workspaces[args[0]]);
+          if (method === "projectCodingExecutionChoose") {
+            const state = structuredClone(h.workspaces[args[0]]); state.execution!.selected = args[1]; h.workspaces[args[0]] = state;
+            return answer(method, state);
+          }
           if (method === "codingResultsState") return answer(`results:${args[0]}`, h.results[args[0]] ?? []);
           if (method === "codingResultReview") return answer("review", h.reviews[args[0]]);
           if (method === "codingResultExport") return answer("export", { ok: true, message: "Review exported. The original project is unchanged." });
@@ -73,12 +84,93 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Project coding folders and
   }
   const selected = (page: Page, id: string | null) => page.evaluate(id => window.dispatchEvent(new CustomEvent("ember-project-changed", { detail: { projectId: id } })), id);
 
+  it("keeps the native default and saves a WSL preparation choice only after Use selection", async () => {
+    const page = await open({ workspaces: { one: executionWorkspace() } });
+    const select = page.getByRole("combobox", { name: "Run coding commands in", exact: true });
+    await expect.poll(() => select.isEnabled()).toBe(true);
+    expect(await select.inputValue()).toBe("local"); expect(await page.locator("#project-coding-execution-choose").isDisabled()).toBe(true);
+    await select.selectOption("wsl:Ubuntu");
+    expect(await page.locator("#project-coding-execution-detail").innerText()).toContain("Waiting for Windows verification");
+    expect(await page.locator("#project-coding-execution-state").innerText()).toContain("Selected: Windows.");
+    expect(await page.evaluate(() => window.__codingBoard.calls.some(call => call.method === "projectCodingExecutionChoose"))).toBe(false);
+    await page.locator("#project-coding-execution-choose").click();
+    await expect.poll(() => page.locator("#project-coding-execution-state").textContent()).toContain("Selected: WSL · Ubuntu. Not ready.");
+    expect(await select.inputValue()).toBe("wsl:Ubuntu");
+    expect(await page.evaluate(() => window.__codingBoard.calls.filter(call => call.method === "projectCodingExecutionChoose"))).toEqual([{ method: "projectCodingExecutionChoose", args: ["one", "wsl:Ubuntu"] }]);
+    expect(await page.evaluate(() => window.__codingBoard.calls.every(call => ["projectCodingWorkspaceState", "codingResultsState", "projectCodingExecutionChoose"].includes(call.method)))).toBe(true);
+    await selected(page, "two");
+    await expect.poll(() => page.locator("#project-coding-execution").isHidden()).toBe(true);
+    await page.close();
+  }, 30_000);
+
+  it("preserves an unsaved environment choice and keyboard focus through metadata refresh, with refusal states", async () => {
+    const page = await open({ workspaces: { one: executionWorkspace() } });
+    const select = page.getByRole("combobox", { name: "Run coding commands in", exact: true });
+    await expect.poll(() => select.isEnabled()).toBe(true); await select.selectOption("wsl:Ubuntu"); await select.focus();
+    await page.evaluate(() => { const h = window.__codingBoard; h.workspaces.one.execution!.message = "Stop this project's coding sessions before changing the command environment."; h.workspaces.one.execution!.canSelect = false; h.emit("onTasks"); });
+    await expect.poll(() => select.isDisabled()).toBe(true);
+    expect(await select.inputValue()).toBe("wsl:Ubuntu");
+    expect(await page.locator("#project-coding-execution-state").innerText()).toContain("Stop this project's coding sessions");
+    expect(await page.locator("#project-coding-execution-choose").isDisabled()).toBe(true);
+    expect(await page.locator('#project-coding-execution-select option[value="wsl:Debian"]').isDisabled()).toBe(true);
+    await page.evaluate(() => { const h = window.__codingBoard; h.workspaces.one.execution!.canSelect = true; h.emit("onTasks"); });
+    await expect.poll(() => select.isEnabled()).toBe(true); await select.focus();
+    await page.evaluate(() => window.__codingBoard.emit("onConversation"));
+    await expect.poll(() => page.evaluate(() => window.__codingBoard.calls.filter(call => call.method === "projectCodingWorkspaceState").length)).toBeGreaterThan(2);
+    expect(await select.inputValue()).toBe("wsl:Ubuntu"); expect(await select.evaluate(element => element === document.activeElement)).toBe(true);
+    await page.close();
+  }, 30_000);
+
+  it.each(["project", "account", "connection"])("ignores a late environment selection response after %s changes", async change => {
+    const page = await open({ workspaces: { one: executionWorkspace(), two: executionWorkspace("two") }, deferred: { projectCodingExecutionChoose: true } });
+    const select = page.getByRole("combobox", { name: "Run coding commands in", exact: true });
+    await expect.poll(() => select.isEnabled()).toBe(true); await select.selectOption("wsl:Ubuntu"); await page.locator("#project-coding-execution-choose").click();
+    await page.waitForFunction(() => !!window.__codingBoard.resolve.projectCodingExecutionChoose);
+    expect(await select.isDisabled()).toBe(true);
+    if (change === "project") await selected(page, "two");
+    else if (change === "account") await page.evaluate(() => window.__codingBoard.emit("onConversationForgotten"));
+    else await page.evaluate(() => window.__codingBoard.emit("onAgentStatus", { phase: "off" }));
+    await page.evaluate(() => { const state = window.__codingBoard.workspaces.one; state.execution!.message = "OLD private environment response"; window.__codingBoard.resolve.projectCodingExecutionChoose(state); });
+    expect(await page.locator("#project-coding").innerText()).not.toContain("OLD private");
+    if (change === "project") await expect.poll(() => select.inputValue()).toBe("local");
+    else expect(await page.locator("#project-coding-execution").isHidden()).toBe(true);
+    await page.close();
+  }, 30_000);
+
+  it("keeps the saved environment visible when an explicit WSL choice is refused", async () => {
+    const page = await open({ workspaces: { one: executionWorkspace() }, deferred: { projectCodingExecutionChoose: true } });
+    const select = page.getByRole("combobox", { name: "Run coding commands in", exact: true });
+    await expect.poll(() => select.isEnabled()).toBe(true); await select.selectOption("wsl:Ubuntu"); await page.locator("#project-coding-execution-choose").click();
+    await page.waitForFunction(() => !!window.__codingBoard.reject.projectCodingExecutionChoose);
+    await page.evaluate(() => window.__codingBoard.reject.projectCodingExecutionChoose(new Error("Couldn't change the command environment. Refresh Projects and choose an available option.")));
+    await expect.poll(() => page.locator("#project-coding-status").textContent()).toContain("Couldn't change");
+    expect(await page.locator("#project-coding-execution-state").innerText()).toContain("Selected: Windows.");
+    expect(await select.inputValue()).toBe("wsl:Ubuntu"); expect(await page.locator("#project-coding-execution-choose").isEnabled()).toBe(true);
+    expect(await page.evaluate(() => window.__codingBoard.calls.filter(call => call.method === "projectCodingExecutionChoose").length)).toBe(1);
+    await page.close();
+  }, 30_000);
+
+  it.each([
+    { reason: "Enable WSL in Computers & apps before running WSL coding commands.", canSelect: true },
+    { reason: "Your administrator disabled commands for this computer.", canSelect: false },
+    { reason: "Commands are Off for this distribution. Review its command settings in Computers & apps.", canSelect: true },
+  ])("shows the host's WSL setup or policy refusal without starting setup: $reason", async ({ reason, canSelect }) => {
+    const state = executionWorkspace(); state.execution!.selected = "wsl:Ubuntu"; state.execution!.message = reason; state.execution!.canSelect = canSelect;
+    const page = await open({ workspaces: { one: state } });
+    await expect.poll(() => page.locator("#project-coding-execution-state").textContent()).toContain(reason);
+    expect(await page.locator("#project-coding-execution-select").isDisabled()).toBe(!canSelect);
+    expect(await page.locator("#project-coding-execution-choose").isDisabled()).toBe(true);
+    expect(await page.evaluate(() => window.__codingBoard.calls.every(call => ["projectCodingWorkspaceState", "codingResultsState"].includes(call.method)))).toBe(true);
+    await page.close();
+  }, 30_000);
+
   it("guides project creation without reading a folder and allows preparation while execution remains unavailable", async () => {
     const page = await open({ selected: null });
     expect(await page.locator("#project-coding").isVisible()).toBe(true);
     expect(await page.locator("#project-coding-folder").textContent()).toContain("Create or select a project above");
     expect(await page.locator("#project-coding-choose").isDisabled()).toBe(true);
     expect(await page.locator("#coding-workspace").isHidden()).toBe(true);
+    expect(await page.locator("#project-coding-execution").isHidden()).toBe(true);
     expect(await page.evaluate(() => window.__codingBoard.calls)).toEqual([]);
     await selected(page, "one");
     await expect.poll(() => page.locator("#project-coding-choose").isEnabled()).toBe(true);
@@ -398,6 +490,39 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Project coding folders and
         await page.evaluate(() => { scrollTo(0, 0); return new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))); });
         fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
         await page.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, `project-coding-${width}.png`), fullPage: true });
+      }
+    }
+    await page.close();
+  }, 30_000);
+
+  it("keeps WSL setup and closed readiness readable in narrow, light and contrast Home views", async () => {
+    const state = executionWorkspace(); state.execution!.selected = "wsl:Ubuntu"; state.available = false;
+    state.execution!.message = "WSL coding is waiting for verification on Windows. Enable WSL in Computers & apps, then review this computer's command settings.";
+    state.message = state.execution!.message;
+    state.execution!.choices[1].label = "WSL · Ubuntu-24.04-development";
+    const page = await open({ workspaces: { one: state } });
+    await expect.poll(() => page.locator("#project-coding-execution").isVisible()).toBe(true);
+    await page.evaluate(() => {
+      document.documentElement.classList.add("content"); document.documentElement.dataset.textSize = "larger";
+      document.getElementById("navigation")!.hidden = true;
+      const main = document.createElement("main"); main.className = "home";
+      const section = document.createElement("section"); section.dataset.pane = "projects";
+      section.append(document.getElementById("project-coding")!); main.append(section); document.body.append(main);
+    });
+    const shared = fs.readFileSync("app/renderer/shared/ember.css", "utf8").replace('../fonts/InterVariable.woff2', `data:font/woff2;base64,${fs.readFileSync("assets/fonts/InterVariable.woff2").toString("base64")}`);
+    await page.addStyleTag({ content: shared + fs.readFileSync("app/renderer/home/styles.css", "utf8") });
+    for (const theme of ["dark", "light", "contrast"] as const) {
+      await page.emulateMedia({ colorScheme: theme === "light" ? "light" : "dark", forcedColors: theme === "contrast" ? "active" : "none" });
+      for (const width of [900, 390]) {
+        await page.setViewportSize({ width, height: 900 }); await page.evaluate(() => document.fonts.ready);
+        expect(await page.evaluate(() => document.body.scrollWidth <= innerWidth)).toBe(true);
+        expect(await page.locator("#project-coding-execution-state").innerText()).toContain("Not ready.");
+        const button = page.locator("#project-coding-execution-choose");
+        expect(await button.isDisabled()).toBe(true);
+        if (process.env.EMBER_UI_EVIDENCE) {
+          fs.mkdirSync(process.env.EMBER_UI_EVIDENCE, { recursive: true });
+          await page.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, `wsl-coding-${theme}-${width}.png`), fullPage: true });
+        }
       }
     }
     await page.close();

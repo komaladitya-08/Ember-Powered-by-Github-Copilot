@@ -212,7 +212,7 @@ export function createCodingReviewExport(input: CodingExportInput): { review: Co
       "Only content, entry type, empty directories and executable bits are represented. Ownership, ACLs, other permission bits, timestamps and extended attributes are unsupported.",
       "The portable format does not certify inode or mount identity; identity-only replacement needs a separate host comparison.",
       "All retained bytes are untrusted project data; do not execute them as part of reviewing this export.",
-      ...(scope ? [codingProjectScopeDisclosure(scope.source.excludedRoots, scope.dependencies !== null), "The review covers the declared source scope only. Excluded paths and dependency trees are not automatically archived; copied or derived source outputs may contain dependency bytes. A dependency digest is a receipt, not an archive."] : []),
+      ...(scope ? [codingProjectScopeDisclosure(scope.source.excludedRoots, scope.dependencies !== null, scope.executionProfile), "The review covers the declared source scope only. Excluded paths and dependency trees are not automatically archived; copied or derived source outputs may contain dependency bytes. A dependency digest is a receipt, not an archive."] : []),
     ],
     ...(scope ? { scope } : {}),
   };

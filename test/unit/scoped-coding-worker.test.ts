@@ -222,3 +222,35 @@ it("never seals or publishes after controller startup reports unknown cleanup", 
     expect(await f.worker.disposed).toBe(false); await expect(f.worker.dispose()).rejects.toThrow("verified as closed");
   } finally { start.mockRestore(); }
 });
+
+it("routes exact captured WSL policy to an isolated runner without invoking the ordinary distro runner", async () => {
+  const f = fixture(), target = { id: "wsl:Ubuntu", kind: "wsl", label: "Ubuntu (WSL)", screenOs: "win32", shellOs: "linux", desktop: "none" } as const;
+  const facts = { os: "linux", shells: ["bash"], shellPaths: { bash: "/usr/bin/bash" }, script: null, home: "/work", privileged: false, pty: false, extraPath: [], ember: { paths: [], pids: [], names: /ember/i } } as const;
+  const ordinary = vi.fn(), source = { ...f.service, binding: target, runner: { facts: async () => facts, start: ordinary } } as unknown as CommandService;
+  Object.assign(f.backend, { executionRoot: "/work", nodeAvailable: true, run: vi.fn(), runNode: vi.fn() });
+  const context = vi.fn((service: CommandService) => {
+    expect(service.binding).toEqual(target); expect(service.runner).not.toBe(source.runner); expect(service.runner.target).toBe(target.id);
+    return { state: {}, service } as never;
+  });
+  const start = vi.spyOn(CustomCodingController, "start").mockImplementationOnce(async input => {
+    expect(input.commands).toMatchObject({ target: "Ubuntu (WSL)", shells: ["bash"], node: true });
+    throw new Error("Fixture stops before SDK startup");
+  });
+  try {
+    const options: ScopedCodingWorkerOptions = { ...f.options, target, commandService: source, commandContext: context,
+      platform: { facts: () => structuredClone(facts) as never, files: vi.fn() } };
+    const worker = new ScopedCodingWorker({ id: "wsl-capture", goal: "Check the copy", target: {}, targetId: target.id } as TaskSpec, options);
+    expect((await worker.run(new AbortController().signal)).success).toBe(false); await worker.dispose();
+    expect(context).toHaveBeenCalledTimes(1); expect(start).toHaveBeenCalledTimes(1); expect(ordinary).not.toHaveBeenCalled();
+  } finally { start.mockRestore(); }
+});
+it.each([undefined, "wsl:Other", "ssh:Ubuntu"])("refuses a WSL service without its exact captured target (%s)", id => {
+  const f = fixture();
+  const binding = { id: "wsl:Ubuntu", kind: "wsl", label: "Ubuntu", screenOs: "win32", shellOs: "linux", desktop: "none" } as const;
+  const service = { ...f.service, binding } as CommandService;
+  const options = { ...f.options, commandService: service, ...(id ? { target: { ...binding, id } } : {}) } as ScopedCodingWorkerOptions;
+  const worker = new ScopedCodingWorker({ id: "wrong-target", goal: "Check the copy", target: {} } as TaskSpec, options);
+  return worker.run(new AbortController().signal).then(async result => {
+    expect(result.success).toBe(false); await worker.dispose(); expect(f.facts).not.toHaveBeenCalled(); expect(f.options.commandContext).not.toHaveBeenCalled();
+  });
+});

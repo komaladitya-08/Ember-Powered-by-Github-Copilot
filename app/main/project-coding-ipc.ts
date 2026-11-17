@@ -1,8 +1,9 @@
 /** Home-only coding folder/review IPC. Main supplies its sender guard and native folder picker. */
 import { z } from "zod";
 import { IPC } from "../shared/ipc";
+import { parseTargetId } from "../shared/targets";
 import type { ProjectSessionsState } from "../shared/project-sessions";
-import type { CodingResultReview, CodingResultSummary, ProjectCodingWorkspaceState } from "../shared/project-coding";
+import type { CodingResultReview, CodingResultSummary, ProjectCodingExecutionState, ProjectCodingWorkspaceState } from "../shared/project-coding";
 import type { CodingWorkspace } from "./agent/coding-workspace";
 import type { ProjectCodingWorkspaces } from "./agent/project-coding-workspaces";
 import { CodingResultRegistryError, type CodingResultRegistry } from "./agent/coding-result-registry";
@@ -14,7 +15,10 @@ export interface ProjectCodingIpcDeps {
   folders: ProjectCodingWorkspaces;
   results(): Promise<Pick<CodingResultRegistry, "state" | "review" | "export" | "reset" | "forgetProject" | "forgetResult">>;
   canUse(): boolean;
-  availability(): { available: boolean; message: string; canContinue?: boolean };
+  availability(projectId?: string): { available: boolean; message: string; canContinue?: boolean };
+  executionState?(projectId: string): ProjectCodingExecutionState | undefined;
+  /** Synchronous metadata choice only; it does not install, start or approve commands. */
+  chooseExecution?(projectId: string, targetId: string): void;
   /** Calls the host's synchronous intake capture, then returns its ordinary conversation submission. */
   continueResult?(id: string, projectId: string, request: string): Promise<boolean>;
   chooseFolder(title: string): Promise<string | null>;
@@ -33,6 +37,9 @@ export interface ProjectCodingIpc {
 
 const idSchema = z.string().max(36).uuid();
 const argsSchema = z.tuple([idSchema]);
+const executionArgsSchema = z.tuple([idSchema, z.string().min(1).max(68).refine(value => {
+  const parsed = parseTargetId(value); return parsed?.kind === "local" || parsed?.kind === "wsl";
+})]);
 const continuationArgsSchema = z.tuple([idSchema, idSchema, z.string().min(1).max(2000).refine(value => !!value.trim())]);
 const UNAVAILABLE = "Connect Ember and open Projects to use coding work.";
 const STALE = "The account, project or folder choice changed. Try again.";
@@ -72,12 +79,15 @@ export function registerProjectCodingIpc(d: ProjectCodingIpcDeps): ProjectCoding
     const allowed = usable() && !!project(id) && safe(d.folders.ownerCurrent(id));
     if (!allowed) return { projectId: id, folder: null, available: false, canChoose: false, message: UNAVAILABLE };
     let availability: { available: boolean; message: string; canContinue?: boolean };
-    try { availability = d.availability(); } catch { availability = { available: false, message: "Coding work is unavailable on this computer." }; }
+    try { availability = d.availability(id); } catch { availability = { available: false, message: "Coding work is unavailable on this computer." }; }
     const folder = d.folders.state(id), busy = liveCoding(id), picking = pickers.has(id);
+    let execution: ProjectCodingExecutionState | undefined;
+    try { const state = d.executionState?.(id); if (state) execution = { ...state, canSelect: !!d.chooseExecution && state.canSelect && !busy && !picking }; } catch { /* A missing capability offers no choice. */ }
     return {
       projectId: id, folder, available: availability.available,
       ...(typeof availability.canContinue === "boolean" ? { canContinue: availability.canContinue } : {}),
       canChoose: !busy && !picking,
+      ...(execution ? { execution } : {}),
       message: busy ? BUSY : picking ? "Finish the folder picker for this project." : availability.message || (availability.available ? "Coding work uses a private copy. The original folder is unchanged." : "Coding work is unavailable on this computer."),
     };
   };
@@ -130,6 +140,29 @@ export function registerProjectCodingIpc(d: ProjectCodingIpcDeps): ProjectCoding
     const id = idFrom(args); requireFolderChange(id);
     d.folders.clear(id); d.folderChanged?.(id); changed();
     return workspaceState(id);
+  });
+  d.handle(IPC.projectCodingExecutionChoose, (...args): ProjectCodingWorkspaceState => {
+    const parsed = executionArgsSchema.safeParse(args);
+    if (!parsed.success) throw new Error("Choose a command environment listed for this project.");
+    const [id, targetId] = parsed.data; requireFolderChange(id);
+    const current = capability(id), owner = capability();
+    let selectionCurrent = current;
+    try {
+      const execution = d.executionState?.(id);
+      assertCurrent(current);
+      requireFolderChange(id);
+      if (!d.chooseExecution || !execution?.canSelect || !execution.choices.some(choice => choice.id === targetId && choice.selectable)) throw new Error("unavailable");
+      d.chooseExecution(id, targetId);
+      assertCurrent(() => safe(current) && !liveCoding(id) && !pickers.has(id));
+      revisions.set(id, (revisions.get(id) ?? 0) + 1);
+      selectionCurrent = capability(id);
+      d.folderChanged?.(id); changed();
+      assertCurrent(() => safe(owner) && safe(selectionCurrent) && !liveCoding(id) && !pickers.has(id));
+      return workspaceState(id);
+    } catch {
+      if (!safe(owner) || !safe(selectionCurrent)) throw new Error(STALE);
+      throw new Error("Couldn't change the command environment. Refresh Projects and choose an available option.");
+    }
   });
   d.handle(IPC.codingResultsState, async (...args): Promise<CodingResultSummary[]> => {
     const id = idFrom(args);
@@ -210,7 +243,7 @@ export function registerProjectCodingIpc(d: ProjectCodingIpcDeps): ProjectCoding
     if (!parsed.success) throw new Error("Choose an existing project or coding result.");
     const [id, projectId, request] = parsed.data, owner = capability(), current = capability(projectId);
     const selected = () => d.projects().selectedProjectId === projectId;
-    const available = () => { const status = d.availability(); return status.available === true && status.canContinue !== false && d.folders.state(projectId)?.valid === true && !pickers.has(projectId); };
+    const available = () => { const status = d.availability(projectId); return status.available === true && status.canContinue !== false && d.folders.state(projectId)?.valid === true && !pickers.has(projectId); };
     if (!d.continueResult || !safe(() => safe(owner) && safe(current) && selected() && available())) return { ok: false, message: UNAVAILABLE };
     try {
       const registry = await registryForUse();

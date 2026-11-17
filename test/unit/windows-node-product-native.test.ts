@@ -79,7 +79,7 @@ describe("reviewed native source binding", () => {
   it("authenticates the captured verifier and every current source pin without issuing native authority", () => {
     const f = proofSourceFixture();
     try {
-      expect(WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS).toHaveLength(125);
+      expect(WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS).toHaveLength(131);
       expect(f.run).not.toThrow(); expect(proofTransforms).toHaveBeenCalledTimes(1);
       expect(f.graph.metadataFiles.size).toBe(0);
       expect(f.graph.sourceVerifier).toBeUndefined();
@@ -268,12 +268,12 @@ describe("native Windows Node product admission", () => {
     expect(Object.keys(facts).sort()).toEqual(["commit", "image"]);
   });
 
-  it("binds the reviewed producer and qualified current-source asset proof for product admission", () => {
-    expect(WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE).toEqual({ ready: true,
+  it("keeps product admission closed pending qualification of the expanded source graph", () => {
+    expect(WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE).toEqual({ ready: false,
       manifestSha256: "d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f",
-      assetProofCommit: "c1fa3b2785ee2247ef0b4dea0cc73e175cb00d6f",
-      assetProofManifestSha256: "41053ba131cd2d98b4c20291d6bea91e04c6dd10a5d41b5ea146faf8a8b33c54",
-      verifierFileSha256: "0ed85644ab3fa52de8ca9e1aa09020e0f2c71064c7f18152f0a94ff666799a6d" });
+      assetProofCommit: null,
+      assetProofManifestSha256: null,
+      verifierFileSha256: null });
     expect(Object.isFrozen(WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE)).toBe(true);
   });
 

@@ -252,3 +252,17 @@ it("counts mixed shell and Node invocations against one run budget", async () =>
   expect(run).toHaveBeenCalledTimes(100); expect(runNode).toHaveBeenCalledTimes(100);
   expect(runner.exitsAfter(0)).toHaveLength(200);
 });
+
+it("binds WSL command stamps to the exact selected distro and refuses local or other-target stamps", async () => {
+  const f = setup(), target = "wsl:Ubuntu" as const;
+  const runner = new IsolatedCodingCommandRunner({ workspace: f.workspace, facts, target, signal: f.owner.signal, current: () => true, inspect: f.inspect });
+  expect(runner.target).toBe(target);
+  expect(await runner.start(spec()).done).toMatchObject({ ended: "failed-to-start" }); expect(f.run).not.toHaveBeenCalled();
+  const accepted = spec(); accepted.stamp.sha256 = createHash("sha256").update(`${target}\0${accepted.shell}\0${accepted.cwd}\0${accepted.command}`).digest("hex");
+  const command = runner.start(accepted); expect(await command.done).toMatchObject({ ended: "exit", code: 0 }); expect(f.run).toHaveBeenCalledTimes(1);
+});
+it("rejects non-coding remote targets before any workspace execution", () => {
+  const f = setup();
+  expect(() => new IsolatedCodingCommandRunner({ workspace: f.workspace, facts, target: "ssh:host", signal: f.owner.signal, current: () => true, inspect: f.inspect })).toThrow("target");
+  expect(f.run).not.toHaveBeenCalled();
+});

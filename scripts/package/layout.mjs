@@ -99,7 +99,7 @@ export function layoutFor(platform, arch) {
       requiredDist: [...COMMON_DIST.slice(0, 1), "desk-agent.cjs", ...COMMON_DIST.slice(1), ...POSIX_HELPERS],
       sidecarDist: [],
       // The Windows/macOS accessibility host never runs here (the Python AT-SPI sidecar does).
-      excludeDist: ["ax-sidecar.cjs"],
+      excludeDist: ["ax-sidecar.cjs", "wsl-coding.cjs"],
       icon: null, exeResources: false, signing: null, voiceModels: "beside", voiceNative: VOICE_NATIVE_DIR,
     };
   }
@@ -127,7 +127,7 @@ export function layoutFor(platform, arch) {
       ],
       // `ember --doctor` for a console: Ember.exe is a windowed program, which cmd.exe doesn't wait for (design §9.9).
       launchers: [{ from: "packaging/windows/ember-doctor.cmd", to: "ember-doctor.cmd" }],
-      requiredDist: [...COMMON_DIST, "ax-sidecar.cjs", ...WINDOWS_HELPERS],
+      requiredDist: [...COMMON_DIST, "ax-sidecar.cjs", "wsl-coding.cjs", ...WINDOWS_HELPERS],
       // The accessibility host, run as Ember's own binary in node mode (ELECTRON_RUN_AS_NODE).
       sidecarDist: ["ax-sidecar.cjs"],
       excludeDist: ["desk-agent.cjs"],
@@ -159,7 +159,7 @@ export function layoutFor(platform, arch) {
     sidecarFiles: [],
     requiredDist: [...COMMON_DIST, "ax-sidecar.cjs", ...POSIX_HELPERS],
     sidecarDist: ["ax-sidecar.cjs"],
-    excludeDist: ["desk-agent.cjs"],
+    excludeDist: ["desk-agent.cjs", "wsl-coding.cjs"],
     icon: { kind: "icns", file: "Contents/Resources/ember.icns", replaces: "Contents/Resources/electron.icns" },
     // Info.plist names the bundle (mac-bundle.mjs); there is no PE resource to rewrite.
     exeResources: false,

@@ -673,7 +673,8 @@ jobs:
         run: |
           # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
           node scripts/package/remote-parts.mjs
-          node scripts/package/stage.mjs --with-models --with-runtimes
+          node scripts/package/wsl-coding-tools.mjs
+          node scripts/package/stage.mjs --with-models --with-runtimes --with-wsl-coding-tools
           node scripts/package/archive.mjs
       - name: "The packaged Ember: its fuses, plain Node kept, NODE_OPTIONS ignored, --inspect refused, its files"
         if: ${{ !cancelled() }}

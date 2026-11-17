@@ -13,6 +13,11 @@ export function mountProjectCoding(): ProjectSessionReviews {
   const stateText = find<HTMLParagraphElement>("state");
   const choose = find<HTMLButtonElement>("choose");
   const forget = find<HTMLButtonElement>("forget");
+  const executionGroup = find<HTMLDivElement>("execution");
+  const executionSelect = find<HTMLSelectElement>("execution-select");
+  const executionChoose = find<HTMLButtonElement>("execution-choose");
+  const executionState = find<HTMLParagraphElement>("execution-state");
+  const executionDetail = find<HTMLParagraphElement>("execution-detail");
   const status = find<HTMLParagraphElement>("status");
   const results = find<HTMLOListElement>("results");
   const review = find<HTMLElement>("review");
@@ -49,6 +54,8 @@ export function mountProjectCoding(): ProjectSessionReviews {
   let releaseSessionFocus: (() => void) | null = null;
   const forgotten = new Set<string>();
   let drawn = "";
+  let executionDrawn = "";
+  let executionSelected = "";
 
   const plain = (tag: string, text: string, className = "") => {
     const node = document.createElement(tag);
@@ -65,6 +72,9 @@ export function mountProjectCoding(): ProjectSessionReviews {
   const controls = () => {
     choose.disabled = pending || !workspace?.canChoose;
     forget.disabled = pending || !workspace?.folder || !workspace.canChoose;
+    const execution = workspace?.execution, candidate = execution?.choices.find(choice => choice.id === executionSelect.value);
+    executionSelect.disabled = pending || !ready || !execution?.canSelect;
+    executionChoose.disabled = executionSelect.disabled || !candidate?.selectable || candidate.id === execution?.selected;
     exportReview.disabled = pending || !opened || opened.projectId !== projectId || !ready;
     continueReview.disabled = pending || !continuationAvailable();
     continueRequest.disabled = pending || !continuationAvailable();
@@ -76,6 +86,28 @@ export function mountProjectCoding(): ProjectSessionReviews {
     root.hidden = false;
     folder.textContent = !projectId ? "Create or select a project above to choose its coding folder." : workspace?.folder ? `${workspace.folder.label}: ${workspace.folder.path}${workspace.folder.valid ? "" : " (folder unavailable)"}` : "No coding folder selected for this project.";
     stateText.textContent = !projectId ? "Each project keeps its own folder choice and coding reviews." : !ready ? "Connect Ember to manage coding folders and review results." : workspace?.message || (workspace?.available ? "Coding work uses a private copy. Your original project stays unchanged." : "Coding work is currently unavailable. You can prepare a folder when Choose folder is available.");
+    const execution = workspace?.execution;
+    executionGroup.hidden = !execution;
+    if (execution) {
+      const signature = JSON.stringify({ selected: execution.selected, choices: execution.choices.map(({ id, label, selectable }) => ({ id, label, selectable })) });
+      if (signature !== executionDrawn) {
+        const draft = executionSelected === execution.selected && execution.choices.some(choice => choice.id === executionSelect.value) ? executionSelect.value : execution.selected;
+        executionDrawn = signature; executionSelected = execution.selected;
+        const options = execution.choices.map(choice => {
+          const option = document.createElement("option"); option.value = choice.id; option.textContent = choice.label; option.disabled = !choice.selectable; return option;
+        });
+        if (!execution.choices.some(choice => choice.id === execution.selected)) {
+          const absent = document.createElement("option"); absent.value = execution.selected; absent.textContent = "Selected environment is unavailable"; absent.disabled = true; options.unshift(absent);
+        }
+        executionSelect.replaceChildren(...options); executionSelect.value = draft;
+      }
+      const selected = execution.choices.find(choice => choice.id === execution.selected);
+      executionState.textContent = `Selected: ${selected?.label ?? "Unavailable environment"}. ${selected?.ready ? "Ready." : "Not ready."} ${execution.message}`;
+      const candidate = execution.choices.find(choice => choice.id === executionSelect.value);
+      executionDetail.textContent = candidate?.id !== execution.selected ? `${candidate?.message ?? "Choose an available environment."} Use selection to save this choice.` : selected?.message ?? "Choose an available environment. The saved choice has not changed.";
+    } else {
+      executionDrawn = ""; executionSelected = ""; executionSelect.replaceChildren(); executionState.textContent = ""; executionDetail.textContent = "";
+    }
     const signature = JSON.stringify(summaries);
     if (signature !== drawn) {
       drawn = signature;
@@ -139,6 +171,18 @@ export function mountProjectCoding(): ProjectSessionReviews {
       const next = kind === "choose" ? await window.ember.projectCodingWorkspaceChoose(id) : await window.ember.projectCodingWorkspaceForget(id);
       if (!current(owner, id) || action !== actionEpoch || next.projectId !== id) return;
       workspace = next; status.textContent = next.message;
+    } catch (error) { if (current(owner, id) && action === actionEpoch) status.textContent = ipcErrorText(error); }
+    finally { if (current(owner, id) && action === actionEpoch) { pending = false; render(); } }
+  };
+  const executionAction = async () => {
+    const candidate = workspace?.execution?.choices.find(choice => choice.id === executionSelect.value);
+    if (!projectId || pending || !ready || !workspace?.execution?.canSelect || !candidate?.selectable || candidate.id === workspace.execution.selected) return;
+    const id = projectId, owner = generation, action = ++actionEpoch, targetId = candidate.id;
+    clearContinuation(); readEpoch++; pending = true; status.textContent = "Saving this project's command environment…"; render();
+    try {
+      const next = await window.ember.projectCodingExecutionChoose(id, targetId);
+      if (!current(owner, id) || action !== actionEpoch || next.projectId !== id) return;
+      workspace = next; status.textContent = next.execution?.message ?? next.message;
     } catch (error) { if (current(owner, id) && action === actionEpoch) status.textContent = ipcErrorText(error); }
     finally { if (current(owner, id) && action === actionEpoch) { pending = false; render(); } }
   };
@@ -227,6 +271,8 @@ export function mountProjectCoding(): ProjectSessionReviews {
   };
   choose.addEventListener("click", () => { if (!choose.disabled) void folderAction("choose"); });
   forget.addEventListener("click", () => { if (!forget.disabled) void folderAction("forget"); });
+  executionSelect.addEventListener("change", render);
+  executionChoose.addEventListener("click", () => { if (!executionChoose.disabled) void executionAction(); });
   closeReview.addEventListener("click", () => {
     const id = opened?.id, control = reviewOrigin?.dataset.sessionControl;
     const origin = openedSessionIdentity && sessionIdentityCurrent(openedSessionIdentity)

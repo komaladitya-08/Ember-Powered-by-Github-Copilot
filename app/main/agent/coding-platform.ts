@@ -63,6 +63,8 @@ export interface CodingWorkspaceReview {
 /** A copied-file lifecycle has no command authority. The seal is called only after awaited controller/file closure. */
 export interface CodingReviewWorkspace extends ScopedCodingWorkspace {
   readonly executionRoot: string;
+  /** A remote backend supplies a serialized write-exclusion check without granting a filesystem path on the host. */
+  quiescent?(): Promise<boolean>;
   stop(): Promise<void>;
   exportReview(exportBase: string): Promise<CodingWorkspaceReview>;
   close(): Promise<void>;

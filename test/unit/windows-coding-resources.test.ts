@@ -27,10 +27,11 @@ afterEach(async () => {
   vi.restoreAllMocks();
   for (const name of ["platform/os", "agent/windows-coding-native", "agent/windows-coding-artifact-store", "agent/windows-file-only-workspace", "agent/coding-privacy-scanner", "agent/coding-toolchain"])
     vi.doUnmock(`../../app/main/${name}`);
+  vi.doUnmock("../../app/shared/wsl-coding-readiness"); vi.doUnmock("../../app/main/agent/wsl-coding-workspace");
   vi.resetModules();
 });
 
-async function setup(options: { existingCommon?: boolean; unknownChildren?: number } = {}) {
+async function setup(options: { existingCommon?: boolean; unknownChildren?: number; wsl?: boolean; guestScope?: CodingExportInput["scope"] } = {}) {
   vi.resetModules();
   vi.doMock("../../app/main/platform/os", () => ({ HOST_PLATFORM: "win32", HOST_ARCH: "x64" }));
   const native = await import("../../app/main/agent/windows-coding-native");
@@ -162,12 +163,14 @@ async function setup(options: { existingCommon?: boolean; unknownChildren?: numb
       if (bytes.length > maximum) throw new errors.CodingResultRegistryError("limit"); return Buffer.from(bytes);
     }
     async sourceBoundary(source: string, check: () => void, expected?: CodingArtifactSourceRef) {
-      check(); const selected = nodes.get(key(source)); if (!selected) return null;
+      check();
       if (expected) {
+        // Match the real store: its retained capability names the original identity even after namespace replacement.
         const captured = this.sources.get(expected);
-        if (!captured || captured.path !== source || captured.id !== selected.info.id) throw new errors.CodingResultRegistryError("stale");
+        if (!captured || captured.path !== source) throw new errors.CodingResultRegistryError("invalid");
         return expected;
       }
+      const selected = nodes.get(key(source)); if (!selected) return null;
       const ref = Object.freeze({}) as CodingArtifactSourceRef; this.sources.set(ref, { path: source, id: selected.info.id }); return ref;
     }
     async sameSource(first: CodingArtifactSourceRef | null, second: CodingArtifactSourceRef | null, check: () => void) {
@@ -234,7 +237,8 @@ async function setup(options: { existingCommon?: boolean; unknownChildren?: numb
         if (base !== input.reviewBase || !backend.sealed || !input.review.current()) return Promise.reject(new errors.CodingResultRegistryError("stale"));
         return exporting ??= (async () => {
           const binding = input.review.binding, tree = (text: string) => ({ binding, entries: [{ path: "app.ts", kind: "file" as const, bytes: Buffer.from(text), executable: false }] });
-          const rendered = createCodingReviewExport({ binding, baseline: tree("original\n"), proposed: tree("changed\n"), current: tree("original\n") });
+          const rendered = createCodingReviewExport({ binding, baseline: tree("original\n"), proposed: tree("changed\n"), current: tree("original\n"),
+            ...(options.wsl ? { scope: { version: 1 as const, source: { excludedRoots: [".git", "node_modules"] as (".git" | "node_modules")[], omitted: [{ path: ".git" as const, kind: "directory" as const }, { path: "node_modules" as const, kind: "link" as const }], byteLimit: 10 * 1024 * 1024 }, dependencies: null } } : {}) });
           const artifact = await store.write({ "changes.patch": Buffer.from(rendered.review.textPatch), "review.json": Buffer.from(JSON.stringify(rendered.review, null, 2)) }, () => {
             if (!input.review.current()) throw new errors.CodingResultRegistryError("stale");
           });
@@ -261,6 +265,35 @@ async function setup(options: { existingCommon?: boolean; unknownChildren?: numb
     ownerCurrent: vi.fn(() => { const selected = owner, epoch = ownerEpoch; return () => owner !== null && selected === owner && epoch === ownerEpoch; }),
     ownerReset: vi.fn(() => { ownerEpoch++; selections.clear(); }),
   };
+  const wslInputs: import("../../app/main/agent/wsl-coding-workspace").WslCodingWorkspaceInput[] = [];
+  if (options.wsl) {
+    vi.doMock("../../app/shared/wsl-coding-readiness", () => ({ WSL_CODING_READINESS: { ready: true } }));
+    class Guest {
+      executionRoot = "/work"; nodeAvailable = true; output?: CodingWorkspaceReview; transferred = false;
+      static async create(input: import("../../app/main/agent/wsl-coding-workspace").WslCodingWorkspaceInput) {
+        events.push("guest-create");
+        const clone = (tree: CodingExportTree) => ({ binding: { ...tree.binding }, entries: tree.entries.map(entry => entry.kind === "file" ? { ...entry, bytes: Buffer.from(entry.bytes) } : { ...entry }) });
+        const captured = { ...input, source: clone(input.source), ...(input.baseline ? { baseline: clone(input.baseline) } : {}) }; wslInputs.push(captured); return new Guest(captured);
+      }
+      constructor(readonly input: import("../../app/main/agent/wsl-coding-workspace").WslCodingWorkspaceInput) {}
+      get sourceBoundary() { return this.input.review.sourceBoundary; }
+      async run() { throw new Error("No fixture command"); }
+      async runNode() { throw new Error("No fixture command"); }
+      async stop() { events.push("guest-stop-proven"); }
+      async sealForReview() { await this.stop(); }
+      async exportReview() {
+        events.push("guest-closed-before-review");
+        const current = await this.input.review.captureCurrent();
+        const binding = this.input.source.binding, baseline = this.input.baseline ?? this.input.source;
+        const data = { binding, baseline, proposed: this.input.source, ...(current ? { current } : {}), ...(options.guestScope ? { scope: options.guestScope } : {}) };
+        this.output = await this.input.review.write(data); return this.output;
+      }
+      transferReview(output: CodingWorkspaceReview) { if (output !== this.output) throw new Error("Wrong producer"); this.transferred = true; }
+      async close() { events.push("guest-close"); if (this.output && !this.transferred) await this.input.review.discard(this.output); }
+    }
+    vi.doMock("../../app/main/agent/wsl-coding-workspace", () => ({ WslCodingWorkspace: Guest, WslCodingCleanupError: native.WindowsCodingCleanupError,
+      wslCodingPlatform: { facts: vi.fn(), files: vi.fn() } }));
+  }
   const { WindowsProjectCodingResources } = await import("../../app/main/agent/windows-coding-resources");
   const { CodingResultRegistry } = await import("../../app/main/agent/coding-result-registry");
   const changed = vi.fn();
@@ -287,7 +320,7 @@ async function setup(options: { existingCommon?: boolean; unknownChildren?: numb
     await workspace.sealForReview?.(); return workspace.exportReview(value.reviewBase);
   };
   return { open, bind, spec, start, review, api, nodes, handles, node, key, location, removed, closed, events, backends, store, storeCreate, discover, changed, folders, projects,
-    createBackend, createEntered, storeEntered, claimEntered, errors, native, retirePrivacy, CodingResultRegistry,
+    createBackend, wslInputs, createEntered, storeEntered, claimEntered, errors, native, retirePrivacy, CodingResultRegistry,
     setOwner(value: string | null) { owner = value; folders.ownerReset(); },
     failNextClose() { failClose = true; }, gateCreate() { return createGate = deferred<void>(); }, gateStore() { return storeGate = deferred<void>(); }, gateClaim() { return claimGate = deferred<void>(); },
   };
@@ -551,4 +584,132 @@ it("latches native seed-cleanup uncertainty during continuation admission and re
   f.createBackend.mockRejectedValueOnce(new WindowsSeedCleanupFailure());
   await expect(value.createWorkspace(previous.task, new AbortController().signal, () => true)).rejects.toBeInstanceOf(WindowsSeedCleanupFailure);
   expect(value.availability().available).toBe(false); await expect(value.close()).rejects.toThrow(); expect(f.nodes.has(f.key(COMMON))).toBe(true);
+});
+
+
+it("keeps the production WSL admission gate closed before any native capture or guest launch", async () => {
+  const f = await setup(), value = await f.open(); await f.bind(value);
+  const open = vi.fn();
+  await expect(value.createWslWorkspace(f.spec(value), new AbortController().signal, () => true, { current: () => true, open })).rejects.toMatchObject({ code: "unavailable" });
+  expect(open).not.toHaveBeenCalled(); expect(f.createBackend).not.toHaveBeenCalled();
+});
+it("closes the native seed before guest launch, keeps host baseline/source identity, and mints the final native artifact after guest close", async () => {
+  const f = await setup({ wsl: true }), value = await f.open(); await f.bind(value); const task = f.spec(value), run = new AbortController();
+  const archive = Buffer.from("pinned archive"), open = vi.fn(async () => {
+    expect(f.backends).toHaveLength(1); expect(f.backends[0].close).toHaveBeenCalledTimes(1); expect(f.store.size).toBe(0);
+    f.events.push("guest-open"); return { connection: {} as never, typescriptArchive: archive };
+  });
+  const workspace = await value.createWslWorkspace(task, run.signal, () => true, { current: () => true, open });
+  expect(f.events.indexOf("backend-close")).toBeLessThan(f.events.indexOf("guest-open")); expect(archive.every(byte => byte === 0)).toBe(true);
+  const input = f.wslInputs[0]; expect(treeText(input.baseline)).toBe("original\n"); expect(treeText(input.source)).toBe("changed\n");
+  expect(input.review.sourceBoundary).toBe(f.backends[0].input.review.sourceBoundary);
+  run.abort(); await workspace.sealForReview?.(); const output = await workspace.exportReview(value.reviewBase);
+  expect(f.backends).toHaveLength(2); expect(f.backends[1].input.signal.aborted).toBe(false);
+  expect(f.backends[1].input.review.sourceBoundary).toBe(input.review.sourceBoundary);
+  expect(f.events.indexOf("guest-closed-before-review")).toBeLessThan(f.events.lastIndexOf("artifact-write"));
+  expect(output.artifact).toBeDefined(); expect(f.store.size).toBe(1); expect(f.store.records.has(output.artifact!)).toBe(true);
+  await workspace.close(); const summary = await value.publish(task, output, "stopped", { ran: 0, passed: 0, failed: 0 });
+  expect(summary.status).toBe("stopped"); expect(output.cleanup).toBe("complete"); expect(f.store.size).toBe(1);
+});
+it("does not launch a guest while native seed disposal is unresolved", async () => {
+  const f = await setup({ wsl: true }), value = await f.open(); await f.bind(value);
+  const gate = deferred<void>(), create = f.createBackend.getMockImplementation()!;
+  f.createBackend.mockImplementationOnce(async input => { const backend = await create(input); backend.closeGate = gate; return backend; });
+  const open = vi.fn(async () => ({ connection: {} as never, typescriptArchive: Buffer.from("archive") }));
+  const creating = value.createWslWorkspace(f.spec(value), new AbortController().signal, () => true, { current: () => true, open });
+  await vi.waitFor(() => expect(f.backends[0]?.close).toHaveBeenCalled()); expect(open).not.toHaveBeenCalled();
+  gate.resolve(); const workspace = await creating; expect(open).toHaveBeenCalledTimes(1); await workspace.close();
+});
+it("retains the WSL proposal with explicit conflicts when the original Windows identity is replaced without reading replacement bytes", async () => {
+  const f = await setup({ wsl: true }), value = await f.open(); await f.bind(value);
+  const task = f.spec(value), workspace = await value.createWslWorkspace(task, new AbortController().signal, () => true,
+    { current: () => true, open: async () => ({ connection: {} as never, typescriptArchive: Buffer.from("archive") }) });
+  f.nodes.get(f.key(SOURCE))!.info.id = "replaced";
+  await workspace.sealForReview?.(); const output = await workspace.exportReview(value.reviewBase);
+  expect(f.backends).toHaveLength(1); // Store/source identity refusal precedes capture of the replacement.
+  expect(output.review.current).toBeNull(); expect(output.review.changes[0].conflicts).toContain("The original project was not captured; concurrent changes are unknown.");
+  expect(output.review.baseline[0]).toMatchObject({ base64: Buffer.from("original\n").toString("base64") });
+  expect(output.review.proposed[0]).toMatchObject({ base64: Buffer.from("changed\n").toString("base64") });
+  expect(output.artifact).toBeDefined(); expect(f.store.size).toBe(1); await workspace.close();
+  const result = await value.publish(task, output, "done", { ran: 0, passed: 0, failed: 0 });
+  expect((await value.results()).state(P)).toContainEqual(result); expect(result.conflicts).toBeGreaterThan(0);
+});
+it("closes a pre-adoption guest connection even if the post-open current callback throws", async () => {
+  const f = await setup({ wsl: true }), value = await f.open(); await f.bind(value);
+  const close = vi.fn(async () => undefined), availability = value.availability.bind(value);
+  const open = vi.fn(async () => {
+    vi.spyOn(value, "availability").mockImplementation(() => { throw new f.native.WindowsCodingCleanupError(); });
+    return { connection: { close } as never, typescriptArchive: Buffer.from("archive") };
+  });
+  await expect(value.createWslWorkspace(f.spec(value), new AbortController().signal, () => true, { current: () => true, open })).rejects.toThrow();
+  expect(close).toHaveBeenCalledTimes(1); expect(f.wslInputs).toHaveLength(0);
+  expect(availability().available).toBe(false);
+});
+it("wipes decoded native seed bytes and retains uncertain capture ownership when seed close fails", async () => {
+  const f = await setup({ wsl: true }), value = await f.open(); await f.bind(value);
+  const exporter = await import("../../app/main/agent/coding-result-export"), decode = exporter.decodeCodingReviewExport;
+  let captured: CodingExportInput | undefined;
+  vi.spyOn(exporter, "decodeCodingReviewExport").mockImplementation((...args) => captured = decode(...args));
+  const create = f.createBackend.getMockImplementation()!;
+  f.createBackend.mockImplementationOnce(async input => {
+    const backend = await create(input); backend.close.mockRejectedValue(new f.native.WindowsCodingCleanupError()); return backend;
+  });
+  const open = vi.fn();
+  await expect(value.createWslWorkspace(f.spec(value), new AbortController().signal, () => true, { current: () => true, open })).rejects.toThrow();
+  expect(open).not.toHaveBeenCalled(); expect(captured).toBeDefined();
+  for (const tree of [captured!.baseline, captured!.proposed, captured!.current]) for (const entry of tree?.entries ?? []) if (entry.kind === "file") expect(entry.bytes.every(byte => byte === 0)).toBe(true);
+  expect(value.availability().available).toBe(false); expect(f.store.size).toBe(1);
+});
+it("wipes a captured seed if the final admission check throws before opening the guest", async () => {
+  const f = await setup({ wsl: true }), value = await f.open(); await f.bind(value);
+  const exporter = await import("../../app/main/agent/coding-result-export"), decode = exporter.decodeCodingReviewExport;
+  let captured: CodingExportInput | undefined;
+  vi.spyOn(exporter, "decodeCodingReviewExport").mockImplementation((...args) => captured = decode(...args));
+  const create = f.createBackend.getMockImplementation()!;
+  f.createBackend.mockImplementationOnce(async input => {
+    const backend = await create(input), close = backend.close.getMockImplementation()!;
+    backend.close.mockImplementationOnce(async () => { await close(); vi.spyOn(value, "availability").mockImplementation(() => { throw new f.native.WindowsCodingCleanupError(); }); });
+    return backend;
+  });
+  const open = vi.fn();
+  await expect(value.createWslWorkspace(f.spec(value), new AbortController().signal, () => true, { current: () => true, open })).rejects.toThrow();
+  expect(open).not.toHaveBeenCalled(); expect(captured).toBeDefined();
+  for (const tree of [captured!.baseline, captured!.proposed, captured!.current]) for (const entry of tree?.entries ?? []) if (entry.kind === "file") expect(entry.bytes.every(byte => byte === 0)).toBe(true);
+});
+
+it("preserves only the host-captured source manifest and offline execution profile in the final WSL review and continuation", async () => {
+  const forged = { version: 1, source: { excludedRoots: [], omitted: [], byteLimit: 1 }, dependencies: null, executionProfile: "online-host" } as unknown as CodingExportInput["scope"];
+  const f = await setup({ wsl: true, guestScope: forged }), value = await f.open(); await f.bind(value); const task = f.spec(value);
+  const workspace = await value.createWslWorkspace(task, new AbortController().signal, () => true,
+    { current: () => true, open: async () => ({ connection: {} as never, typescriptArchive: Buffer.from("archive") }) });
+  const nativeScope = f.backends[0].output!.review.scope; expect(nativeScope).toBeDefined();
+  const scope = { ...nativeScope!, executionProfile: "wsl-offline" };
+  await workspace.sealForReview?.(); const output = await workspace.exportReview(value.reviewBase); expect(output.review.scope).toEqual(scope);
+  expect(output.review.limitations.join(" ")).toContain("offline"); expect(output.review.limitations.join(" ")).not.toContain("No dependencies are installed or downloaded");
+  await workspace.close(); const summary = await value.publish(task, output, "done", { ran: 0, passed: 0, failed: 0 });
+  const ref = value.captureContinuation(summary.id, P); expect(ref).not.toBeNull();
+  const load = vi.spyOn(f.CodingResultRegistry.prototype, "loadContinuation");
+  const next = f.spec(value); next.codingWorkspace = { ...next.codingWorkspace!, continuation: ref! };
+  const continuation = await value.createFileWorkspace(next, new AbortController().signal, () => true);
+  expect(load).toHaveBeenCalledTimes(1); expect((await load.mock.results[0].value).scope).toEqual(scope);
+  expect(f.backends.at(-1)!.seed?.scope).toEqual(nativeScope); expect(f.backends.at(-1)!.seed?.scope).not.toHaveProperty("executionProfile");
+  await continuation.close();
+});
+
+it("never downgrades unknown native current-capture cleanup to an unavailable-current review", async () => {
+  const f = await setup({ wsl: true }), value = await f.open(); await f.bind(value);
+  const workspace = await value.createWslWorkspace(f.spec(value), new AbortController().signal, () => true,
+    { current: () => true, open: async () => ({ connection: {} as never, typescriptArchive: Buffer.from("archive") }) });
+  f.createBackend.mockRejectedValueOnce(new f.native.WindowsCodingCleanupError());
+  await workspace.sealForReview?.(); await expect(workspace.exportReview(value.reviewBase)).rejects.toBeInstanceOf(f.native.WindowsCodingCleanupError);
+  expect(value.availability().available).toBe(false); expect(f.store.size).toBe(0);
+});
+it("does not retain a partial WSL review when a known source refusal also retires the captured owner", async () => {
+  const f = await setup({ wsl: true }), value = await f.open(); await f.bind(value);
+  const workspace = await value.createWslWorkspace(f.spec(value), new AbortController().signal, () => true,
+    { current: () => true, open: async () => ({ connection: {} as never, typescriptArchive: Buffer.from("archive") }) });
+  const { ScopedCodingFileError } = await import("../../app/main/agent/coding-platform");
+  f.createBackend.mockImplementationOnce(async () => { f.setOwner(B); throw new ScopedCodingFileError("missing"); });
+  await workspace.sealForReview?.(); await expect(workspace.exportReview(value.reviewBase)).rejects.toThrow("changed");
+  expect(f.store.size).toBe(0); await workspace.close();
 });

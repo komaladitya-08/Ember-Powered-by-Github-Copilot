@@ -18,6 +18,8 @@ import { createCodingReviewExport, type CodingExportBinding, type CodingExportEn
 import { ExperimentalNamespaceReceipt } from "./experimental-stop-receipt";
 import { copyIsolatedCommandAssets } from "./isolated-command-assets";
 import { isolatedCommandSeccomp } from "./isolated-command-seccomp";
+import { prepareWslCodingTools, type WslCodingToolProfile } from "./wsl-coding-tools";
+import { wslCodingSeccomp } from "./wsl-coding-seccomp";
 import { codingWorkspaceFilePathProblem, codingWorkspaceFileProblemAsync } from "./scoped-coding-files";
 import { CodingPrivacyScanner, CodingPrivacyCleanupError, CodingPrivacyScanError, captureCodingPrivacyScope, assertCodingPrivacyScope, type CodingPrivacyScope } from "./coding-privacy-scanner";
 import { codingProjectManifest, type CodingProjectManifest, type CodingProjectScope, type CodingExcludedRoot } from "./coding-project-scope";
@@ -30,6 +32,8 @@ export interface IsolatedCommandWorkspaceInput {
   source: string; baseDir: string; protectedPaths: readonly string[]; binding: CodingExportBinding;
   /** Explicit host-selected trusted Node binary. Absence means Node commands are unsupported. */
   nodePath?: string;
+  /** Opaque guest-owned offline tools. Absence preserves the ordinary Linux asset and syscall policy. */
+  wslProfile?: WslCodingToolProfile;
   limits?: Partial<IsolatedCommandLimits>;
   signal?: AbortSignal;
   /** Host capability for this accepted task, checked again before each lease and native command release. */
@@ -116,6 +120,8 @@ export class IsolatedCommandWorkspace {
   private cleanup: Promise<void> | null = null;
   private exporting: Promise<IsolatedCommandReview> | null = null;
   private active: { cancel(): void } | null = null;
+  private namespacesLaunched = 0;
+  private namespacesExited = 0;
   private readonly exportPrivacyClosures: Promise<void>[] = [];
   private taskPrivacyClosure: Promise<void> | null = null;
   private privacyFailure: CodingPrivacyCleanupError | null = null;
@@ -205,7 +211,9 @@ export class IsolatedCommandWorkspace {
       admitted();
       scratch = await fs.mkdtemp(path.join(base, "ember-command-state-")); await fs.chmod(scratch, 0o700);
       const rootfs = path.join(scratch, "rootfs"); await fs.mkdir(rootfs, { mode: 0o700 });
-      const assets = await copyIsolatedCommandAssets({ rootfs, protectedPaths: roots, ...(input.nodePath ? { nodePath: input.nodePath } : {}), signal: input.signal });
+      const assets = input.wslProfile
+        ? await prepareWslCodingTools(input.wslProfile, { rootfs, protectedPaths: roots, nodePath: input.nodePath, signal: input.signal })
+        : await copyIsolatedCommandAssets({ rootfs, protectedPaths: roots, ...(input.nodePath ? { nodePath: input.nodePath } : {}), signal: input.signal });
       admitted();
       for (const folder of ["work", "tmp", "proc", "dev"]) await fs.mkdir(path.join(rootfs, folder), { mode: 0o700 });
       if (excludedRoots.length) {
@@ -213,7 +221,7 @@ export class IsolatedCommandWorkspace {
         for (const name of excludedRoots) await fs.mkdir(path.join(rootfs, "excluded", name), { mode: 0o700 });
       }
       await fs.symlink("usr/bin", path.join(rootfs, "bin"));
-      await fs.writeFile(path.join(scratch, "seccomp.bpf"), isolatedCommandSeccomp(), { flag: "wx", mode: 0o600 });
+      await fs.writeFile(path.join(scratch, "seccomp.bpf"), input.wslProfile ? wslCodingSeccomp() : isolatedCommandSeccomp(), { flag: "wx", mode: 0o600 });
       admitted();
       if (!await sameRoot(source, sourceIdentity) || !await sameRoot(base, baseIdentity)) throw new Error("The project or private coding folder changed while preparing commands.");
       admitted();
@@ -318,6 +326,7 @@ export class IsolatedCommandWorkspace {
         ...(invocation.kind === "shell" ? [BARRIER, "ember-command", invocation.command] : [NODE_BARRIER, "ember-node", ...invocation.argv])],
       { shell: false, env: { HOME: "/tmp", PATH: "/usr/bin:/bin", LC_ALL: "C" }, stdio: ["pipe", "pipe", "pipe", filter, receiptFd] });
     } finally { closeSync(filter); if (receiptFd >= 0) closeSync(receiptFd); }
+    this.namespacesLaunched++;
     let closed = false, stopped = false, timedOut = false, outputLimited = false, output = "", size = 0, deliveryFailed = false;
     let killTimer: ReturnType<typeof setTimeout> | undefined, rejectKill!: (error: Error) => void;
     const killFailure = new Promise<never>((_resolve, reject) => { rejectKill = reject; }); void killFailure.catch(() => undefined);
@@ -348,6 +357,11 @@ export class IsolatedCommandWorkspace {
     });
     void ending.catch(() => undefined);
     let receipt: ExperimentalNamespaceReceipt | undefined;
+    let witnessedExit = false;
+    const requireExited = async () => {
+      await receipt!.requireExited(this.limits.proofMs);
+      if (!witnessedExit) { witnessedExit = true; this.namespacesExited++; }
+    };
     try {
       const until = performance.now() + this.limits.proofMs;
       while (!receipt) {
@@ -361,13 +375,13 @@ export class IsolatedCommandWorkspace {
       const current = this.admitted();
       if (current && !signal.aborted && !this.retired && !timedOut) child.stdin!.end("ember-command-ready\n"); else { stopped = true; cancel(); }
       const result = await Promise.race([ending, killFailure]);
-      await receipt.requireExited(this.limits.proofMs);
+      await requireExited();
       if (deliveryFailed) throw new Error("The isolated command output could not be delivered.");
       output += decoders.stdout.end() + decoders.stderr.end();
       return { exitCode: result.code, signal: result.signal, stopped: stopped || this.retired, timedOut, outputLimited, output, observed: true };
     } catch (error) {
       cancel();
-      try { await Promise.race([ending, killFailure]); if (!receipt) throw new Error("Missing namespace receipt", { cause: error }); await receipt.requireExited(this.limits.proofMs); }
+      try { await Promise.race([ending, killFailure]); if (!receipt) throw new Error("Missing namespace receipt", { cause: error }); await requireExited(); }
       catch { this.failure = "An isolated command could not be verified as stopped. The coding workspace was retained."; }
       if (this.failure) throw new Error(this.failure, { cause: error });
       throw error;
@@ -383,6 +397,12 @@ export class IsolatedCommandWorkspace {
     const privacy = this.closeTaskPrivacy(); void privacy.catch(() => undefined);
     if (this.lease.getStore()) return Promise.reject(new Error("Stop cannot wait inside its own workspace lease."));
     return Promise.all([this.tail, privacy]).then(() => { if (this.failure) throw new Error(this.failure); });
+  }
+
+  /** Cached kernel-witness facts only; callers must separately seal admission and drain their accepted operations. */
+  commandWitness(): Readonly<{ kind: "linux-pid-namespaces"; launched: number; exited: number }> {
+    if (this.failure || this.active || this.namespacesLaunched !== this.namespacesExited) throw new Error("The command namespace witness is incomplete.");
+    return Object.freeze({ kind: "linux-pid-namespaces", launched: this.namespacesLaunched, exited: this.namespacesExited });
   }
 
   exportReview(exportBase: string): Promise<IsolatedCommandReview> {

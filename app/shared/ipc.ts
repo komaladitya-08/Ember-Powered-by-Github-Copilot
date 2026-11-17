@@ -150,6 +150,7 @@ export const IPC = {
   projectCodingWorkspaceState: "projects:coding-workspace-state",
   projectCodingWorkspaceChoose: "projects:coding-workspace-choose",
   projectCodingWorkspaceForget: "projects:coding-workspace-forget",
+  projectCodingExecutionChoose: "projects:coding-execution-choose",
   codingResultsState: "coding:results-state",
   codingResultReview: "coding:result-review",
   codingResultExport: "coding:result-export",
@@ -493,6 +494,7 @@ export interface EmberHomeApi {
   projectCodingWorkspaceState(projectId: string): Promise<import("./project-coding").ProjectCodingWorkspaceState>;
   projectCodingWorkspaceChoose(projectId: string): Promise<import("./project-coding").ProjectCodingWorkspaceState>;
   projectCodingWorkspaceForget(projectId: string): Promise<import("./project-coding").ProjectCodingWorkspaceState>;
+  projectCodingExecutionChoose(projectId: string, targetId: string): Promise<import("./project-coding").ProjectCodingWorkspaceState>;
   codingResultsState(projectId: string): Promise<import("./project-coding").CodingResultSummary[]>;
   codingResultReview(id: string): Promise<import("./project-coding").CodingResultReview>;
   codingResultExport(id: string): Promise<{ ok: boolean; message: string }>;

@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "version": "5.9.3",
+  "url": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+  "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+  "filename": "typescript-5.9.3.tgz",
+  "bytes": 4377468,
+  "sha256": "10e108c9cf7d5f2879053dff18515fb405abf2ccef63eaaf017d9c571687a1d3",
+  "license": "Apache-2.0",
+  "licenseBytes": 9197,
+  "licenseSha256": "a7d00bfd54525bc694b6e32f64c7ebcf5e6b7ae3657be5cc12767bce74654a47",
+  "noticeBytes": 37824,
+  "noticeSha256": "1af3c68039c57e539422da82a4faada506ce6d0ea6f90e0b699d02dbcdb7a90c"
+}

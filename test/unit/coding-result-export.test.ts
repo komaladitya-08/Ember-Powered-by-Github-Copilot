@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { createCodingReviewExport, type CodingExportEntry, type CodingExportInput, type CodingExportTree } from "../../app/main/agent/coding-result-export";
+import { createCodingReviewExport, decodeCodingReviewExport, type CodingExportEntry, type CodingExportInput, type CodingExportTree } from "../../app/main/agent/coding-result-export";
 import type { CodingProjectManifest } from "../../app/main/agent/coding-project-scope";
 
 const binding = { owner: "a".repeat(64), session: randomUUID(), snapshot: randomUUID() };
@@ -14,6 +14,29 @@ const tree = (...entries: CodingExportEntry[]): CodingExportTree => ({ binding, 
 const review = (baseline: CodingExportTree, proposed: CodingExportTree, current = baseline, extra: Partial<CodingExportInput> = {}) => createCodingReviewExport({ binding, baseline, proposed, current, ...extra });
 
 describe("portable isolated-result review formatting", () => {
+  it("retains exact pre-profile native review JSON bytes", () => {
+    const binding = { owner: "a".repeat(64), session: "11111111-1111-4111-8111-111111111111", snapshot: "22222222-2222-4222-8222-222222222222" };
+    const tree = { binding, entries: [] }, scope: CodingProjectManifest = { version: 1, source: { excludedRoots: [".git", "node_modules"], omitted: [], byteLimit: 10485760 }, dependencies: null };
+    const result = createCodingReviewExport({ binding, baseline: tree, proposed: tree, current: tree, scope });
+    // Captured from the pre-profile implementation with this fixed portable fixture.
+    expect(Buffer.byteLength(result.json)).toBe(1732);
+    expect(createHash("sha256").update(result.json).digest("hex")).toBe("8be2c2ded61cc8d3cf03c894ff8fa7f828ef7671ca92c3bc72d654c977146a57");
+    expect(result.json).not.toContain("executionProfile");
+  });
+
+  it("round-trips a host-declared WSL offline profile with canonical truthful review disclosures", () => {
+    const scope: CodingProjectManifest = { version: 1, source: { excludedRoots: [".git", "node_modules"], omitted: [], byteLimit: 10 * 1024 * 1024 }, dependencies: null, executionProfile: "wsl-offline" };
+    const result = review(tree(file("a.js", "before")), tree(file("a.js", "after")), undefined, { scope });
+    const decoded = decodeCodingReviewExport(Buffer.from(result.json), binding);
+    expect(decoded.scope).toEqual(scope); expect(createCodingReviewExport(decoded).json).toBe(result.json);
+    expect(result.review.limitations.join(" ")).toContain("Local, offline package installation is available inside the isolated WSL copy.");
+    expect(result.review.limitations.join(" ")).toContain("Network access and public package downloads are unavailable.");
+    expect(result.review.limitations.join(" ")).not.toContain("No dependencies are installed");
+    const altered = JSON.parse(result.json); altered.scope.executionProfile = "online-host";
+    expect(() => decodeCodingReviewExport(Buffer.from(JSON.stringify(altered)), binding)).toThrow();
+    expect(() => review(tree(), tree(), undefined, { scope: { ...scope, executionProfile: "online-host" } as never })).toThrow();
+  });
+
   it("preserves declared omissions and dependency receipts without presenting excluded files as captured source", () => {
     const scope: CodingProjectManifest = { version: 1, source: { excludedRoots: [".git", "node_modules"], omitted: [{ path: ".git", kind: "link" }], byteLimit: 10 * 1024 * 1024 },
       dependencies: { access: "copied-read-only", mount: "/work/node_modules", files: 2, bytes: 100, sha256: "a".repeat(64), materializedLinks: [] } };

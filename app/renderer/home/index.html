@@ -375,6 +375,13 @@
           <button id="project-coding-forget" type="button" class="btn quiet" disabled>Forget folder</button>
         </div>
         <p id="project-coding-state" class="hint"></p>
+        <div id="project-coding-execution" hidden>
+          <div class="choice"><label for="project-coding-execution-select">Run coding commands in</label><select id="project-coding-execution-select" aria-describedby="project-coding-execution-state project-coding-execution-detail" disabled></select></div>
+          <p id="project-coding-execution-state" class="hint"></p>
+          <p id="project-coding-execution-detail" class="hint"></p>
+          <div class="agent-actions"><button id="project-coding-execution-choose" type="button" class="btn quiet" aria-describedby="project-coding-execution-detail" disabled>Use selection</button></div>
+          <p class="hint">This choice applies to new coding sessions for this project. It does not install software or allow commands. Commands still follow your approval settings.</p>
+        </div>
         <p id="project-coding-status" class="hint" role="status" aria-live="polite"></p>
         <ol id="project-coding-results" aria-label="Coding results"></ol>
         <section id="project-coding-review" aria-labelledby="project-coding-review-title" hidden>

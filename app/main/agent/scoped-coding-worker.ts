@@ -6,6 +6,8 @@ import { runCommandTool, runNodeTool, type CommandFlowContext, type CommandConse
 import { CustomCodingController, CodingControllerCleanupError, type CodingControllerResult, type CustomCodingControllerOptions, type CodingControllerToolContext, type CodingControllerCommandResult } from "./custom-coding-controller";
 import { ScopedCodingFiles } from "./scoped-coding-files";
 import type { CodingCommandWorkspace, CodingReviewWorkspace, CodingWorkspaceReview, CodingPlatformAdapter, CodingFileBroker } from "./coding-platform";
+import { parseTargetId } from "../../shared/targets";
+import type { TargetBinding } from "../targets/types";
 import type { RunNodeArgs } from "../commands/node-invocation";
 import { IsolatedCodingCommandRunner } from "./isolated-coding-command-runner";
 import type { PrivateControllerRuntimeInput } from "./private-controller-runtime";
@@ -39,6 +41,8 @@ export interface ScopedCodingWorkerOptions extends ScopedCodingWorkerBaseOptions
   platform?: CodingPlatformAdapter;
   /** Immutable host-selected constraints, not task or model text. */
   toolchain?: "windows-node";
+  /** Exact trusted project selection, immutable at intake; omitted retains local-only behavior. */
+  target?: Readonly<TargetBinding>;
   commandService: CommandService;
   /** Called once. Its original words, refusals, taint, policy and mutable flow state survive every command. */
   commandContext(service: CommandService, signal: AbortSignal): CommandFlowContext;
@@ -142,7 +146,7 @@ export class ScopedCodingWorker {
       if (this.o.mode === "files-only" && (this.o.commandService !== undefined || this.o.commandContext !== undefined || typeof this.o.platform?.files !== "function")) throw new Error("The coding capability is invalid.");
       // Capture execution authority before startup can wait. A later caller mutation cannot upgrade this task.
       const commands = this.o.mode === "files-only" ? null : { service: this.o.commandService, context: this.o.commandContext,
-        toolchain: this.o.toolchain, facts: this.o.platform?.facts.bind(this.o.platform), createWorkspace: this.o.createWorkspace.bind(this.o) };
+        toolchain: this.o.toolchain, target: this.o.target ? structuredClone(this.o.target) : undefined, facts: this.o.platform?.facts.bind(this.o.platform), createWorkspace: this.o.createWorkspace.bind(this.o) };
       const files = this.o.platform?.files.bind(this.o.platform);
       const createWorkspace = this.o.createWorkspace.bind(this.o);
       this.watch = setInterval(() => { if (!this.current() && !this.lifetime.signal.aborted) this.invalidate(); }, 100);
@@ -161,17 +165,22 @@ export class ScopedCodingWorker {
           this.files = files ? await files(this.workspace!, signal) : await ScopedCodingFiles.create({ workspace: this.workspace!, signal });
           this.requireCurrent(); return this.files;
         },
-        finishCheck: () => this.workspace!.files(async () => this.current() && (commands === null ? this.runner === null : this.runner !== null && this.runner.running === 0)),
+        finishCheck: () => this.workspace!.quiescent
+          ? this.workspace!.quiescent().then(ready => ready && this.current() && (commands === null ? this.runner === null : this.runner !== null && this.runner.running === 0))
+          : this.workspace!.files(async () => this.current() && (commands === null ? this.runner === null : this.runner !== null && this.runner.running === 0)),
       };
       if (commands === null) this.controller = await CustomCodingController.start({ ...controller, mode: "files-only" });
       else {
         if (!commandWorkspace) throw new Error("The coding command workspace is unavailable.");
         const original = commands.service;
-        if (original.binding.id !== "local" || original.binding.kind !== "local") throw new Error("Coding requires the local command service.");
+        const target = commands.target;
+        if (target ? target.kind !== "wsl" || parseTargetId(target.id)?.kind !== "wsl" || target.shellOs !== "linux" ||
+          JSON.stringify(target) !== JSON.stringify(original.binding) : original.binding.id !== "local" || original.binding.kind !== "local") throw new Error("The coding command target changed.");
         const hostFacts = await original.runner.facts(); this.requireCurrent();
         const facts: RunnerFacts = commands.facts?.(commandWorkspace, hostFacts) ?? { ...hostFacts, os: "linux", home: "/state", shells: ["bash"], shellPaths: { bash: "/usr/bin/bash" }, script: null, pty: false, extraPath: [] };
+        if (target && (facts.os !== "linux" || facts.privileged || !facts.shells.includes("bash") || !commandWorkspace.nodeAvailable || !commands.facts)) throw new Error("The WSL coding platform is unavailable.");
         if (facts.shells.some(shell => !["bash", "sh", "zsh", "powershell"].includes(shell))) throw new Error("The coding platform has no supported command shell.");
-        this.runner = new IsolatedCodingCommandRunner({ workspace: commandWorkspace, facts, signal: this.lifetime.signal,
+        this.runner = new IsolatedCodingCommandRunner({ workspace: commandWorkspace, facts, target: target?.id ?? "local", signal: this.lifetime.signal,
           current: this.current, inspect: (paths, cwd) => this.files ? this.files.inspect(paths, cwd) : Promise.resolve(paths.map(() => ({ exists: null, real: null }))) });
         if (!facts.shells.length && !this.runner.nodeAvailable) throw new Error("The coding platform has no supported execution capability.");
         if (commands.toolchain !== undefined && (commands.toolchain !== "windows-node" || facts.os !== "win32" || facts.shells.length || !this.runner.nodeAvailable)) throw new Error("The coding toolchain capability is invalid.");

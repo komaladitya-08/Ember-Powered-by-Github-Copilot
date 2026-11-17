@@ -61,6 +61,9 @@ const remote = build({
 
 await Promise.all([
   remote,
+  // Credential-free Linux guest. Commands enter the private bwrap rootfs through framed stdio only.
+  build({ ...common, entryPoints: ["app/wsl-coding/main.ts"], outfile: "dist/app/wsl-coding.cjs",
+    platform: "node", format: "cjs", target: "node22" }),
   build({
     ...common,
     entryPoints: ["app/main/main.ts"],

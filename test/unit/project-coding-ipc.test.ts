@@ -10,7 +10,7 @@ import type { CodingWorkspace } from "../../app/main/agent/coding-workspace";
 import { CodingResultRegistryError } from "../../app/main/agent/coding-result-registry";
 import { IPC } from "../../app/shared/ipc";
 import type { ProjectSession, ProjectSessionsState } from "../../app/shared/project-sessions";
-import type { CodingResultReview, CodingResultSummary, ProjectCodingWorkspaceState } from "../../app/shared/project-coding";
+import type { CodingResultReview, CodingResultSummary, ProjectCodingExecutionState, ProjectCodingWorkspaceState } from "../../app/shared/project-coding";
 
 const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) fs.rmSync(directory, { recursive: true, force: true }); });
@@ -23,6 +23,7 @@ function setup() {
   fs.writeFileSync(path.join(source, "unchanged.txt"), "The original is unchanged.");
   const first = randomUUID(), second = randomUUID(), record = randomUUID();
   let owner: string | null = "owner-a", allowed = true, available = false, canContinue: boolean | undefined;
+  let execution: ProjectCodingExecutionState | undefined;
   const state: ProjectSessionsState = { selectedProjectId: first, projects: [first, second].map(id => ({ id, name: id, goal: "", createdAt: 1, sessions: [] })) };
   const folders = new ProjectCodingWorkspaces({ projectExists: id => state.projects.some(project => project.id === id), currentOwner: () => owner });
   const review: CodingResultReview = { id: record, projectId: first, taskId: randomUUID(), title: "Improve the app", sourcePath: source, status: "done", files: 1, conflicts: 0,
@@ -42,21 +43,84 @@ function setup() {
   const changed = vi.fn();
   const folderChanged = vi.fn<(projectId?: string) => void>();
   const continueResult = vi.fn(async (_id: string, _projectId: string, _request: string) => true);
+  const availability = vi.fn((_projectId?: string) => ({ available, canContinue, message: "Coding work is unavailable, but a folder can be prepared." }));
+  const executionState = vi.fn((_projectId: string) => execution!);
+  const chooseExecution = vi.fn((_projectId: string, targetId: string) => { execution!.selected = targetId; });
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const api = registerProjectCodingIpc({ handle: (channel, handler) => handlers.set(channel, handler), projects: () => state, folders, results,
-    canUse: () => allowed, availability: () => ({ available, canContinue, message: "Coding work is unavailable, but a folder can be prepared." }), continueResult,
+    canUse: () => allowed, availability, executionState, chooseExecution, continueResult,
     chooseFolder, validateFolder, folderChanged, changed });
   const call = async <T>(channel: string, ...args: unknown[]): Promise<T> => await handlers.get(channel)!(...args) as T;
   const live = (id: string, status: ProjectSession["status"], kind: ProjectSession["kind"] = "coding") => {
     state.projects.find(project => project.id === id)!.sessions = [{ id: randomUUID(), taskId: randomUUID(), title: "Work", kind, status, detail: "", startedAt: 1 }];
   };
   return { root, source, other, privateDir, first, second, record, review, state, folders, registry, results, chooseFolder, validateFolder, folderChanged, changed, handlers, api, call, live,
-    continueResult, available: (value: boolean) => { available = value; }, canContinue: (value: boolean) => { canContinue = value; },
+    continueResult, availability, executionState, chooseExecution, execution: (value: ProjectCodingExecutionState) => { execution = value; }, available: (value: boolean) => { available = value; }, canContinue: (value: boolean) => { canContinue = value; },
     owner: (value: string | null) => { owner = value; }, allowed: (value: boolean) => { allowed = value; },
     records: (value: CodingResultSummary[]) => { records = value; } };
 }
 
 describe("Home's project coding IPC", () => {
+  const execution = (): ProjectCodingExecutionState => ({ selected: "local", canSelect: true, message: "WSL coding is waiting for verification on Windows.", choices: [
+    { id: "local", label: "Windows", selectable: true, ready: true, message: "Uses the built-in Windows coding environment." },
+    { id: "wsl:Ubuntu", label: "WSL · Ubuntu", selectable: true, ready: false, message: "Waiting for Windows verification. Commands also require WSL consent and approval." },
+    { id: "wsl:Debian", label: "WSL · Debian", selectable: false, ready: false, message: "Use a WSL 2 distribution." },
+  ] });
+  it("prepares an explicit per-project command environment while its execution gate stays closed", async () => {
+    const f = setup(); f.execution(execution());
+    expect(await f.call(IPC.projectCodingWorkspaceState, f.first)).toMatchObject({ available: false, execution: { selected: "local", choices: [expect.anything(), { id: "wsl:Ubuntu", ready: false, selectable: true, label: "WSL · Ubuntu", message: expect.any(String) }, expect.anything()] } });
+    const state = await f.call<ProjectCodingWorkspaceState>(IPC.projectCodingExecutionChoose, f.first, "wsl:Ubuntu");
+    expect(state.available).toBe(false); expect(state.execution?.selected).toBe("wsl:Ubuntu");
+    expect(f.chooseExecution).toHaveBeenCalledExactlyOnceWith(f.first, "wsl:Ubuntu");
+    expect(f.availability).toHaveBeenLastCalledWith(f.first); expect(f.folderChanged).toHaveBeenLastCalledWith(f.first);
+    expect(f.results).not.toHaveBeenCalled(); expect(f.continueResult).not.toHaveBeenCalled(); expect(f.chooseFolder).not.toHaveBeenCalled();
+    expect(fs.readFileSync(path.join(f.source, "unchanged.txt"), "utf8")).toBe("The original is unchanged.");
+  });
+
+  it("accepts only an exact currently selectable target, without a fallback or renderer-supplied authority", async () => {
+    const f = setup(); f.execution(execution());
+    for (const args of [[f.first, "wsl:Unknown"], [f.first, "wsl:Debian"], [f.first, "wsl:ubuntu"], [f.first, "local", true],
+      [f.first, { targetId: "local", ready: true }], [f.first, "wsl:"], [f.first, "wsl:Ubuntu\n"], [f.first, "x".repeat(257)], ["../project", "local"]]) {
+      await expect(f.call(IPC.projectCodingExecutionChoose, ...args)).rejects.toThrow();
+    }
+    expect(f.chooseExecution).not.toHaveBeenCalled(); expect(f.folderChanged).not.toHaveBeenCalled();
+  });
+
+  it("refuses command environment changes during live coding, folder pickers and account loss", async () => {
+    const f = setup(); f.execution(execution()); f.live(f.first, "running");
+    expect(await f.call(IPC.projectCodingWorkspaceState, f.first)).toMatchObject({ execution: { canSelect: false } });
+    await expect(f.call(IPC.projectCodingExecutionChoose, f.first, "wsl:Ubuntu")).rejects.toThrow("Stop");
+    f.state.projects[0].sessions = []; const picker = deferred<string | null>(); f.chooseFolder.mockReturnValueOnce(picker.promise);
+    const choosing = f.call(IPC.projectCodingWorkspaceChoose, f.first);
+    await expect(f.call(IPC.projectCodingExecutionChoose, f.first, "wsl:Ubuntu")).rejects.toThrow("picker");
+    picker.resolve(null); await choosing; f.allowed(false);
+    await expect(f.call(IPC.projectCodingExecutionChoose, f.first, "wsl:Ubuntu")).rejects.toThrow("Connect");
+    expect(f.chooseExecution).not.toHaveBeenCalled();
+  });
+
+  it("invalidates delayed project result reads when the execution choice changes", async () => {
+    const f = setup(); f.execution(execution()); const registry = deferred<typeof f.registry>(); f.results.mockReturnValueOnce(registry.promise);
+    const reading = f.call(IPC.codingResultsState, f.first);
+    await f.call(IPC.projectCodingExecutionChoose, f.first, "wsl:Ubuntu"); registry.resolve(f.registry);
+    expect(await reading).toEqual([]);
+  });
+
+  it("sanitizes selection failures and refuses a reentrant owner change", async () => {
+    const f = setup(); f.execution(execution());
+    f.chooseExecution.mockImplementationOnce(() => { throw new Error("private=/secret/distro"); });
+    await expect(f.call(IPC.projectCodingExecutionChoose, f.first, "wsl:Ubuntu")).rejects.toThrow("Couldn't change the command environment.");
+    f.executionState.mockImplementationOnce(() => { f.owner("owner-b"); return execution(); });
+    await expect(f.call(IPC.projectCodingExecutionChoose, f.first, "wsl:Ubuntu")).rejects.toThrow("changed");
+    expect(f.chooseExecution).toHaveBeenCalledTimes(1); expect(f.folderChanged).not.toHaveBeenCalled();
+  });
+
+  it("rechecks live coding after reading the current execution choices", async () => {
+    const f = setup(); f.execution(execution());
+    f.executionState.mockImplementationOnce(() => { f.live(f.first, "queued"); return execution(); });
+    await expect(f.call(IPC.projectCodingExecutionChoose, f.first, "wsl:Ubuntu")).rejects.toThrow("Couldn't change the command environment.");
+    expect(f.chooseExecution).not.toHaveBeenCalled(); expect(f.folderChanged).not.toHaveBeenCalled();
+  });
+
   const prepareContinuation = (f: ReturnType<typeof setup>) => {
     f.available(true); f.folders.bind(f.first, projectCommandFolder(f.source, f.privateDir), f.folders.ownerCurrent(f.first));
   };
@@ -123,7 +187,7 @@ describe("Home's project coding IPC", () => {
 
   it("registers only bounded metadata/review channels and prepares a folder without executing or reading source files", async () => {
     const f = setup();
-    expect([...f.handlers.keys()]).toEqual([IPC.projectCodingWorkspaceState, IPC.projectCodingWorkspaceChoose, IPC.projectCodingWorkspaceForget, IPC.codingResultsState, IPC.codingResultReview, IPC.codingResultExport, IPC.codingResultForget, IPC.codingResultContinue]);
+    expect([...f.handlers.keys()]).toEqual([IPC.projectCodingWorkspaceState, IPC.projectCodingWorkspaceChoose, IPC.projectCodingWorkspaceForget, IPC.projectCodingExecutionChoose, IPC.codingResultsState, IPC.codingResultReview, IPC.codingResultExport, IPC.codingResultForget, IPC.codingResultContinue]);
     const before = fs.readFileSync(path.join(f.source, "unchanged.txt"), "utf8");
     const state = await f.call<ProjectCodingWorkspaceState>(IPC.projectCodingWorkspaceState, f.first);
     expect(state).toMatchObject({ available: false, canChoose: true, folder: null });
@@ -154,7 +218,7 @@ describe("Home's project coding IPC", () => {
     const f = setup();
     for (const channel of f.handlers.keys()) {
       for (const args of [[], ["../project"], ["x".repeat(10_000)], [{ projectId: f.first, path: f.source }], [f.first, f.source]]) {
-        await expect(f.call(channel, ...args)).rejects.toThrow("Choose an existing project or coding result.");
+        await expect(f.call(channel, ...args)).rejects.toThrow(channel === IPC.projectCodingExecutionChoose ? "Choose a command environment listed for this project." : "Choose an existing project or coding result.");
       }
     }
     await expect(f.call(IPC.projectCodingWorkspaceChoose, randomUUID())).rejects.toThrow("Connect Ember");

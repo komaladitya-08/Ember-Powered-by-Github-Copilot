@@ -6,6 +6,7 @@ import type { CodingCommandWorkspace, CodingPlatformAdapter } from "./coding-pla
 import type { ScopedCodingHost, ScopedCodingCapability } from "./host";
 import { ScopedCodingFileError, type CodingReviewWorkspace } from "./coding-platform";
 import type { TaskSpec } from "./worker";
+import type { CapturedWslCodingExecution } from "./project-coding-execution";
 
 export type ProjectCodingResourcesPort = Pick<ProjectCodingResources, "folders" | "reviewBase" | "results" |
   "validateSource" | "workspace" | "captureContinuation" | "continuationCurrent" | "publish" | "invalidate" | "close"> & {
@@ -18,12 +19,15 @@ export interface ProjectCodingBackend {
   host(common: CommonHost, localCommandsEnabled?: () => boolean): ScopedCodingHost;
 }
 
-export function createProjectCodingBackend(options: ProjectCodingResourcesOptions): ProjectCodingBackend {
+export function createProjectCodingBackend(options: ProjectCodingResourcesOptions, execution?: {
+  capture(projectId: string | null): CapturedWslCodingExecution | null | undefined;
+}): ProjectCodingBackend {
   if (HOST_PLATFORM === "win32") {
     const ready = WindowsProjectCodingResources.createNode(options);
     return Object.freeze({ ready, host(common: CommonHost, localCommandsEnabled?: () => boolean): ScopedCodingHost {
       const select = localCommandsEnabled, nodes = new WeakMap<CodingReviewWorkspace, CodingPlatformAdapter>(),
-        files = new WeakMap<CodingReviewWorkspace, Pick<CodingPlatformAdapter, "files">>();
+        files = new WeakMap<CodingReviewWorkspace, Pick<CodingPlatformAdapter, "files">>(),
+        wsl = new WeakMap<CodingReviewWorkspace, CodingPlatformAdapter>();
       const nodePlatform: CodingPlatformAdapter = Object.freeze({
         facts(workspace: CodingCommandWorkspace, facts: Parameters<CodingPlatformAdapter["facts"]>[1]) {
           const platform = nodes.get(workspace); if (!platform) throw new ScopedCodingFileError("boundary");
@@ -34,6 +38,10 @@ export function createProjectCodingBackend(options: ProjectCodingResourcesOption
           return platform.files(workspace, signal);
         },
       });
+      const wslPlatform: CodingPlatformAdapter = Object.freeze({
+        facts(workspace: CodingCommandWorkspace, facts: Parameters<CodingPlatformAdapter["facts"]>[1]) { const platform = wsl.get(workspace); if (!platform) throw new ScopedCodingFileError("boundary"); return platform.facts(workspace, facts); },
+        files(workspace: CodingReviewWorkspace, signal: AbortSignal) { const platform = wsl.get(workspace); if (!platform) return Promise.reject(new ScopedCodingFileError("boundary")); return platform.files(workspace, signal); },
+      });
       const filePlatform = Object.freeze({ files: (workspace: CodingReviewWorkspace, signal: AbortSignal) => {
         const platform = files.get(workspace); if (!platform) return Promise.reject(new ScopedCodingFileError("boundary"));
         return platform.files(workspace, signal);
@@ -41,7 +49,21 @@ export function createProjectCodingBackend(options: ProjectCodingResourcesOption
       return Object.freeze({ ...common, mode: "commands", get reviewBase() { return common.reviewBase; },
         // No caller may bypass intake selection by using the static compatibility surface directly.
         createWorkspace: () => Promise.reject(new ScopedCodingFileError("boundary")),
-        captureCapability(): ScopedCodingCapability | null {
+        captureCapability(projectId: string | null = null): ScopedCodingCapability | null {
+          let chosen: CapturedWslCodingExecution | null | undefined;
+          try { chosen = execution?.capture(projectId); } catch { return null; }
+          if (chosen === null) return null;
+          if (chosen) {
+            const binding = chosen;
+            return Object.freeze({ mode: "commands", target: binding.target, platform: wslPlatform, current: binding.current,
+              createWorkspace: async (spec: TaskSpec, signal: AbortSignal, admit: () => boolean) => {
+                const admitted = () => binding.current() && admit();
+                if (!admitted() || signal.aborted || spec.codingWorkspace?.projectId !== projectId) throw new ScopedCodingFileError("cancelled");
+                const resource = await ready;
+                if (!admitted() || signal.aborted) throw new ScopedCodingFileError("cancelled");
+                const workspace = await resource.createWslWorkspace(spec, signal, admitted, binding); wsl.set(workspace, resource.wslPlatform); return workspace;
+              } });
+          }
           let on: unknown; try { on = select?.(); } catch { return null; }
           if (on !== true && on !== false) return null;
           if (!on) return Object.freeze({ mode: "files-only", platform: filePlatform,

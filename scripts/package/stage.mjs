@@ -26,7 +26,8 @@
 // node scripts/package/runtimes.mjs, each checked against remote-runtime.json), so it never downloads one.
 // --with-windows-node-toolchain: Windows x64 only; stage the exact offline coding Node, licence and producer receipt
 // from .cache/windows-node-toolchain into resources/coding/windows-node-x64. This does not enable command execution.
-// usage: node scripts/package/stage.mjs [--allow-missing-sidecar] [--allow-missing-remote-parts] [--with-models] [--with-runtimes] [--with-windows-node-toolchain]
+// --with-wsl-coding-tools: stage the authenticated offline TypeScript archive and exact Apache-2.0 licence.
+// usage: node scripts/package/stage.mjs [--allow-missing-sidecar] [--allow-missing-remote-parts] [--with-models] [--with-runtimes] [--with-windows-node-toolchain] [--with-wsl-coding-tools]
 //   (after npm run build and node scripts/package/remote-parts.mjs)
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
@@ -45,8 +46,9 @@ import { finishMacBundle } from "./mac-bundle.mjs";
 import { stageParts } from "./remote-parts.mjs";
 import { stageWindowsNodeToolchain, verifyWindowsNodeToolchain, WINDOWS_NODE_TOOLCHAIN_DIRECTORY } from "./windows-node-toolchain.mjs";
 import { prepareWindowsNodeElectronCopyFilter } from "./windows-node-toolchain-copy.mjs";
+import { WSL_CODING_TOOLS, WSL_CODING_TOOLS_DIRECTORY, verifyWslCodingTools, stageWslCodingTools } from "./wsl-coding-tools.mjs";
 
-const FLAGS = ["--allow-missing-sidecar", "--allow-missing-remote-parts", "--with-models", "--with-runtimes", "--with-windows-node-toolchain"];
+const FLAGS = ["--allow-missing-sidecar", "--allow-missing-remote-parts", "--with-models", "--with-runtimes", "--with-windows-node-toolchain", "--with-wsl-coding-tools"];
 const flags = process.argv.slice(2);
 const unknown = flags.filter(f => !FLAGS.includes(f));
 if (unknown.length) { console.error(`unknown option ${unknown[0]}\nusage: node scripts/package/stage.mjs [${FLAGS.join("] [")}]`); process.exit(2); }
@@ -55,6 +57,13 @@ const withModels = flags.includes("--with-models");
 
 const layout = layoutFor(process.platform, process.arch);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const withWslCoding = flags.includes("--with-wsl-coding-tools");
+const wslCodingSource = path.join(root, "dist/wsl-coding-tools", WSL_CODING_TOOLS.filename);
+if (withWslCoding) {
+  if (layout.target !== "win32-x64") throw new Error("The optional WSL coding helper supports Windows x64 only.");
+  // Authentication and positive source close happen before replacing any existing staged package.
+  verifyWslCodingTools(wslCodingSource);
+}
 const withWindowsNode = flags.includes("--with-windows-node-toolchain");
 const windowsNodeSource = path.join(root, ".cache/windows-node-toolchain");
 if (withWindowsNode) {
@@ -225,6 +234,7 @@ for (const src of prod) {
 for (const p of layout.prune) fs.rmSync(path.join(appDir, "node_modules", p), { recursive: true, force: true });
 
 // 3. The accessibility sidecar files (main.ts looks for them under resources/ when packaged).
+if (withWslCoding) stageWslCodingTools(wslCodingSource, path.join(resources, WSL_CODING_TOOLS_DIRECTORY));
 for (const s of sidecars) {
   fs.mkdirSync(path.dirname(path.join(resources, s.to)), { recursive: true });
   fs.copyFileSync(path.join(root, s.from), path.join(resources, s.to));
@@ -310,6 +320,7 @@ fs.writeFileSync(path.join(app, layout.noticesDir, "THIRD_PARTY_NOTICES"), [
   `Electron ${electronVersion}: MIT (LICENSE beside this file). Chromium and the libraries in it, among them FFmpeg\n(LGPL-2.1-or-later): LICENSES.chromium.html beside this file.`,
   `Inter 4.1 (the typeface of Ember's windows, ${fonts}): OFL-1.1\n\n--- LICENSE.txt ---\n${fs.readFileSync(path.join(root, "assets/fonts/LICENSE.txt"), "utf8").trim()}`,
   ...(withWindowsNode ? [`Offline coding Node 22.23.5 and its bundled dependencies: ${path.posix.relative(layout.noticesDir, `${layout.resourcesDir}/${WINDOWS_NODE_TOOLCHAIN_DIRECTORY}/LICENSE`)}. The exact producer receipt accompanies it; this fork supplies no shell, networking, child processes or dependency installation.`] : []),
+  ...(withWslCoding ? [`TypeScript ${WSL_CODING_TOOLS.version}: Apache-2.0. Authenticated offline WSL coding tool asset; its exact LICENSE.txt and ThirdPartyNoticeText.txt accompany the archive in ${WSL_CODING_TOOLS_DIRECTORY}. The publisher's complete third-party notices include MIT, Unicode-DFS-2016, W3C-20150513, CC-BY-4.0 and the W3C Community Final Specification Agreement. Shipping assets does not enable the unqualified WSL command capability.`] : []),
   ...(layout.voiceNative ? [capiNotice(path.posix.relative(layout.noticesDir, `${layout.resourcesDir}/${layout.voiceNative}`))] : []),
   ...sections,
 ].join(`\n\n${"=".repeat(78)}\n\n`) + "\n");

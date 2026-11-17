@@ -121,3 +121,26 @@ it.each(["missing", "throw", "nonboolean"])("refuses an unverifiable trusted com
   const create = await select("win32"), host = create(options).host(common().value, choose);
   expect(host.captureCapability!()).toBeNull(); expect(resource.createNodeWorkspace).not.toHaveBeenCalled(); expect(resource.createFileWorkspace).not.toHaveBeenCalled();
 });
+
+it("captures the exact project WSL capability without consulting the local command switch or native Node factory", async () => {
+  const workspace = new f.Workspace(), platform = { facts: vi.fn(), files: vi.fn(async () => ({ close: async () => undefined })) },
+    resource = { createWslWorkspace: vi.fn(async () => workspace), wslPlatform: platform, createNodeWorkspace: vi.fn(), createFileWorkspace: vi.fn() };
+  f.windows.mockResolvedValue(resource); const create = await select("win32"), target = { id: "wsl:Ubuntu", kind: "wsl", label: "Ubuntu", shellOs: "linux", screenOs: "win32", desktop: "none" } as const;
+  const current = vi.fn(() => true), open = vi.fn(), binding = Object.freeze({ target, current, open }), capture = vi.fn(() => binding);
+  const local = vi.fn(() => { throw new Error("Local selection must not override WSL"); }), backend = create(options, { capture }), host = backend.host(common().value, local);
+  const capability = host.captureCapability!("project"); expect(capture).toHaveBeenCalledExactlyOnceWith("project"); expect(local).not.toHaveBeenCalled();
+  if (!capability || capability.mode !== "commands") throw new Error("Expected WSL capability");
+  expect(capability.target).toBe(target); expect(capability.toolchain).toBeUndefined(); expect(capability.current).toBe(current);
+  const task = { ...spec, codingWorkspace: { projectId: "project", path: "C:\\project", current: () => true } }, signal = new AbortController().signal;
+  const result = await capability.createWorkspace(task, signal, () => true); expect(result).toBe(workspace);
+  expect(resource.createWslWorkspace).toHaveBeenCalledExactlyOnceWith(task, signal, expect.any(Function), binding);
+  await capability.platform!.files(result, signal); expect(platform.files).toHaveBeenCalledExactlyOnceWith(workspace, signal);
+  await expect(capability.platform!.files(new f.Workspace() as unknown as CodingReviewWorkspace, signal)).rejects.toMatchObject({ code: "boundary" });
+  expect(resource.createNodeWorkspace).not.toHaveBeenCalled(); expect(resource.createFileWorkspace).not.toHaveBeenCalled();
+});
+it("preserves refusal of a blocked explicitly selected WSL backend without falling back to files or Node", async () => {
+  const resource = { createWslWorkspace: vi.fn(), createNodeWorkspace: vi.fn(), createFileWorkspace: vi.fn() }; f.windows.mockResolvedValue(resource);
+  const create = await select("win32"), capture = vi.fn(() => null), local = vi.fn(() => true), host = create(options, { capture }).host(common().value, local);
+  expect(host.captureCapability!("project")).toBeNull(); expect(local).not.toHaveBeenCalled();
+  expect(resource.createWslWorkspace).not.toHaveBeenCalled(); expect(resource.createNodeWorkspace).not.toHaveBeenCalled(); expect(resource.createFileWorkspace).not.toHaveBeenCalled();
+});

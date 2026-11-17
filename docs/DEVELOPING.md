@@ -4,7 +4,9 @@ This guide gets a development copy of Ember running. §1–§9 cover RHEL 8.4 (a
 Ember's first platform; §10 covers Windows 10 and 11, §11 macOS 13 and later, §12 the platform layer the three share,
 §13 CI, and §14 working on SSH, WSL and commands. What §5 says about using Ember holds on every OS, with that OS's
 shortcuts (README.md has the table). What users and administrators see of commands, WSL and other computers is in
-[COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md).
+[COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md). The optional isolated WSL coding backend,
+its offline tools and its separate native qualification gate are documented in
+[WSL-CODING-BACKEND.md](WSL-CODING-BACKEND.md).
 
 ## 1. Log in to "GNOME on Xorg"
 

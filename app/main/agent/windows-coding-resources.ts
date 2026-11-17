@@ -17,7 +17,10 @@ import { WindowsCodingArtifactStore } from "./windows-coding-artifact-store";
 import { CodingResultRegistry, CodingResultRegistryError } from "./coding-result-registry";
 import { CodingArtifactCleanupError, type CodingArtifactInput, type CodingArtifactSourceRef } from "./coding-artifact-store";
 import { clearCodingContinuation, type CodingContinuationRef } from "./coding-continuation";
-import type { CodingExportInput } from "./coding-result-export";
+import { createCodingReviewExport, decodeCodingReviewExport, type CodingExportInput } from "./coding-result-export";
+import { WslCodingWorkspace, WslCodingCleanupError, wslCodingPlatform } from "./wsl-coding-workspace";
+import type { WslCodingConnection } from "./wsl-coding-connection";
+import { WSL_CODING_READINESS } from "../../shared/wsl-coding-readiness";
 import { CodingPrivacyCleanupError, captureCodingPrivacyScope, assertCodingPrivacyScope, retireCodingPrivacyScanners,
   codingPrivacyCleanupFailure, type CodingPrivacyScope } from "./coding-privacy-scanner";
 import { loadWindowsCodingNative, retireWindowsCodingNative, WindowsCodingCleanupError,
@@ -56,7 +59,13 @@ export function requireWindowsOwnedCommandParentCurrent(ref: WindowsOwnedCommand
   const value = ref && typeof ref === "object" ? commandParents.get(ref) : undefined;
   if (!value) throw new ScopedCodingFileError("boundary"); value.current();
 }
-type WindowsOwnedWorkspace = WindowsFileOnlyWorkspace | WindowsNodeWorkspace;
+export interface WindowsWslCodingBinding {
+  /** Captured project/distro/consent/policy receipt. False permanently retires this session. */
+  current(): boolean;
+  /** Only a trusted installed helper and pinned tool archive may be returned here. */
+  open(): Promise<{ connection: WslCodingConnection; typescriptArchive: Buffer }>;
+}
+type WindowsOwnedWorkspace = WindowsFileOnlyWorkspace | WindowsNodeWorkspace | WslCodingWorkspace;
 type ResourceOptions = Pick<ProjectCodingResourcesOptions, "userData" | "protectedPaths" | "currentOwner" | "projectExists" | "changed" | "resourcesPath">;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DISCLOSURE = "Windows coding can edit files in a private copy and prepare a review. Commands, tests and dependency installation are unavailable. Captures exclude .git and node_modules; review exports include all captured files, including unchanged files. Continue from a review starts a fresh private copy of its proposed files. Your original project stays unchanged.";
@@ -68,7 +77,7 @@ class WindowsProjectCodingResourcesCleanupError extends WindowsCodingCleanupErro
   constructor() { super(); this.name = "WindowsProjectCodingResourcesCleanupError"; this.message = cleanupFailed().message; }
 }
 const safe = (check: () => boolean): boolean => { try { return check() === true; } catch { return false; } };
-const nativeUncertain = (error: unknown): boolean => error instanceof WindowsCodingCleanupError || error instanceof CodingArtifactCleanupError || error instanceof CodingPrivacyCleanupError;
+const nativeUncertain = (error: unknown): boolean => error instanceof WindowsCodingCleanupError || error instanceof CodingArtifactCleanupError || error instanceof CodingPrivacyCleanupError || error instanceof WslCodingCleanupError;
 const sameIdentity = (a: WindowsCodingInfo, b: WindowsCodingInfo) => a.id === b.id && a.volume === b.volume && a.kind === b.kind;
 const overlap = (a: string, b: string) => windowsCodingWithin(a, b) || windowsCodingWithin(b, a);
 function ordinary(value: unknown): value is string {
@@ -84,6 +93,7 @@ export class WindowsProjectCodingResources {
   readonly folders: ProjectCodingWorkspaces;
   readonly nodePlatform: CodingPlatformAdapter;
   readonly filePlatform: Pick<CodingPlatformAdapter, "files">;
+  readonly wslPlatform: CodingPlatformAdapter;
   #options: ResourceOptions;
   #api: WindowsCodingNative | null = null;
   #common: string;
@@ -105,6 +115,9 @@ export class WindowsProjectCodingResources {
   #active = new Map<WindowsOwnedWorkspace, Authority>(); #backendClosing = new WeakMap<WindowsOwnedWorkspace, Promise<void>>();
   #nodeWrappers = new WeakMap<CodingReviewWorkspace, WindowsNodeWorkspace>();
   #fileWrappers = new WeakMap<CodingReviewWorkspace, WindowsFileOnlyWorkspace>();
+  #wslWrappers = new WeakMap<CodingReviewWorkspace, WslCodingWorkspace>();
+  #captures = new Set<WindowsFileOnlyWorkspace>();
+  #connections = new Set<WslCodingConnection>();
   #creating = new Set<Promise<CodingReviewWorkspace>>(); #exporting = new Set<Promise<unknown>>(); #publishing = new Set<Promise<unknown>>();
   #unadopted = new Map<CodingWorkspaceReview, PendingArtifact>();
   #store: WindowsCodingArtifactStore | null = null; #storeOpening: Promise<WindowsCodingArtifactStore> | null = null;
@@ -125,6 +138,11 @@ export class WindowsProjectCodingResources {
       files: async (workspace, signal) => windowsNodeCodingPlatform.files(resolve(workspace), signal),
     };
     this.nodePlatform = Object.freeze(nodePlatform);
+    const resolveWsl = (workspace: CodingReviewWorkspace) => {
+      const owner = this.#wslWrappers.get(workspace); if (!owner) throw new ScopedCodingFileError("boundary"); return owner;
+    };
+    this.wslPlatform = Object.freeze({ facts: (workspace: CodingCommandWorkspace, facts: Parameters<CodingPlatformAdapter["facts"]>[1]) => wslCodingPlatform.facts(resolveWsl(workspace), facts),
+      files: (workspace: CodingReviewWorkspace, signal: AbortSignal) => wslCodingPlatform.files(resolveWsl(workspace), signal) });
     this.filePlatform = Object.freeze({ files: async (workspace: CodingReviewWorkspace, signal: AbortSignal) => {
       const owner = this.#fileWrappers.get(workspace); if (!owner) throw new ScopedCodingFileError("boundary");
       return WindowsFileOnlyWorkspace.prototype.filesBroker.call(owner, signal);
@@ -374,7 +392,7 @@ export class WindowsProjectCodingResources {
   createFileWorkspace(spec: TaskSpec, signal: AbortSignal, admit: () => boolean): Promise<CodingReviewWorkspace> {
     return this.#createWorkspace(spec, signal, admit, false);
   }
-  #createWorkspace(spec: TaskSpec, signal: AbortSignal, admit: () => boolean, node: boolean): Promise<CodingReviewWorkspace> {
+  #createWorkspace(spec: TaskSpec, signal: AbortSignal, admit: () => boolean, node: boolean, wsl?: WindowsWslCodingBinding): Promise<CodingReviewWorkspace> {
     const grant = spec.codingWorkspace, projectId = grant?.projectId, owner = this.#owner();
     if (!this.availability(node ? "commands" : "files-only").available || !grant || !projectId || !owner || !this.#project(projectId) || this.#tasks.has(spec.id)) return Promise.reject(stale());
     let privacy: CodingPrivacyScope;
@@ -389,7 +407,7 @@ export class WindowsProjectCodingResources {
     const current = () => {
       this.#known();
       try { assertCodingPrivacyScope(privacy); } catch (error) { if (nativeUncertain(error)) { this.#failure(); throw this.#terminal; } return false; }
-      return !this.#closed && !this.#failed && this.#epoch === epoch && !signal.aborted && !authority.cancel.signal.aborted && this.availability(node ? "commands" : "files-only").available &&
+      return !this.#closed && !this.#failed && (!wsl || WSL_CODING_READINESS.ready && this.#admit(wsl.current)) && this.#epoch === epoch && !signal.aborted && !authority.cancel.signal.aborted && this.availability(node ? "commands" : "files-only").available &&
         this.#owner() === owner && this.#admit(authority.ownerCurrent) && this.#project(projectId) && selected?.path === source && this.#admit(selected.current) && this.#admit(sourceCurrent) && this.#admit(admit) &&
         (!hasContinuation || continuationReady || this.#registry?.continuationCurrent(continuationRef!, projectId) === true);
     };
@@ -406,6 +424,11 @@ export class WindowsProjectCodingResources {
           if (!this.#registry) throw stale();
           continuation = await this.#registry.loadContinuation(continuationRef!, projectId, authority.sourceBoundary, current);
           if (!current()) throw stale();
+          // A previous review describes its own execution environment, never the next task's capability.
+          if (continuation.scope?.executionProfile) {
+            const { executionProfile: _profile, ...scope } = continuation.scope;
+            continuation = { ...continuation, scope };
+          }
         }
         const input: WindowsFileOnlyWorkspaceInput = { source, privateBase: this.#copies, protectedPaths: this.#roots,
           signal: AbortSignal.any([signal, authority.cancel.signal]), current, scope: { excludeRoots: [".git", "node_modules"] }, reviewBase: this.#reviews,
@@ -413,7 +436,56 @@ export class WindowsProjectCodingResources {
           review: { binding: { owner, session: randomUUID(), snapshot: randomUUID() }, store,
             sourceBoundary: authority.sourceBoundary ?? undefined, current: () => this.#reviewCurrent(authority) } };
         if (node) input.commandParent = this.#issueCommandParent(authority, current, signal, epoch);
-        const backend = node
+        let backend: WindowsOwnedWorkspace;
+        if (wsl) {
+          const seed = await this.#captureWslTree(input);
+          try {
+            if (!current()) throw stale();
+            if (!seed.scope) throw new ScopedCodingFileError("boundary");
+            const scope = { ...structuredClone(seed.scope), executionProfile: "wsl-offline" as const };
+            // The native seed copy and its temporary artifact are closed before any guest is launched.
+            const opened = await wsl.open();
+            this.#connections.add(opened.connection);
+            try {
+              if (!current()) throw stale();
+              backend = await WslCodingWorkspace.create({ ...opened, source: seed.proposed, baseline: seed.baseline,
+                signal: input.signal, current, privacyScope: privacy, review: { base: this.#reviews, sourceBoundary: authority.sourceBoundary!,
+                  current: () => this.#reviewCurrent(authority),
+                  captureCurrent: async () => {
+                    try {
+                      const captured = await this.#captureWslTree({ ...input, continuation: undefined, signal: authority.cancel.signal,
+                        current: () => this.#reviewCurrent(authority), review: { ...input.review, current: () => this.#reviewCurrent(authority) } });
+                      const tree = captured.proposed;
+                      for (const entry of captured.baseline.entries) if (entry.kind === "file") entry.bytes.fill(0);
+                      for (const entry of captured.current?.entries ?? []) if (entry.kind === "file") entry.bytes.fill(0);
+                      return tree;
+                    } catch (error) {
+                      if (nativeUncertain(error)) throw error;
+                      if (!this.#reviewCurrent(authority)) throw stale();
+                      // A moved/unsupported original supplies no current bytes. Preserve work as a conflicted review.
+                      if (error instanceof ScopedCodingFileError && ["boundary", "missing", "unsupported", "conflict", "limit"].includes(error.code) ||
+                        error instanceof CodingResultRegistryError && error.code === "stale") return undefined;
+                      throw error;
+                    }
+                  },
+                  write: async data => {
+                    if (!this.#reviewCurrent(authority)) throw stale();
+                    const exported = createCodingReviewExport({ ...data, scope }), files = { "review.json": Buffer.from(exported.json), "changes.patch": Buffer.from(exported.review.textPatch) };
+                    try {
+                      const artifact = await store.write(files, () => { if (!this.#reviewCurrent(authority)) throw stale(); });
+                      return Object.freeze({ ...artifact, review: exported.review, cleanup: "complete" as const });
+                    } finally { files["review.json"].fill(0); files["changes.patch"].fill(0); }
+                  },
+                  discard: output => store.discard(output),
+                } });
+              this.#connections.delete(opened.connection); // The issued workspace now owns disposal.
+            } catch (error) {
+              try { await opened.connection.close(); this.#connections.delete(opened.connection); }
+              catch { this.#failure(); throw new WindowsProjectCodingResourcesCleanupError(); }
+              throw error;
+            } finally { opened.typescriptArchive.fill(0); }
+          } finally { clearCodingContinuation(seed); }
+        } else backend = node
           ? await WindowsNodeWorkspace.create({ ...input, resourcesPath: this.#options.resourcesPath!, assetsParent: this.#assets })
           : await WindowsFileOnlyWorkspace.create(input);
         authority.workspace = backend; this.#active.set(backend, authority);
@@ -430,6 +502,27 @@ export class WindowsProjectCodingResources {
       } finally { clearCodingContinuation(continuation); }
     })();
     this.#creating.add(pending); void pending.then(() => this.#creating.delete(pending), () => this.#creating.delete(pending)); return pending;
+  }
+  /** Native Windows custody is retained even when the execution copy lives in WSL. */
+  async createWslWorkspace(spec: TaskSpec, signal: AbortSignal, admit: () => boolean, binding: WindowsWslCodingBinding): Promise<CodingCommandWorkspace> {
+    if (!WSL_CODING_READINESS.ready || !this.#admit(binding.current)) throw new ScopedCodingFileError("unavailable");
+    const workspace = await this.#createWorkspace(spec, signal, admit, false, binding);
+    if (!this.#wslWrappers.has(workspace)) throw new ScopedCodingFileError("boundary");
+    return workspace as CodingCommandWorkspace;
+  }
+  async #captureWslTree(input: WindowsFileOnlyWorkspaceInput): Promise<CodingExportInput> {
+    const capture = await WindowsFileOnlyWorkspace.create(input); this.#captures.add(capture);
+    let decoded: CodingExportInput | undefined;
+    const close = async () => {
+      try { await capture.close(); this.#captures.delete(capture); }
+      catch { clearCodingContinuation(decoded); this.#failure(); throw new WindowsProjectCodingResourcesCleanupError(); }
+    };
+    try {
+      await capture.sealForReview(); const output = await capture.exportReview(this.#reviews);
+      const document = Buffer.from(JSON.stringify(output.review));
+      try { decoded = decodeCodingReviewExport(document, input.review.binding); } finally { document.fill(0); }
+    } catch (error) { await close(); throw error; }
+    await close(); return decoded!;
   }
   async createNodeWorkspace(spec: TaskSpec, signal: AbortSignal, admit: () => boolean): Promise<CodingCommandWorkspace> {
     if (!this.#node) throw new ScopedCodingFileError("boundary");
@@ -468,6 +561,7 @@ export class WindowsProjectCodingResources {
       const value = Reflect.get(target, key, target); return typeof value === "function" ? value.bind(target) : value;
     } });
     if (backend instanceof WindowsNodeWorkspace) this.#nodeWrappers.set(wrapped, backend);
+    else if (backend instanceof WslCodingWorkspace) this.#wslWrappers.set(wrapped, backend);
     else this.#fileWrappers.set(wrapped, backend);
     return wrapped;
   }
@@ -547,6 +641,7 @@ export class WindowsProjectCodingResources {
   }
   #emptyRoles(): void {
     if (!this.#process) return;
+    if (this.#captures.size || this.#connections.size) throw cleanupFailed();
     this.#storageCurrent();
     for (const role of this.#roles) if (this.#api!.list(role.owned.handle, 1).length) throw cleanupFailed();
     const children = this.#api!.list(this.#process.owned.handle, 3);
@@ -559,11 +654,13 @@ export class WindowsProjectCodingResources {
     const creating = [...this.#creating].map(pending => pending.then(() => undefined, () => undefined));
     const privacy = retireCodingPrivacyScanners();
     const backends = [...this.#active.keys()];
+    const captures = [...this.#captures].map(async capture => { await capture.stop(); await capture.close(); this.#captures.delete(capture); });
+    const connections = [...this.#connections].map(async connection => { await connection.close(); this.#connections.delete(connection); });
     const stopping = backends.map(backend => { try { return backend.stop(); } catch { return Promise.reject(cleanupFailed()); } });
     const closing = backends.map(backend => this.#closeBackend(backend));
     const pending = (async () => {
       try {
-        const settled = await Promise.allSettled([...stopping, ...closing, ...creating, privacy]);
+        const settled = await Promise.allSettled([...stopping, ...closing, ...creating, ...captures, ...connections, privacy]);
         if (settled.some(value => value.status === "rejected")) this.#failure();
         const remaining = await Promise.allSettled([...this.#active.keys()].map(backend => this.#closeBackend(backend)));
         if (remaining.some(value => value.status === "rejected")) this.#failure();

@@ -49,7 +49,7 @@ import { terminalRequest } from "../policy/vocabulary";
 import type { AuditLog } from "../policy/audit";
 import { PLATFORM_WORDS } from "../../shared/words";
 import type { TargetBinding, PromptCaps } from "../targets/types";
-import type { TargetId } from "../../shared/targets";
+import { parseTargetId, type TargetId } from "../../shared/targets";
 import { whereWords, type CommandFlowContext } from "../commands/flow";
 import { Refusals } from "../policy/refusals";
 import { injectionSignals } from "../perception/injection";
@@ -219,9 +219,9 @@ export interface TranscriptEntry {
 const ACCOUNT_RETRY_MS: readonly number[] = [1000, 3000];
 
 interface ScopedCodingHostBase {
-  available(): boolean;
+  available(projectId?: string | null): boolean;
   /** Fixed host status text only, never a raw exception, credential or filesystem path. */
-  unavailable?(): string;
+  unavailable?(projectId?: string | null): string;
   workspace(projectId: string | null): { path: string; projectId: string; current(): boolean } | null;
   /** Host-only result selection. Captured before a request can wait; no model or renderer receives this reference. */
   captureContinuation?(id: string, projectId: string): CodingContinuationRef | null;
@@ -229,7 +229,7 @@ interface ScopedCodingHostBase {
   reviewBase: string;
   publish(spec: TaskSpec, output: CodingWorkspaceReview, status: "done" | "failed" | "stopped", checks: ScopedCodingChecks): Promise<CodingResultSummary>;
   /** One trusted atomic choice at request intake; never called to upgrade an already accepted request. */
-  captureCapability?(): ScopedCodingCapability | null;
+  captureCapability?(projectId?: string | null): ScopedCodingCapability | null;
 }
 /** Explicit host capability. A failed command backend never grants the restricted mode implicitly. */
 export type ScopedCodingCapability = { current?(): boolean } & ({
@@ -239,6 +239,8 @@ export type ScopedCodingCapability = { current?(): boolean } & ({
   platform?: CodingPlatformAdapter;
   /** Fixed host capability context; never taken from a task, model or file. */
   toolchain?: "windows-node";
+  /** Trusted exact project-selected execution target; absent preserves this computer. */
+  target?: TargetBinding;
 } | {
   mode: "files-only";
   toolchain?: never;
@@ -246,14 +248,14 @@ export type ScopedCodingCapability = { current?(): boolean } & ({
   platform: Pick<CodingPlatformAdapter, "files">;
 });
 export type ScopedCodingHost = ScopedCodingHostBase & ScopedCodingCapability;
-type CapturedCodingCapability = { current?(): boolean } & ({ mode: "commands"; toolchain?: "windows-node"; platform?: CodingPlatformAdapter; createWorkspace: (spec: TaskSpec, signal: AbortSignal, admit: () => boolean) => Promise<CodingCommandWorkspace> } |
+type CapturedCodingCapability = { current?(): boolean } & ({ mode: "commands"; toolchain?: "windows-node"; target?: Readonly<TargetBinding>; platform?: CodingPlatformAdapter; createWorkspace: (spec: TaskSpec, signal: AbortSignal, admit: () => boolean) => Promise<CodingCommandWorkspace> } |
   { mode: "files-only"; platform: Pick<CodingPlatformAdapter, "files">; createWorkspace: (spec: TaskSpec, signal: AbortSignal, admit: () => boolean) => Promise<CodingReviewWorkspace> });
 const FILE_ONLY_CODING_LINE = "Coding for this request is limited to reading and editing the private project copy for review. Coding commands and test execution are unavailable, regardless of generic coding tool descriptions. Do not claim commands or tests ran, and do not use desktop tasks, shells, plugins or helpers to work around this restriction. A mixed request may continue to its explicitly requested app work only after the coding worker reports completion and its cleanup finishes.";
 
-function captureCodingCapability(scoped: ScopedCodingHost): CapturedCodingCapability | null {
+function captureCodingCapability(scoped: ScopedCodingHost, projectId: string | null = null): CapturedCodingCapability | null {
   const capture = scoped.captureCapability;
   if (capture !== undefined && typeof capture !== "function") return null;
-  const selected = capture ? capture.call(scoped) : scoped;
+  const selected = capture ? capture.call(scoped, projectId) : scoped;
   if (!selected) return null;
   const { mode, createWorkspace, platform, current } = selected;
   if (typeof createWorkspace !== "function" || current !== undefined && typeof current !== "function") return null;
@@ -261,10 +263,12 @@ function captureCodingCapability(scoped: ScopedCodingHost): CapturedCodingCapabi
   if (mode === "files-only") {
     return typeof platform?.files === "function" ? Object.freeze({ ...live, mode: "files-only", createWorkspace: createWorkspace.bind(selected), platform: Object.freeze({ files: platform.files.bind(platform) }) }) : null;
   }
-  const toolchain = selected.toolchain;
+  const toolchain = selected.toolchain, target = selected.target;
+  if (target && (target.kind !== "wsl" || parseTargetId(target.id)?.kind !== "wsl" || target.shellOs !== "linux" || !current || !platform || toolchain !== undefined)) return null;
   if (mode !== undefined && mode !== "commands" || toolchain !== undefined && toolchain !== "windows-node") return null;
   if (platform && (typeof platform.facts !== "function" || typeof platform.files !== "function")) return null;
   return Object.freeze({ ...live, mode: "commands", createWorkspace: createWorkspace.bind(selected),
+    ...(target ? { target: Object.freeze(structuredClone(target)) } : {}),
     ...(toolchain === "windows-node" ? { toolchain: "windows-node" as const } : {}),
     ...(platform ? { platform: Object.freeze({ facts: platform.facts.bind(platform), files: platform.files.bind(platform) }) } : {}) });
 }
@@ -1153,9 +1157,9 @@ export class AgentHost {
     }
   }
 
-  private scopedCodingUnavailable(): string {
+  private scopedCodingUnavailable(projectId: string | null = this.turn?.projectId ?? null): string {
     try {
-      const reason = this.o.scopedCoding?.unavailable?.();
+      const reason = this.o.scopedCoding?.unavailable?.(projectId);
       if (typeof reason === "string" && reason.trim() && reason.length <= 512 && !/[\p{Cc}\p{Cf}]/u.test(reason)) return reason.trim();
     } catch { /* A status callback cannot disclose its exception or authorize a fallback backend. */ }
     return CODING_UNAVAILABLE;
@@ -1173,14 +1177,14 @@ export class AgentHost {
     let active = true;
     let capability: CapturedCodingCapability | null = null;
     let source: ReturnType<NonNullable<HostOptions["scopedCoding"]>["workspace"]> = null;
-    try { capability = captureCodingCapability(scoped); if (capability && scoped.available()) source = scoped.workspace(projectId); } catch { active = false; }
+    try { capability = captureCodingCapability(scoped, projectId); if (capability && scoped.available(projectId)) source = scoped.workspace(projectId); } catch { active = false; }
     const chosen = source;
     const revoke = () => { active = false; };
     const current = () => {
       if (!active) return false;
       try {
         if (!capability || capability.current && capability.current() !== true || !projectId || !chosen || chosen.projectId !== projectId || gen !== this.gen || this.status.phase !== "ready" || this.providerMoved()
-          || this.handing !== null || !scoped.available() || this.vaultFillHolds || this.o.redact?.active || !this.actionsAllowed()
+          || this.handing !== null || !scoped.available(projectId) || this.vaultFillHolds || this.o.redact?.active || !this.actionsAllowed()
           || modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null) !== mode || !chosen.current()) active = false;
         if (active) this.sessionProjects.destination(projectId);
       } catch { active = false; }
@@ -1296,7 +1300,11 @@ export class AgentHost {
       if (projectId !== null) this.sessionProjects.destination(projectId);
       const association = this.taskProjectAssociations().get(task.id);
       if (receipt.metadataFree ? association !== undefined : association !== receipt.association || projectId !== null && !receipt.association) return false;
-      if (source) return target === undefined || target === "local";
+      if (source) {
+        if (target === undefined || target === "local") return true;
+        if (!binding || binding.kind !== "wsl" || binding.id !== target || !this.o.targets) return false;
+        const got = this.o.targets.handsFor(binding.id); return got.ok && JSON.stringify(got.hands.binding) === bindingKey;
+      }
       if (!this.o.targets) return true;
       if (!binding) return false;
       const got = this.o.targets.handsFor(binding.id);
@@ -1359,7 +1367,12 @@ export class AgentHost {
           const task = manager.get(item.id);
           if (task !== item.task || task && task.targetId !== item.target) return false;
           if (item.coding) {
-            if (!item.source || item.target !== undefined && item.target !== "local") return false;
+            if (!item.source) return false;
+            if (item.target !== undefined && item.target !== "local") {
+              if (!item.binding || item.binding.kind !== "wsl" || item.binding.id !== item.target || !this.o.targets) return false;
+              const got = this.o.targets.handsFor(item.binding.id);
+              if (!got.ok || JSON.stringify(got.hands.binding) !== item.bindingKey) return false;
+            }
           } else if (item.task && this.o.targets) {
             if (!item.binding) return false;
             const got = this.o.targets.handsFor(item.binding.id);
@@ -2684,7 +2697,7 @@ export class AgentHost {
           if (spec.codingWorkspace) {
             if (spec.codingWorkspace.projectId && this.o.scopedCoding) {
               const scoped = this.o.scopedCoding;
-              if (!scoped.available()) return refusedWorker(spec, this.scopedCodingUnavailable());
+              if (!scoped.available(spec.codingWorkspace.projectId)) return refusedWorker(spec, this.scopedCodingUnavailable(spec.codingWorkspace.projectId));
               if (!spec.codingWorkspace.current()) return refusedWorker(spec, "The coding folder or task context changed. Ask again.");
               if (this.codingRetirement.blocked) return refusedWorker(spec, "A previous coding task is still stopping or could not be stopped safely.");
               if (this.vaultFillHolds || this.o.redact?.active) return refusedWorker(spec, "Coding is unavailable after a vault fill until Ember restarts.");
@@ -2693,7 +2706,7 @@ export class AgentHost {
               const capability = scope?.capability;
               if (!scope || !capability) return refusedWorker(spec, "The coding capability could not be verified. Ask again.");
               const current = () => gen === this.gen && this.status.phase === "ready" && !this.providerMoved() && this.handing === null
-                && !this.vaultFillHolds && !this.o.redact?.active && scoped.available() && scope.current();
+                && !this.vaultFillHolds && !this.o.redact?.active && scoped.available(workspace.projectId) && scope.current();
               if (!current()) return refusedWorker(spec, "The coding context changed. Ask again.");
               let worker: ScopedCodingWorker;
               const common = {
@@ -2709,12 +2722,15 @@ export class AgentHost {
                 createWorkspace: (signal, admit) => capability.createWorkspace(spec, signal, () => current() && admit()) });
               else {
                 const base = this.o.taskBase ?? (hands ? { audit: hands.audit, confirmer: hands.confirmer } : null);
-                const local = targets?.handsFor("local");
-                const commands = local?.ok ? local.hands.commands : null;
-                if (!base || !commands || commands.binding.kind !== "local" || commands.binding.id !== "local") return refusedWorker(spec, "Coding requires this computer's command service.");
+                const target = capability.target;
+                if ((spec.targetId ?? "local") !== (target?.id ?? "local")) return refusedWorker(spec, "The coding target changed. Ask again.");
+                const selected = targets?.handsFor(target?.id ?? "local");
+                const commands = selected?.ok ? selected.hands.commands : null;
+                if (!base || !commands || (target ? JSON.stringify(commands.binding) !== JSON.stringify(target)
+                  : commands.binding.kind !== "local" || commands.binding.id !== "local")) return refusedWorker(spec, target ? "The selected coding command service is unavailable." : "Coding requires this computer's command service.");
                 const presenter = this.taskPresenter(spec.id, spec.goal, commands.binding, false, true);
                 worker = new ScopedCodingWorker(spec, { ...common, ...(capability.platform ? { platform: capability.platform } : {}), commandService: commands,
-                  ...(capability.toolchain ? { toolchain: capability.toolchain } : {}),
+                  ...(capability.toolchain ? { toolchain: capability.toolchain } : {}), ...(target ? { target } : {}),
                   createWorkspace: (signal, admit) => capability.createWorkspace(spec, signal, () => current() && admit()),
                   commandContext: (service, signal) => this.codingCommandContext(spec, service, signal, current, client, provider?.config, presenter, base) });
               }
@@ -2800,7 +2816,7 @@ export class AgentHost {
       const projectsCurrent = () => gen === this.gen && this.status.phase === "ready" && !this.providerMoved()
         && this.turn !== null && this.turn.projectEpoch === this.stopEpoch;
       const projectsStale = "This project request is no longer current. Ask again on the current connection.";
-      const codingOff = () => this.o.scopedCoding ? !this.o.scopedCoding.available() : !codingAvailable();
+      const codingOff = () => this.o.scopedCoding ? !this.o.scopedCoding.available(this.turn?.projectId ?? null) : !codingAvailable();
       const captureCoding = (r: UserRequest): NonNullable<TaskSpec["codingWorkspace"]> | null => {
         const scoped = this.o.scopedCoding;
         if (scoped) {
@@ -2818,6 +2834,7 @@ export class AgentHost {
       };
       const recordCoding = (t: Task, workspace: NonNullable<TaskSpec["codingWorkspace"]>) => {
         const sourceCurrent = workspace.current.bind(workspace), scope = this.codingGrants.get(workspace);
+        if (scope?.capability?.mode === "commands" && scope.capability.target) this.taskBindings.set(t.id, structuredClone(scope.capability.target));
         this.codingWaitScopes.set(t, () => sourceCurrent() && (!scope || scope.current()));
         if (t.status !== "running" && t.status !== "queued") return;
         this.codingTasks.add(t.id);
@@ -2972,7 +2989,8 @@ export class AgentHost {
             : "No coding workspace is selected. Ask the user to choose a folder in Home under Coding workspace, then ask again. Do not start a desktop task instead.";
           const said = this.userWordsOf(r);
           if (!projectsCurrent() || !workspace.current()) return projectsStale;
-          const t = tasks.start(goal, { target: {}, codingWorkspace: workspace, where: `in ${path.basename(workspace.path)}`, userWords: said.words, agreed: said.agreed,
+          const codingBinding = this.codingGrants.get(workspace)?.capability?.mode === "commands" ? this.codingGrants.get(workspace)?.capability : undefined;
+          const t = tasks.start(goal, { target: {}, ...(codingBinding?.mode === "commands" && codingBinding.target ? { targetId: codingBinding.target.id } : {}), codingWorkspace: workspace, where: `in ${path.basename(workspace.path)}`, userWords: said.words, agreed: said.agreed,
             ...(said.commandWords !== undefined ? { commandWords: said.commandWords } : {}), ...(said.checkWords !== undefined ? { checkWords: said.checkWords } : {}), ...(said.typedOnly ? { typedOnly: true } : {}) });
           recordCoding(t, workspace);
           this.attachTaskProject(r.projectId ?? null, t, "coding", sessionName ?? titleOf(goal));
@@ -3013,7 +3031,8 @@ export class AgentHost {
           const start = (kind: "coding" | "desktop", goal: string, handoffSummary?: string, deferHandoff = false) => {
             if (!current()) throw new Error("The task context changed.");
             const t = tasks.start(goal, {
-              target: kind === "coding" ? {} : target, userWords: said.words, agreed: said.agreed, ...(handoffSummary ? { handoffSummary } : {}), ...(deferHandoff ? { deferHandoff: true as const } : {}),
+              target: kind === "coding" ? {} : target,
+              ...(kind === "coding" && r.codingIntake?.capability?.mode === "commands" && r.codingIntake.capability.target ? { targetId: r.codingIntake.capability.target.id } : {}), userWords: said.words, agreed: said.agreed, ...(handoffSummary ? { handoffSummary } : {}), ...(deferHandoff ? { deferHandoff: true as const } : {}),
               ...(said.commandWords !== undefined ? { commandWords: said.commandWords } : {}),
               ...(said.checkWords !== undefined ? { checkWords: said.checkWords } : {}),
               ...(said.typedOnly ? { typedOnly: true } : {}),
@@ -4008,7 +4027,7 @@ export class AgentHost {
       || typeof projectId !== "string" || !uuid.test(projectId)) throw refused();
     try {
       const scoped = this.o.scopedCoding;
-      if (!scoped?.captureContinuation || !scoped.continuationCurrent || !scoped.available() || this.sessionProjects.state().selectedProjectId !== projectId) throw refused();
+      if (!scoped?.captureContinuation || !scoped.continuationCurrent || !scoped.available(projectId) || this.sessionProjects.state().selectedProjectId !== projectId) throw refused();
       const ref = scoped.captureContinuation(id, projectId);
       if (!ref || !scoped.continuationCurrent(ref, projectId)) throw refused();
       const codingIntake = this.captureCodingIntake(projectId, ref);
