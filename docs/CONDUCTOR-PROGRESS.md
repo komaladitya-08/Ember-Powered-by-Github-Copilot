@@ -1,6 +1,6 @@
 # Conductor progress and remaining work
 
-Software progress updated on 17 November 2026, following published checkpoint `fe2406f4`. The original submitted
+Software progress updated on 17 November 2026, following published checkpoint `c3307603`. The original submitted
 baseline was `audit/beta-readiness` at `76d0a2c9`; main was `85b5bd56` at that audit. The native-proof baseline is
 `546793a3f94d89ae2ed2593727d9c35aa5571831`;
 [draft #262](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/262) targets main and records
@@ -10,12 +10,13 @@ The legacy native-SDK `codingAvailable()` gate remains false.
 
 ## Current software work on 17 November 2026
 
-Draft #262 records the current published head and exact hosted checks. The latest published checkpoint here is
+Draft #262 records the current published head and exact hosted checks. The latest completed product-journey checkpoint is
 `fe2406f4`: both native coding leaves passed two cases and both source Home leaves passed seven cases, zero skips,
 on Windows Server 2022 and 2025. Both packaged leaves now complete UIA readiness, then fail on the consent
 memory-row path: 18 of 20 required cases passed. A built Home witness shows the rows begin below the default
-760 by 640 viewport and ordinary keyboard navigation reveals them. The packaged fixture navigation correction
-is being checked separately; this witness does not by itself prove the hosted failure's cause.
+760 by 640 viewport and ordinary keyboard navigation reveals them. The fixture now reveals rows with bounded ordinary Tab navigation, preserving fresh focus, identity, consent and
+arming guards. It passed 192 unit and four focused browser cases; actual packaged Windows verification remains
+required. The witness does not by itself prove the earlier hosted failure's cause.
 
 Automatic combined completion was published at `7830febd`. Two to eight tasks from the current request can produce
 one tool-free synthesis after terminal results and cleanup settle. New intake, Stop and captured ownership/context
@@ -32,8 +33,12 @@ any awaited handshake. Native Windows and default Linux behavior remain separate
 WSL admission remains `false` with null proof metadata. Its first toolchain supports offline TypeScript projects
 without external dependencies; public dependency acquisition is still separate work. The fixed native asset bundle
 now has 104 inputs and its catalog expands from 125 to 131 files (4,131,699 bytes), manifest `3b1f1c4b…`.
-The previous `c1fa3b27` proof qualifies the old 125-file graph only. Both Node product proof gates have therefore
-been closed with null proof identities pending fresh seven-mode qualification on both Windows images.
+The previous `c1fa3b27` proof qualifies the old 125-file graph only. Fresh
+[manual qualification 44077815204](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44077815204)
+passed at `5b895638`: 620 portable and all seven native modes on each Windows image, zero skips; contracts 256+620.
+Root and an independent reviewer checked all fourteen exact source/Stop/snapshot/seed/cleanup frames. Both Node
+product proof gates now name that 131-file qualification and whole-verifier hash `8dff6a53…`. This qualifies the fixed
+asset layer only. WSL product admission remains closed pending its actual Windows-to-WSL and product proofs.
 The merged candidate passed full TypeScript over 1,515 unchanged inputs, an app build, 256 C-contract cases and
 867 source/workflow cases. Full lint and normal-sandbox launcher/Ask smoke also passed; its helper was restored exactly.
 Both real Linux helper cases passed, including npm/TypeScript repair, child-process Stop and artifact cleanup.

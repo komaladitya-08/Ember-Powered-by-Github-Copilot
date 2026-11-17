@@ -13,6 +13,7 @@ it("keeps native qualification separate, manual and required on both Windows ima
   expect(contracts).toContain("test/unit/wsl-coding-protocol.test.ts test/unit/wsl-coding-seccomp.test.ts test/unit/wsl-coding-workflow.test.ts --maxWorkers=1");
   expect(contracts).not.toContain("wsl.exe"); expect(contracts).not.toContain("EMBER_WSL_CODING_NATIVE_TEST");
   expect(source).toContain("image: [windows-2022, windows-2025]");
+  expect(source).toContain("additional-packages: bubblewrap gcc libc6-dev util-linux");
   expect(source).toContain("EMBER_WSL_CODING_NATIVE_TEST: \"1\"");
   expect(source).toContain("test/integration/wsl-coding-native.test.ts");
   expect(source).toContain("result.numPassedTests !== 1"); expect(source).toContain("result.numPendingTests !== 0");

@@ -46,7 +46,7 @@ const SIGNED_OUT = { phase: "signed-out", detail: "Not signed in.", models: [], 
 const CARD = commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts: { kind: "local", privileged: false, windows: false, podman: false, byok: false } });
 const ALL_ROWS = ["commands", "memory", "voice", "screenshots", "interactive"].map(row => ({ row, offered: true, why: null }));
 
-interface Seed { consent?: number; firstRun?: { rows: unknown[]; commands: unknown }; agreeDone?: { ok: boolean; failed: string[] }; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean }
+interface Seed { consent?: number; firstRun?: { rows: unknown[]; commands: unknown }; agreeDone?: { ok: boolean; failed: string[] }; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean; viewport?: { width: number; height: number } }
 
 let browser: Browser;
 let server: http.Server;
@@ -77,7 +77,7 @@ async function open(seed: Seed = {}): Promise<Page> {
   settings.consent = { version: seed.consent ?? 99, at: "2026-11-04T12:00:00Z" };
   const admin = { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [], ...seed.admin };
   const environment = { checks: seed.checks ?? [], versions: { node: "24", electron: "44", chrome: "152" } };
-  const page = await browser.newPage({ viewport: { width: 1000, height: 900 } });
+  const page = await browser.newPage({ viewport: seed.viewport ?? { width: 1000, height: 900 } });
   const errors: string[] = [];
   page.on("pageerror", e => errors.push(e.message));
   (page as Page & { errors: string[] }).errors = errors;
@@ -1983,6 +1983,44 @@ describe.skipIf(gate)("first run's one agreement (owner decision of 2026-11-12)"
     await p.waitForTimeout(AGREE_ARM_MS + 100);
   };
   const ON = (more: Record<string, boolean> = {}) => JSON.stringify({ commands: true, memory: true, voice: true, screenshots: true, interactive: true, ...more });
+
+  it("ordinary keyboard scrolling reveals consent switches below the normal packaged window viewport", async () => {
+    const card = commandsConsent({ os: "win32", target: "local", targetLabel: "This computer", facts: { kind: "local", privileged: false, windows: true, podman: false, byok: false } });
+    const p = await open({ consent: 0, viewport: { width: 760, height: 640 }, firstRun: { rows: ALL_ROWS, commands: { title: card.title, body: card.body, sha256: card.sha256 } } });
+    await toConsent(p);
+    const position = (row: string) => p.locator("#w-row-" + row).evaluate(node => {
+      const box = node.getBoundingClientRect(); return { top: box.top, bottom: box.bottom, onscreen: box.top < innerHeight && box.bottom > 0 };
+    });
+    expect((await position("memory")).onscreen).toBe(false);
+    const reveal = async (row: string, backwards = false) => {
+      let tabs = 0;
+      while (!(await position(row)).onscreen && tabs < 12) {
+        const before = await p.evaluateHandle(() => document.activeElement);
+        try {
+          await p.keyboard.press(backwards ? "Shift+Tab" : "Tab"); tabs++;
+          // Match the real fixture's existing 150-ms pause between navigation attempts.
+          await p.waitForTimeout(150);
+          await expect.poll(() => p.evaluate(previous => document.activeElement !== previous, before)).toBe(true);
+        } finally { await before.dispose(); }
+      }
+      expect((await position(row)).onscreen, row).toBe(true);
+    };
+    // Match the packaged fixture: navigate in row order, then click/focus each optional switch before the next row.
+    // Mouse coordinates cannot ask Playwright to scroll an offscreen locator into view.
+    for (const row of ["memory", "voice", "screenshots", "interactive"]) {
+      await reveal(row);
+      const box = await p.locator("#w-row-" + row).boundingBox(); expect(box).not.toBeNull();
+      await p.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
+      expect(await focusedId(p)).toBe("w-row-" + row);
+      expect(await p.locator("#w-row-" + row).isChecked()).toBe(false);
+    }
+    // The commands switch is earlier in the same tab order; return with Shift+Tab without animated Home scrolling.
+    await reveal("commands", true);
+    expect(await p.locator("#w-row-commands").isChecked()).toBe(true);
+    for (const row of ["memory", "voice", "screenshots", "interactive"]) expect(await p.locator("#w-row-" + row).isChecked()).toBe(false);
+    expect((await calls(p)).some(call => call.startsWith("agreeFirstRun:"))).toBe(false);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 30_000);
 
   it("shows five rows, each on, named, with its own card's whole text, and agrees to what is left on (slice4-27)", async () => {
     const p = await open({ consent: 0 });

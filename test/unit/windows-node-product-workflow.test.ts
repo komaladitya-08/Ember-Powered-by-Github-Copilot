@@ -405,6 +405,61 @@ it("actual fixture click keeps its successful call order and does not turn metad
   await expect(observedClick(o, input, trace).click(99, () => true)).resolves.toBeUndefined();
   expect(trace).toEqual(["node", "focus", "move", "down", "up", "release"]); expect(o.value()).toBeUndefined();
 });
+function welcomeNavigation(options: { blocked?: boolean; active?: number; loseForeground?: boolean; readError?: Error; keyError?: Error; enabled?: boolean; backwards?: boolean } = {}, snapshots: object[][] = []) {
+  const source = read(cases.packaged), begin = source.indexOf("  private async revealWelcomeRow("), end = source.indexOf("  async start():", begin);
+  expect(begin > 0 && end > begin).toBe(true);
+  const code = transformSync(`module.exports = class {
+    constructor(state) {
+      this.state = state; this.home = 99; this.phase = 3;
+      this.input = { blockedReason: () => state.blocked, activate: () => state.trace.push("activate"), activeWindow: () => state.active,
+        releaseAll: () => state.trace.push("release") };
+    }
+    current() { if (this.state.stale) throw refusal(3); }
+    chord(modifier, key) { this.state.trace.push(modifier + "+" + key); if (this.state.keyError) throw this.state.keyError; }
+    pressKey(key) { this.state.trace.push(key); if (this.state.keyError) throw this.state.keyError; }
+    async nodes() { const s = this.state; s.trace.push("snapshot"); if (s.readError) throw s.readError; if (s.loseForeground) s.active = 100;
+      return s.snapshots[s.reads++] ?? []; }
+    async until(read, accepts) { for (let n = 0; n < 14; n++) { const value = await read(); if (accepts(value)) return value; } throw refusal(3); }
+    ${source.slice(begin, end)}
+  };`, { loader: "ts", format: "cjs", target: "node22" }).code;
+  const failure = new Error("PRIVATE navigation refusal"), state = { trace: [] as string[], active: 99, reads: 0, snapshots, stale: false, ...options };
+  const module = { exports: undefined as unknown as new (state: object) => { revealWelcomeRow(select: (node: { automationId?: string }) => boolean, enabled: boolean, backwards: boolean): Promise<object> } };
+  runInNewContext(code, { module, refusal: () => failure });
+  return { run: () => new module.exports(state).revealWelcomeRow(node => node.automationId === "w-row-memory", options.enabled ?? false, options.backwards ?? false), state, failure };
+}
+it("actual consent navigation reveals only the exact onscreen row through bounded ordinary keys without clicking or toggling", async () => {
+  const target = { automationId: "w-row-memory", isOffscreen: false, isEnabled: false };
+  const f = welcomeNavigation({}, [[{ ...target, isOffscreen: true }], [{ automationId: "w-row-commands", isOffscreen: false }], [target]]);
+  await expect(f.run()).resolves.toBe(target);
+  expect(f.state.trace).toEqual(["activate", "snapshot", "Tab", "release", "snapshot", "Tab", "release", "snapshot"]);
+});
+it("consent command-row navigation retains the original enabled-control admission", async () => {
+  const target = { automationId: "w-row-memory", isOffscreen: false, isEnabled: true };
+  const f = welcomeNavigation({ enabled: true }, [[{ ...target, isEnabled: false }], [target]]);
+  await expect(f.run()).resolves.toBe(target); expect(f.state.trace.filter(value => value === "Tab")).toHaveLength(1);
+});
+it.each(["blocked", "foreign-window", "lost-window"] as const)("consent scrolling refuses %s before another key can reach an unverified receiver", async kind => {
+  const f = welcomeNavigation(kind === "blocked" ? { blocked: true } : kind === "foreign-window" ? { active: 100 } : { loseForeground: true });
+  await expect(f.run()).rejects.toBe(f.failure);
+  expect(f.state.trace).toEqual(kind === "blocked" ? [] : kind === "foreign-window" ? ["activate"] : ["activate", "snapshot"]);
+});
+it.each([false, true])("consent navigation stops after twelve keys in the selected direction backwards=%s", async backwards => {
+  const f = welcomeNavigation({ backwards }); await expect(f.run()).rejects.toBe(f.failure);
+  expect(f.state.reads).toBe(13); expect(f.state.trace.filter(value => value === (backwards ? "Shift_L+Tab" : "Tab"))).toHaveLength(12);
+  expect(f.state.trace.at(-1)).toBe("snapshot");
+});
+it.each(["read", "key", "reverse-key"] as const)("consent navigation preserves the original %s error and releases held input", async kind => {
+  const error = new Error("PRIVATE original"), f = welcomeNavigation(kind === "read" ? { readError: error } : { keyError: error, backwards: kind === "reverse-key" });
+  await expect(f.run()).rejects.toBe(error);
+  expect(f.state.trace).toEqual(kind === "read" ? ["activate", "snapshot"] : ["activate", "snapshot", kind === "reverse-key" ? "Shift_L+Tab" : "Tab", "release"]);
+});
+it("actual consent navigation reverses ordinary Tabs only for returning to the commands row", async () => {
+  const target = { automationId: "w-row-memory", isOffscreen: false, isEnabled: true };
+  const f = welcomeNavigation({ backwards: true }, [[], [target]]);
+  await expect(f.run()).resolves.toBe(target);
+  expect(f.state.trace).toEqual(["activate", "snapshot", "Shift_L+Tab", "release", "snapshot"]);
+  expect(read(cases.packaged)).toContain('this.revealWelcomeRow(id("w-row-commands"), true, true)');
+});
 it("a transient capture-accessor fault cannot cause outer cleanup to acquire a later first snapshot", async () => {
   const plain = observationHelper(), trace: string[] = [], failure = new Error("PRIVATE original"); let attempts = 0;
   const o = new Proxy(plain, { get(target, key, receiver) { if (key === "capture" && ++attempts === 1) throw new Error("PRIVATE observer fault"); return Reflect.get(target, key, receiver); } });
@@ -499,14 +554,14 @@ function sourceFixture(selectedScript = Script) {
     } }), close: () => fs.rmSync(repository, { recursive: true, force: false }) };
 }
 
-it("keeps product admission closed pending qualification of the expanded source graph", () => {
+it("binds the newly qualified expanded source graph before product admission", () => {
   const reviewed = runInNewContext("(" + producer.match(/const reviewed = Object\.freeze\(([\s\S]*?)\);/)![1] + ")");
-  expect(reviewed).toEqual({ ready: false, run: 43991252195, commit: "b75c944dec58973d157542e2d4d2db3720667982", artifact: 14289217635, archiveBytes: 38425334,
+  expect(reviewed).toEqual({ ready: true, run: 43991252195, commit: "b75c944dec58973d157542e2d4d2db3720667982", artifact: 14289217635, archiveBytes: 38425334,
     archiveSha256: "cbbbf6c641c41bda8ece457c28a54b9bc4121a068dc376725bcf0e3ac24a2f62",
     manifestSha256: "d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f",
-    assetProofCommit: null,
-    assetProofManifestSha256: null,
-    verifierFileSha256: null });
+    assetProofCommit: "5b89563840479d27b1ba83251fd74652d219d913",
+    assetProofManifestSha256: "3b1f1c4b03aaa44afd617f38a2ea81095ee6e688fa06390daeb6e54529329320",
+    verifierFileSha256: "8dff6a53bca9c2dc39a190a9298f743cbbc40c54f7f24ea456af21498e19c302" });
   expect(product).toContain("id: reviewed_input");
   expect(product).toContain("REVIEWED_ASSET_PROOF_COMMIT: ${{ steps.reviewed_input.outputs.proofCommit }}");
   expect(product).toContain("REVIEWED_ASSET_PROOF_MANIFEST: ${{ steps.reviewed_input.outputs.proofManifest }}");

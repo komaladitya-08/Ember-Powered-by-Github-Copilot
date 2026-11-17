@@ -316,6 +316,22 @@ class Journey {
     if (!sameNode(await this.node(hwnd, select), before)) throw refusal(this.phase);
     await this.click(hwnd, select);
   }
+  /** UIA does not descend an offscreen group: follow consent order with ordinary forward or reverse Tab navigation. */
+  private async revealWelcomeRow(select: Selector, enabled = true, backwards = false): Promise<RawNode> {
+    this.current();
+    if (!this.input || this.input.blockedReason?.(this.home)) throw refusal(this.phase);
+    this.input.activate(this.home);
+    if (this.input.activeWindow() !== this.home) throw refusal(this.phase);
+    let tabs = 0;
+    return this.until(async () => {
+      const found = (await this.nodes(this.home)).find(node => select(node) && node.isOffscreen === false && (!enabled || node.isEnabled === true));
+      if (found) return found;
+      this.current();
+      if (++tabs > 12 || this.input!.blockedReason?.(this.home) || this.input!.activeWindow() !== this.home) throw refusal(this.phase);
+      try { if (backwards) this.chord("Shift_L", "Tab"); else this.pressKey("Tab"); } finally { this.input!.releaseAll(); }
+      return undefined;
+    }, value => !!value).then(value => value!);
+  }
   async start(): Promise<void> {
     this.phase = 1;
     expect(process.platform).toBe("win32"); expect(process.arch).toBe("x64");
@@ -376,13 +392,13 @@ class Journey {
       if (next.name === "Agree and continue") {
         for (const row of ["memory", "voice", "screenshots", "interactive"]) {
           this.observe({ operation: 8, target: ["memory", "voice", "screenshots", "interactive"].indexOf(row) + 3 });
-          const field = await this.node(this.home, id("w-row-" + row), false);
+          const field = await this.revealWelcomeRow(id("w-row-" + row), false);
           this.observe({ operation: 8 });
           if (field.patterns.toggle === "On" && field.isEnabled) await this.click(this.home, id("w-row-" + row));
           const checked = await this.node(this.home, id("w-row-" + row), false); this.observe({ operation: 9 });
           const toggle = checked.patterns.toggle; this.observeInput(toggle === "Off"); expect(toggle).toBe("Off");
         }
-        this.observe({ target: 7 }); const checked = await this.node(this.home, id("w-row-commands")); this.observe({ operation: 9 });
+        this.observe({ target: 7 }); const checked = await this.revealWelcomeRow(id("w-row-commands"), true, true); this.observe({ operation: 9 });
         const toggle = checked.patterns.toggle; this.observeInput(toggle === "On"); expect(toggle).toBe("On");
       }
       const skip = nodes.find(node => node.automationId === "w-alt" && node.name === "Skip for now" && node.isEnabled);
