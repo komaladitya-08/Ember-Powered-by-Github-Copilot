@@ -14,7 +14,7 @@ is still blocked. Dependency installation remains unavailable, and the legacy na
 Do not change execution or reviewed-producer gates to perform acceptance. Continuation was enabled at `7eabd077`
 after the separate real Home continuation proof. Automatic crash checkpointing is not implemented.
 
-The current published product candidate is `4de1889be1829f1c07c88ba0ffbbbc2902959ca8`
+The current published product candidate is `0553e412060a89513d3191c02cb8bd36a959413f`
 ([draft #262](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/262)), including literal direct-Node
 execution on the isolated Linux backend, Windows resource/coordinator integration, the preceding coordination work
 and the exact-session
@@ -23,18 +23,31 @@ and bounded `wait_for_tasks`. The read-only join observes up to eight tasks from
 20 seconds; it starts no work, consumes no reports and does not schedule a later wakeup. Ordinary desktop cleanup
 remains best effort: a completed card alone leaves the wait's cleanup observation unknown and dependent success false.
 
-All seven ordinary jobs in [43988264446](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43988264446)
-and the separate preservation matrices are green. The overall CI result remains red only at the six intentionally
-closed `ready: false` Windows Node product leaves and their aggregate; it is not merge-ready. The old LPAC/RHEL
-failures below are historical outcomes, not the current ordinary-job status. Local rename disclosure `89768751`
-has 131 focused cases, three actual SDK/model cases over DLL models and normal Type `40030` passing, but remains unpushed.
+[CI 44001406593](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44001406593)
+is running. At 02:24 UTC, packaging, evaluation and voice jobs passed. Linux and Windows remaining-unit steps
+passed; real-runtime and Windows desktop integration continue. The macOS remaining-unit step failed, but its job
+is still active and the cause is unclassified pending the completed log. EL8 remains active. Separate preservation matrices are green.
+At preceding `5f1cf389`, Linux, Windows and macOS ordinary jobs failed only a stale `docs.test`
+expectation; the other four ordinary jobs and all separate preservation matrices passed. `0553e412` fixes that
+expectation with 87 focused cases passing. Both full Type checks passed unchanged before/after 1,479-file catalogs; scoped
+828-contract and 159-case diagnostic gates passed. These do not make the pending CI green or close the six
+`ready: false` product leaves. Rename disclosure `89768751` is published in `5f1cf389`.
 
-The new build artifact is independently statically authenticated. A local manifest/tuple update exists, but product
-prerequisites remain `ready: false`. Before final laptop acceptance, pass the reviewed asset enforcement proof against
-that exact new Node image, finalize the reviewed manifest/tuple promotion and pass native resources,
-source Home and packaged Home on both Windows images. Then verify the chosen live account and physical device.
-No live credential was supplied and no live model request was made; account verification needs sign-in, not
-intrinsically a laptop. See [current progress](CONDUCTOR-PROGRESS.md#current-status) for exact CI counts and gates.
+The authenticated artifact has staging evidence, but the first V4 pair and bounded diagnostic failed phase 5 on
+both images after passing their C controls. Zero full cases closed; graphs remain retained and Node execution
+within phase 5 is unknown.
+The evidence-only [diagnostic 44001782995](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44001782995)
+failed at checkpoint 6/inner class 0 on both images, after a genuine suspended Node PI and completed ordinary
+image/pin attester. Resume, execution, cleanup and cause remain unknown. Before final acceptance, establish the
+actual cause, pass the reviewed
+seven-case asset proof on both images, promote exact prerequisites to ready, and pass native resources, source
+Home and packaged Home on both images plus all platform CI. Then verify the chosen live account and physical device.
+No accepted live credential was supplied and no live model request was made. Account verification is not Windows-only.
+This is no merge, tag or release authorization. See [current progress](CONDUCTOR-PROGRESS.md#current-status).
+
+At earlier `4de1889b`, all seven ordinary jobs in
+[43988264446](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43988264446)
+and its preservation matrices passed. That dated result does not make the latest CI green.
 
 The following hosted Server 2022/2025 rows retain the results and limits at their named historical heads. Record
 them separately from current Node-product and laptop results:
@@ -72,8 +85,8 @@ naming fix, native installed-Electron provenance correction and old file-only ZI
 Home and packaged normal-UI tests are source-reviewed but remain unrun on Windows. These results do not establish
 native canonical transfer. Draft #262's required Windows prerequisites remain closed. Later test-only corrections
 `fbbac1f4` and `4de1889b` fix stale release/import assertions and a reproduced Windows path-spy alias recursion.
-Their affected 281/249-case gates and the current seven ordinary hosted jobs pass; the six new product leaves
-remain separate required evidence.
+Their affected 281/249-case gates passed, followed by `4de1889b`'s historical seven ordinary hosted successes.
+Latest CI and the six new product leaves remain separate required evidence.
 
 Four-patch producer `e56aa8c9` passed 352 local contracts, full types and 234 registration cases. Diagnostic
 [43982542556](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43982542556)
@@ -87,8 +100,9 @@ prefix and both actual SDK/C11/fresh-COFF preflights passed at `b75c944dec58973d
 [43989502028](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43989502028).
 The one observed full build [43991252195](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43991252195)
 succeeded at that head with 232 Windows portable passes and 32 skips. Artifact `14289217635` passed independent
-static archive/API, member, receipt/recipe, COFF, PE and license authentication. The image remains unexecuted;
-build/authentication success is not Windows native or product execution evidence.
+static archive/API, member, receipt/recipe, COFF, PE and license authentication. Hosted staging passed 113 portable
+and six actual staging cases. Authentication did not execute the image; consumer Node execution within the later
+phase-5 failure is unknown. Neither static authentication nor staging establishes a native/product pass.
 
 Asset V2 `bcce66ad` passed 562 local/registration cases and full types, then failed its first C prelude on both
 images in [43983628743](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43983628743).
@@ -110,9 +124,25 @@ authenticated held primary Low/`0x60`/`NO_WRITE_UP` token. The original 24 secur
 later-case blocking are unchanged. No causal MIC proof, V3 native pass or complete Windows Node product proof exists.
 Microsoft's [AppContainer guidance](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer)
 permits Medium-or-lower access when both user/group and package ACEs grant it, so V3's Medium-denial expectation
-was invalid. V4's reviewed design is approved for implementation on the final product source graph: fresh all-Low
-package RX-versus-FA DACL controls with the original production denials and no MIC-defense claim. No V4 run has
-occurred. A reviewed asset enforcement proof is still required for the authenticated new image.
+was invalid. V4 uses fresh all-Low package RX-versus-FA DACL controls on the final product source graph with the
+original production denials and no MIC-defense claim.
+
+The first [V4 run 43998770804](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43998770804)
+at `5f1cf38917f8286d225d8bbb428d4c301051799e` failed on both servers. C49/prelude 14 passed all 32 actual
+DACL/data/create checks, genuine C Stop, EOF and post-control readbacks; phase 5 then failed with outer Copy
+class 1. Zero full cases closed. Later cases stayed blocked and graphs remain retained, without established
+asset/private-profile cleanup. Cause and Node execution within phase 5 remain unknown.
+
+`0553e412` adds only bounded Node checkpoints `0..7`/inner classes `0..8` in four probe files; C/runtime/native
+implementation, guards and bounds are unchanged. The one evidence-only
+[diagnostic 44001782995](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44001782995)
+failed on both servers after 572 portable passes per image and another successful C49/prelude-14/32-control
+segment. Phase 5/outer Copy class 1 remained, with identical checkpoint `6`/inner class `0`: the factory returned
+a genuine suspended Node PI and the ordinary image/pin attester completed, but Copy launch did not resolve a RunRef.
+Creator capture, output matching/activation, automatic Node asset attestation and Resume remain in that interval;
+cause and actual Node Resume/execution are unknown. Zero of seven full cases closed, later cases remained blocked
+and private graphs stayed retained without established asset/profile cleanup. The reviewed seven-case asset proof
+on both images and exact prerequisite readiness remain required before the three product journeys on both images.
 Worker startup fix `bec2e6ad` passed all six existing Windows controller/ZIP/files-only Electron jobs. These
 preservation results do not establish Windows Node product readiness or close live-account and physical-laptop acceptance.
 
@@ -239,7 +269,7 @@ Use a disposable ordinary local project with a deliberately failing test. Explic
 argv and `\work` cwd, including `--preserve-symlinks`, `--preserve-symlinks-main` and, for `--test`,
 `--experimental-test-isolation=none`. Observe the real approval card, the failed check, a private-copy repair and
 the identical approved arguments passing. File tools retain their logical `/work` spelling. A different check cannot clear the failure. Verify the failed/passed
-counts, unchanged source, review/export and a fresh cumulative continuation. The reviewed local disclosure limits rename to regular files;
+counts, unchanged source, review/export and a fresh cumulative continuation. The published constraint limits rename to regular files;
 directory rename, shells, npm, installation, network access and child processes are unavailable.
 
 Repeat with Not now, a running writer stopped by its own session control, a mode change and ordinary provider-key

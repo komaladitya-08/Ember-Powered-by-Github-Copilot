@@ -3,33 +3,41 @@
 Reviewed 17 November 2026. The original submitted baseline was `audit/beta-readiness` at `76d0a2c9`;
 main was `85b5bd56` at that audit. The current published product is
 [draft #262](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/262) at
-`4de1889be1829f1c07c88ba0ffbbbc2902959ca8`. It includes the conductor/project/session work and the Windows
+`0553e412060a89513d3191c02cb8bd36a959413f`. It includes the conductor/project/session work and the Windows
 Node-only resource/coordinator implementation. Complete Windows Node product verification is still outstanding;
 the candidate is not merge-ready. The legacy native-SDK `codingAvailable()` gate remains false.
 
 ## Current status
 
-All seven ordinary jobs in [CI 43988264446](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43988264446)
-succeeded at that product head. Linux passed 21,184 units (38 skipped), 319 integrations (769 skipped) and 314
-renderer cases; Windows passed 20,785 units (433 skipped), and macOS 20,835 (387 skipped). RPM/package, RHEL,
-voice and evaluation jobs also succeeded. Separate preservation matrices are green. Skipped cases remain unverified.
-The overall CI result is red only because the six required Windows Node product leaves and their aggregate refuse
-the intentionally closed `ready: false` reviewed-producer prerequisites. Old LPAC/PowerShell failures remain in
-their separate diagnostic history; they are not the current ordinary-job failure. The earlier RHEL Save-button
-failure has not recurred, and its cause remains unknown.
+[CI 44001406593](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44001406593)
+is still running at the published head. At 02:24 UTC, packaging, evaluation and voice jobs passed. Linux and Windows
+remaining-unit steps passed; real-runtime integration and Windows desktop integration continue. The macOS
+remaining-unit step failed while its job remains active; the cause is unclassified pending the completed log.
+EL8 remains active. The eligible remote preservation jobs, six controller jobs, two file jobs, two artifact jobs and toolchain
+job are green. At preceding `5f1cf389`, ordinary Linux, Windows and macOS jobs failed only the
+stale `docs.test` expectation; the other four ordinary jobs and all separate preservation matrices passed. `0553e412`
+fixes that expectation, with 87 focused cases passing. The latest pending CI is not a pass. Six Windows Node product
+leaves and their aggregate remain blocked by `ready: false` prerequisites; no merge, tag or release is ready.
 
-The four-patch source build and independent static artifact authentication succeeded; image execution and product
-readiness are unproved. The first V3 native asset pair failed on both servers, as recorded below, and establishes
-no causal MIC proof. The local manifest/tuple has been updated, while the product prerequisites remain `ready: false`.
-Local disclosure commit `89768751` states that only regular files can be renamed and directory renames are unavailable.
-Its 131 focused cases, three actual SDK/model cases over DLL models and normal full types (`40030`) pass; it is reviewed
-but unpushed at this snapshot.
+Both normal full Type checks passed with unchanged before/after catalogs of 1,479 files (latest `13139`, exit 0).
+Scoped validation also passed 828 contracts in separate 256/572-case gates and 159 Node-diagnostic focused cases.
+These scopes are not a single non-overlapping total. Directory-rename disclosure `89768751` is now published in
+`5f1cf389`: only regular files can be renamed; directory renames are unavailable.
 
-The remaining order is: pass the reviewed asset enforcement proof against the authenticated new image, finalize
-the reviewed manifest/artifact tuple promotion, pass native resources, source Home and packaged Home journeys on both
-Windows images, verify the chosen live account, then complete physical-device acceptance. No live credential was
-supplied and no live model request was made. The native and product gates are cloud/software work;
-they are not intrinsically dependent on the user's laptop. Dated receipts below retain the outcomes at their named heads.
+Artifact `14289217635` is statically authenticated and has hosted staging evidence. Authentication did not execute
+the image; whether the consumer executed Node within the later phase-5 failure is unknown. Both the first V4 pair
+and the bounded diagnostic passed their C controls but failed phase 5 on both servers, closed zero full cases and
+retained the private graphs.
+The evidence-only [Node diagnostic 44001782995](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44001782995)
+failed on both images at Node checkpoint 6/inner class 0. The factory returned genuine suspended Node process
+information (PI), and the ordinary image/pin attester completed. Resume, execution, full cleanup and cause remain unknown.
+Details and earlier failures are retained below.
+
+The remaining order is: identify the actual diagnostic cause, pass the reviewed seven-case asset enforcement proof
+on both Windows images, promote the exact prerequisites to ready, pass all three product journeys on both images
+and all platform CI, verify the chosen live account, then complete physical acceptance. No accepted live credential
+was supplied and no live model request was made. Account verification is not Windows-only; the native and product
+gates are cloud/software work. Dated receipts below retain the outcomes at their named heads.
 
 ## What was already implemented
 
@@ -343,8 +351,8 @@ Full Linux CI at `8f12ec82` passed 21,181 units and found two stale release/impo
 correction passed 281 affected cases and is published at `fbbac1f4`. Completed Windows logs also showed 51 resource
 model failures from a test spy calling itself when node:path and win32 alias. A same-object control reproduced the
 RangeError; the new regression was red before the module-initial predicate capture and passed with that fix.
-Its 249 affected cases passed; test-only correction `4de1889b` is published, and its seven ordinary jobs and separate
-preservation matrices are green as recorded in Current status. The earlier full remote matrix and six existing
+Its 249 affected cases passed; test-only correction `4de1889b` and its seven successful ordinary jobs are recorded
+in Historical verification below. The earlier full remote matrix and six existing
 controller/ZIP/files-only Electron jobs also passed. Cancelled or unfinished jobs are not passes. The six required
 Node-product leaves still refuse the closed reviewed-producer prerequisites; regression successes do not certify
 Windows Node execution.
@@ -369,7 +377,9 @@ preflights then passed at `b75c944dec58973d157542e2d4d2db3720667982` in
 The one observed [full source build 43991252195](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43991252195)
 succeeded at that exact head, with 232 Windows portable cases passing and 32 skipped. Artifact `14289217635`
 is independently statically authenticated: archive/API provenance, four members, exact receipt/recipe/patch inputs,
-two fresh COFF objects, x64 PE and license checks agree. The image has not been executed; this is no native/product claim.
+two fresh COFF objects, x64 PE and license checks agree. Hosted staging then passed 113 portable and six actual
+staging cases. Authentication did not execute the image. Consumer Node execution within the later phase-5 failure
+is unknown; static authentication and staging are not a native/product pass.
 
 The native asset proof [#261](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/261)
 retains all four failed V1 native pairs. A separately issued V2 at `bcce66ad` added identical-owner/DACL Low/Medium
@@ -397,10 +407,26 @@ Medium denials were absent despite the authenticated held primary token being Lo
 No causal MIC differential, V3 native pass or complete Windows Node product proof is established; the failed
 assertions remain failed. Microsoft's [AppContainer guidance](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer)
 permits access to Medium-or-lower objects when both user/group and package ACEs grant it. V3's expected Medium
-denials were therefore invalid for this AppContainer case. V4's reviewed design is approved for implementation
-on the final product source graph: fresh all-Low controls compare package RX with FA DACL grants, retaining the
-original production denials and making no MIC-defense claim. No V4 run has occurred.
-The reviewed asset enforcement proof must pass against the authenticated new image before product tuple promotion.
+denials were therefore invalid for this AppContainer case. V4 uses fresh all-Low controls comparing package RX with
+FA DACL grants on the final product source graph. It retains the original production denials and makes no MIC-defense claim.
+
+The first [V4 pair 43998770804](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43998770804)
+at `5f1cf38917f8286d225d8bbb428d4c301051799e` failed on both servers. C49/prelude 14 passed all 32 actual
+DACL/data/create controls, genuine C Stop, EOF and post-control readbacks. Both then failed phase 5 with outer
+Copy class 1. Zero full cases closed, later cases stayed blocked and the private graphs remain retained;
+asset/private-profile cleanup was not established. Cause remains unestablished, and Node execution within phase 5 is unknown.
+
+Published `0553e412` adds bounded Node checkpoints `0..7` and inner classes `0..8` in four probe-only files.
+The C program, runtime/native implementation, guards and bounds are unchanged. Its manual contracts passed all
+828 cases. The one [diagnostic 44001782995](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44001782995)
+failed on both servers after 572 portable passes per image. C49/prelude 14 and all 32 Low DACL controls passed
+again, but phase 5/outer Copy class 1 remained, with identical Node checkpoint `6` and inner class `0`.
+The factory returned a genuine suspended Node PI and the ordinary image/pin attester completed. Failure is after
+that attester ends and before Copy launch resolves a RunRef; the remaining interval includes creator capture,
+output matching/activation, automatic Node asset attestation and Resume. No particular cause is established.
+Actual Node Resume/execution and full cleanup remain unknown: zero of seven full cases closed, later cases stayed
+blocked and graphs remain retained. The reviewed seven-case asset proof must still pass on both images before
+exact product prerequisites can become ready.
 
 The separate worker startup correction [#258](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/258)
 at `bec2e6ad` preserves genuine native/artifact/seed cleanup uncertainty when a factory rejects before returning a
@@ -422,6 +448,14 @@ remain explicit in the product and acceptance results.
 ## Historical verification
 
 Current readiness is summarized above. The following receipts retain each named head's results and failures.
+
+At `4de1889be1829f1c07c88ba0ffbbbc2902959ca8`, all seven ordinary jobs in
+[CI 43988264446](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43988264446)
+succeeded. Linux passed 21,184 units (38 skipped), 319 integrations (769 skipped) and 314 renderer cases; Windows
+passed 20,785 units (433 skipped), and macOS 20,835 (387 skipped). RPM/package, RHEL, voice and evaluation jobs
+also succeeded, as did the separate preservation matrices. Its required Node product leaves remained closed.
+These are historical head-specific results, not a pass for the latest pending CI. The earlier RHEL Save-button
+failure did not recur; its cause remains unknown. Skipped cases remain unverified.
 
 The earlier integrated product candidate [draft #247](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/247)
 at `a970a98388d8f8df3e805a518c498571cb37335b` added literal `run_node` arguments to the existing guarded command
