@@ -274,5 +274,5 @@ it.each(["store", "projection", "snapshot", "shape", "bounds"] as const)("a diag
 it("normal build stages optionally and the Windows packaging recipe requires the fixed toolchain", () => {
   const root = fileURLToPath(new URL("../../", import.meta.url)), build = fs.readFileSync(path.join(root, "scripts/build-app.mjs"), "utf8"), pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
   expect(build.includes('stageWindowsNodeToolchainDevelopment({ required: false })')).toBe(true);
-  expect(pkg.scripts["package:win"]).toBe("npm run build && node scripts/package/remote-parts.mjs && node scripts/package/stage.mjs --with-windows-node-toolchain && node scripts/package/archive.mjs");
+  expect(pkg.scripts["package:win"]).toBe("npm run build && node scripts/package/remote-parts.mjs && node scripts/package/wsl-coding-tools.mjs && node scripts/package/stage.mjs --with-windows-node-toolchain --with-wsl-coding-tools && node scripts/package/archive.mjs");
 });

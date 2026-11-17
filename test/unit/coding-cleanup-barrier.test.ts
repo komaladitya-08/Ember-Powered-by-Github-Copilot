@@ -65,20 +65,22 @@ function resetHarness(firstHost: { codingCleanupReceipt(): CodingCleanupReceipt 
   const main = fs.readFileSync("app/main/main.ts", "utf8"), start = main.indexOf("  const resetProjectCoding = (): Promise<void> => {");
   const reset = main.slice(start, main.indexOf("\n  let projectCodingOwner", start)).replace("const resetProjectCoding = (): Promise<void> =>", "const resetProjectCoding = () =>");
   const ipc = deferred<void>(), resources = deferred<void>();
-  const projectCodingFolders = { ownerReset: vi.fn() }, projectCoding = { reset: vi.fn(() => ipc.promise) }, resource = { invalidate: vi.fn(() => resources.promise) }, changed = vi.fn();
-  const install = new Function("initialHost", "projectCodingFolders", "projectCoding", "codingResourcesReady", "projectCodingChanged", "unconfirmedCodingCleanupReceipt", `
+  const codingExecution = { reset: vi.fn() }, projectCodingFolders = { ownerReset: vi.fn() }, projectCoding = { reset: vi.fn(() => ipc.promise) }, resource = { invalidate: vi.fn(() => resources.promise) }, changed = vi.fn();
+  const install = new Function("initialHost", "codingExecution", "projectCodingFolders", "projectCoding", "codingResourcesReady", "projectCodingChanged", "unconfirmedCodingCleanupReceipt", `
     let agent = initialHost, codingCleanupPending = 0, codingCleanupFailed = false, codingCleanupAttempt = 0;
     const codingCleanupReceipts = new Set(), codingCleanupReceiptsByHost = new WeakMap();
     ${reset}
     return { resetProjectCoding, setHost(next) { agent = next; }, state() { return { codingCleanupPending, codingCleanupFailed }; } };
   `) as (...args: unknown[]) => { resetProjectCoding(): Promise<void>; setHost(host: unknown): void; state(): { codingCleanupPending: number; codingCleanupFailed: boolean } };
-  return { ...install(firstHost, projectCodingFolders, projectCoding, Promise.resolve(resource), changed, unconfirmedCodingCleanupReceipt), ipc, resources, projectCodingFolders, projectCoding, resource };
+  return { ...install(firstHost, codingExecution, projectCodingFolders, projectCoding, Promise.resolve(resource), changed, unconfirmedCodingCleanupReceipt), ipc, resources, codingExecution, projectCodingFolders, projectCoding, resource };
 }
 
 it("main captures the exact host at erasure intake and waits for its held controller after copies and IPC finish", async () => {
   const controller = deferred<void>(), old = fakeHost(() => controller.promise), replacement = fakeHost(async () => undefined);
   const main = resetHarness(old); let complete = false;
   const pending = main.resetProjectCoding().then(() => { complete = true; }); main.setHost(replacement);
+  expect(main.codingExecution.reset).toHaveBeenCalledOnce();
+  expect(main.codingExecution.reset.mock.invocationCallOrder[0]).toBeLessThan(old.codingCleanupReceipt.mock.invocationCallOrder[0]);
   expect(old.codingCleanupReceipt).toHaveBeenCalledOnce(); expect(replacement.codingCleanupReceipt).not.toHaveBeenCalled();
   main.ipc.resolve(); main.resources.resolve(); await Promise.resolve(); expect(complete).toBe(false);
   expect(main.state().codingCleanupPending).toBe(1);
