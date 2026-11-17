@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { types } from "node:util";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { expect, it } from "vitest";
 import { openWin32Input } from "../../app/main/platform/win32/input";
@@ -17,32 +18,75 @@ const required = process.env.EMBER_UIA_FOCUS_NATIVE_TEST === "1";
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 function refusal(phase: number): Error { const error = new Error("Windows UIA focus primitive refused (phase " + phase + ")."); error.stack = "Error: " + error.message; return error; }
 function ordinary(file: string): boolean { const stat = fs.lstatSync(file); return stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1; }
-interface OwnedChild { process: ChildProcessWithoutNullStreams; closed: Promise<{ code: number | null; signal: NodeJS.Signals | null }>; ready: Promise<boolean> }
+// appReady:0pending/1sandbox-ready/2fixed-negative/3other-ready-frame/4stream-bound/5early-error/6early-exit.
+// appExit:0unobserved/1zero/2nonzero/3signal-or-unknown; appError:existing error event0/1.
+// appStage:1profile-check/2profile-set/3menu/4screen/5windows/6load/7show/8metrics/9sandbox-evaluated.
+// bridgeReady:0pending/1resolved/2rejected; bridgeStage is the existing bounded stderr cache0..30.
+// A last observed boundary is never a claim about the cause or success of that operation.
+interface StartupApp { appReady: number; appExit: number; appError: number; appStage: number }
+/** Cached startup facts only; neither their values nor an observer fault can change readiness or cleanup. */
+function focusStartupObservation(app: unknown, bridgeReady: unknown, bridgeStage: unknown, phase: unknown) {
+  const own = (key: string) => {
+    if (!app || typeof app !== "object" || types.isProxy(app)) return undefined;
+    const property = Object.getOwnPropertyDescriptor(app, key); return property && Object.hasOwn(property, "value") ? property.value : undefined;
+  };
+  const bounded = (value: unknown, maximum: number) => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= maximum ? value : 0;
+  return Object.freeze({ schema: 1, phase: bounded(phase, 8), appReady: bounded(own("appReady"), 6), appExit: bounded(own("appExit"), 3),
+    appError: bounded(own("appError"), 1), appStage: bounded(own("appStage"), 9), bridgeReady: bounded(bridgeReady, 2), bridgeStage: bounded(bridgeStage, 30) });
+}
+interface OwnedChild { process: ChildProcessWithoutNullStreams; closed: Promise<{ code: number | null; signal: NodeJS.Signals | null }>; ready: Promise<boolean>; startup(): Readonly<StartupApp> }
 function startOwned(executable: string, app: string, env: NodeJS.ProcessEnv): OwnedChild {
   const process = spawn(executable, [app], { env, stdio: ["pipe", "pipe", "pipe"], windowsHide: false });
+  const startup: StartupApp = { appReady: 0, appExit: 0, appError: 0, appStage: 0 };
   // Capture the owned process and close observation synchronously, before startup can fail or any await occurs.
   const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(resolve => process.once("close", (code, signal) => resolve({ code, signal })));
-  process.stdin.on("error", () => undefined); process.stderr.on("data", () => undefined);
+  let stageBuffer = "", stageBytes = 0, stageInvalid = false;
+  process.stdin.on("error", () => undefined); process.stderr.on("data", (chunk: Buffer) => { try {
+    if (stageInvalid) return;
+    if (types.isProxy(chunk) || !Buffer.isBuffer(chunk) || Object.getPrototypeOf(chunk) !== Buffer.prototype ||
+        ["length", "byteLength", "byteOffset", "buffer", "toString", "utf8Slice"].some(name => Object.getOwnPropertyDescriptor(chunk, name))) { stageInvalid = true; startup.appStage = 0; stageBuffer = ""; return; }
+    stageBytes += chunk.length;
+    if (stageBytes > 64 * 1024) { stageInvalid = true; startup.appStage = 0; stageBuffer = ""; return; }
+    stageBuffer += Buffer.prototype.toString.call(chunk, "utf8");
+    const lines = stageBuffer.split("\n"); stageBuffer = lines.pop() ?? "";
+    for (const line of lines) if (line.includes("EMBER_UIA_FOCUS_STARTUP")) {
+      const match = /^EMBER_UIA_FOCUS_STARTUP_V1:([1-9])\r?$/.exec(line);
+      if (!match) { stageInvalid = true; startup.appStage = 0; stageBuffer = ""; return; }
+      startup.appStage = Number(match[1]);
+    }
+    if (stageBuffer.length > 512) { stageInvalid = true; startup.appStage = 0; stageBuffer = ""; }
+  } catch { stageInvalid = true; startup.appStage = 0; stageBuffer = ""; } });
   const ready = new Promise<boolean>(resolve => {
     let buffer = "", bytes = 0, settled = false;
     const finish = (value: boolean) => { if (!settled) { settled = true; buffer = ""; resolve(value); } };
-    process.once("error", () => finish(false)); process.once("exit", () => finish(false));
+    process.once("error", () => { startup.appError = 1; if (!settled) startup.appReady = 5; finish(false); });
+    process.once("exit", (code, signal) => { startup.appExit = signal !== null && signal !== undefined ? 3 : code === 0 ? 1 : Number.isSafeInteger(code) ? 2 : 3; if (!settled) startup.appReady = 6; finish(false); });
     process.stdout.on("data", (chunk: Buffer) => {
-      bytes += chunk.length; if (bytes > 64 * 1024) { finish(false); return; }
+      bytes += chunk.length; if (bytes > 64 * 1024) { if (!settled) startup.appReady = 4; finish(false); return; }
       if (settled) return; buffer += chunk.toString("utf8");
       const lines = buffer.split("\n"); buffer = lines.pop() ?? "";
-      for (const line of lines) if (line === "EMBER_UIA_FOCUS_READY_V1:1") finish(true); else if (line.startsWith("EMBER_UIA_FOCUS_READY_V1:")) finish(false);
-      if (buffer.length > 512) finish(false);
+      for (const line of lines) if (line === "EMBER_UIA_FOCUS_READY_V1:1") { if (!settled) startup.appReady = 1; finish(true); }
+      else if (line.startsWith("EMBER_UIA_FOCUS_READY_V1:")) { if (!settled) startup.appReady = line === "EMBER_UIA_FOCUS_READY_V1:0" ? 2 : 3; finish(false); }
+      if (buffer.length > 512) { if (!settled) startup.appReady = 4; finish(false); }
     });
   });
-  return { process, closed, ready };
+  return { process, closed, ready, startup: () => Object.freeze({ ...startup }) };
 }
 
 it.skipIf(!required)("compares one native focus per fixed Electron target and activation condition without relaxing identity", async () => {
   let phase = 1, failed = false, firstFailure = 0, retired = false, bridgeBroken = false, root: string | undefined;
   let owned: OwnedChild | undefined, bridge: UiaBridge | undefined, input: ReturnType<typeof openWin32Input> = null, work: Promise<void> | undefined;
-  let completed = 0, matchedMask = 0, cleanup: boolean;
-  const fail = () => { if (!failed) firstFailure = phase; failed = true; };
+  let completed = 0, matchedMask = 0, cleanup: boolean, bridgeReady = 0;
+  const fail = () => {
+    if (!failed) {
+      firstFailure = phase;
+      let app: unknown, stage: unknown;
+      try { app = owned?.startup(); } catch { /* Unknown cached application startup. */ }
+      try { stage = bridge?.startupStage; } catch { /* Unknown cached bridge startup. */ }
+      try { console.info("Windows UIA focus startup", JSON.stringify(focusStartupObservation(app, bridgeReady, stage, phase))); } catch { /* Preserve the original failure. */ }
+    }
+    failed = true;
+  };
   const current = () => { if (retired || bridgeBroken) throw refusal(phase); };
   const bounded = async <T>(promise: Promise<T>, ms: number): Promise<T> => {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -63,8 +107,9 @@ it.skipIf(!required)("compares one native focus per fixed Electron target and ac
     input = openWin32Input(); expect(input).not.toBeNull();
     phase = 2; owned = startOwned(executable, path.join(repository, "test/fixtures/uia-focus-app"), env);
     expect(owned.process.spawnargs.some(arg => arg === "--no-sandbox" || arg === "--disable-sandbox" || arg.startsWith("--inspect"))).toBe(false);
-    bridge = new UiaBridge(path.join(repository, "sidecar/uia/ember_uia.ps1"), bridgeEnv(env, { EMBER_UIA_CACHE: path.join(root, "bridge-cache") }));
+    bridge = new UiaBridge(path.join(repository, "sidecar/uia/ember_uia.ps1"), bridgeEnv(env, { EMBER_UIA_CACHE: path.join(root, "bridge-cache"), EMBER_UIA_STARTUP_OBSERVE: "1" }));
     const application = owned, ui = bridge, native = input!;
+    void ui.ready.then(() => { bridgeReady = 1; }, () => { bridgeReady = 2; });
     const bridgeError = new Promise<never>((_resolve, reject) => { ui.child.once("error", () => { bridgeBroken = true; reject(refusal(phase)); }); });
     void bridgeError.catch(() => undefined);
     const poll = async <T>(read: () => Promise<T>, accept: (value: T) => boolean, ms: number): Promise<T> => {

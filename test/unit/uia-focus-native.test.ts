@@ -3,6 +3,8 @@ import fs from "node:fs";
 import { EventEmitter } from "node:events";
 import { runInNewContext } from "node:vm";
 import { transformSync } from "esbuild";
+import { types } from "node:util";
+import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import { nativeFocusEnvironment, nativeFocusObservation, sameNativeFocusTarget } from "../fixtures/uia-focus-contract";
 
@@ -65,10 +67,10 @@ it("the actual bridge error observation is owned early, rejection-handled and st
 function ownedChild() {
   const first = native.indexOf("function startOwned("), last = native.indexOf("\nit.skipIf", first); expect(first >= 0 && last > first).toBe(true);
   const child = Object.assign(new EventEmitter(), { stdin: new EventEmitter(), stdout: new EventEmitter(), stderr: new EventEmitter() });
-  const module = { exports: undefined as unknown as (exe: string, app: string, env: object) => { process: typeof child; ready: Promise<boolean>; closed: Promise<{ code: number | null; signal: string | null }> } };
+  const module = { exports: undefined as unknown as (exe: string, app: string, env: object) => { process: typeof child; ready: Promise<boolean>; closed: Promise<{ code: number | null; signal: string | null }>; startup(): Readonly<{ appReady: number; appExit: number; appError: number; appStage: number }> } };
   const calls: unknown[][] = [];
   runInNewContext(transformSync(native.slice(first, last) + "\nmodule.exports = startOwned;", { loader: "ts", format: "cjs", target: "node22" }).code,
-    { module, spawn: (...args: unknown[]) => { calls.push(args); return child; } });
+    { module, Buffer, types, spawn: (...args: unknown[]) => { calls.push(args); return child; } });
   const owned = module.exports("fixed-electron.exe", "/fixed-bench", { FIXED: "yes" });
   return { child, owned, calls };
 }
@@ -101,4 +103,112 @@ it.each(["clean", "app-failed", "app-unknown", "bridge-unknown", "bridge-error",
   const result = await module.exports(ports, kind === "earlier-failure");
   expect(result.retired).toBe(true); expect(trace.includes("delete")).toBe(kind === "clean"); expect(result.failed).toBe(kind !== "clean");
   if (kind === "earlier-failure") expect(result.firstFailure).toBe(4);
+});
+
+function startupProjection(app: unknown, bridgeReady: unknown, bridgeStage: unknown, phase: unknown) {
+  const begin = native.indexOf("function focusStartupObservation("), end = native.indexOf("interface OwnedChild", begin);
+  expect(begin > 0 && end > begin).toBe(true);
+  const module = { exports: undefined as unknown as (app: unknown, ready: unknown, stage: unknown, phase: unknown) => Record<string, number> };
+  runInNewContext(transformSync(native.slice(begin, end) + "\nmodule.exports = focusStartupObservation;", { loader: "ts", format: "cjs", target: "node22" }).code, { module, types });
+  return module.exports(app, bridgeReady, bridgeStage, phase);
+}
+it.each(["positive", "negative", "malformed", "overflow", "error", "exit"] as const)("distinguishes existing application ready outcomes without another launch (%s)", async kind => {
+  const f = ownedChild();
+  if (kind === "positive") f.child.stdout.emit("data", Buffer.from("EMBER_UIA_FOCUS_READY_V1:1\n"));
+  if (kind === "negative") f.child.stdout.emit("data", Buffer.from("EMBER_UIA_FOCUS_READY_V1:0\n"));
+  if (kind === "malformed") f.child.stdout.emit("data", Buffer.from("EMBER_UIA_FOCUS_READY_V1:PRIVATE\n"));
+  if (kind === "overflow") f.child.stdout.emit("data", Buffer.alloc(64 * 1024 + 1));
+  if (kind === "error") f.child.emit("error", new Error("PRIVATE startup"));
+  if (kind === "exit") f.child.emit("exit", 71, null);
+  expect(f.calls).toHaveLength(1); await expect(f.owned.ready).resolves.toBe(kind === "positive");
+  expect(f.owned.startup().appReady).toBe(["positive", "negative", "malformed", "overflow", "error", "exit"].indexOf(kind) + 1);
+  expect(f.owned.startup().appError).toBe(kind === "error" ? 1 : 0); expect(f.owned.startup().appExit).toBe(kind === "exit" ? 2 : 0);
+  expect(JSON.stringify(f.owned.startup())).not.toContain("PRIVATE");
+});
+it("keeps a positive application ready result sticky while separately observing later exit", async () => {
+  const f = ownedChild(); f.child.stdout.emit("data", Buffer.from("EMBER_UIA_FOCUS_READY_V1:1\n")); await f.owned.ready;
+  const before = f.owned.startup(); f.child.emit("exit", 0, null);
+  expect(f.owned.startup()).toEqual({ appReady: 1, appExit: 1, appError: 0, appStage: 0 }); expect(before.appExit).toBe(0); expect(Object.isFrozen(before)).toBe(true);
+});
+it.each(["split", "malformed", "overflow", "proxy", "accessor"] as const)("the existing stderr listener caches only fixed complete startup stages (%s)", kind => {
+  const f = ownedChild(); let reads = 0;
+  f.child.stderr.emit("data", Buffer.from("PRIVATE ignored line\nEMBER_UIA_FOCUS_STARTUP_V1:1\n"));
+  if (kind === "split") { f.child.stderr.emit("data", Buffer.from("EMBER_UIA_FOCUS_STARTUP_V1:")); f.child.stderr.emit("data", Buffer.from("6\n")); }
+  if (kind === "malformed") f.child.stderr.emit("data", Buffer.from("EMBER_UIA_FOCUS_STARTUP_V1:10\n"));
+  if (kind === "overflow") f.child.stderr.emit("data", Buffer.alloc(64 * 1024 + 1));
+  if (kind === "proxy") f.child.stderr.emit("data", new Proxy(Buffer.from("PRIVATE"), { get() { reads++; throw new Error("PRIVATE"); }, getOwnPropertyDescriptor() { reads++; throw new Error("PRIVATE"); } }));
+  if (kind === "accessor") { const chunk = Buffer.from("PRIVATE"); Object.defineProperty(chunk, "toString", { get() { reads++; throw new Error("PRIVATE"); } }); f.child.stderr.emit("data", chunk); }
+  expect(reads).toBe(0); expect(f.owned.startup().appStage).toBe(kind === "split" ? 6 : 0);
+  // A failed observation cannot suppress the original readiness protocol.
+  f.child.stdout.emit("data", Buffer.from("EMBER_UIA_FOCUS_READY_V1:1\n")); expect(f.owned.startup().appReady).toBe(1);
+});
+it("does not read private getters or proxy traps when freezing startup provenance", () => {
+  let reads = 0; const trap = () => { reads++; throw new Error("PRIVATE"); };
+  for (const app of [new Proxy({}, { get: trap, getOwnPropertyDescriptor: trap }), { get appReady() { return trap(); } }]) {
+    expect(startupProjection(app, "PRIVATE", Infinity, -1)).toEqual({ schema: 1, phase: 0, appReady: 0, appExit: 0, appError: 0, appStage: 0, bridgeReady: 0, bridgeStage: 0 });
+  }
+  expect(reads).toBe(0); const maximum = startupProjection({ appReady: 6, appExit: 3, appError: 1, appStage: 9 }, 2, 30, 8);
+  expect(Object.isFrozen(maximum)).toBe(true); expect(Buffer.byteLength(JSON.stringify(maximum))).toBeLessThanOrEqual(256);
+});
+it("observes the original bridge promise without replacing its resolution or rejection", async () => {
+  const line = native.match(/ {4}void ui\.ready\.then\([^\n]+\);/)![0]; expect(line).toBeDefined();
+  const module = { exports: undefined as unknown as (ui: { ready: Promise<unknown> }) => () => number };
+  runInNewContext("module.exports=ui=>{let bridgeReady=0;" + line + "return()=>bridgeReady;};", { module });
+  for (const fails of [false, true]) {
+    const error = new Error("PRIVATE bridge"), ready = fails ? Promise.reject(error) : Promise.resolve("original ready");
+    const observed = module.exports({ ready });
+    if (fails) await expect(ready).rejects.toBe(error); else await expect(ready).resolves.toBe("original ready");
+    expect(observed()).toBe(fails ? 2 : 1);
+  }
+  expect(native).toContain('await bounded(Promise.all([Promise.race([ui.ready, bridgeError]), application.ready]), 30_000).then(([, sandboxed]) => { current(); if (!sandboxed) throw refusal(phase); });');
+});
+it.each([false, true])("captures startup once at the original failure before teardown even when projection output faults=%s", outputFault => {
+  const begin = native.indexOf("  const fail = () => {"), end = native.indexOf("  const current =", begin); expect(begin > 0 && end > begin).toBe(true);
+  let appReady = 0, appStage = 6, reads = 0; const frames: unknown[][] = [];
+  const module = { exports: undefined as unknown as (ports: object) => { fail(): void; later(): void; state(): object } };
+  runInNewContext(transformSync("module.exports=ports=>{let phase=2,failed=false,firstFailure=0,bridgeReady=1;const {owned,bridge}=ports;" + native.slice(begin, end) + "return{fail,later(){phase=8},state:()=>({failed,firstFailure})};};", { loader: "ts", format: "cjs", target: "node22" }).code,
+    { module, focusStartupObservation: startupProjection, console: { info(...args: unknown[]) { if (outputFault) throw new Error("PRIVATE output fault"); frames.push(args); } } });
+  const driver = module.exports({ owned: { startup() { reads++; return { appReady, appExit: 0, appError: 0, appStage }; } }, bridge: { startupStage: 30 } });
+  driver.fail(); appReady = 1; appStage = 9; driver.later(); driver.fail();
+  expect(driver.state()).toEqual({ failed: true, firstFailure: 2 }); expect(reads).toBe(1); expect(frames).toHaveLength(outputFault ? 0 : 1);
+  if (!outputFault) expect(JSON.parse(frames[0][1] as string)).toEqual({ schema: 1, phase: 2, appReady: 0, appExit: 0, appError: 0, appStage: 6, bridgeReady: 1, bridgeStage: 30 });
+});
+
+const bench = fs.readFileSync("test/fixtures/uia-focus-app/main.cjs", "utf8");
+const oldBench = bench.replace(/\n\/\/ Fixed bench boundaries only;[^\n]*\nfunction startup\(stage\) \{[^\n]*\}\n/, "").replace(/^ *startup\([1-9]\);\n/gm, "");
+it("preserves the entire original readiness/conditions operation block and teardown/summary bytes", () => {
+  const begin = native.indexOf("    const poll ="), end = native.indexOf("    work = body();", begin), cleanup = native.indexOf("    retired = true;");
+  expect(begin > 0 && end > begin && cleanup > end).toBe(true);
+  expect(createHash("sha256").update(native.slice(begin, end)).digest("hex")).toBe("35f8d1eddc313eb36150027f8a103fb3507ff415feb58c57e14d63171e28c15c");
+  expect(createHash("sha256").update(native.slice(cleanup)).digest("hex")).toBe("8295218fccb1f61b337a10b2ef64be3d5d2fc162e5e6d562749bf64c8c4eed3c");
+});
+it("recovers the whole original synthetic app by removing only the fixed observer helper and nine marker calls", () => {
+  expect(createHash("sha256").update(oldBench).digest("hex")).toBe("31e7d5aa484c95a8ec95f0c54d7877db6bde5495bcd08e662bab488bc418b75a");
+  expect(bench.match(/^ *startup\([1-9]\);$/gm)).toHaveLength(9);
+  expect(native).toContain('bridgeEnv(env, { EMBER_UIA_CACHE: path.join(root, "bridge-cache"), EMBER_UIA_STARTUP_OBSERVE: "1" })');
+});
+it.each(["normal", "load-fault", "metrics-fault", "observer-fault"] as const)("the actual synthetic app retains its original actions and ready result with %s", async mode => {
+  const run = async (source: string) => {
+    const calls: string[] = [], stdout: string[] = [], stderr: string[] = []; let completion = Promise.resolve(); let next = 0;
+    class Window {
+      pid = ++next; webContents = { getOSProcessId: () => this.pid };
+      constructor() { calls.push("create"); }
+      async loadFile() { calls.push("load"); if (mode === "load-fault") throw new Error("PRIVATE load"); }
+      setTitle() { calls.push("title"); } show() { calls.push("show"); }
+    }
+    const app = { setPath() { calls.push("profile"); }, on() {}, quit() { calls.push("quit"); },
+      whenReady() { return { then(fn: () => Promise<void>) { completion = Promise.resolve().then(fn); return completion; } }; },
+      getAppMetrics() { calls.push("metrics"); if (mode === "metrics-fault") throw new Error("PRIVATE metrics"); return [{ pid: 1, sandboxed: true }, { pid: 2, sandboxed: true }]; } };
+    const line = { on() { return line; } };
+    runInNewContext(source, { __dirname: "/fixed-bench", process: { env: { EMBER_UIA_FOCUS_PROFILE: "/fixed-profile" }, stdin: {}, exit() { throw new Error("Unexpected exit"); },
+      stdout: { write(value: string) { stdout.push(value); } }, stderr: { write(value: string) { if (mode === "observer-fault") throw new Error("PRIVATE stderr"); stderr.push(value); } } },
+      require(name: string) { if (name === "node:path") return { isAbsolute: () => true, join: (...parts: string[]) => parts.join("/") };
+        if (name === "node:readline") return { createInterface: () => line };
+        return { app, BrowserWindow: Window, Menu: { setApplicationMenu() { calls.push("menu"); } }, screen: { getPrimaryDisplay() { calls.push("screen"); return { workArea: { x: 0, y: 0, width: 1200 } }; } } }; } });
+    await completion.catch(() => undefined); return { calls, stdout, stderr };
+  };
+  const old = await run(oldBench), current = await run(bench); expect(current.calls).toEqual(old.calls); expect(current.stdout).toEqual(old.stdout);
+  expect(current.stdout).toEqual(["EMBER_UIA_FOCUS_READY_V1:" + (mode === "load-fault" || mode === "metrics-fault" ? "0" : "1") + "\n"]);
+  const stage = mode === "load-fault" ? 6 : mode === "metrics-fault" ? 8 : 9;
+  if (mode !== "observer-fault") expect(current.stderr.at(-1)).toBe("EMBER_UIA_FOCUS_STARTUP_V1:" + stage + "\n");
 });

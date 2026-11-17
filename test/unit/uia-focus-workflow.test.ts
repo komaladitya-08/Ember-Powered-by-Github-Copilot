@@ -170,6 +170,47 @@ it.each(["invalid-utf8", "oversized", "accessor", "proxy", "shadowed-buffer"] as
   refused(fixture({ child })); expect(reads).toBe(0);
 });
 
+const startup = () => ({ schema: 1, phase: 2, appReady: 0, appExit: 0, appError: 0, appStage: 6, bridgeReady: 1, bridgeStage: 30 });
+const startupLine = (value: unknown) => "Windows UIA focus startup " + JSON.stringify(value);
+it("projects cached startup for a failed zero-condition experiment without reading a report or granting acceptance", () => {
+  const partial = { schema: 1, completed: 0, matchedMask: 0, negative: 0, phase: 2 };
+  const f = fixture({ child: attempt({ status: 1, stdout: Buffer.from(startupLine(startup()) + "\n" + summaryLine(partial)) }) });
+  refused(f); expect(projected(f)).toEqual([["Windows UIA focus summary", partial], ["Windows UIA focus startup", startup()]]);
+  expect(f.queries).not.toContain("read:" + reportPath); expect(f.spawn).toHaveBeenCalledOnce();
+});
+it.each([
+  ["schema", 2], ["phase", 9], ["appReady", 7], ["appExit", 4], ["appError", 2], ["appStage", 10], ["bridgeReady", 3], ["bridgeStage", 31],
+] as const)("withholds an invalid startup %s value while retaining the original failed outcome", (key, value) => {
+  const f = fixture({ child: attempt({ status: 1, stdout: Buffer.from(output() + "\n" + startupLine({ ...startup(), [key]: value })) }) });
+  refused(f); expect(messages(f)).not.toContain("Windows UIA focus startup");
+});
+it.each(["conflict", "extra", "missing", "string", "fraction", "malformed", "oversized"] as const)("optional %s startup data has no authority over a complete successful six-condition experiment", kind => {
+  let value: unknown = startup();
+  if (kind === "extra") value = { ...startup(), private: "PRIVATE" };
+  if (kind === "missing") { const { appStage: _stage, ...rest } = startup(); value = rest; }
+  if (kind === "string") value = { ...startup(), appStage: "PRIVATE" };
+  if (kind === "fraction") value = { ...startup(), bridgeStage: 1.5 };
+  const frame = kind === "malformed" ? "Windows UIA focus startup {PRIVATE}" : kind === "oversized" ? startupLine({ private: "PRIVATE" + "x".repeat(257) }) : startupLine(value);
+  const f = fixture({ child: attempt({ stdout: Buffer.from(output() + "\n" + frame + (kind === "conflict" ? "\n" + startupLine({ ...startup(), appStage: 9 }) : "")) }) });
+  f.run(); expect(messages(f)).toContain("Required Windows UIA focus primitive passed"); expect(messages(f)).not.toContain("Windows UIA focus startup");
+  expect(JSON.stringify(f.printed.mock.calls)).not.toContain("PRIVATE");
+});
+it("accepts agreeing startup duplicates only for the original failure and withholds conflicting observations", () => {
+  for (const conflict of [false, true]) {
+    const f = fixture({ child: attempt({ status: 1, stdout: Buffer.from(output() + "\n" + startupLine(startup())),
+      stderr: Buffer.from("\u001b[32m" + startupLine({ ...startup(), appStage: conflict ? 9 : 6 }) + "\u001b[0m\r\nPRIVATE ignored") }) });
+    refused(f); expect(messages(f).filter(value => value === "Windows UIA focus startup")).toHaveLength(conflict ? 0 : 1);
+  }
+});
+it("recovers the entire original strict workflow by reversing only the optional startup frame parser/projection", () => {
+  let old = source.replace('          let startup, startupConflict = false, startupInvalid = false;\n', "")
+    .replace('          const startupLimits = { schema: [1, 1], phase: [0, 8], appReady: [0, 6], appExit: [0, 3], appError: [0, 1], appStage: [0, 9], bridgeReady: [0, 2], bridgeStage: [0, 30] };\n', "");
+  const begin = old.indexOf('                const boot ='), end = old.indexOf('                const condition =', begin); expect(begin > 0 && end > begin).toBe(true);
+  old = old.slice(0, begin) + old.slice(end);
+  old = old.replace('          if (!passed && startup && !startupConflict && !startupInvalid) console.info("Windows UIA focus startup", JSON.stringify(startup));\n', "");
+  expect(createHash("sha256").update(old).digest("hex")).toBe("33dea7955b2959fdc5a67886e10f264374c573c040d103d664a255a2c3c474d5");
+});
+
 const ci = fs.readFileSync(".github/workflows/ci.yml", "utf8");
 const jobsSource = ci.slice(ci.indexOf("\njobs:\n") + "\njobs:\n".length);
 const headers = [...jobsSource.matchAll(/^ {2}([a-z][a-z0-9-]*):\n/gm)];

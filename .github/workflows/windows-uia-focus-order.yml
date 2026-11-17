@@ -43,6 +43,7 @@ jobs:
           const relative = "test/integration/uia-electron-focus-native.test.ts";
           const conditions = new Map(), conflicts = new Set();
           let summary, summaryConflict = false, malformed = false, executed, reportPath, suite;
+          let startup, startupConflict = false, startupInvalid = false;
           const own = (value, key) => {
             if (!value || typeof value !== "object" || types.isProxy(value)) return undefined;
             const descriptor = Object.getOwnPropertyDescriptor(value, key);
@@ -63,6 +64,7 @@ jobs:
           const conditionLimits = { schema: [1, 1], mode: [1, 3], target: [1, 2], matched: [0, 1],
             focus: [0, 15], identity: [0, 255], foreground: [0, 1], performed: [0, 1] };
           const summaryLimits = { schema: [1, 1], completed: [0, 6], matchedMask: [0, 63], negative: [0, 1], phase: [1, 8] };
+          const startupLimits = { schema: [1, 1], phase: [0, 8], appReady: [0, 6], appExit: [0, 3], appError: [0, 1], appStage: [0, 9], bridgeReady: [0, 2], bridgeStage: [0, 30] };
           const readFrames = attempt => {
             let total = 0;
             for (const key of ["stdout", "stderr"]) {
@@ -73,6 +75,16 @@ jobs:
               const text = Buffer.prototype.toString.call(bytes, "utf8");
               if (!Buffer.prototype.equals.call(Buffer.from(text, "utf8"), bytes)) { malformed = true; continue; }
               for (const line of text.replace(/\x1b\[[0-9;]*m/g, "").replace(/\r\n/g, "\n").split("\n")) {
+                const boot = /^[ \t]*Windows UIA focus startup (\{[^\r\n]*\})$/.exec(line);
+                if (boot || /^[ \t]*Windows UIA focus startup /.test(line)) {
+                  try {
+                    if (!boot) throw new Error("Unsupported startup observation.");
+                    const next = frame(boot[1], startupLimits);
+                    if (startup && JSON.stringify(startup) !== JSON.stringify(next)) startupConflict = true;
+                    else startup = next;
+                  } catch { startupInvalid = true; }
+                  continue; // Optional observations have no success or failure authority.
+                }
                 const condition = /^[ \t]*Windows UIA focus condition (\{[^\r\n]*\})$/.exec(line);
                 const final = /^[ \t]*Windows UIA focus summary (\{[^\r\n]*\})$/.exec(line);
                 if (!condition && !final) {
@@ -140,5 +152,6 @@ jobs:
             if (value && !conflicts.has(id)) console.info("Windows UIA focus condition", JSON.stringify(value));
           }
           if (summary && !summaryConflict) console.info("Windows UIA focus summary", JSON.stringify(summary));
+          if (!passed && startup && !startupConflict && !startupInvalid) console.info("Windows UIA focus startup", JSON.stringify(startup));
           if (!passed) throw new Error("The required Windows UIA focus primitive could not be verified.");
           console.info("Required Windows UIA focus primitive passed", JSON.stringify({ schema: 1, passed: 1, skipped: 0 }));
