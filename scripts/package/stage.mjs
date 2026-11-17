@@ -44,6 +44,7 @@ import { exeResourceMismatches, readExeResources, rewriteExeResources } from "./
 import { finishMacBundle } from "./mac-bundle.mjs";
 import { stageParts } from "./remote-parts.mjs";
 import { stageWindowsNodeToolchain, verifyWindowsNodeToolchain, WINDOWS_NODE_TOOLCHAIN_DIRECTORY } from "./windows-node-toolchain.mjs";
+import { prepareWindowsNodeElectronCopyFilter } from "./windows-node-toolchain-copy.mjs";
 
 const FLAGS = ["--allow-missing-sidecar", "--allow-missing-remote-parts", "--with-models", "--with-runtimes", "--with-windows-node-toolchain"];
 const flags = process.argv.slice(2);
@@ -137,17 +138,20 @@ const capiLibs = layout.voiceNative ? Object.entries(CAPI_RELEASE.libs).map(([fi
   return { file, bytes };
 }) : [];
 
-// Only this script's folders are replaced; built packages beside them stay until rebuilt.
-for (const d of [layout.appDir, "voice-models"]) fs.rmSync(path.join(out, d), { recursive: true, force: true });
-fs.mkdirSync(out, { recursive: true });
-
 // 1. Electron itself, as Ember. Requiring the package gives its executable (downloading it if npm ci didn't);
 //    its dist folder is that path less layout.electronExe. macOS copies the whole Electron.app bundle, keeping the
 //    frameworks' symlinks as they are.
 const electronExe = createRequire(import.meta.url)("electron");
 const electronDist = layout.electronExe.split("/").reduce(d => path.dirname(d), electronExe);
 if (path.join(electronDist, layout.electronExe) !== path.normalize(electronExe)) throw new Error(`Electron's executable isn't where ${layout.target} has it: ${electronExe}`);
-fs.cpSync(path.join(electronDist, layout.electronSource), app, { recursive: true, verbatimSymlinks: true });
+const electronSource = path.join(electronDist, layout.electronSource);
+// Development assets are authenticated and omitted even without the release flag. Only the producer stages release assets.
+const electronCopyFilter = layout.target === "win32-x64" ? prepareWindowsNodeElectronCopyFilter(electronSource) : null;
+// Only this script's folders are replaced; built packages beside them stay until rebuilt.
+for (const d of [layout.appDir, "voice-models"]) fs.rmSync(path.join(out, d), { recursive: true, force: true });
+fs.mkdirSync(out, { recursive: true });
+if (electronCopyFilter) fs.cpSync(electronSource, app, { recursive: true, verbatimSymlinks: true, filter: electronCopyFilter });
+else fs.cpSync(path.join(electronDist, layout.electronSource), app, { recursive: true, verbatimSymlinks: true });
 for (const [from, to] of layout.renames) renameRetrying(path.join(app, from), path.join(app, to));
 for (const f of layout.remove) fs.rmSync(path.join(app, f), { force: true });
 // Electron's licences go inside the app folder (on Linux and Windows they already are).
