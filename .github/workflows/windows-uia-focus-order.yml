@@ -64,7 +64,7 @@ jobs:
           const conditionLimits = { schema: [1, 1], mode: [1, 3], target: [1, 2], matched: [0, 1],
             focus: [0, 15], identity: [0, 255], foreground: [0, 1], performed: [0, 1] };
           const summaryLimits = { schema: [1, 1], completed: [0, 6], matchedMask: [0, 63], negative: [0, 1], phase: [1, 8] };
-          const startupLimits = { schema: [1, 1], phase: [0, 8], appReady: [0, 6], appExit: [0, 3], appError: [0, 1], appStage: [0, 9], bridgeReady: [0, 2], bridgeStage: [0, 30] };
+          const startupLimits = { schema: [1, 1], phase: [0, 8], appReady: [0, 6], appExit: [0, 3], appError: [0, 1], appStage: [0, 9], bridgeReady: [0, 2], bridgeStage: [0, 30], loadCode: [0, 7], quit: [0, 4], fixtureFlags: [0, 7] };
           const readFrames = attempt => {
             let total = 0;
             for (const key of ["stdout", "stderr"]) {

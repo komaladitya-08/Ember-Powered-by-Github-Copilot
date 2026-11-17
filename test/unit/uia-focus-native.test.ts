@@ -67,7 +67,7 @@ it("the actual bridge error observation is owned early, rejection-handled and st
 function ownedChild() {
   const first = native.indexOf("function startOwned("), last = native.indexOf("\nit.skipIf", first); expect(first >= 0 && last > first).toBe(true);
   const child = Object.assign(new EventEmitter(), { stdin: new EventEmitter(), stdout: new EventEmitter(), stderr: new EventEmitter() });
-  const module = { exports: undefined as unknown as (exe: string, app: string, env: object) => { process: typeof child; ready: Promise<boolean>; closed: Promise<{ code: number | null; signal: string | null }>; startup(): Readonly<{ appReady: number; appExit: number; appError: number; appStage: number }> } };
+  const module = { exports: undefined as unknown as (exe: string, app: string, env: object) => { process: typeof child; ready: Promise<boolean>; closed: Promise<{ code: number | null; signal: string | null }>; startup(): Readonly<{ appReady: number; appExit: number; appError: number; appStage: number; loadCode: number; quit: number }> } };
   const calls: unknown[][] = [];
   runInNewContext(transformSync(native.slice(first, last) + "\nmodule.exports = startOwned;", { loader: "ts", format: "cjs", target: "node22" }).code,
     { module, Buffer, types, spawn: (...args: unknown[]) => { calls.push(args); return child; } });
@@ -105,12 +105,12 @@ it.each(["clean", "app-failed", "app-unknown", "bridge-unknown", "bridge-error",
   if (kind === "earlier-failure") expect(result.firstFailure).toBe(4);
 });
 
-function startupProjection(app: unknown, bridgeReady: unknown, bridgeStage: unknown, phase: unknown) {
+function startupProjection(app: unknown, bridgeReady: unknown, bridgeStage: unknown, phase: unknown, fixtureFlags?: unknown) {
   const begin = native.indexOf("function focusStartupObservation("), end = native.indexOf("interface OwnedChild", begin);
   expect(begin > 0 && end > begin).toBe(true);
-  const module = { exports: undefined as unknown as (app: unknown, ready: unknown, stage: unknown, phase: unknown) => Record<string, number> };
+  const module = { exports: undefined as unknown as (app: unknown, ready: unknown, stage: unknown, phase: unknown, fixtureFlags?: unknown) => Record<string, number> };
   runInNewContext(transformSync(native.slice(begin, end) + "\nmodule.exports = focusStartupObservation;", { loader: "ts", format: "cjs", target: "node22" }).code, { module, types });
-  return module.exports(app, bridgeReady, bridgeStage, phase);
+  return module.exports(app, bridgeReady, bridgeStage, phase, fixtureFlags);
 }
 it.each(["positive", "negative", "malformed", "overflow", "error", "exit"] as const)("distinguishes existing application ready outcomes without another launch (%s)", async kind => {
   const f = ownedChild();
@@ -128,7 +128,7 @@ it.each(["positive", "negative", "malformed", "overflow", "error", "exit"] as co
 it("keeps a positive application ready result sticky while separately observing later exit", async () => {
   const f = ownedChild(); f.child.stdout.emit("data", Buffer.from("EMBER_UIA_FOCUS_READY_V1:1\n")); await f.owned.ready;
   const before = f.owned.startup(); f.child.emit("exit", 0, null);
-  expect(f.owned.startup()).toEqual({ appReady: 1, appExit: 1, appError: 0, appStage: 0 }); expect(before.appExit).toBe(0); expect(Object.isFrozen(before)).toBe(true);
+  expect(f.owned.startup()).toEqual({ appReady: 1, appExit: 1, appError: 0, appStage: 0, loadCode: 0, quit: 0 }); expect(before.appExit).toBe(0); expect(Object.isFrozen(before)).toBe(true);
 });
 it.each(["split", "malformed", "overflow", "proxy", "accessor"] as const)("the existing stderr listener caches only fixed complete startup stages (%s)", kind => {
   const f = ownedChild(); let reads = 0;
@@ -142,10 +142,32 @@ it.each(["split", "malformed", "overflow", "proxy", "accessor"] as const)("the e
   // A failed observation cannot suppress the original readiness protocol.
   f.child.stdout.emit("data", Buffer.from("EMBER_UIA_FOCUS_READY_V1:1\n")); expect(f.owned.startup().appReady).toBe(1);
 });
+it.each(["whole", "split", "conflict", "invalid"] as const)("the same stdout callback observes load provenance before the unchanged negative-ready result (%s)", kind => {
+  const f = ownedChild();
+  if (kind === "split") { f.child.stdout.emit("data", Buffer.from("EMBER_UIA_FOCUS_LOAD_V1:1:")); f.child.stdout.emit("data", Buffer.from("1\nEMBER_UIA_FOCUS_READY_V1:0\n")); }
+  else f.child.stdout.emit("data", Buffer.from("EMBER_UIA_FOCUS_LOAD_V1:1:1\n" + (kind === "conflict" ? "EMBER_UIA_FOCUS_LOAD_V1:2:4\n" : kind === "invalid" ? "EMBER_UIA_FOCUS_LOAD_V1:PRIVATE\n" : "") + "EMBER_UIA_FOCUS_READY_V1:0\n"));
+  expect(f.owned.startup()).toMatchObject({ appReady: 2, loadCode: kind === "conflict" || kind === "invalid" ? 0 : 1, quit: kind === "conflict" || kind === "invalid" ? 0 : 1 });
+  expect(f.calls).toHaveLength(1); expect(JSON.stringify(f.owned.startup())).not.toContain("PRIVATE");
+});
+it.each(["ordinary", "missing", "link", "hardlink", "empty", "oversized", "alias"] as const)("observes only the three fixed file-custody paths with %s metadata", mode => {
+  const begin = native.indexOf("function fixtureCustody("), end = native.indexOf("interface OwnedChild", begin);
+  const module = { exports: undefined as unknown as (directory: string) => number }, calls: string[] = [];
+  runInNewContext(transformSync(native.slice(begin, end) + "\nmodule.exports=fixtureCustody;", { loader: "ts", format: "cjs", target: "node22" }).code, {
+    module, path: { join: (root: string, name: string) => root + "/" + name, resolve: (file: string) => file }, fs: {
+      lstatSync(file: string) { calls.push(file); const selected = file.endsWith("index.html"); if (selected && mode === "missing") throw new Error("PRIVATE stat");
+        return { isFile: () => true, isSymbolicLink: () => selected && mode === "link", nlink: selected && mode === "hardlink" ? 2n : 1n,
+          size: selected && mode === "empty" ? 0n : selected && mode === "oversized" ? 16385n : 100n }; },
+      realpathSync: { native: (file: string) => file.endsWith("index.html") && mode === "alias" ? "PRIVATE elsewhere" : file },
+    },
+  });
+  expect(module.exports("fixed-checkout")).toBe(mode === "ordinary" ? 7 : 6);
+  expect(calls).toEqual(["fixed-checkout/index.html", "fixed-checkout/package.json", "fixed-checkout/main.cjs"]);
+  expect(native).toContain('fixtureFlags = fixtureCustody(path.join(repository, "test/fixtures/uia-focus-app"));\n    phase = 2; owned = startOwned');
+});
 it("does not read private getters or proxy traps when freezing startup provenance", () => {
   let reads = 0; const trap = () => { reads++; throw new Error("PRIVATE"); };
   for (const app of [new Proxy({}, { get: trap, getOwnPropertyDescriptor: trap }), { get appReady() { return trap(); } }]) {
-    expect(startupProjection(app, "PRIVATE", Infinity, -1)).toEqual({ schema: 1, phase: 0, appReady: 0, appExit: 0, appError: 0, appStage: 0, bridgeReady: 0, bridgeStage: 0 });
+    expect(startupProjection(app, "PRIVATE", Infinity, -1)).toEqual({ schema: 1, phase: 0, appReady: 0, appExit: 0, appError: 0, appStage: 0, bridgeReady: 0, bridgeStage: 0, loadCode: 0, quit: 0, fixtureFlags: 0 });
   }
   expect(reads).toBe(0); const maximum = startupProjection({ appReady: 6, appExit: 3, appError: 1, appStage: 9 }, 2, 30, 8);
   expect(Object.isFrozen(maximum)).toBe(true); expect(Buffer.byteLength(JSON.stringify(maximum))).toBeLessThanOrEqual(256);
@@ -166,16 +188,79 @@ it.each([false, true])("captures startup once at the original failure before tea
   const begin = native.indexOf("  const fail = () => {"), end = native.indexOf("  const current =", begin); expect(begin > 0 && end > begin).toBe(true);
   let appReady = 0, appStage = 6, reads = 0; const frames: unknown[][] = [];
   const module = { exports: undefined as unknown as (ports: object) => { fail(): void; later(): void; state(): object } };
-  runInNewContext(transformSync("module.exports=ports=>{let phase=2,failed=false,firstFailure=0,bridgeReady=1;const {owned,bridge}=ports;" + native.slice(begin, end) + "return{fail,later(){phase=8},state:()=>({failed,firstFailure})};};", { loader: "ts", format: "cjs", target: "node22" }).code,
+  runInNewContext(transformSync("module.exports=ports=>{let phase=2,failed=false,firstFailure=0,bridgeReady=1,fixtureFlags=7;const {owned,bridge}=ports;" + native.slice(begin, end) + "return{fail,later(){phase=8},state:()=>({failed,firstFailure})};};", { loader: "ts", format: "cjs", target: "node22" }).code,
     { module, focusStartupObservation: startupProjection, console: { info(...args: unknown[]) { if (outputFault) throw new Error("PRIVATE output fault"); frames.push(args); } } });
   const driver = module.exports({ owned: { startup() { reads++; return { appReady, appExit: 0, appError: 0, appStage }; } }, bridge: { startupStage: 30 } });
   driver.fail(); appReady = 1; appStage = 9; driver.later(); driver.fail();
   expect(driver.state()).toEqual({ failed: true, firstFailure: 2 }); expect(reads).toBe(1); expect(frames).toHaveLength(outputFault ? 0 : 1);
-  if (!outputFault) expect(JSON.parse(frames[0][1] as string)).toEqual({ schema: 1, phase: 2, appReady: 0, appExit: 0, appError: 0, appStage: 6, bridgeReady: 1, bridgeStage: 30 });
+  if (!outputFault) expect(JSON.parse(frames[0][1] as string)).toEqual({ schema: 1, phase: 2, appReady: 0, appExit: 0, appError: 0, appStage: 6, bridgeReady: 1, bridgeStage: 30, loadCode: 0, quit: 0, fixtureFlags: 7 });
 });
 
 const bench = fs.readFileSync("test/fixtures/uia-focus-app/main.cjs", "utf8");
-const oldBench = bench.replace(/\n\/\/ Fixed bench boundaries only;[^\n]*\nfunction startup\(stage\) \{[^\n]*\}\n/, "").replace(/^ *startup\([1-9]\);\n/gm, "");
+let priorBench = bench.replace('const { types } = require("node:util");\n', "");
+const loadStart = priorBench.indexOf("\nlet loadRecorded ="), loadEnd = priorBench.indexOf("\n// Fixed bench boundaries only;", loadStart);
+if (loadStart < 0 || loadEnd <= loadStart) throw new Error("Missing fixed load observation helpers.");
+priorBench = priorBench.slice(0, loadStart) + priorBench.slice(loadEnd);
+priorBench = priorBench.replace('readline.createInterface({ input: process.stdin }).on("line", line => { if (line === "quit") { noteQuit(2); app.quit(); } }).on("close", () => { noteQuit(1); app.quit(); });',
+  'readline.createInterface({ input: process.stdin }).on("line", line => { if (line === "quit") app.quit(); }).on("close", () => app.quit());')
+  .replace('app.on("window-all-closed", () => { noteQuit(3); app.quit(); });', 'app.on("window-all-closed", () => app.quit());')
+  .replace('  for (const window of windows) window.webContents.on("did-fail-load", (_event, code, _description, _url, mainFrame) => { if (mainFrame === true) noteLoad(code); });\n', "")
+  .replace('}).catch(error => { if (!loadRecorded) noteLoad(error); noteQuit(4); process.stdout.write("EMBER_UIA_FOCUS_LOAD_V1:" + loadCode + ":" + firstQuit + "\\nEMBER_UIA_FOCUS_READY_V1:0\\n"); app.quit(); });',
+    '}).catch(() => { process.stdout.write("EMBER_UIA_FOCUS_READY_V1:0\\n"); app.quit(); });');
+const oldBench = priorBench.replace(/\n\/\/ Fixed bench boundaries only;[^\n]*\nfunction startup\(stage\) \{[^\n]*\}\n/, "").replace(/^ *startup\([1-9]\);\n/gm, "");
+function loadClassification(value: unknown): number {
+  const begin = bench.indexOf("function classifyLoadCode("), end = bench.indexOf("function noteLoad(", begin);
+  const module = { exports: undefined as unknown as (value: unknown) => number };
+  runInNewContext(bench.slice(begin, end) + "\nmodule.exports=classifyLoadCode;", { module, types }); return module.exports(value);
+}
+it.each([[-3, 1], [-6, 2], [-10, 3], [-300, 4], [-2, 5], [-105, 6], [0, 7], [Infinity, 7], ["PRIVATE", 7]] as const)("classifies only fixed native load error category %#", (value, category) => {
+  expect(loadClassification(value)).toBe(category);
+});
+it("uses genuine native Error own data and refuses private accessors, proxies and conflicting load facts", () => {
+  let reads = 0; const trap = () => { reads++; throw new Error("PRIVATE"); };
+  const error = Object.assign(new Error("PRIVATE URL"), { errno: -3, code: "ERR_ABORTED", url: "PRIVATE" });
+  expect(loadClassification(error)).toBe(1); expect(loadClassification(Object.assign(new Error("PRIVATE"), { errno: -6, code: "ERR_ABORTED" }))).toBe(7);
+  expect(loadClassification(Object.assign(new Error("PRIVATE"), { code: "__proto__" }))).toBe(7);
+  expect(loadClassification(Object.defineProperty(new Error("PRIVATE"), "errno", { get: trap }))).toBe(7);
+  expect(loadClassification(new Proxy(error, { get: trap, getOwnPropertyDescriptor: trap }))).toBe(7);
+  expect(loadClassification({ errno: -3, code: "ERR_ABORTED" })).toBe(7); expect(reads).toBe(0);
+});
+it.each(["load", "stdin", "typed", "windows", "first-event", "subframe"] as const)("the actual two-load app reports the existing %s failure/quit order without changing its cancellation", async mode => {
+  const execute = async (source: string) => {
+    let complete = Promise.resolve(), next = 0, loads = 0, quits = 0;
+    const stdout: string[] = [], lineCallbacks = new Map<string, (...args: unknown[]) => void>(), appCallbacks = new Map<string, () => void>();
+    class Window {
+      pid = ++next; failed?: (_event: unknown, code: number, description: string, url: string, main: boolean) => void;
+      webContents = { getOSProcessId: () => this.pid, on: (_name: string, fn: Window["failed"]) => { this.failed = fn; } };
+      async loadFile() {
+        loads++;
+        if (this.pid === 1) {
+          if (mode === "stdin") lineCallbacks.get("close")!();
+          if (mode === "typed") lineCallbacks.get("line")!("quit");
+          if (mode === "windows") appCallbacks.get("window-all-closed")!();
+          if (mode === "subframe") this.failed?.(null, -10, "PRIVATE", "PRIVATE", false);
+          this.failed?.(null, mode === "stdin" || mode === "typed" || mode === "windows" ? -3 : -6, "PRIVATE", "PRIVATE", true);
+          if (mode === "first-event") this.failed?.(null, -3, "PRIVATE", "PRIVATE", true);
+        }
+        throw Object.assign(new Error("PRIVATE path"), { errno: -3, code: "ERR_ABORTED" });
+      }
+      setTitle() {} show() {}
+    }
+    const app = { setPath() {}, on: (name: string, fn: () => void) => appCallbacks.set(name, fn), quit() { quits++; },
+      whenReady() { return { then(fn: () => Promise<void>) { complete = Promise.resolve().then(fn); return complete; } }; }, getAppMetrics() { throw new Error("Metrics must not run after failed loads"); } };
+    const line = { on(name: string, fn: (...args: unknown[]) => void) { lineCallbacks.set(name, fn); return line; } };
+    runInNewContext(source, { __dirname: "/fixed-bench", process: { env: { EMBER_UIA_FOCUS_PROFILE: "/fixed-profile" }, stdin: {}, stdout: { write: (value: string) => stdout.push(value) }, stderr: { write() {} } },
+      require(name: string) { if (name === "node:util") return { types }; if (name === "node:path") return { isAbsolute: () => true, join: (...p: string[]) => p.join("/") };
+        if (name === "node:readline") return { createInterface: () => line }; return { app, BrowserWindow: Window, Menu: { setApplicationMenu() {} }, screen: { getPrimaryDisplay: () => ({ workArea: { x: 0, y: 0, width: 1200 } }) } }; } });
+    await complete.catch(() => undefined); return { stdout, loads, quits };
+  };
+  const before = await execute(priorBench), after = await execute(bench);
+  expect(after.loads).toBe(2); expect(after.loads).toBe(before.loads); expect(after.quits).toBe(before.quits);
+  const quit = mode === "stdin" ? 1 : mode === "typed" ? 2 : mode === "windows" ? 3 : 4;
+  const code = ["stdin", "typed", "windows"].includes(mode) ? 1 : 2;
+  expect(after.stdout).toEqual([`EMBER_UIA_FOCUS_LOAD_V1:${code}:${quit}\nEMBER_UIA_FOCUS_READY_V1:0\n`]);
+  expect(before.stdout).toEqual(["EMBER_UIA_FOCUS_READY_V1:0\n"]); expect(JSON.stringify(after.stdout)).not.toContain("PRIVATE");
+});
 it("preserves the entire original readiness/conditions operation block and teardown/summary bytes", () => {
   const begin = native.indexOf("    const poll ="), end = native.indexOf("    work = body();", begin), cleanup = native.indexOf("    retired = true;");
   expect(begin > 0 && end > begin && cleanup > end).toBe(true);
@@ -185,13 +270,14 @@ it("preserves the entire original readiness/conditions operation block and teard
 it("recovers the whole original synthetic app by removing only the fixed observer helper and nine marker calls", () => {
   expect(createHash("sha256").update(oldBench).digest("hex")).toBe("31e7d5aa484c95a8ec95f0c54d7877db6bde5495bcd08e662bab488bc418b75a");
   expect(bench.match(/^ *startup\([1-9]\);$/gm)).toHaveLength(9);
+  expect(createHash("sha256").update(priorBench).digest("hex")).toBe("e91598e96042b0510ebe2087796c8f6e4c293562e225ce5c7b4423b5814fabec");
   expect(native).toContain('bridgeEnv(env, { EMBER_UIA_CACHE: path.join(root, "bridge-cache"), EMBER_UIA_STARTUP_OBSERVE: "1" })');
 });
 it.each(["normal", "load-fault", "metrics-fault", "observer-fault"] as const)("the actual synthetic app retains its original actions and ready result with %s", async mode => {
   const run = async (source: string) => {
     const calls: string[] = [], stdout: string[] = [], stderr: string[] = []; let completion = Promise.resolve(); let next = 0;
     class Window {
-      pid = ++next; webContents = { getOSProcessId: () => this.pid };
+      pid = ++next; webContents = { getOSProcessId: () => this.pid, on() {} };
       constructor() { calls.push("create"); }
       async loadFile() { calls.push("load"); if (mode === "load-fault") throw new Error("PRIVATE load"); }
       setTitle() { calls.push("title"); } show() { calls.push("show"); }
@@ -204,11 +290,14 @@ it.each(["normal", "load-fault", "metrics-fault", "observer-fault"] as const)("t
       stdout: { write(value: string) { stdout.push(value); } }, stderr: { write(value: string) { if (mode === "observer-fault") throw new Error("PRIVATE stderr"); stderr.push(value); } } },
       require(name: string) { if (name === "node:path") return { isAbsolute: () => true, join: (...parts: string[]) => parts.join("/") };
         if (name === "node:readline") return { createInterface: () => line };
+        if (name === "node:util") return { types };
         return { app, BrowserWindow: Window, Menu: { setApplicationMenu() { calls.push("menu"); } }, screen: { getPrimaryDisplay() { calls.push("screen"); return { workArea: { x: 0, y: 0, width: 1200 } }; } } }; } });
     await completion.catch(() => undefined); return { calls, stdout, stderr };
   };
-  const old = await run(oldBench), current = await run(bench); expect(current.calls).toEqual(old.calls); expect(current.stdout).toEqual(old.stdout);
-  expect(current.stdout).toEqual(["EMBER_UIA_FOCUS_READY_V1:" + (mode === "load-fault" || mode === "metrics-fault" ? "0" : "1") + "\n"]);
+  const old = await run(oldBench), current = await run(bench); expect(current.calls).toEqual(old.calls);
+  const ready = (value: string[]) => value.join("").split("\n").filter(line => line.startsWith("EMBER_UIA_FOCUS_READY_V1:"));
+  expect(ready(current.stdout)).toEqual(ready(old.stdout));
+  expect(ready(current.stdout)).toEqual(["EMBER_UIA_FOCUS_READY_V1:" + (mode === "load-fault" || mode === "metrics-fault" ? "0" : "1")]);
   const stage = mode === "load-fault" ? 6 : mode === "metrics-fault" ? 8 : 9;
   if (mode !== "observer-fault") expect(current.stderr.at(-1)).toBe("EMBER_UIA_FOCUS_STARTUP_V1:" + stage + "\n");
 });

@@ -23,21 +23,34 @@ function ordinary(file: string): boolean { const stat = fs.lstatSync(file); retu
 // appStage:1profile-check/2profile-set/3menu/4screen/5windows/6load/7show/8metrics/9sandbox-evaluated.
 // bridgeReady:0pending/1resolved/2rejected; bridgeStage is the existing bounded stderr cache0..30.
 // A last observed boundary is never a claim about the cause or success of that operation.
-interface StartupApp { appReady: number; appExit: number; appError: number; appStage: number }
+// loadCode:0unobserved/1aborted/2file-missing/3access-denied/4invalid-URL/5failed/6other-negative/7unknown.
+// quit:0unobserved/1stdin-close/2typed-quit/3all-windows-closed/4existing-catch; fixtureFlags below are observations only.
+interface StartupApp { appReady: number; appExit: number; appError: number; appStage: number; loadCode: number; quit: number }
 /** Cached startup facts only; neither their values nor an observer fault can change readiness or cleanup. */
-function focusStartupObservation(app: unknown, bridgeReady: unknown, bridgeStage: unknown, phase: unknown) {
+function focusStartupObservation(app: unknown, bridgeReady: unknown, bridgeStage: unknown, phase: unknown, fixtureFlags: unknown) {
   const own = (key: string) => {
     if (!app || typeof app !== "object" || types.isProxy(app)) return undefined;
     const property = Object.getOwnPropertyDescriptor(app, key); return property && Object.hasOwn(property, "value") ? property.value : undefined;
   };
   const bounded = (value: unknown, maximum: number) => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= maximum ? value : 0;
   return Object.freeze({ schema: 1, phase: bounded(phase, 8), appReady: bounded(own("appReady"), 6), appExit: bounded(own("appExit"), 3),
-    appError: bounded(own("appError"), 1), appStage: bounded(own("appStage"), 9), bridgeReady: bounded(bridgeReady, 2), bridgeStage: bounded(bridgeStage, 30) });
+    appError: bounded(own("appError"), 1), appStage: bounded(own("appStage"), 9), bridgeReady: bounded(bridgeReady, 2), bridgeStage: bounded(bridgeStage, 30),
+    loadCode: bounded(own("loadCode"), 7), quit: bounded(own("quit"), 4), fixtureFlags: bounded(fixtureFlags, 7) });
+}
+/** Fixed checkout files only: bits1HTML/2package/4main each observed ordinary, single-link, small and canonical. No admission authority. */
+function fixtureCustody(directory: string): number {
+  let flags = 0;
+  for (const [index, name] of ["index.html", "package.json", "main.cjs"].entries()) { try {
+    const file = path.join(directory, name), stat = fs.lstatSync(file, { bigint: true });
+    if (stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1n && stat.size > 0n && stat.size <= 16_384n &&
+        fs.realpathSync.native(file).toLowerCase() === path.resolve(file).toLowerCase()) flags |= 1 << index;
+  } catch { /* Unknown custody is not an instruction to skip, repair or relaunch. */ } }
+  return flags;
 }
 interface OwnedChild { process: ChildProcessWithoutNullStreams; closed: Promise<{ code: number | null; signal: NodeJS.Signals | null }>; ready: Promise<boolean>; startup(): Readonly<StartupApp> }
 function startOwned(executable: string, app: string, env: NodeJS.ProcessEnv): OwnedChild {
   const process = spawn(executable, [app], { env, stdio: ["pipe", "pipe", "pipe"], windowsHide: false });
-  const startup: StartupApp = { appReady: 0, appExit: 0, appError: 0, appStage: 0 };
+  const startup: StartupApp = { appReady: 0, appExit: 0, appError: 0, appStage: 0, loadCode: 0, quit: 0 };
   // Capture the owned process and close observation synchronously, before startup can fail or any await occurs.
   const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(resolve => process.once("close", (code, signal) => resolve({ code, signal })));
   let stageBuffer = "", stageBytes = 0, stageInvalid = false;
@@ -58,6 +71,7 @@ function startOwned(executable: string, app: string, env: NodeJS.ProcessEnv): Ow
   } catch { stageInvalid = true; startup.appStage = 0; stageBuffer = ""; } });
   const ready = new Promise<boolean>(resolve => {
     let buffer = "", bytes = 0, settled = false;
+    let loadSeen = false, loadInvalid = false;
     const finish = (value: boolean) => { if (!settled) { settled = true; buffer = ""; resolve(value); } };
     process.once("error", () => { startup.appError = 1; if (!settled) startup.appReady = 5; finish(false); });
     process.once("exit", (code, signal) => { startup.appExit = signal !== null && signal !== undefined ? 3 : code === 0 ? 1 : Number.isSafeInteger(code) ? 2 : 3; if (!settled) startup.appReady = 6; finish(false); });
@@ -65,8 +79,16 @@ function startOwned(executable: string, app: string, env: NodeJS.ProcessEnv): Ow
       bytes += chunk.length; if (bytes > 64 * 1024) { if (!settled) startup.appReady = 4; finish(false); return; }
       if (settled) return; buffer += chunk.toString("utf8");
       const lines = buffer.split("\n"); buffer = lines.pop() ?? "";
-      for (const line of lines) if (line === "EMBER_UIA_FOCUS_READY_V1:1") { if (!settled) startup.appReady = 1; finish(true); }
-      else if (line.startsWith("EMBER_UIA_FOCUS_READY_V1:")) { if (!settled) startup.appReady = line === "EMBER_UIA_FOCUS_READY_V1:0" ? 2 : 3; finish(false); }
+      for (const line of lines) {
+        try { if (line.startsWith("EMBER_UIA_FOCUS_LOAD_V1:")) {
+          const match = /^EMBER_UIA_FOCUS_LOAD_V1:([0-7]):([0-4])$/.exec(line);
+          if (!match || loadInvalid || loadSeen && (startup.loadCode !== Number(match[1]) || startup.quit !== Number(match[2]))) {
+            loadInvalid = true; startup.loadCode = 0; startup.quit = 0;
+          } else { loadSeen = true; startup.loadCode = Number(match[1]); startup.quit = Number(match[2]); }
+        } } catch { loadInvalid = true; startup.loadCode = 0; startup.quit = 0; }
+        if (line === "EMBER_UIA_FOCUS_READY_V1:1") { if (!settled) startup.appReady = 1; finish(true); }
+        else if (line.startsWith("EMBER_UIA_FOCUS_READY_V1:")) { if (!settled) startup.appReady = line === "EMBER_UIA_FOCUS_READY_V1:0" ? 2 : 3; finish(false); }
+      }
       if (buffer.length > 512) { if (!settled) startup.appReady = 4; finish(false); }
     });
   });
@@ -76,14 +98,14 @@ function startOwned(executable: string, app: string, env: NodeJS.ProcessEnv): Ow
 it.skipIf(!required)("compares one native focus per fixed Electron target and activation condition without relaxing identity", async () => {
   let phase = 1, failed = false, firstFailure = 0, retired = false, bridgeBroken = false, root: string | undefined;
   let owned: OwnedChild | undefined, bridge: UiaBridge | undefined, input: ReturnType<typeof openWin32Input> = null, work: Promise<void> | undefined;
-  let completed = 0, matchedMask = 0, cleanup: boolean, bridgeReady = 0;
+  let completed = 0, matchedMask = 0, cleanup: boolean, bridgeReady = 0, fixtureFlags = 0;
   const fail = () => {
     if (!failed) {
       firstFailure = phase;
       let app: unknown, stage: unknown;
       try { app = owned?.startup(); } catch { /* Unknown cached application startup. */ }
       try { stage = bridge?.startupStage; } catch { /* Unknown cached bridge startup. */ }
-      try { console.info("Windows UIA focus startup", JSON.stringify(focusStartupObservation(app, bridgeReady, stage, phase))); } catch { /* Preserve the original failure. */ }
+      try { console.info("Windows UIA focus startup", JSON.stringify(focusStartupObservation(app, bridgeReady, stage, phase, fixtureFlags))); } catch { /* Preserve the original failure. */ }
     }
     failed = true;
   };
@@ -105,6 +127,7 @@ it.skipIf(!required)("compares one native focus per fixed Electron target and ac
     const profile = path.join(root, "profile"), scratch = path.join(root, "temporary"); fs.mkdirSync(profile); fs.mkdirSync(scratch);
     const env = nativeFocusEnvironment(process.env, profile, scratch);
     input = openWin32Input(); expect(input).not.toBeNull();
+    fixtureFlags = fixtureCustody(path.join(repository, "test/fixtures/uia-focus-app"));
     phase = 2; owned = startOwned(executable, path.join(repository, "test/fixtures/uia-focus-app"), env);
     expect(owned.process.spawnargs.some(arg => arg === "--no-sandbox" || arg === "--disable-sandbox" || arg.startsWith("--inspect"))).toBe(false);
     bridge = new UiaBridge(path.join(repository, "sidecar/uia/ember_uia.ps1"), bridgeEnv(env, { EMBER_UIA_CACHE: path.join(root, "bridge-cache"), EMBER_UIA_STARTUP_OBSERVE: "1" }));

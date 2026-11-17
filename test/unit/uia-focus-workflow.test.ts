@@ -170,7 +170,7 @@ it.each(["invalid-utf8", "oversized", "accessor", "proxy", "shadowed-buffer"] as
   refused(fixture({ child })); expect(reads).toBe(0);
 });
 
-const startup = () => ({ schema: 1, phase: 2, appReady: 0, appExit: 0, appError: 0, appStage: 6, bridgeReady: 1, bridgeStage: 30 });
+const startup = () => ({ schema: 1, phase: 2, appReady: 0, appExit: 0, appError: 0, appStage: 6, bridgeReady: 1, bridgeStage: 30, loadCode: 1, quit: 1, fixtureFlags: 7 });
 const startupLine = (value: unknown) => "Windows UIA focus startup " + JSON.stringify(value);
 it("projects cached startup for a failed zero-condition experiment without reading a report or granting acceptance", () => {
   const partial = { schema: 1, completed: 0, matchedMask: 0, negative: 0, phase: 2 };
@@ -179,7 +179,7 @@ it("projects cached startup for a failed zero-condition experiment without readi
   expect(f.queries).not.toContain("read:" + reportPath); expect(f.spawn).toHaveBeenCalledOnce();
 });
 it.each([
-  ["schema", 2], ["phase", 9], ["appReady", 7], ["appExit", 4], ["appError", 2], ["appStage", 10], ["bridgeReady", 3], ["bridgeStage", 31],
+  ["schema", 2], ["phase", 9], ["appReady", 7], ["appExit", 4], ["appError", 2], ["appStage", 10], ["bridgeReady", 3], ["bridgeStage", 31], ["loadCode", 8], ["quit", 5], ["fixtureFlags", 8],
 ] as const)("withholds an invalid startup %s value while retaining the original failed outcome", (key, value) => {
   const f = fixture({ child: attempt({ status: 1, stdout: Buffer.from(output() + "\n" + startupLine({ ...startup(), [key]: value })) }) });
   refused(f); expect(messages(f)).not.toContain("Windows UIA focus startup");
@@ -204,7 +204,7 @@ it("accepts agreeing startup duplicates only for the original failure and withho
 });
 it("recovers the entire original strict workflow by reversing only the optional startup frame parser/projection", () => {
   let old = source.replace('          let startup, startupConflict = false, startupInvalid = false;\n', "")
-    .replace('          const startupLimits = { schema: [1, 1], phase: [0, 8], appReady: [0, 6], appExit: [0, 3], appError: [0, 1], appStage: [0, 9], bridgeReady: [0, 2], bridgeStage: [0, 30] };\n', "");
+    .replace('          const startupLimits = { schema: [1, 1], phase: [0, 8], appReady: [0, 6], appExit: [0, 3], appError: [0, 1], appStage: [0, 9], bridgeReady: [0, 2], bridgeStage: [0, 30], loadCode: [0, 7], quit: [0, 4], fixtureFlags: [0, 7] };\n', "");
   const begin = old.indexOf('                const boot ='), end = old.indexOf('                const condition =', begin); expect(begin > 0 && end > begin).toBe(true);
   old = old.slice(0, begin) + old.slice(end);
   old = old.replace('          if (!passed && startup && !startupConflict && !startupInvalid) console.info("Windows UIA focus startup", JSON.stringify(startup));\n', "");
