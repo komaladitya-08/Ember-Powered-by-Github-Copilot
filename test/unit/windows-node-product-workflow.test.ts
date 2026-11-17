@@ -290,14 +290,14 @@ function sourceFixture(selectedScript = Script) {
     } }), close: () => fs.rmSync(repository, { recursive: true, force: false }) };
 }
 
-it("pins the first reviewed producer and successful two-image asset-proof tuple exactly", () => {
+it("keeps the reviewed producer fixed and product admission closed pending current-source asset qualification", () => {
   const reviewed = runInNewContext("(" + producer.match(/const reviewed = Object\.freeze\(([\s\S]*?)\);/)![1] + ")");
-  expect(reviewed).toEqual({ ready: true, run: 43991252195, commit: "b75c944dec58973d157542e2d4d2db3720667982", artifact: 14289217635, archiveBytes: 38425334,
+  expect(reviewed).toEqual({ ready: false, run: 43991252195, commit: "b75c944dec58973d157542e2d4d2db3720667982", artifact: 14289217635, archiveBytes: 38425334,
     archiveSha256: "cbbbf6c641c41bda8ece457c28a54b9bc4121a068dc376725bcf0e3ac24a2f62",
     manifestSha256: "d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f",
-    assetProofCommit: "546793a3f94d89ae2ed2593727d9c35aa5571831",
-    assetProofManifestSha256: "bcf191c0fba3518f5c67d043da1b2a3abf2fbbaec0c750a21940326e611abf43",
-    verifierFileSha256: "a581968c3d8a354ccdabfb764d4dc89ac4e261e24e4bbf8c1ad70da4413f1c66" });
+    assetProofCommit: null,
+    assetProofManifestSha256: null,
+    verifierFileSha256: null });
   expect(product).toContain("id: reviewed_input");
   expect(product).toContain("REVIEWED_ASSET_PROOF_COMMIT: ${{ steps.reviewed_input.outputs.proofCommit }}");
   expect(product).toContain("REVIEWED_ASSET_PROOF_MANIFEST: ${{ steps.reviewed_input.outputs.proofManifest }}");

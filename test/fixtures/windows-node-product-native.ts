@@ -18,12 +18,12 @@ export const WINDOWS_NODE_PRODUCT_NATIVE_CASES = Object.freeze(["natural-repair"
 export type WindowsNodeProductNativeCase = typeof WINDOWS_NODE_PRODUCT_NATIVE_CASES[number];
 export const WINDOWS_NODE_PRODUCT_NATIVE_ARGV = Object.freeze(["--preserve-symlinks", "--preserve-symlinks-main", "product-native.cjs", "exercise"]);
 export const WINDOWS_NODE_PRODUCT_NATIVE_CWD = "\\work";
-/** First literal reviewed producer/asset-proof tuple; callers cannot override these prerequisite identities. */
-export const WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE = Object.freeze({ ready: true as boolean,
+/** Reviewed producer stays fixed; current-source asset qualification must complete before product admission. */
+export const WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE = Object.freeze({ ready: false as boolean,
   manifestSha256: "d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f" as string | null,
-  assetProofCommit: "546793a3f94d89ae2ed2593727d9c35aa5571831" as string | null,
-  assetProofManifestSha256: "bcf191c0fba3518f5c67d043da1b2a3abf2fbbaec0c750a21940326e611abf43" as string | null,
-  verifierFileSha256: "a581968c3d8a354ccdabfb764d4dc89ac4e261e24e4bbf8c1ad70da4413f1c66" as string | null });
+  assetProofCommit: null as string | null,
+  assetProofManifestSha256: null as string | null,
+  verifierFileSha256: null as string | null });
 const OWNER = "b".repeat(64), PROJECT = "22222222-2222-4222-8222-222222222222";
 const PROGRAM = fileURLToPath(new URL("./windows-node-product-native-program.cjs", import.meta.url));
 const stdout = Buffer.concat([Buffer.from("PRODUCT-OUT\n"), Buffer.alloc(72 * 1024, 79), Buffer.from("\nPRODUCT-EOF\n")]);

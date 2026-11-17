@@ -26,7 +26,7 @@ export const WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS: readonly Readonly<{ pat
   Object.freeze({"path":"app/main/agent/coding-result-registry.ts","bytes":21438,"sha256":"00ff8756bad4b2fc0a1462101e7221db7acc8c9e0be9a0afbc3835f8b63a3540"}),
   Object.freeze({"path":"app/main/agent/coding-seed-snapshot.ts","bytes":13379,"sha256":"675a5c45d9fe294031919614aee2008b994f0c48e2651c68d7cc26e7998eaa27"}),
   Object.freeze({"path":"app/main/agent/coding-storage.ts","bytes":975,"sha256":"2a5bb4a72fcc0c37d3da53fc38ac241d1affe78c5d2263fc41c121a7f5f5760c"}),
-  Object.freeze({"path":"app/main/agent/confirm.ts","bytes":37150,"sha256":"60f3c170fbc74ba9957d8a9055b2007c00b660ac1b7a0ace6937b7b5763852d5"}),
+  Object.freeze({"path":"app/main/agent/confirm.ts","bytes":37213,"sha256":"d986041a6661b6baec7b524701c6bec618a083b06672a78607ed5271595d95a1"}),
   Object.freeze({"path":"app/main/agent/experimental-windows-lpac-api.ts","bytes":21228,"sha256":"2bc979f341fab8476263f99408291f9c9e557c1f2776aae352403d463276a342"}),
   Object.freeze({"path":"app/main/agent/linux-coding-artifact-store.ts","bytes":32936,"sha256":"de7f7891e7324eb29702c135a8dedcdae06a0a9902ab26b256d56ed30f495667"}),
   Object.freeze({"path":"app/main/agent/presenter.ts","bytes":100237,"sha256":"7e429829286cbe95d78d86027a0c222064a067c63b1979ae4f02ae4552e141d7"}),

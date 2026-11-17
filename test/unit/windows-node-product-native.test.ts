@@ -268,12 +268,12 @@ describe("native Windows Node product admission", () => {
     expect(Object.keys(facts).sort()).toEqual(["commit", "image"]);
   });
 
-  it("pins the reviewed producer and successful seven-case asset prerequisite exactly", () => {
-    expect(WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE).toEqual({ ready: true,
+  it("keeps the reviewed producer fixed until current-source asset qualification permits product admission", () => {
+    expect(WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE).toEqual({ ready: false,
       manifestSha256: "d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f",
-      assetProofCommit: "546793a3f94d89ae2ed2593727d9c35aa5571831",
-      assetProofManifestSha256: "bcf191c0fba3518f5c67d043da1b2a3abf2fbbaec0c750a21940326e611abf43",
-      verifierFileSha256: "a581968c3d8a354ccdabfb764d4dc89ac4e261e24e4bbf8c1ad70da4413f1c66" });
+      assetProofCommit: null,
+      assetProofManifestSha256: null,
+      verifierFileSha256: null });
     expect(Object.isFrozen(WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE)).toBe(true);
   });
 
