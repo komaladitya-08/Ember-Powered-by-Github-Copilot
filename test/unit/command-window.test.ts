@@ -13,6 +13,7 @@ import { statusLine, headerLine } from "../../app/renderer/command/copy";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../../app/main/targets/types";
 import type { CommandCard, RunExit, RunningCommand } from "../../app/main/commands/types";
 import type { Logger } from "../../app/main/logger";
+import { Confirmer, type Question } from "../../app/main/agent/confirm";
 
 type Handler = (event: { sender: WebContentsLike }, ...args: unknown[]) => unknown;
 
@@ -132,6 +133,75 @@ function setup(o: { keyHint?: () => string | null; screenReader?: () => boolean;
 
 beforeEach(() => { vi.useFakeTimers(); logs.length = 0; });
 afterEach(() => { vi.useRealTimers(); });
+
+describe("a command card's answer through the Confirmer", () => {
+  function bridge(armMs: number, blocked = () => false) {
+    const window = setup();
+    const command = card({ target: "local", targetLabel: "This computer", kind: "node", shell: undefined,
+      argv: ["--test", "test.cjs"], cwd: "\\work", command: 'Node arguments: ["--test","test.cjs"]', armMs });
+    let showing = 0;
+    const confirmer = new Confirmer(() => undefined, { now: Date.now, armMs, gapMs: 0, blocked,
+      panelReady: n => window.ctl.cardReady(n), onChange: next => {
+        if (showing && (!next || next.n !== showing)) window.ctl.hideCard(showing);
+        if (next?.question.panel?.kind === "command") {
+          showing = next.n; window.ctl.showCard(next.n, next.question.panel.card);
+        }
+      } });
+    const taken: boolean[] = [];
+    window.ctl.onAnswer(answer => {
+      const accepted = confirmer.answer(`q${answer.n}:${answer.answer}`, "panel", { sha256: answer.sha256 });
+      taken.push(accepted); return accepted;
+    });
+    const question: Question = { title: "May I run a command?", prompt: "Run the copied Node test?", armMs,
+      options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }],
+      panel: { kind: "command", card: command } };
+    const answer = confirmer.ask(question);
+    let result: string | null | undefined;
+    void answer.then(value => { result = value; });
+    const send = (choice: "once" | "deny") => window.ipc.send(COMMANDS_IPC.answer, window.page(), { n: 1, answer: choice, sha256: command.sha256 });
+    const snapshot = () => window.ipc.invoke(COMMANDS_IPC.state, window.page()) as Snapshot;
+    return { ...window, confirmer, answer, taken, send, snapshot, result: () => result,
+      close: () => { confirmer.cancelAll(); window.ctl.dispose(); } };
+  }
+
+  it.each([500, 1500])("takes Not now before a %i ms arm delay without granting a run", async armMs => {
+    const b = bridge(armMs);
+    try {
+      b.send("deny"); await Promise.resolve();
+      expect({ taken: b.taken, answer: b.result(), retry: b.snapshot().state.card?.retry ?? 0 })
+        .toEqual({ taken: [true], answer: "deny", retry: 0 });
+      expect(b.snapshot().state.tabs).toEqual([]);
+      expect(b.snapshot().state.card).toBeNull();
+      await expect(b.answer).resolves.toBe("deny");
+    } finally { b.close(); }
+  });
+
+  it.each([500, 1500])("still refuses Allow before a %i ms arm delay", async armMs => {
+    const b = bridge(armMs);
+    try {
+      b.seen(1); b.send("once"); await Promise.resolve();
+      expect(b.taken).toEqual([]); expect(b.result()).toBeUndefined();
+      expect(b.snapshot().state.card?.retry).toBe(1);
+      expect(b.snapshot().state.tabs).toEqual([]);
+    } finally { b.close(); }
+  });
+
+  it("still refuses Not now while Ember borrows the mouse, then takes it after borrowing ends", async () => {
+    let blocked = true;
+    const b = bridge(1500, () => blocked);
+    try {
+      b.send("deny"); await Promise.resolve();
+      expect(b.taken).toEqual([false]); expect(b.result()).toBeUndefined();
+      expect(b.snapshot().state.card?.retry).toBe(1);
+      expect(b.snapshot().state.tabs).toEqual([]);
+      blocked = false;
+      b.send("deny"); await Promise.resolve();
+      expect(b.taken).toEqual([false, true]);
+      await expect(b.answer).resolves.toBe("deny");
+      expect(b.snapshot().state.tabs).toEqual([]);
+    } finally { b.close(); }
+  });
+});
 
 describe("the command window's sender checks", () => {
   it("takes every page message only from its own window's page (critique integration-5)", async () => {

@@ -21,6 +21,65 @@ function confirmer(o: { blocked?: () => boolean; panelReady?: (n: number) => boo
   return { c, later: (ms: number) => { t += ms; }, step: () => bubbles.at(-1)?.step ?? null };
 }
 
+describe("Not now before a question's initial arm delay", () => {
+  it("takes the exact deny option immediately and reports no refusal", async () => {
+    const { c } = confirmer();
+    const answer = c.ask(q());
+    try {
+      expect(c.refusal("q1:deny")).toBeNull();
+      expect(c.answerKey("deny")).toBe(true);
+      await expect(answer).resolves.toBe("deny");
+    } finally { c.cancelAll(); }
+  });
+
+  it("still reports busy and refuses Not now while Ember borrows the mouse", async () => {
+    let blocked = true;
+    const { c, step } = confirmer({ blocked: () => blocked });
+    const answer = c.ask(q());
+    try {
+      expect(c.refusal("q1:deny")).toBe("not-yet");
+      expect(c.answerKey("deny")).toBe(false);
+      expect(step()).toBe(`${KEY_REFUSED.busy}\n${KEYS}`);
+      expect(c.currentNumber).toBe(1);
+      blocked = false;
+      expect(c.refusal("q1:deny")).toBeNull();
+      expect(c.answerKey("deny")).toBe(true);
+      await expect(answer).resolves.toBe("deny");
+    } finally { c.cancelAll(); }
+  });
+
+  it.each([500, 1500])("still arms Allow and Always for %i ms", async armMs => {
+    const { c, later } = confirmer();
+    const answer = c.ask(q({ armMs, options: [...options, { id: "always", label: "Always" }] }));
+    try {
+      for (const option of ["once", "always"]) {
+        expect(c.refusal(`q1:${option}`)).toBe("not-yet");
+        expect(c.answer(`q1:${option}`)).toBe(false);
+      }
+      later(armMs - 1);
+      expect(c.answer("q1:once")).toBe(false);
+      expect(c.answer("q1:always")).toBe(false);
+      later(1);
+      expect(c.refusal("q1:once")).toBeNull();
+      expect(c.answer("q1:once")).toBe(true);
+      await expect(answer).resolves.toBe("once");
+    } finally { c.cancelAll(); }
+  });
+
+  it("does not exempt a differently spelled or undeclared denial from the existing gates", () => {
+    const { c } = confirmer();
+    void c.ask(q({ options: [{ id: "once", label: "Allow" }, { id: "Deny", label: "Not now" }] }));
+    try {
+      expect(c.refusal("q1:Deny")).toBe("not-yet");
+      expect(c.answer("q1:Deny")).toBe(false);
+      expect(c.refusal("q1:deny")).toBe("gone");
+      expect(c.answer("q1:deny")).toBe(false);
+      expect(c.answer("q2:Deny")).toBe(false);
+      expect(c.answer("not an action")).toBe(false);
+    } finally { c.cancelAll(); }
+  });
+});
+
 describe("an allow key press that is refused (owner's report of 2026-11-12)", () => {
   it("says on the question that it was pressed as the question came up, and takes the next press", async () => {
     const { c, later, step } = confirmer();
