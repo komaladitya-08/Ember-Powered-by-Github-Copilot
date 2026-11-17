@@ -29,6 +29,7 @@ const proof = script("Require the actual native, source Home or packaged Home pr
 const producer = script("Require the reviewed POSIX producer and authenticate its exact archive");
 const binding = script("Bind all product journeys to the reviewed native source catalog");
 const extraction = script("Extract only the authenticated producer members");
+const staging = script("Stage the exact development Electron resources and build the actual app");
 const cases = {
   native: "test/integration/windows-node-product-native.test.ts",
   source: "test/integration/project-coding-windows-node-electron.test.ts",
@@ -49,6 +50,54 @@ it("executes the extraction step's actual inline Node command with an absolute c
     throw new Error("The extraction command requested an unsupported import.");
   } });
   expect(verify).toHaveBeenCalledExactlyOnceWith(path.resolve(".cache/windows-node-toolchain"), "producer");
+});
+
+// Model only this fixed PowerShell command/check sequence; execute no actual installer, download or build.
+function stagingCommands(invoke: (program: string, args: string[]) => number) {
+  const lines = staging.split("\n"); expect(lines.shift()).toBe('$ErrorActionPreference = "Stop"');
+  for (let index = 0; index < lines.length; index += 2) {
+    const command = /^(node|npm) ([A-Za-z0-9_./ -]+)$/.exec(lines[index]);
+    const check = /^if \(\$LASTEXITCODE -ne 0\) \{ throw "([A-Za-z .]+)" \}$/.exec(lines[index + 1]);
+    expect(command).not.toBeNull(); expect(check).not.toBeNull();
+    if (invoke(command![1], command![2].split(" ")) !== 0) throw new Error(check![1]);
+  }
+}
+it("installs the pinned Electron package explicitly before strict staging and build for every journey", () => {
+  expect(staging.split("\n")).toEqual([
+    '$ErrorActionPreference = "Stop"', "node node_modules/electron/install.js",
+    'if ($LASTEXITCODE -ne 0) { throw "The pinned development Electron installation failed." }',
+    "node scripts/package/windows-node-toolchain-dev.mjs",
+    'if ($LASTEXITCODE -ne 0) { throw "The development Electron toolchain could not be verified." }',
+    "npm run build", 'if ($LASTEXITCODE -ne 0) { throw "The product build failed." }',
+  ]);
+  const invoke = vi.fn(() => 0); expect(() => stagingCommands(invoke)).not.toThrow();
+  expect(invoke.mock.calls).toEqual([["node", ["node_modules/electron/install.js"]], ["node", ["scripts/package/windows-node-toolchain-dev.mjs"]], ["npm", ["run", "build"]]]);
+  const marker = "      - name: Stage the exact development Electron resources and build the actual app\n", after = product.slice(product.indexOf(marker) + marker.length);
+  expect(after.slice(0, after.indexOf("\n      - name:"))).not.toMatch(/\n {8}if:/);
+  expect(JSON.parse(read("package.json")).devDependencies.electron).toBe("44.9.3");
+  expect(product).toContain("journey: [native, source, packaged]");
+});
+it.each(["missing", "failed"] as const)("a genuinely %s model installer stops the actual checked sequence before stager or build", selected => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "ember-installer-contract-")), calls: string[] = [];
+  try {
+    if (selected === "failed") {
+      const directory = path.join(temporary, "node_modules", "electron"); fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(path.join(directory, "install.js"), "process.exitCode = 7;\n", { flag: "wx" });
+    }
+    let status: number | null = null;
+    expect(() => stagingCommands((program, args) => {
+      calls.push(program + " " + args.join(" ")); expect(program).toBe("node"); expect(args).toEqual(["node_modules/electron/install.js"]);
+      const result = spawnSync(process.execPath, args, { cwd: temporary, timeout: 1000, maxBuffer: 64 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+      expect(result.error).toBeUndefined(); expect(result.signal).toBeNull(); status = result.status; return result.status!;
+    })).toThrow("The pinned development Electron installation failed.");
+    expect(status).toBe(selected === "missing" ? 1 : 7); expect(calls).toEqual(["node node_modules/electron/install.js"]);
+  } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
+});
+it.each([1, 2])("the checked sequence also stops at downstream command %i without bypassing its guard", failed => {
+  const calls: string[] = [];
+  expect(() => stagingCommands((program, args) => { calls.push(program + " " + args.join(" ")); return calls.length - 1 === failed ? 1 : 0; }))
+    .toThrow(failed === 1 ? "The development Electron toolchain could not be verified." : "The product build failed.");
+  expect(calls).toHaveLength(failed + 1);
 });
 
 it("requires the bounded C model once before all remaining units in each ordinary platform job", () => {
