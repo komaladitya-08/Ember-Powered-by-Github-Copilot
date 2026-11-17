@@ -220,7 +220,7 @@ it("unchanged successful source reporting accepts only its complete seven-case i
 });
 
 const packagedFrame = (phase: number) => `Error: Windows Node packaged journey refused (phase ${phase}).`;
-const emptyObservation = () => ({ operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0, projectStage: 0 });
+const emptyObservation = () => ({ operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0, projectStage: 0, providerStage: 0, commandStage: 0, commandDecision: 0, repairStep: 0, repairResults: 0, focusIdentity: 0, cardFlags: 0 });
 type Observation = ReturnType<typeof emptyObservation>;
 const packagedDiagnostic = (fixture: ReturnType<typeof proofFixture>) => {
   const rows = fixture.printed.mock.calls.filter(call => call[0] === "Windows Node packaged proof failure facts"); expect(rows).toHaveLength(1);
@@ -275,7 +275,7 @@ interface ObservationHelper {
   update(value: unknown): void; answer(value: unknown): void; windows(value: unknown): void; node(value: unknown): void; step(value: unknown): void;
   readyError(error: unknown): void;
   focused(value: unknown, target: unknown, hwnd: number): void; fresh(value: unknown): void; input<T>(value: T, rejection?: boolean): T;
-  capture(): void; value(): Readonly<Observation> | undefined;
+  decision(): void; card(value: unknown, previous: unknown): void; capture(): void; value(): Readonly<Observation> | undefined;
 }
 function observationHelper(globals: Record<string, unknown> = {}): ObservationHelper {
   const source = read(cases.packaged), start = source.indexOf("function packagedObservation()"), end = source.indexOf("/** Keep the real OS profile", start);
@@ -359,13 +359,133 @@ it("opts in only the external UIA harness while leaving the packaged app environ
   expect(source).toContain("try { await bounded(this.bridge.ready, 30_000); }");
 });
 const observationFrame = (value: unknown) => "Windows Node packaged cached observation " + JSON.stringify(value);
+it.each([
+  [{}, 255], [{ runtimeId: "PRIVATE different runtime" }, 251], [{ pid: 43 }, 223],
+  [{ automationId: "PRIVATE other control" }, 191], [{ controlType: "PRIVATE other type" }, 127],
+  [{ runtimeId: undefined }, 249], [{ pid: 0 }, 207],
+] as const)("splits cached focus identity components without weakening the original match or projecting values %#", (change, flags) => {
+  const o = observationHelper(), target = { pid: 42, runtimeId: "PRIVATE runtime", automationId: "byok-conductor", controlType: "ComboBox", hasKeyboardFocus: true };
+  o.focused({ hwnd: 99, element: { ...target, ...change } }, target, 99); o.capture();
+  expect(o.value()?.focusIdentity).toBe(flags); expect(o.value()?.focusFlags).toBe(flags === 255 ? 15 : 11);
+  expect(JSON.stringify(o.value())).not.toContain("PRIVATE");
+});
+it("keeps absent metadata distinct from a failed original identity predicate", () => {
+  const o = observationHelper(), target = { pid: 42, runtimeId: "PRIVATE runtime", controlType: "Edit", hasKeyboardFocus: true };
+  o.focused({ hwnd: 99, element: target }, target, 99); o.capture();
+  expect(o.value()?.focusFlags).toBe(15); expect(o.value()?.focusIdentity).toBe(191);
+});
+it("the passive decision count becomes permanently unknown after the existing eight-call bound", () => {
+  const o = observationHelper();
+  for (let count = 1; count <= 8; count++) { o.decision(); o.capture(); if (count === 1) expect(o.value()?.commandDecision).toBe(1); }
+  // A fresh observer measures each late count: capture is deliberately one-shot.
+  for (const count of [8, 9, 10, 20]) {
+    const next = observationHelper(); for (let index = 0; index < count; index++) next.decision(); next.capture();
+    expect(next.value()?.commandDecision).toBe(count === 8 ? 8 : 0);
+  }
+});
+it.each([
+  [[], "", 0], [[], "PRIVATE previous", 8], [[{ automationId: "ask-cmd" }], "", 1],
+  [[{ automationId: "ask-cmd", runtimeId: "PRIVATE current" }], "", 7],
+  [[{ automationId: "ask-cmd", runtimeId: "PRIVATE previous" }], "PRIVATE previous", 11],
+  [[{ automationId: "ask-cmd", runtimeId: "PRIVATE current" }], "PRIVATE previous", 15],
+] as const)("observes only existing command display-presence/freshness bits %#", (nodes, previous, expected) => {
+  const o = observationHelper(); o.card(nodes, previous); o.capture(); expect(o.value()?.cardFlags).toBe(expected); expect(JSON.stringify(o.value())).not.toContain("PRIVATE");
+});
+it("new focus and display projections do not read proxy traps or cached-node accessors", () => {
+  let reads = 0; const trap = () => { reads++; throw new Error("PRIVATE"); }, o = observationHelper();
+  const hostile = new Proxy([], { get: trap, getOwnPropertyDescriptor: trap });
+  o.card(hostile, "PRIVATE previous"); o.focused(hostile, hostile, 99);
+  const node = { automationId: "ask-cmd", get runtimeId() { return trap(); } };
+  o.card([node], "PRIVATE previous"); o.focused({ element: node }, node, 99); o.capture();
+  expect(reads).toBe(0); expect(o.value()?.cardFlags).toBe(9); expect(o.value()?.focusIdentity).toBe(64); expect(JSON.stringify(o.value())).not.toContain("PRIVATE");
+});
+it("the full maximum numeric frame remains inside the unchanged 512-byte strict parser boundary", () => {
+  const o = observationHelper(); o.update({ operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30, projectStage: 16,
+    providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15 }); o.capture();
+  expect(Buffer.byteLength(JSON.stringify(o.value()))).toBeLessThanOrEqual(512);
+  const f = proofFixture("packaged", passing("packaged"), { attempt: sourceAttempt(packagedFrame(6) + "\n" + observationFrame(o.value())) });
+  expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f).observation).toEqual(o.value()); expect(f.outputs).toEqual([]);
+});
+it.each(Object.entries({ providerStage: 13, commandStage: 15, commandDecision: 9, repairStep: 5, repairResults: 5, focusIdentity: 256, cardFlags: 16 }))("the strict workflow refuses an out-of-domain new %s field without accepting any partial frame", (field, invalid) => {
+  const tuple = { ...emptyObservation(), [field]: invalid };
+  const f = proofFixture("packaged", passing("packaged"), { attempt: sourceAttempt(packagedFrame(6) + "\n" + observationFrame(tuple)) });
+  expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f).observation).toEqual(emptyObservation()); expect(f.outputs).toEqual([]);
+});
+
+function diagnosticOperations(o: ObservationHelper, ports: Record<string, unknown>, readSettings: () => string) {
+  const source = read(cases.packaged);
+  const method = (begin: string, end: string) => {
+    const first = source.indexOf(begin), last = source.indexOf(end, first); expect(first >= 0 && last > first).toBe(true); return source.slice(first, last);
+  };
+  const code = transformSync(`module.exports = class {
+    phase = 0; home = 99; profile = "/PRIVATE/profile"; key = "PRIVATE key"; previousCard = ""; failureCaptured = false;
+    constructor(observation, ports) { this.observation = observation; Object.assign(this, ports); }
+    ${method("  private observe(values:", "  private observeInput")}
+    ${method("  captureFailure():", "  failureObservation():")}
+    ${method("  private async configureProvider():", "  private async folder(")}
+    ${method("  async decide(", "  private async review(")}
+  };`, { loader: "ts", format: "cjs", target: "node22" }).code;
+  interface Operations { phase: number; configureProvider(): Promise<void>; configureCommands(): Promise<void>; decide(argv: readonly string[]): Promise<void>; captureFailure(): void }
+  const module = { exports: undefined as unknown as new (o: ObservationHelper, ports: Record<string, unknown>) => Operations };
+  runInNewContext(code, { module, expect, path, fs: { readFileSync: readSettings },
+    id: (automationId: string) => Object.assign((node: { automationId?: string }) => node.automationId === automationId, { label: automationId }),
+    named: (name: string) => Object.assign((node: { name?: string }) => node.name === name, { label: name }) });
+  return new module.exports(o, ports);
+}
+it.each(Array.from({ length: 12 }, (_, index) => index + 1))("marks existing provider operation %i before its unchanged controlled failure", async stage => {
+  const o = observationHelper(), trace: string[] = [], failure = new Error("PRIVATE existing operation");
+  const hit = (name: string) => { trace.push(name); if (trace.length === stage) throw failure; };
+  const ports = { model: { baseUrl: "http://127.0.0.1/fixed" },
+    async pane() { hit("pane"); }, async click() { hit("click"); }, async fill() { hit("fill"); }, async node() { hit("node"); }, async armed() { hit("armed"); }, async idle() { hit("idle"); } };
+  const actual = diagnosticOperations(o, ports, () => { hit("settings"); return "{}"; });
+  await expect(actual.configureProvider()).rejects.toBe(failure); actual.captureFailure();
+  expect(actual.phase).toBe(4); expect(o.value()?.providerStage).toBe(stage);
+  expect(trace).toEqual(["pane", "click", "fill", "fill", "fill", "fill", "click", "node", "armed", "click", "idle", "settings"].slice(0, stage));
+});
+it.each([false, true])("the actual provider, Commands setup and decision operations preserve every read/action with observer faults=%s", async faults => {
+  const plain = observationHelper(), observedStages: number[] = [], o = faults ? new Proxy(plain, { get() { throw new Error("PRIVATE observer"); } }) : {
+    ...plain, update(value: unknown) { const stage = (value as Partial<Observation>).commandStage; if (typeof stage === "number") observedStages.push(stage); plain.update(value); },
+  };
+  const trace: string[] = [], argv = ["--test", "test.cjs"]; let asked = false, decision = 0;
+  const ports = { model: { baseUrl: "http://127.0.0.1/fixed" },
+    async pane(value: string) { trace.push("pane:" + value); },
+    async click(_window: number, selected: { label?: string }) { if (selected.label === "Ask me before every command on this computer") asked = true; trace.push("click"); },
+    async fill() { trace.push("fill"); }, async armed() { trace.push("armed"); }, async idle() { trace.push("idle"); },
+    async node(_window: number, selected: { label?: string }) { trace.push("node"); return { patterns: { toggle: selected.label === "Run commands on this computer" || asked ? "On" : "Off" }, isEnabled: true }; },
+    async command() { trace.push("command"); decision++; return 99; },
+    async nodes() { trace.push("snapshot"); return [{ automationId: "ask-cmd", runtimeId: "PRIVATE runtime " + decision }, { name: "\\work", controlType: "Text" }, { controlType: "TabItem", runtimeId: "PRIVATE tab " + decision }]; },
+    async until(read: () => Promise<unknown>, accept: (value: unknown) => boolean, timeout: number) { expect(timeout).toBe(45_000); const value = await read(); expect(accept(value)).toBe(true); return value; },
+    async focus() { trace.push("focus"); }, async text() { trace.push("text"); return "Node arguments: " + JSON.stringify(argv); },
+  };
+  const actual = diagnosticOperations(o, ports, () => { trace.push("settings"); return "{}"; });
+  await actual.configureProvider(); await actual.configureCommands();
+  for (let index = 0; index < 8; index++) await actual.decide(argv);
+  expect(trace).toEqual(["pane:Models & connections", "click", "fill", "fill", "fill", "fill", "click", "node", "armed", "click", "idle", "settings", "pane:Commands", "node", "node", "click", "node",
+    ...Array.from({ length: 8 }, () => ["command", "snapshot", "focus", "text", "snapshot", "snapshot", "click"]).flat()]);
+  if (!faults) {
+    plain.capture(); expect(plain.value()).toMatchObject({ providerStage: 12, commandStage: 14, commandDecision: 8, cardFlags: 15 });
+    expect(observedStages).toEqual([1, 2, 3, 4, 5, ...Array.from({ length: 8 }, () => [6, 7, 8, 9, 10, 11, 12, 13, 14]).flat()]);
+  }
+});
+it("the actual first-failure capture freezes only cached repair counts before later local model or cleanup changes", () => {
+  const o = observationHelper(), steps = new Map([["repair", 3]]), results = new Map([["repair", ["PRIVATE result", "PRIVATE result", "PRIVATE result"]]]);
+  o.update({ commandStage: 7 }); const actual = diagnosticOperations(o, { model: { steps, results } }, () => "{}");
+  actual.captureFailure(); steps.set("repair", 4); results.get("repair")!.push("PRIVATE later"); o.update({ commandStage: 14 }); actual.captureFailure();
+  expect(o.value()).toMatchObject({ commandStage: 7, repairStep: 3, repairResults: 3 }); expect(JSON.stringify(o.value())).not.toContain("PRIVATE");
+});
+it("a local cached-model count fault cannot suppress the first failure snapshot or retry it after cleanup", () => {
+  const o = observationHelper(); o.update({ commandStage: 7 });
+  const actual = diagnosticOperations(o, {}, () => "{}"); Object.defineProperty(actual, "model", { get() { throw new Error("PRIVATE model observation"); } });
+  expect(() => actual.captureFailure()).not.toThrow(); o.update({ commandStage: 14 }); actual.captureFailure();
+  expect(o.value()).toMatchObject({ commandStage: 7, repairStep: 0, repairResults: 0 });
+});
 it("the actual pure fixture helper freezes only bounded cached fields before cleanup, without retaining private node data", () => {
   const o = observationHelper(), node = { pid: 42, runtimeId: "PRIVATE runtime", automationId: "w-next", controlType: "Button", hasKeyboardFocus: true };
   o.update({ operation: 14, iteration: 2 }); o.answer({ error: { code: "busy", message: "PRIVATE error" }, result: { busy: true, truncated: true, cut: ["PRIVATE cut"], nodes: [] } });
   o.node({ ...node, name: "Agree and continue", value: "PRIVATE field" }); o.step("Step 2 of 6");
   o.focused({ hwnd: 99, element: node }, node, 99); o.fresh({ isOffscreen: false, bounds: { x: 100, y: 100, width: 36, height: 21 } });
   expect(o.input(false)).toBe(false); o.capture(); const first = o.value();
-  expect(first).toEqual({ operation: 14, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 1, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 0, projectStage: 0 });
+  expect(first).toEqual({ operation: 14, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 1, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 0, projectStage: 0, providerStage: 0, commandStage: 0, commandDecision: 0, repairStep: 0, repairResults: 0, focusIdentity: 255, cardFlags: 0 });
   expect(Object.isFrozen(first)).toBe(true); expect(JSON.stringify(first)).not.toContain("PRIVATE");
   o.update({ operation: 0, iteration: 12 }); o.capture(); expect(o.value()).toBe(first);
 });
@@ -531,13 +651,13 @@ it("the actual outer failure catch captures before close and does not replace th
   expect(await module.exports(fixture, { async close() { trace.push("model"); } })).toEqual({ failed: true, phase: 3 });
   expect(trace).toEqual(["capture", "close", "model"]); expect(o.value()?.operation).toBe(7);
 });
-it.each(Object.entries({ operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30, projectStage: 16 }))("the pure helper refuses out-of-domain %s metadata", (field, maximum) => {
+it.each(Object.entries({ operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30, projectStage: 16, providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15 }))("the pure helper refuses out-of-domain %s metadata", (field, maximum) => {
   for (const invalid of [-1, maximum + 1, 0.5, Infinity, "PRIVATE"]) {
     const o = observationHelper(); o.update({ [field]: invalid }); o.capture(); expect(o.value()).toEqual(emptyObservation());
   }
 });
 it("the strict workflow projects one agreeing cached tuple while preserving phase and the original fatal guard", () => {
-  const tuple = { operation: 7, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 0, snapshotFlags: 0, focusFlags: 15, inputResult: 1, bridgeStage: 30, projectStage: 16 };
+  const tuple = { operation: 7, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 0, snapshotFlags: 0, focusFlags: 15, inputResult: 1, bridgeStage: 30, projectStage: 16, providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15 };
   const f = proofFixture("packaged", passing("packaged"), { attempt: sourceAttempt(packagedFrame(3) + "\n" + observationFrame(tuple), observationFrame(tuple)) });
   expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase: 3, observation: tuple });
   expect(f.queries).toEqual(["exists", "read", "lstat", "exists"]); expect(f.outputs).toEqual([]);

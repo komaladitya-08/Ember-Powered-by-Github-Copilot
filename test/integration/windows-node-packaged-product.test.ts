@@ -74,6 +74,7 @@ async function run(file: string, args: readonly string[], env: NodeJS.ProcessEnv
 interface PackagedObservation {
   operation: number; iteration: number; welcomeStep: number; nextLabel: number; target: number;
   bridgeError: number; snapshotFlags: number; focusFlags: number; inputResult: number; bridgeStage: number; projectStage: number;
+  providerStage: number; commandStage: number; commandDecision: number; repairStep: number; repairResults: number; focusIdentity: number; cardFlags: number;
 }
 /**
  * Pure cached observations, never action/cleanup authority. Operation is the last marked existing operation, not proof it failed.
@@ -89,11 +90,18 @@ interface PackagedObservation {
  * Project/folder stage0 is unknown;1pane/2name/3add/4choose/5folder-call/6source-text/7disclosure/8dialog-wait/
  * 9dialog-block-check/10dialog-activate/11dialog-foreground/12dialog-input/13destination-read/14select-folder/15dialog-closed/16project-return.
  * These are observed boundaries, not proof a later operation failed.
+ * Provider stage1pane/2switch/3endpoint/4conversation-model/5worker-model/6key/7Save/8saved-read/9agreement/10test/11idle/12settings-read.
+ * Command stage1pane/2local-read/3ask-read/4ask-toggle/5ask-check/6window/7new-display/8display-focus/9command-text/10cwd/
+ * 11remember-display/12remember-tabs/13answer/14returned; decision1..8 counts only the existing decide calls.
+ * Repair step/results0..4 are cached local fixture counts at the first failure, never tool output or execution evidence.
+ * Focus identity bits: target-runtime1/returned-runtime2/runtime-match4/target-PID8/returned-PID16/PID-match32/known-string-automation-ID-match64/known-string-control-type-match128.
+ * Card bits from an existing display poll: ask-cmd-present1/nonempty-runtime2/different-from-previous4/previous-recorded8.
  */
 function packagedObservation() {
-  const limits: PackagedObservation = { operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30, projectStage: 16 };
-  const current: PackagedObservation = { operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0, projectStage: 0 };
+  const limits: PackagedObservation = { operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30, projectStage: 16, providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15 };
+  const current: PackagedObservation = { operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0, projectStage: 0, providerStage: 0, commandStage: 0, commandDecision: 0, repairStep: 0, repairResults: 0, focusIdentity: 0, cardFlags: 0 };
   let captured = false, first: Readonly<PackagedObservation> | undefined;
+  let decisions = 0;
   const own = (value: unknown, key: string): unknown => {
     if (!value || typeof value !== "object" || types.isProxy(value)) return undefined;
     const property = Object.getOwnPropertyDescriptor(value, key); return property && Object.hasOwn(property, "value") ? property.value : undefined;
@@ -105,6 +113,17 @@ function packagedObservation() {
   };
   return {
     update,
+    decision() { try { decisions = Math.min(9, decisions + 1); update({ commandDecision: decisions <= 8 ? decisions : 0 }); } catch { /* The counter never controls a decision. */ } },
+    card(value: unknown, previous: unknown) { try {
+      const count = own(value, "length"); let flags = typeof previous === "string" && previous ? 8 : 0;
+      if (!Array.isArray(value) || types.isProxy(value) || typeof count !== "number" || !Number.isInteger(count) || count < 0 || count > 2000) { update({ cardFlags: 0 }); return; }
+      for (let index = 0; index < count; index++) {
+        const node = own(value, String(index)); if (own(node, "automationId") !== "ask-cmd") continue;
+        const runtime = own(node, "runtimeId"), valid = typeof runtime === "string" && !!runtime;
+        flags |= 1 | (valid ? 2 : 0) | (valid && runtime !== previous ? 4 : 0);
+      }
+      update({ cardFlags: flags });
+    } catch { /* No new snapshot or runtime identity is retained. */ } },
     answer(value: unknown) { try {
       const error = own(own(value, "error"), "code"), result = own(value, "result"), cut = own(own(result, "cut"), "length"), count = own(own(result, "nodes"), "length");
       update({ bridgeError: ["busy", "gone", "denied", "bad_request", "failed"].indexOf(error as string) + 1,
@@ -145,6 +164,12 @@ function packagedObservation() {
     step(value: unknown) { try { const match = typeof value === "string" ? /^Step ([1-6]) of 6$/.exec(value) : null; update({ welcomeStep: match ? Number(match[1]) : 0 }); } catch { /* No raw text is retained. */ } },
     focused(value: unknown, target: unknown, hwnd: number) { try {
       const element = own(value, "element"), pid = own(element, "pid"), runtime = own(element, "runtimeId");
+      const targetRuntime = own(target, "runtimeId"), targetPid = own(target, "pid"), validRuntime = typeof runtime === "string" && !!runtime, validTargetRuntime = typeof targetRuntime === "string" && !!targetRuntime;
+      const validPid = typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0, validTargetPid = typeof targetPid === "number" && Number.isSafeInteger(targetPid) && targetPid > 0;
+      update({ focusIdentity: (validTargetRuntime ? 1 : 0) | (validRuntime ? 2 : 0) | (validTargetRuntime && validRuntime && runtime === targetRuntime ? 4 : 0)
+        | (validTargetPid ? 8 : 0) | (validPid ? 16 : 0) | (validTargetPid && validPid && pid === targetPid ? 32 : 0)
+        | (typeof own(element, "automationId") === "string" && own(element, "automationId") === own(target, "automationId") ? 64 : 0)
+        | (typeof own(element, "controlType") === "string" && own(element, "controlType") === own(target, "controlType") ? 128 : 0) });
       const same = typeof runtime === "string" && !!runtime && typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0 && runtime === own(target, "runtimeId") && pid === own(target, "pid")
         && own(element, "automationId") === own(target, "automationId") && own(element, "controlType") === own(target, "controlType");
       update({ focusFlags: (own(value, "hwnd") === hwnd ? 1 : 0) | (element ? 2 : 0) | (same ? 4 : 0) | (own(element, "hasKeyboardFocus") === true ? 8 : 0) });
@@ -198,7 +223,7 @@ class Journey {
   assertionsComplete = false;
   private observe(values: Partial<PackagedObservation>): void { try { this.observation.update(values); } catch { /* Observation cannot change control flow. */ } }
   private observeInput<T>(value: T, rejection = false): T { try { this.observation.input(value, rejection); } catch { /* Preserve the exact result. */ } return value; }
-  captureFailure(): void { if (this.failureCaptured) return; this.failureCaptured = true; try { this.observation.capture(); } catch { /* Never retry with later cleanup state. */ } }
+  captureFailure(): void { if (this.failureCaptured) return; this.failureCaptured = true; try { this.observe({ repairStep: this.model.steps.get("repair") ?? 0, repairResults: this.model.results.get("repair")?.length ?? 0 }); } catch { /* Cached local fixture counts only. */ } try { this.observation.capture(); } catch { /* Never retry with later cleanup state. */ } }
   failureObservation(): Readonly<PackagedObservation> | undefined { try { return this.observation.value(); } catch { return undefined; } }
   constructor(readonly root: string, readonly model: Model) {
     const selected = process.env.EMBER_WINDOWS_NODE_PACKAGE;
@@ -264,7 +289,7 @@ class Journey {
     return text || node.name || "";
   }
   private async focus(hwnd: number, node: RawNode): Promise<RawNode> {
-    this.observe({ operation: 10, focusFlags: 0, inputResult: 0 }); try { this.observation.node(node); } catch { /* Cached target only. */ }
+    this.observe({ operation: 10, focusFlags: 0, inputResult: 0, focusIdentity: 0 }); try { this.observation.node(node); } catch { /* Cached target only. */ }
     if (!this.input || this.input.blockedReason?.(hwnd)) throw refusal(this.phase);
     this.observeInput(this.input.activate(hwnd));
     await this.bridge!.call("perform", { handle: node.h, op: "focus", deadlineMs: 2500 }, 5000);
@@ -415,22 +440,22 @@ class Journey {
     this.observe({ operation: 18 }); throw refusal(3);
   }
   private async configureProvider(): Promise<void> {
-    this.phase = 4; await this.pane("Models & connections");
-    await this.click(this.home, id("byok-on"));
-    await this.fill(this.home, id("byok-url"), this.model.baseUrl);
-    await this.fill(this.home, id("byok-conductor"), "mock-model"); await this.fill(this.home, id("byok-worker"), "mock-model");
-    await this.fill(this.home, id("byok-key"), this.key, true); await this.click(this.home, node => node.controlType === "Button" && node.name === "Save");
-    await this.node(this.home, named("Key saved"), false); await this.armed(this.home, id("byok-yes"));
-    await this.click(this.home, id("byok-test"));
-    await this.idle();
-    expect(fs.readFileSync(path.join(this.profile, "settings.json"), "utf8")).not.toContain(this.key);
+    this.phase = 4; this.observe({ providerStage: 1 }); await this.pane("Models & connections");
+    this.observe({ providerStage: 2 }); await this.click(this.home, id("byok-on"));
+    this.observe({ providerStage: 3 }); await this.fill(this.home, id("byok-url"), this.model.baseUrl);
+    this.observe({ providerStage: 4 }); await this.fill(this.home, id("byok-conductor"), "mock-model"); this.observe({ providerStage: 5 }); await this.fill(this.home, id("byok-worker"), "mock-model");
+    this.observe({ providerStage: 6 }); await this.fill(this.home, id("byok-key"), this.key, true); this.observe({ providerStage: 7 }); await this.click(this.home, node => node.controlType === "Button" && node.name === "Save");
+    this.observe({ providerStage: 8 }); await this.node(this.home, named("Key saved"), false); this.observe({ providerStage: 9 }); await this.armed(this.home, id("byok-yes"));
+    this.observe({ providerStage: 10 }); await this.click(this.home, id("byok-test"));
+    this.observe({ providerStage: 11 }); await this.idle();
+    this.observe({ providerStage: 12 }); expect(fs.readFileSync(path.join(this.profile, "settings.json"), "utf8")).not.toContain(this.key);
   }
   private async configureCommands(): Promise<void> {
-    await this.pane("Commands");
-    expect((await this.node(this.home, named("Run commands on this computer"), false)).patterns.toggle).toBe("On");
-    const ask = named("Ask me before every command on this computer"), node = await this.node(this.home, ask, false);
-    if (node.patterns.toggle === "Off" && node.isEnabled) await this.click(this.home, ask);
-    expect((await this.node(this.home, ask, false)).patterns.toggle).toBe("On");
+    this.observe({ commandStage: 1 }); await this.pane("Commands");
+    this.observe({ commandStage: 2 }); expect((await this.node(this.home, named("Run commands on this computer"), false)).patterns.toggle).toBe("On");
+    this.observe({ commandStage: 3 }); const ask = named("Ask me before every command on this computer"), node = await this.node(this.home, ask, false);
+    if (node.patterns.toggle === "Off" && node.isEnabled) { this.observe({ commandStage: 4 }); await this.click(this.home, ask); }
+    this.observe({ commandStage: 5 }); expect((await this.node(this.home, ask, false)).patterns.toggle).toBe("On");
   }
   private async folder(title: string, destination: string): Promise<void> {
     this.observe({ projectStage: 8 }); const dialog = (await this.until(() => this.windows(), windows => windows.some(window => window.name === title), 20_000)).find(window => window.name === title)!;
@@ -453,14 +478,15 @@ class Journey {
   async send(request: string): Promise<void> { await this.revealHomeControl(id("project-sessions-request"), true, true); await this.fill(this.home, id("project-sessions-request"), request); await this.click(this.home, id("project-sessions-send")); }
   private async command(): Promise<number> { return (await this.until(() => this.windows(), windows => windows.some(window => window.name === "Ember commands"), 45_000)).find(window => window.name === "Ember commands")!.hwnd; }
   async decide(argv: readonly string[], answer: "Allow" | "Not now" = "Allow"): Promise<void> {
-    this.phase = 6; const hwnd = await this.command();
-    const display = (await this.until(() => this.nodes(hwnd), nodes => nodes.some(node => node.automationId === "ask-cmd" && !!node.runtimeId && node.runtimeId !== this.previousCard), 45_000)).find(id("ask-cmd"))!;
-    await this.focus(hwnd, display);
-    expect(await this.text(hwnd, id("ask-cmd"))).toBe("Node arguments: " + JSON.stringify(argv));
-    expect((await this.nodes(hwnd)).map(node => node.name ?? "").join("\n")).toContain("\\work");
-    this.previousCard = display.runtimeId!;
-    this.previousTabs = new Set((await this.nodes(hwnd)).filter(node => node.controlType === "TabItem" && node.runtimeId).map(node => node.runtimeId!));
-    await this.click(hwnd, named(answer));
+    this.phase = 6; try { this.observation.decision(); } catch { /* Count only this existing call. */ } this.observe({ commandStage: 6, cardFlags: 0 }); const hwnd = await this.command();
+    this.observe({ commandStage: 7 });
+    const display = (await this.until(() => this.nodes(hwnd), nodes => { try { this.observation.card(nodes, this.previousCard); } catch { /* Cached poll only. */ } return nodes.some(node => node.automationId === "ask-cmd" && !!node.runtimeId && node.runtimeId !== this.previousCard); }, 45_000)).find(id("ask-cmd"))!;
+    this.observe({ commandStage: 8 }); await this.focus(hwnd, display);
+    this.observe({ commandStage: 9 }); expect(await this.text(hwnd, id("ask-cmd"))).toBe("Node arguments: " + JSON.stringify(argv));
+    this.observe({ commandStage: 10 }); expect((await this.nodes(hwnd)).map(node => node.name ?? "").join("\n")).toContain("\\work");
+    this.observe({ commandStage: 11 }); this.previousCard = display.runtimeId!;
+    this.observe({ commandStage: 12 }); this.previousTabs = new Set((await this.nodes(hwnd)).filter(node => node.controlType === "TabItem" && node.runtimeId).map(node => node.runtimeId!));
+    this.observe({ commandStage: 13 }); await this.click(hwnd, named(answer)); this.observe({ commandStage: 14 });
   }
   private async review(goal: string, counts: string): Promise<string> {
     this.phase = 7; await this.pane("Projects");

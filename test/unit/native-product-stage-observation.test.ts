@@ -76,6 +76,24 @@ it("preserves the entire native WSL test after reversing only the new observatio
 });
 it("preserves the entire packaged test after reversing only the new project/folder stage field and markers", () => {
   let source = fs.readFileSync("test/integration/windows-node-packaged-product.test.ts", "utf8");
+  source = source.replace('  providerStage: number; commandStage: number; commandDecision: number; repairStep: number; repairResults: number; focusIdentity: number; cardFlags: number;\n', "");
+  source = source.replace(/ \* Provider stage1pane[^\n]*\n \* Command stage1pane[^\n]*\n \* 11remember-display[^\n]*\n \* Repair step\/results0[^\n]*\n \* Focus identity bits:[^\n]*\n \* Card bits from an existing display poll:[^\n]*\n/, "");
+  source = source.replace(', providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15', "");
+  source = source.replace(', providerStage: 0, commandStage: 0, commandDecision: 0, repairStep: 0, repairResults: 0, focusIdentity: 0, cardFlags: 0', "").replace('  let decisions = 0;\n', "");
+  const counter = source.indexOf("    decision()"), answer = source.indexOf("    answer(value: unknown)", counter);
+  expect(counter > 0 && answer > counter).toBe(true); source = source.slice(0, counter) + source.slice(answer);
+  const identity = source.indexOf("      const targetRuntime ="), same = source.indexOf("      const same =", identity);
+  expect(identity > 0 && same > identity).toBe(true); source = source.slice(0, identity) + source.slice(same);
+  source = source.replace(' try { this.observe({ repairStep: this.model.steps.get("repair") ?? 0, repairResults: this.model.results.get("repair")?.length ?? 0 }); } catch { /* Cached local fixture counts only. */ }', "");
+  source = source.replace(', focusIdentity: 0 }); try { this.observation.node(node);', ' }); try { this.observation.node(node);');
+  source = source.replace(/this\.observe\(\{ providerStage: (?:[1-9]|1[0-2]) \}\); /g, "");
+  source = source.replace('    this.observe({ commandStage: 7 });\n', "").replace(' this.observe({ commandStage: 14 });', "");
+  source = source.replace(' try { this.observation.decision(); } catch { /* Count only this existing call. */ }', "");
+  source = source.replace('this.observe({ commandStage: 6, cardFlags: 0 }); ', "");
+  source = source.replace(/this\.observe\(\{ commandStage: (?:[1-9]|1[0-3]) \}\); /g, "");
+  source = source.replace('if (node.patterns.toggle === "Off" && node.isEnabled) { await this.click(this.home, ask); }', 'if (node.patterns.toggle === "Off" && node.isEnabled) await this.click(this.home, ask);');
+  source = source.replace('nodes => { try { this.observation.card(nodes, this.previousCard); } catch { /* Cached poll only. */ } return nodes.some(node => node.automationId === "ask-cmd" && !!node.runtimeId && node.runtimeId !== this.previousCard); }',
+    'nodes => nodes.some(node => node.automationId === "ask-cmd" && !!node.runtimeId && node.runtimeId !== this.previousCard)');
   source = source.replaceAll("revealHomeControl", "revealWelcomeRow");
   source = source.replace("reveal Home controls with ordinary forward or reverse Tab navigation.", "follow consent order with ordinary forward or reverse Tab navigation.");
   source = source.replace('await this.revealWelcomeRow(id("project-coding-choose")); ', "");
@@ -91,6 +109,8 @@ it("preserves the entire packaged test after reversing only the new project/fold
 });
 it("preserves the whole workflow after reversing only the closed project/folder field and reviewed source-proof demotion", () => {
   let source = fs.readFileSync(".github/workflows/windows-node-product.yml", "utf8").replace(", projectStage: 16", "").replace(", projectStage: 0", "");
+  source = source.replace(', providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15', "");
+  source = source.replace(', providerStage: 0, commandStage: 0, commandDecision: 0, repairStep: 0, repairResults: 0, focusIdentity: 0, cardFlags: 0', "");
   const closed = `          const reviewed = Object.freeze({
             ready: false,
             run: 43991252195,
