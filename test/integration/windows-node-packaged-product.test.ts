@@ -73,7 +73,7 @@ async function run(file: string, args: readonly string[], env: NodeJS.ProcessEnv
 
 interface PackagedObservation {
   operation: number; iteration: number; welcomeStep: number; nextLabel: number; target: number;
-  bridgeError: number; snapshotFlags: number; focusFlags: number; inputResult: number; bridgeStage: number;
+  bridgeError: number; snapshotFlags: number; focusFlags: number; inputResult: number; bridgeStage: number; projectStage: number;
 }
 /**
  * Pure cached observations, never action/cleanup authority. Operation is the last marked existing operation, not proof it failed.
@@ -86,11 +86,13 @@ interface PackagedObservation {
  * For operations3/4 its existing UIA codes remain busy1/gone2/denied3/bad-request4/failed5.
  * Bridge stage0 is unknown;1..17 are PowerShell bootstrap milestones,18..25 are C# startup,26 is after source path construction,
  * and27/28 bracket only the initial source SHA chain;29 is after explicit system utility import,30 after assembly loading.
+ * Project/folder stage0 is unknown;1pane/2name/3add/4choose/5folder-call/6source-text/7disclosure/8dialog-wait/
+ * 9dialog-block-check/10dialog-activate/11dialog-foreground/12dialog-input/13destination-read/14select-folder/15dialog-closed/16project-return.
  * These are observed boundaries, not proof a later operation failed.
  */
 function packagedObservation() {
-  const limits: PackagedObservation = { operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30 };
-  const current: PackagedObservation = { operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0 };
+  const limits: PackagedObservation = { operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30, projectStage: 16 };
+  const current: PackagedObservation = { operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0, projectStage: 0 };
   let captured = false, first: Readonly<PackagedObservation> | undefined;
   const own = (value: unknown, key: string): unknown => {
     if (!value || typeof value !== "object" || types.isProxy(value)) return undefined;
@@ -431,22 +433,22 @@ class Journey {
     expect((await this.node(this.home, ask, false)).patterns.toggle).toBe("On");
   }
   private async folder(title: string, destination: string): Promise<void> {
-    const dialog = (await this.until(() => this.windows(), windows => windows.some(window => window.name === title), 20_000)).find(window => window.name === title)!;
-    if (!this.input || this.input.blockedReason?.(dialog.hwnd)) throw refusal(this.phase);
-    this.input.activate(dialog.hwnd);
-    await this.until(async () => this.input!.activeWindow(), hwnd => hwnd === dialog.hwnd, 5000);
-    try { this.chord("Alt_L", "d"); this.type(destination); this.pressKey("Return"); } finally { this.input.releaseAll(); }
+    this.observe({ projectStage: 8 }); const dialog = (await this.until(() => this.windows(), windows => windows.some(window => window.name === title), 20_000)).find(window => window.name === title)!;
+    this.observe({ projectStage: 9 }); if (!this.input || this.input.blockedReason?.(dialog.hwnd)) throw refusal(this.phase);
+    this.observe({ projectStage: 10 }); this.input.activate(dialog.hwnd);
+    this.observe({ projectStage: 11 }); await this.until(async () => this.input!.activeWindow(), hwnd => hwnd === dialog.hwnd, 5000);
+    this.observe({ projectStage: 12 }); try { this.chord("Alt_L", "d"); this.type(destination); this.pressKey("Return"); } finally { this.input.releaseAll(); }
     // Inspect the actual dialog after navigation; no hard-coded control ID or simulated dialog result.
-    await this.until(() => this.nodes(dialog.hwnd), nodes => nodes.some(node => (node.name ?? "").toLowerCase().includes(path.basename(destination).toLowerCase())));
-    await this.click(dialog.hwnd, node => node.controlType === "Button" && /^Select Folder$/i.test(node.name ?? ""));
-    await this.until(() => this.windows(), windows => !windows.some(window => window.hwnd === dialog.hwnd));
+    this.observe({ projectStage: 13 }); await this.until(() => this.nodes(dialog.hwnd), nodes => nodes.some(node => (node.name ?? "").toLowerCase().includes(path.basename(destination).toLowerCase())));
+    this.observe({ projectStage: 14 }); await this.click(dialog.hwnd, node => node.controlType === "Button" && /^Select Folder$/i.test(node.name ?? ""));
+    this.observe({ projectStage: 15 }); await this.until(() => this.windows(), windows => !windows.some(window => window.hwnd === dialog.hwnd));
   }
   async project(name: string): Promise<void> {
-    this.phase = 5; await this.pane("Projects");
-    await this.fill(this.home, id("project-sessions-name"), "Packaged Node " + name); await this.click(this.home, id("project-sessions-add"));
-    await this.click(this.home, id("project-coding-choose")); await this.folder("Choose a coding folder", this.source);
-    await this.accessibleText(text => text.includes(this.source));
-    await this.accessibleText(text => text.includes("Shells, npm, dependency installation, network access and child processes are unavailable"));
+    this.phase = 5; this.observe({ projectStage: 1 }); await this.pane("Projects");
+    this.observe({ projectStage: 2 }); await this.fill(this.home, id("project-sessions-name"), "Packaged Node " + name); this.observe({ projectStage: 3 }); await this.click(this.home, id("project-sessions-add"));
+    this.observe({ projectStage: 4 }); await this.click(this.home, id("project-coding-choose")); this.observe({ projectStage: 5 }); await this.folder("Choose a coding folder", this.source);
+    this.observe({ projectStage: 6 }); await this.accessibleText(text => text.includes(this.source));
+    this.observe({ projectStage: 7 }); await this.accessibleText(text => text.includes("Shells, npm, dependency installation, network access and child processes are unavailable")); this.observe({ projectStage: 16 });
   }
   async send(request: string): Promise<void> { await this.fill(this.home, id("project-sessions-request"), request); await this.click(this.home, id("project-sessions-send")); }
   private async command(): Promise<number> { return (await this.until(() => this.windows(), windows => windows.some(window => window.name === "Ember commands"), 45_000)).find(window => window.name === "Ember commands")!.hwnd; }

@@ -220,7 +220,7 @@ it("unchanged successful source reporting accepts only its complete seven-case i
 });
 
 const packagedFrame = (phase: number) => `Error: Windows Node packaged journey refused (phase ${phase}).`;
-const emptyObservation = () => ({ operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0 });
+const emptyObservation = () => ({ operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0, projectStage: 0 });
 type Observation = ReturnType<typeof emptyObservation>;
 const packagedDiagnostic = (fixture: ReturnType<typeof proofFixture>) => {
   const rows = fixture.printed.mock.calls.filter(call => call[0] === "Windows Node packaged proof failure facts"); expect(rows).toHaveLength(1);
@@ -232,6 +232,13 @@ it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])("observes only the bounded pack
   expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase, observation: emptyObservation() });
   expect(f.queries).toEqual(["exists", "read", "lstat", "exists"]); expect(f.invoked).toHaveBeenCalledTimes(1); expect(f.outputs).toEqual([]);
   expect(JSON.stringify(f.printed.mock.calls)).not.toContain("PRIVATE");
+});
+it.each(Array.from({ length: 16 }, (_, index) => index + 1))("observes existing project/folder stage %i only in the unchanged fatal packaged path", projectStage => {
+  const o = observationHelper(); o.update({ projectStage }); o.capture();
+  const f = proofFixture("packaged", passing("packaged"), { attempt: sourceAttempt(packagedFrame(5) + "\n" + observationFrame(o.value())) });
+  expect(f.run).toThrow("The required Windows Node product proof could not be verified.");
+  expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase: 5, observation: { ...emptyObservation(), projectStage } });
+  expect(f.invoked).toHaveBeenCalledTimes(1); expect(f.outputs).toEqual([]); expect(f.queries).toEqual(["exists", "read", "lstat", "exists"]);
 });
 it("a conflicting packaged phase remains unknown after repeated earlier frames", () => {
   const f = proofFixture("packaged", passing("packaged"), { attempt: sourceAttempt([packagedFrame(4), packagedFrame(5), packagedFrame(4)].join("\n")) });
@@ -358,7 +365,7 @@ it("the actual pure fixture helper freezes only bounded cached fields before cle
   o.node({ ...node, name: "Agree and continue", value: "PRIVATE field" }); o.step("Step 2 of 6");
   o.focused({ hwnd: 99, element: node }, node, 99); o.fresh({ isOffscreen: false, bounds: { x: 100, y: 100, width: 36, height: 21 } });
   expect(o.input(false)).toBe(false); o.capture(); const first = o.value();
-  expect(first).toEqual({ operation: 14, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 1, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 0 });
+  expect(first).toEqual({ operation: 14, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 1, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 0, projectStage: 0 });
   expect(Object.isFrozen(first)).toBe(true); expect(JSON.stringify(first)).not.toContain("PRIVATE");
   o.update({ operation: 0, iteration: 12 }); o.capture(); expect(o.value()).toBe(first);
 });
@@ -501,13 +508,13 @@ it("the actual outer failure catch captures before close and does not replace th
   expect(await module.exports(fixture, { async close() { trace.push("model"); } })).toEqual({ failed: true, phase: 3 });
   expect(trace).toEqual(["capture", "close", "model"]); expect(o.value()?.operation).toBe(7);
 });
-it.each(Object.entries({ operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30 }))("the pure helper refuses out-of-domain %s metadata", (field, maximum) => {
+it.each(Object.entries({ operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30, projectStage: 16 }))("the pure helper refuses out-of-domain %s metadata", (field, maximum) => {
   for (const invalid of [-1, maximum + 1, 0.5, Infinity, "PRIVATE"]) {
     const o = observationHelper(); o.update({ [field]: invalid }); o.capture(); expect(o.value()).toEqual(emptyObservation());
   }
 });
 it("the strict workflow projects one agreeing cached tuple while preserving phase and the original fatal guard", () => {
-  const tuple = { operation: 7, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 0, snapshotFlags: 0, focusFlags: 15, inputResult: 1, bridgeStage: 30 };
+  const tuple = { operation: 7, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 0, snapshotFlags: 0, focusFlags: 15, inputResult: 1, bridgeStage: 30, projectStage: 16 };
   const f = proofFixture("packaged", passing("packaged"), { attempt: sourceAttempt(packagedFrame(3) + "\n" + observationFrame(tuple), observationFrame(tuple)) });
   expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase: 3, observation: tuple });
   expect(f.queries).toEqual(["exists", "read", "lstat", "exists"]); expect(f.outputs).toEqual([]);
