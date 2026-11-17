@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-require-imports -- Fixed CommonJS Electron bench entry runs directly without an application build. */
 const { app, BrowserWindow, Menu, screen } = require("electron");
 const path = require("node:path");
-const readline = require("node:readline");
+const net = require("node:net");
 const { types } = require("node:util");
 
 let loadRecorded = false, loadCode = 0, firstQuit = 0;
@@ -35,9 +35,42 @@ if (!profile || !path.isAbsolute(profile)) process.exit(1);
 app.setPath("userData", profile);
 startup(2);
 let windows = [];
-readline.createInterface({ input: process.stdin }).on("line", line => { if (line === "quit") { noteQuit(2); app.quit(); } }).on("close", () => { noteQuit(1); app.quit(); });
+// Begin owned local control: GUI stdin is not the controller for this fixture.
+const address = process.env.EMBER_UIA_FOCUS_CONTROL, nonce = process.env.EMBER_UIA_FOCUS_NONCE;
+if (typeof address !== "string" || !/^\\\\\.\\pipe\\ember-native-focus-[a-f0-9]{32}$/.test(address) || typeof nonce !== "string" || !/^[a-f0-9]{64}$/.test(nonce)) process.exit(1);
+let controlBroken = false, controlAuthenticated = false, controlQuitting = false, controlInput = "", controlBytes = 0;
+let controlResolve, controlReject;
+const controlled = new Promise((resolve, reject) => { controlResolve = resolve; controlReject = reject; });
+void controlled.catch(() => undefined);
+const control = net.connect(address);
+function controlRefuse() {
+  if (controlBroken) return;
+  controlBroken = true; noteQuit(1); process.exitCode = 1; controlReject(new Error("Synthetic control refused.")); control.destroy(); app.quit();
+}
+control.on("error", controlRefuse);
+control.on("end", () => { if (controlInput || !controlQuitting) controlRefuse(); });
+control.on("close", hadError => { if (hadError || !controlQuitting) controlRefuse(); });
+control.once("connect", () => { control.write("HELLO " + nonce + " " + process.pid + "\n", error => { if (error) controlRefuse(); }); });
+control.on("data", chunk => {
+  if (controlBroken) return;
+  if (!Buffer.isBuffer(chunk) || (controlBytes += chunk.length) > 256 || [...chunk].some(byte => byte !== 10 && (byte < 32 || byte > 126))) { controlRefuse(); return; }
+  controlInput += chunk.toString("ascii");
+  let end;
+  while ((end = controlInput.indexOf("\n")) >= 0) {
+    const line = controlInput.slice(0, end); controlInput = controlInput.slice(end + 1);
+    if (line.length > 128) { controlRefuse(); return; }
+    if (!controlAuthenticated && line === "OK " + nonce) { controlAuthenticated = true; controlResolve(); }
+    else if (controlAuthenticated && !controlQuitting && line === "QUIT " + nonce) {
+      controlQuitting = true; noteQuit(2);
+      control.end("BYE " + nonce + " " + process.pid + "\n", () => app.quit());
+    } else { controlRefuse(); return; }
+  }
+  if (controlInput.length > 128 || controlQuitting && controlInput) controlRefuse();
+});
+// End owned local control.
 app.on("window-all-closed", () => { noteQuit(3); app.quit(); });
 app.whenReady().then(async () => {
+  await controlled;
   startup(3);
   Menu.setApplicationMenu(null);
   startup(4);
@@ -54,6 +87,7 @@ app.whenReady().then(async () => {
   startup(8);
   const metrics = app.getAppMetrics();
   const sandboxed = windows.every(window => metrics.find(metric => metric.pid === window.webContents.getOSProcessId())?.sandboxed === true);
+  if (controlBroken || !controlAuthenticated) throw new Error("Synthetic control refused.");
   startup(9);
   process.stdout.write("EMBER_UIA_FOCUS_READY_V1:" + (sandboxed ? "1" : "0") + "\n");
 }).catch(error => { if (!loadRecorded) noteLoad(error); noteQuit(4); process.stdout.write("EMBER_UIA_FOCUS_LOAD_V1:" + loadCode + ":" + firstQuit + "\nEMBER_UIA_FOCUS_READY_V1:0\n"); app.quit(); });

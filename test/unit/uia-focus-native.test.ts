@@ -56,7 +56,7 @@ it("the actual bridge error observation is owned early, rejection-handled and st
   const begin = native.indexOf("    const bridgeError = new Promise"), end = native.indexOf("    const poll =", begin); expect(begin > 0 && end > begin).toBe(true);
   const originalCurrent = native.match(/ {2}const current = \(\) => \{[^\n]+\};/)![0];
   const module = { exports: undefined as unknown as (ui: object) => { error: Promise<never>; current(): void; broken(): boolean } }, failure = new Error("Existing bridge failure.");
-  runInNewContext(transformSync(`module.exports=ui=>{let phase=2,retired=false,bridgeBroken=false;${originalCurrent}${native.slice(begin, end)}return{error:bridgeError,current,broken:()=>bridgeBroken};};`, { loader: "ts", format: "cjs", target: "node22" }).code,
+  runInNewContext(transformSync(`module.exports=ui=>{let phase=2,retired=false,bridgeBroken=false,control,owned;${originalCurrent}${native.slice(begin, end)}return{error:bridgeError,current,broken:()=>bridgeBroken};};`, { loader: "ts", format: "cjs", target: "node22" }).code,
     { module, refusal: () => failure });
   const child = new EventEmitter(), result = module.exports({ child }); expect(child.listenerCount("error")).toBe(1); result.current();
   expect(await Promise.race([Promise.resolve("ready"), result.error])).toBe("ready");
@@ -66,17 +66,18 @@ it("the actual bridge error observation is owned early, rejection-handled and st
 
 function ownedChild() {
   const first = native.indexOf("function startOwned("), last = native.indexOf("\nit.skipIf", first); expect(first >= 0 && last > first).toBe(true);
-  const child = Object.assign(new EventEmitter(), { stdin: new EventEmitter(), stdout: new EventEmitter(), stderr: new EventEmitter() });
+  const child = Object.assign(new EventEmitter(), { pid: 42, stdin: null, stdout: new EventEmitter(), stderr: new EventEmitter() });
   const module = { exports: undefined as unknown as (exe: string, app: string, env: object) => { process: typeof child; ready: Promise<boolean>; closed: Promise<{ code: number | null; signal: string | null }>; startup(): Readonly<{ appReady: number; appExit: number; appError: number; appStage: number; loadCode: number; quit: number }> } };
   const calls: unknown[][] = [];
   runInNewContext(transformSync(native.slice(first, last) + "\nmodule.exports = startOwned;", { loader: "ts", format: "cjs", target: "node22" }).code,
     { module, Buffer, types, spawn: (...args: unknown[]) => { calls.push(args); return child; } });
-  const owned = module.exports("fixed-electron.exe", "/fixed-bench", { FIXED: "yes" });
+  const owned = (module.exports as unknown as (...args: unknown[]) => ReturnType<typeof module.exports>)("fixed-electron.exe", "/fixed-bench", { FIXED: "yes" },
+    { address: "fixed-local-pipe", nonce: "fixed-nonce", authenticated: Promise.resolve(), bindChild(pid: number) { expect(pid).toBe(42); } });
   return { child, owned, calls };
 }
 it("captures the spawned owner and close listeners before any ready or startup failure can arrive", async () => {
   const f = ownedChild(); expect(f.owned.process).toBe(f.child); expect(f.child.listenerCount("close")).toBe(1); expect(f.child.listenerCount("error")).toBe(1);
-  expect(f.calls).toEqual([["fixed-electron.exe", ["/fixed-bench"], { env: { FIXED: "yes" }, stdio: ["pipe", "pipe", "pipe"], windowsHide: false }]]);
+  expect(f.calls).toEqual([["fixed-electron.exe", ["/fixed-bench"], { env: { FIXED: "yes", EMBER_UIA_FOCUS_CONTROL: "fixed-local-pipe", EMBER_UIA_FOCUS_NONCE: "fixed-nonce" }, stdio: ["ignore", "pipe", "pipe"], windowsHide: false }]]);
   f.child.emit("error", new Error("PRIVATE startup")); f.child.emit("close", 1, null);
   await expect(f.owned.ready).resolves.toBe(false); await expect(f.owned.closed).resolves.toEqual({ code: 1, signal: null });
 });
@@ -89,16 +90,17 @@ it.each(["positive", "negative", "oversized", "early-exit"])("the real startup r
   await expect(f.owned.ready).resolves.toBe(kind === "positive"); f.child.emit("close", 0, null); await f.owned.closed;
 });
 
-it.each(["clean", "app-failed", "app-unknown", "bridge-unknown", "bridge-error", "input-failed", "earlier-failure"])("actual teardown deletes only after fully observed clean owners, with %s", async kind => {
+it.each(["clean", "app-failed", "app-unknown", "bridge-unknown", "bridge-error", "control-unknown", "control-broken", "input-failed", "earlier-failure"])("actual teardown deletes only after fully observed clean owners, with %s", async kind => {
   const begin = native.indexOf("    retired = true;"), end = native.indexOf("\n  }\n  phase = failed", begin); expect(begin >= 0 && end > begin).toBe(true);
   const body = native.slice(begin, end), trace: string[] = [];
-  const process = { stdin: { end(value: string) { expect(value).toBe("quit\n"); trace.push("quit"); } }, exitCode: kind === "app-unknown" ? null : kind === "app-failed" ? 1 : 0, signalCode: null, kill() { trace.push("kill-app"); } };
+  const process = { exitCode: kind === "app-unknown" ? null : kind === "app-failed" ? 1 : 0, signalCode: null, kill() { trace.push("kill-app"); } };
   const fault = Promise.reject(new Error("PRIVATE close")); void fault.catch(() => undefined);
   const ports = { owned: { process, closed: kind === "app-unknown" ? fault : Promise.resolve({ code: kind === "app-failed" ? 1 : 0, signal: null }) },
+    control: { async quit() { trace.push("quit"); }, async close() { trace.push("close-control"); if (kind === "control-unknown") throw new Error("PRIVATE control"); }, broken: () => kind === "control-broken" },
     bridge: { async close() { trace.push("close-bridge"); if (kind === "bridge-unknown") throw new Error("PRIVATE bridge"); return { code: 0 }; }, closed: Promise.resolve(), kill() { trace.push("kill-bridge"); } },
     input: { releaseAll() { trace.push("release"); if (kind === "input-failed") throw new Error("PRIVATE input"); }, close() { trace.push("close-input"); } } };
   const module = { exports: undefined as unknown as (ports: object, earlier: boolean) => Promise<{ retired: boolean; cleanup: boolean; failed: boolean; firstFailure: number }> };
-  const code = `module.exports = async (ports, earlier) => { let phase=7, retired=false, bridgeBroken=${kind === "bridge-error"}, failed=earlier, firstFailure=earlier?4:0, cleanup; const root="fixed-root", work=Promise.resolve(); const {owned,bridge,input}=ports; const bounded=async p=>p; const fail=()=>{if(!failed)firstFailure=phase;failed=true;}; ${body} return {retired,cleanup,failed,firstFailure}; };`;
+  const code = `module.exports = async (ports, earlier) => { let phase=7, retired=false, bridgeBroken=${kind === "bridge-error"}, failed=earlier, firstFailure=earlier?4:0, cleanup; const root="fixed-root", work=Promise.resolve(),ownership={},retainedFocusOwners=new Set([ownership]); const {owned,bridge,input,control}=ports; const bounded=async p=>p; const fail=()=>{if(!failed)firstFailure=phase;failed=true;}; ${body} return {retired,cleanup,failed,firstFailure}; };`;
   runInNewContext(transformSync(code, { loader: "ts", format: "cjs", target: "node22" }).code, { module, fs: { rmSync(root: string) { expect(root).toBe("fixed-root"); trace.push("delete"); } } });
   const result = await module.exports(ports, kind === "earlier-failure");
   expect(result.retired).toBe(true); expect(trace.includes("delete")).toBe(kind === "clean"); expect(result.failed).toBe(kind !== "clean");
@@ -162,7 +164,7 @@ it.each(["ordinary", "missing", "link", "hardlink", "empty", "oversized", "alias
   });
   expect(module.exports("fixed-checkout")).toBe(mode === "ordinary" ? 7 : 6);
   expect(calls).toEqual(["fixed-checkout/index.html", "fixed-checkout/package.json", "fixed-checkout/main.cjs"]);
-  expect(native).toContain('fixtureFlags = fixtureCustody(path.join(repository, "test/fixtures/uia-focus-app"));\n    phase = 2; owned = startOwned');
+  expect(native).toContain('fixtureFlags = fixtureCustody(path.join(repository, "test/fixtures/uia-focus-app"));\n    phase = 2;');
 });
 it("does not read private getters or proxy traps when freezing startup provenance", () => {
   let reads = 0; const trap = () => { reads++; throw new Error("PRIVATE"); };
@@ -196,7 +198,14 @@ it.each([false, true])("captures startup once at the original failure before tea
   if (!outputFault) expect(JSON.parse(frames[0][1] as string)).toEqual({ schema: 1, phase: 2, appReady: 0, appExit: 0, appError: 0, appStage: 6, bridgeReady: 1, bridgeStage: 30, loadCode: 0, quit: 0, fixtureFlags: 7 });
 });
 
-const bench = fs.readFileSync("test/fixtures/uia-focus-app/main.cjs", "utf8");
+const controlledBench = fs.readFileSync("test/fixtures/uia-focus-app/main.cjs", "utf8");
+// Historical observer controls retain their exact 761d input. The actual controlled app is exercised over real local IPC separately.
+const controlBegin = controlledBench.indexOf("// Begin owned local control:"), controlEnd = controlledBench.indexOf("// End owned local control.\n", controlBegin);
+if (controlBegin < 0 || controlEnd <= controlBegin) throw new Error("Missing fixed local control delta.");
+const bench = (controlledBench.slice(0, controlBegin) + 'readline.createInterface({ input: process.stdin }).on("line", line => { if (line === "quit") { noteQuit(2); app.quit(); } }).on("close", () => { noteQuit(1); app.quit(); });\n' + controlledBench.slice(controlEnd + "// End owned local control.\n".length))
+  .replace('const net = require("node:net");', 'const readline = require("node:readline");')
+  .replace("  await controlled;\n", "")
+  .replace('  if (controlBroken || !controlAuthenticated) throw new Error("Synthetic control refused.");\n', "");
 let priorBench = bench.replace('const { types } = require("node:util");\n', "");
 const loadStart = priorBench.indexOf("\nlet loadRecorded ="), loadEnd = priorBench.indexOf("\n// Fixed bench boundaries only;", loadStart);
 if (loadStart < 0 || loadEnd <= loadStart) throw new Error("Missing fixed load observation helpers.");
@@ -261,11 +270,12 @@ it.each(["load", "stdin", "typed", "windows", "first-event", "subframe"] as cons
   expect(after.stdout).toEqual([`EMBER_UIA_FOCUS_LOAD_V1:${code}:${quit}\nEMBER_UIA_FOCUS_READY_V1:0\n`]);
   expect(before.stdout).toEqual(["EMBER_UIA_FOCUS_READY_V1:0\n"]); expect(JSON.stringify(after.stdout)).not.toContain("PRIVATE");
 });
-it("preserves the entire original readiness/conditions operation block and teardown/summary bytes", () => {
+it("preserves the entire original readiness/conditions operation block and binds the explicit local-control teardown", () => {
   const begin = native.indexOf("    const poll ="), end = native.indexOf("    work = body();", begin), cleanup = native.indexOf("    retired = true;");
   expect(begin > 0 && end > begin && cleanup > end).toBe(true);
   expect(createHash("sha256").update(native.slice(begin, end)).digest("hex")).toBe("35f8d1eddc313eb36150027f8a103fb3507ff415feb58c57e14d63171e28c15c");
-  expect(createHash("sha256").update(native.slice(cleanup)).digest("hex")).toBe("8295218fccb1f61b337a10b2ef64be3d5d2fc162e5e6d562749bf64c8c4eed3c");
+  expect(createHash("sha256").update(native.slice(cleanup)).digest("hex")).toBe("f84e1845985278585528583e4c57e578476d95da62d4ebdad79a42905129164c");
+  expect(createHash("sha256").update(bench).digest("hex")).toBe("cfaff3cb8dcee55af46e7fba8fe69ffeabf83c9019473e9b9ac7c76176428272");
 });
 it("recovers the whole original synthetic app by removing only the fixed observer helper and nine marker calls", () => {
   expect(createHash("sha256").update(oldBench).digest("hex")).toBe("31e7d5aa484c95a8ec95f0c54d7877db6bde5495bcd08e662bab488bc418b75a");
