@@ -43,20 +43,20 @@ jobs:
           const path = require("node:path");
           const { createHash } = require("node:crypto");
           const { spawnSync, execFileSync } = require("node:child_process");
-          // The fixed POSIX producer is authenticated; the expanded current-source graph awaits fresh qualification.
+          // The fixed POSIX producer and expanded current-source graph are independently qualified.
           // Product admission stays closed until seven-case evidence on both images is reviewed.
           // Workflow inputs or caller environment cannot select another producer or proof.
           const reviewed = Object.freeze({
-            ready: false,
+            ready: true,
             run: 43991252195,
             commit: "b75c944dec58973d157542e2d4d2db3720667982",
             artifact: 14289217635,
             archiveBytes: 38425334,
             archiveSha256: "cbbbf6c641c41bda8ece457c28a54b9bc4121a068dc376725bcf0e3ac24a2f62",
             manifestSha256: "d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f",
-            assetProofCommit: null,
-            assetProofManifestSha256: null,
-            verifierFileSha256: null,
+            assetProofCommit: "aa5345a934d75d9a7924a4b7984c3b27c9521020",
+            assetProofManifestSha256: "91f162e84a22f199606acee94131bcb605761d2796e57d9148c77311e09e8db6",
+            verifierFileSha256: "9674e7b019cf736024b00593e0a73cfa4c8a30ed57f8135baf749b15b21e2a97",
           });
           if (reviewed.ready !== true || !/^[0-9a-f]{40}$/.test(reviewed.commit ?? "") ||
               !Number.isSafeInteger(reviewed.artifact) || reviewed.artifact < 1 ||
@@ -208,8 +208,8 @@ jobs:
         run: |
           let failureJourney = 0, failureAttempt;
           const failureFacts = (attempt, packaged = false) => {
-            const limits = { operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30, projectStage: 16, providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15 };
-            const empty = { operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0, projectStage: 0, providerStage: 0, commandStage: 0, commandDecision: 0, repairStep: 0, repairResults: 0, focusIdentity: 0, cardFlags: 0 };
+            const limits = { operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 9, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30, projectStage: 16, providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15, allowFlags: 31, denyFlags: 31, hintFlags: 3 };
+            const empty = { operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0, projectStage: 0, providerStage: 0, commandStage: 0, commandDecision: 0, repairStep: 0, repairResults: 0, focusIdentity: 0, cardFlags: 0, allowFlags: 0, denyFlags: 0, hintFlags: 0 };
             const facts = packaged ? { child: 0, timeout: 0, phase: 0, observation: empty } : { child: 0, timeout: 0, phases: [0, 0, 0, 0, 0, 0, 0] };
             try {
               const { types } = require("node:util"), missing = Symbol();

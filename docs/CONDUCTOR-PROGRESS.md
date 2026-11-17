@@ -1,16 +1,16 @@
 # Conductor progress and remaining work
 
-Software progress updated on 17 November 2026, following published integration checkpoint `20300c71`. The original submitted
+Software progress updated on 17 November 2026, following published native-qualification checkpoint `aa5345a9`. The original submitted
 baseline was `audit/beta-readiness` at `76d0a2c9`; main was `85b5bd56` at that audit.
 [draft #262](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/262) targets main and records
 the latest head and its exact checks. The integration adds reviewed WSL/public-dependency and saved-draft
-work to the published conductor/project/session and Windows Node foundations. These changes have not yet
-qualified their final native source graph or complete Windows product journeys. The legacy native-SDK
+work to the published conductor/project/session and Windows Node foundations. Their final 146-file native
+source graph is qualified; complete current-source Windows product journeys remain pending. The legacy native-SDK
 `codingAvailable()` gate remains false. This is not merge readiness.
 
 ## Current software work on 17 November 2026
 
-Checkpoint `a0a7c707` adds only bounded cached diagnostics for the two packaged failures. Its exact source passed
+Earlier checkpoint `a0a7c707` added only bounded cached diagnostics for the two packaged failures. Its exact source passed
 342 targeted cases, lint and the full 1,517-file TypeScript check. Its six Windows product leaves completed at
 18 of 20: Server 2022 stopped at the second command decision's answer-button path, and Server 2025 at a project-flow
 focus identity check after provider setup. The earlier
@@ -26,8 +26,14 @@ The ordinary UIA pass does not certify either packaged case or the unpublished i
 The final combined source has 146 pins (4,238,624 bytes), manifest `91f162e8…`, with whole-verifier hash
 `9674e7b0…`. Root and an independent reviewer verified all source bytes, the 116-input native closure and unchanged
 worker recipes. Only the WSL readiness row changed from the earlier 146-file preparation. All live pins match.
-The four Node, WSL Home and draft product-proof gates remain closed with null proof metadata. The published
-131-file qualification below does not qualify this graph; fresh seven-mode evidence on both images is required.
+Published `aa5345a9` qualified that exact graph in
+[manual run 44117708730](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44117708730):
+876 contract cases passed, and each Windows Server image passed 620 portable cases and all seven native modes,
+zero skips. Root and an independent reviewer checked all fourteen exact-source frames, including the 32 C49
+controls in each natural mode (13 positive, 19 denied, two DACL pairs), genuine Node exit 17, mode-specific Stop/output,
+snapshot, unchanged seed and asset/private-tree/profile cleanup. This closes the fixed native asset proof, not Home
+or arbitrary-workload acceptance. The local P2 candidate sets all four product-proof tuples true for that
+qualification. This enables the required current-source product cases; it does not record their execution.
 
 The earlier [WSL native run 44093857380](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44093857380)
 at `b7e8e54b` passed its one real Windows-to-WSL case on each image, zero skips: non-root helper provisioning,
@@ -39,10 +45,10 @@ WSL runtime readiness now names that exact commit and run. This qualifies its is
 downloads, Home, ZIP or draft acceptance. WSL keeps source custody, model access
 and final artifacts on Windows; unknown host or guest cleanup retains the owner and blocks further work.
 
-The local public-dependency integration captures per-project opt-in separately from normal mode-sensitive approval
+The public-dependency integration captures per-project opt-in separately from normal mode-sensitive approval
 of each baseline or changed exact lock set before host downloads. Commands remain offline; private registries and
 general fetch are unavailable. Encrypted coding-draft Save/Open/Forget and fresh-folder import are implemented
-locally under consent 15. Opening is inert; old code/context grants no task, folder or execution authority, and work
+under consent 15. Opening is inert; old code/context grants no task, folder or execution authority, and work
 requires fresh source checks and a new explicit request. Neither implementation yet has its complete Windows Home proof.
 
 Two real pinned-SDK/public-dependency cases and five real Linux guest cases passed; these overlapping scopes are
@@ -54,9 +60,10 @@ four-suite run passed all 146 cases with the same source and original bounds. Th
 cause remain. No load or CPU explanation is established.
 
 New acceptance requires two resource, nine source Home and one shipped Home WSL case per image, plus a separate
-one-case saved-draft source Home journey per image that restarts the real app and OS keyring. The local CI caller
-and release dependencies require both new workflows; their native admission remains closed pending qualification.
-The integrated source passed its full 1,568-file TypeScript check and 458 targeted cases with no skips, plus full
+one-case saved-draft source Home journey per image that restarts the real app and OS keyring. With the unchanged
+Node two/seven/one inventory, the required total is 46 current-source cases across both images. P2 enables these
+cases through the required CI caller and release dependencies; all 46 remain pending on this candidate.
+The earlier integrated source passed its full 1,568-file TypeScript check and 458 targeted cases with no skips, plus full
 lint. The final readiness/pin batch passed a new full 1,568-file TypeScript check, 1,094 targeted cases with no skips,
 a fresh app build and normal-sandbox launcher/Ask smoke; the temporary helper was restored exactly. Its portable
 resource mocks now explicitly select closed or open readiness instead of depending on the production literal.
@@ -70,15 +77,26 @@ and draft product leaves refused the closed proof gate before app execution; tho
 qualification. A separate auxiliary branch at `2f194bbd` retains the old qualified 131-file graph while testing cached
 button diagnostics and an observed runtime-focus departure after Tab. Its 383 portable cases, 18 board cases and
 full 1,517-file TypeScript check passed. Actual Windows native/source leaves again passed 18 of 20 cases, but both
-packaged cases failed at strict focus checks in different paths. The queued-Tab change has not established a hosted
-cause or repair; a native Chromium focus/activation probe is being prepared without relaxing the identity guard.
+packaged cases failed at strict focus checks (focus flags 11, identity flags 59) in different paths. The queued-Tab
+change has not established a hosted cause or repair. A separate nine-file native Chromium focus/activation probe
+is frozen but has not run on Windows; its `only=focus` route is auxiliary only and does not relax the identity guard
+or qualify required product cases.
+
+The local P2 composition is independently peer-closed across 17 paths, with all 146 qualified source pins and
+verifier `9674e7b0…` unchanged. Its full TypeScript check passed over an unchanged 1,570-file catalog
+(`1cd9d6c2…`); 553 targeted cases across 13 files passed, zero skips, and all 13 TypeScript files passed lint.
+Consent expectations were updated: the focused two-case and whole 60-case views passed. The combined Root
+browser gate passed all 78 cases across both files, with zero failures or skips and the original bounds.
 
 Two separate preservation failures remain recorded. A Windows PowerShell UTF-8 case timed out at its original
 15-second bound, then passed in the single same-commit job retry; its first stall is unexplained. An EL8 forced-WASM
-speech case classified one synthetic refusal as assent. The unchanged original case and sixteen bounded local
-renditions subsequently produced no assent, so the cause remains under investigation. That speech test did not
-demonstrate a tool authorization. Windows and macOS ordinary jobs passed; final complete platform evidence is
-still required.
+speech case classified one synthetic refusal as assent. Twenty-four bounded local controls (sixteen user-rendition
+and eight read-out variations) were all clipped and emitted no utterances. One full original forced-WASM file,
+including the preceding cases, then passed 43 cases with one expected native-voice skip at unchanged bounds.
+These results did not reproduce or explain the EL8 failure; its original clipped/tail state was not captured.
+P2 includes failure-only bounded replay capture for those fixed public synthetic fixtures, with no recognizer or
+runtime repair and no transcript upload. The speech failure did not demonstrate a tool authorization. Earlier
+Windows and macOS ordinary jobs passed; final complete platform evidence is still required.
 
 Automatic combined completion was published at `7830febd`. Two to eight tasks from the current request can produce
 one tool-free synthesis after terminal results and cleanup settle. New intake, Stop and captured ownership/context
@@ -86,7 +104,7 @@ changes retire it. Settled foreground joins suppress duplication; existing quest
 The feature passed affected units, two real pinned-SDK/local-provider cases and normal-sandbox app smoke.
 
 The product is not merge-ready. Remaining software includes the packaged focus failures, speech investigation,
-final 146-file native qualification, all required new Home/draft journeys, and affected Linux, macOS and Windows regressions.
+all 46 required current-source product cases, and affected Linux, macOS and Windows regressions.
 No accepted live-provider credential is available; no chosen-account live request or acceptance is claimed. That
 verification is not intrinsically Windows-only. Physical device acceptance follows the software work. Main remains
 unchanged; no merge, tag or release.

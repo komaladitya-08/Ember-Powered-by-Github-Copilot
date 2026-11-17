@@ -129,3 +129,73 @@ it("reveals the newly opened Continue request before the real repair sequence fi
   };
   await execute.call(port); expect(calls).toEqual(["open", "reveal", "fill", "submit"]);
 });
+
+it("keeps the actual field-exit Tab and waits for a fresh owned departure before returning", async () => {
+  const fill = actualMethod("  private async fill(", "\n  private async homeText", "hwnd, select, value, password = false", { refusal: () => new Error("The controlled field guard refused.") });
+  const field = { pid: 7, runtimeId: "field-one", automationId: "project-sessions-request", isPassword: false }, calls: string[] = [], accepted: boolean[] = [];
+  const next = { pid: 7, runtimeId: "send-one", automationId: "project-sessions-send", hasKeyboardFocus: true };
+  const observations = [
+    { hwnd: 73, element: { ...field, hasKeyboardFocus: true } },
+    { hwnd: 73, element: { ...next, runtimeId: "field-one" } },
+    { hwnd: 73, element: { ...next, automationId: field.automationId } },
+    { hwnd: 73, element: { ...next, pid: 8 } },
+    { hwnd: 74, element: next },
+    { hwnd: 73, element: { ...next, hasKeyboardFocus: false } },
+    { hwnd: 73, element: { ...next, runtimeId: "" } },
+    { hwnd: 73, element: next },
+  ];
+  let reads = 0;
+  const port = {
+    phase: 5, async node() { return field; }, async focus(_hwnd: number, node: unknown) { expect(node).toBe(field); calls.push("focus"); return field; },
+    current() { calls.push("current"); }, chord(modifier: string, key: string) { expect([modifier, key]).toEqual(["Control_L", "a"]); calls.push("select"); },
+    type(value: string) { expect(value).toBe("A new original request."); calls.push("type"); }, pressKey(key: string) { expect(key).toBe("Tab"); calls.push("tab"); },
+    input: { blockedReason: () => null, activeWindow: () => 73, releaseAll() { calls.push("release"); } },
+    bridge: { async call(method: string, options: unknown, bound: number) { expect(method).toBe("focused"); expect(options).toEqual({ values: false, deadlineMs: 2500 }); expect(bound).toBe(5000); return observations[reads++]; } },
+    async until(read: () => Promise<unknown>, accepts: (value: unknown) => boolean, bound: number) {
+      expect(bound).toBe(10_000);
+      for (let index = 0; index < observations.length; index++) { const value = await read(), yes = accepts(value); accepted.push(yes); if (yes) return value; }
+      throw new Error("No exact owned departure was observed.");
+    },
+  };
+  await fill.call(port, 73, () => true, "A new original request.");
+  expect(accepted).toEqual([false, false, false, false, false, false, false, true]); expect(reads).toBe(8);
+  expect(calls.slice(0, 4)).toEqual(["focus", "select", "type", "tab"]); expect(calls.at(-1)).toBe("release");
+});
+
+it.each(["retired", "blocked", "foreign-before", "foreign-after"])("refuses %s after accepted Tab without refocusing or typing another field", async kind => {
+  const refused = new Error("The controlled field guard refused."), fill = actualMethod("  private async fill(", "\n  private async homeText", "hwnd, select, value, password = false", { refusal: () => refused });
+  const field = { pid: 7, runtimeId: "field-one", automationId: "project-sessions-request", isPassword: false }, calls: string[] = [];
+  let tab = false, read = false;
+  const port = {
+    phase: 5, async node() { return field; }, async focus() { calls.push("focus"); return field; },
+    current() { if (tab && kind === "retired") throw refused; }, chord() {}, type() { calls.push("type"); }, pressKey() { tab = true; calls.push("tab"); },
+    input: { blockedReason: () => tab && kind === "blocked" ? "protected" : null,
+      activeWindow: () => kind === "foreign-before" || kind === "foreign-after" && read ? 74 : 73, releaseAll() { calls.push("release"); } },
+    bridge: { async call() { read = true; calls.push("read"); return { hwnd: 73, element: { pid: 7, runtimeId: "send-one", automationId: "project-sessions-send", hasKeyboardFocus: true } }; } },
+    async until(read: () => Promise<unknown>, accepts: (value: unknown) => boolean) { const value = await read(); if (!accepts(value)) throw refused; return value; },
+  };
+  await expect(fill.call(port, 73, () => true, "Public request.")).rejects.toBe(refused);
+  expect(calls.filter(value => value === "focus")).toHaveLength(1); expect(calls.filter(value => value === "type")).toHaveLength(1);
+  expect(calls.includes("read")).toBe(kind === "foreign-after"); expect(calls.at(-1)).toBe("release");
+});
+
+it("retains the actual secret-field mismatch refusal before any input or departure observation", async () => {
+  const refused = new Error("The controlled secret-field guard refused."), fill = actualMethod("  private async fill(", "\n  private async homeText", "hwnd, select, value, password = false", { refusal: () => refused });
+  const calls: string[] = [], port = { phase: 5, async node() { return { isPassword: true }; }, async focus() { calls.push("focus"); return { isPassword: true }; },
+    chord() { calls.push("select"); }, type() { calls.push("type"); }, pressKey() { calls.push("tab"); }, until() { calls.push("read"); }, input: { releaseAll() { calls.push("release"); } } };
+  await expect(fill.call(port, 73, () => true, "Not a secret.")).rejects.toBe(refused); expect(calls).toEqual(["focus"]);
+});
+
+it.each([{ name: "Save", automationId: "", password: true }, { name: "Advanced", automationId: undefined, password: false }])("observes a legitimate unnamed $name runtime departure without granting the following action", async endpoint => {
+  const fill = actualMethod("  private async fill(", "\n  private async homeText", "hwnd, select, value, password = false", { refusal: () => new Error("The controlled field guard refused.") });
+  const field = { pid: 7, runtimeId: "field-one", automationId: endpoint.password ? "byok-key" : "byok-worker", isPassword: endpoint.password };
+  const calls: string[] = [], port = {
+    phase: 4, async node() { return field; }, async focus() { calls.push("field-focus"); return field; }, current() {}, chord() {}, type() {}, pressKey(key: string) { expect(key).toBe("Tab"); calls.push("tab"); },
+    input: { blockedReason: () => null, activeWindow: () => 73, releaseAll() { calls.push("release"); } },
+    bridge: { async call(method: string) { expect(method).toBe("focused"); calls.push("observe"); return { hwnd: 73, element: { pid: 7, runtimeId: "unnamed-next", automationId: endpoint.automationId, name: endpoint.name, hasKeyboardFocus: true } }; } },
+    async until(read: () => Promise<unknown>, accepts: (value: unknown) => boolean, bound: number) { expect(bound).toBe(10_000); const value = await read(); expect(accepts(value)).toBe(true); return value; },
+  };
+  await fill.call(port, 73, () => true, "Fixed synthetic input.", endpoint.password);
+  // This is departure only. No next-control action or identity exemption exists in fill().
+  expect(calls).toEqual(["field-focus", "tab", "observe", "release"]);
+});

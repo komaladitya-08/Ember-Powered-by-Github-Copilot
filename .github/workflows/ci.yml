@@ -187,11 +187,29 @@ jobs:
           key: voice-models-ryan-el8-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
       - run: node scripts/voice/prepare.mjs --voice ryan
       - name: Speech on RHEL 8's glibc, on both builds (WebAssembly, then sherpa-onnx's C API, which the packages use)
+        id: speech
         env:
           EMBER_VOICE_TEST: "1"
+          EMBER_SYNTHETIC_TAIL_CAPTURE: "1"
         run: |
           EMBER_VOICE_BACKEND=wasm npm run test:integration -- test/integration/voice.test.ts
           EMBER_KITTEN_TEST=1 EMBER_SHERPA_CAPI="$(node scripts/voice/fetch-capi.mjs)" npm run test:integration -- test/integration/voice.test.ts
+      - name: Preserve fixed synthetic refusal-tail failure evidence
+        if: failure() && !cancelled() && steps.speech.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: synthetic-refusal-tail-el8
+          if-no-files-found: ignore
+          retention-days: 3
+          path: |
+            ${{ runner.temp }}/ember-synthetic-refusal-tail/facts.json
+            ${{ runner.temp }}/ember-synthetic-refusal-tail/synthetic-tail-user.f32le
+            ${{ runner.temp }}/ember-synthetic-refusal-tail/synthetic-tail-readout.f32le
+            ${{ runner.temp }}/ember-synthetic-refusal-tail/synthetic-tail-mic.f32le
+            ${{ runner.temp }}/ember-synthetic-refusal-tail/synthetic-tail-asr-1.f32le
+            ${{ runner.temp }}/ember-synthetic-refusal-tail/synthetic-tail-asr-2.f32le
+            ${{ runner.temp }}/ember-synthetic-refusal-tail/synthetic-tail-asr-3.f32le
+            ${{ runner.temp }}/ember-synthetic-refusal-tail/synthetic-tail-asr-4.f32le
       - run: npm run build
       - name: Launch smoke test as a normal user (sandbox on)
         run: |

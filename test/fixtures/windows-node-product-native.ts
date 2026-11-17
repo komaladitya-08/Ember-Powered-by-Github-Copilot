@@ -18,12 +18,12 @@ export const WINDOWS_NODE_PRODUCT_NATIVE_CASES = Object.freeze(["natural-repair"
 export type WindowsNodeProductNativeCase = typeof WINDOWS_NODE_PRODUCT_NATIVE_CASES[number];
 export const WINDOWS_NODE_PRODUCT_NATIVE_ARGV = Object.freeze(["--preserve-symlinks", "--preserve-symlinks-main", "product-native.cjs", "exercise"]);
 export const WINDOWS_NODE_PRODUCT_NATIVE_CWD = "\\work";
-/** Reviewed fixed producer; current-source proof awaits fresh native qualification. Callers cannot override either identity. */
-export const WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE = Object.freeze({ ready: false as boolean,
+/** Reviewed literal producer and independently qualified current-source asset proof; callers cannot override either identity. */
+export const WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE = Object.freeze({ ready: true as boolean,
   manifestSha256: "d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f" as string | null,
-  assetProofCommit: null as string | null,
-  assetProofManifestSha256: null as string | null,
-  verifierFileSha256: null as string | null });
+  assetProofCommit: "aa5345a934d75d9a7924a4b7984c3b27c9521020" as string | null,
+  assetProofManifestSha256: "91f162e84a22f199606acee94131bcb605761d2796e57d9148c77311e09e8db6" as string | null,
+  verifierFileSha256: "9674e7b019cf736024b00593e0a73cfa4c8a30ed57f8135baf749b15b21e2a97" as string | null });
 const OWNER = "b".repeat(64), PROJECT = "22222222-2222-4222-8222-222222222222";
 const PROGRAM = fileURLToPath(new URL("./windows-node-product-native-program.cjs", import.meta.url));
 const stdout = Buffer.concat([Buffer.from("PRODUCT-OUT\n"), Buffer.alloc(72 * 1024, 79), Buffer.from("\nPRODUCT-EOF\n")]);

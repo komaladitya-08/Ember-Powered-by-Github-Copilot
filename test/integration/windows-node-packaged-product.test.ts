@@ -74,7 +74,7 @@ async function run(file: string, args: readonly string[], env: NodeJS.ProcessEnv
 interface PackagedObservation {
   operation: number; iteration: number; welcomeStep: number; nextLabel: number; target: number;
   bridgeError: number; snapshotFlags: number; focusFlags: number; inputResult: number; bridgeStage: number; projectStage: number;
-  providerStage: number; commandStage: number; commandDecision: number; repairStep: number; repairResults: number; focusIdentity: number; cardFlags: number;
+  providerStage: number; commandStage: number; commandDecision: number; repairStep: number; repairResults: number; focusIdentity: number; cardFlags: number; allowFlags: number; denyFlags: number; hintFlags: number;
 }
 /**
  * Pure cached observations, never action/cleanup authority. Operation is the last marked existing operation, not proof it failed.
@@ -96,10 +96,12 @@ interface PackagedObservation {
  * Repair step/results0..4 are cached local fixture counts at the first failure, never tool output or execution evidence.
  * Focus identity bits: target-runtime1/returned-runtime2/runtime-match4/target-PID8/returned-PID16/PID-match32/known-string-automation-ID-match64/known-string-control-type-match128.
  * Card bits from an existing display poll: ask-cmd-present1/nonempty-runtime2/different-from-previous4/previous-recorded8.
+ * Target codes1..7 keep the existing welcome controls;8project-sessions-request/9project-sessions-send.
+ * Existing stage13 snapshot only: Allow/Not now presence1/enabled2/disabled4/onscreen8/offscreen16; hint bits exact whole-command-read1/answer-retry2.
  */
 function packagedObservation() {
-  const limits: PackagedObservation = { operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30, projectStage: 16, providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15 };
-  const current: PackagedObservation = { operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0, projectStage: 0, providerStage: 0, commandStage: 0, commandDecision: 0, repairStep: 0, repairResults: 0, focusIdentity: 0, cardFlags: 0 };
+  const limits: PackagedObservation = { operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 9, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30, projectStage: 16, providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15, allowFlags: 31, denyFlags: 31, hintFlags: 3 };
+  const current: PackagedObservation = { operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0, projectStage: 0, providerStage: 0, commandStage: 0, commandDecision: 0, repairStep: 0, repairResults: 0, focusIdentity: 0, cardFlags: 0, allowFlags: 0, denyFlags: 0, hintFlags: 0 };
   let captured = false, first: Readonly<PackagedObservation> | undefined;
   let decisions = 0;
   const own = (value: unknown, key: string): unknown => {
@@ -124,6 +126,21 @@ function packagedObservation() {
       }
       update({ cardFlags: flags });
     } catch { /* No new snapshot or runtime identity is retained. */ } },
+    controls(value: unknown) { try {
+      if (current.commandStage !== 13) return;
+      const count = own(value, "length"); let allowFlags = 0, denyFlags = 0, hintFlags = 0;
+      if (!Array.isArray(value) || types.isProxy(value) || typeof count !== "number" || !Number.isInteger(count) || count < 0 || count > 2000) { update({ allowFlags, denyFlags, hintFlags }); return; }
+      for (let index = 0; index < count; index++) {
+        const node = own(value, String(index)), name = own(node, "name"), kind = own(node, "controlType");
+        if (kind === "Button" && (name === "Allow" || name === "Not now")) {
+          const enabled = own(node, "isEnabled"), offscreen = own(node, "isOffscreen");
+          const flags = 1 | (enabled === true ? 2 : enabled === false ? 4 : 0) | (offscreen === false ? 8 : offscreen === true ? 16 : 0);
+          if (name === "Allow") allowFlags |= flags; else denyFlags |= flags;
+        }
+        if (kind === "Text") hintFlags |= name === "Read the whole command to allow it." ? 1 : name === "Ember couldn't take that answer just now. Try again." ? 2 : 0;
+      }
+      update({ allowFlags, denyFlags, hintFlags });
+    } catch { /* Existing admitted snapshot only; no control text, identity or output is retained. */ } },
     answer(value: unknown) { try {
       const error = own(own(value, "error"), "code"), result = own(value, "result"), cut = own(own(result, "cut"), "length"), count = own(own(result, "nodes"), "length");
       update({ bridgeError: ["busy", "gone", "denied", "bad_request", "failed"].indexOf(error as string) + 1,
@@ -157,7 +174,7 @@ function packagedObservation() {
     windows(value: unknown) { try { update({ snapshotFlags: own(value, "length") === 0 ? 8 : 0 }); } catch { /* Never change the returned window list. */ } },
     node(value: unknown) { try {
       const selected = own(value, "automationId");
-      const target = ["w-next", "w-alt", "w-row-memory", "w-row-voice", "w-row-screenshots", "w-row-interactive", "w-row-commands"].indexOf(selected as string) + 1;
+      const target = ["w-next", "w-alt", "w-row-memory", "w-row-voice", "w-row-screenshots", "w-row-interactive", "w-row-commands", "project-sessions-request", "project-sessions-send"].indexOf(selected as string) + 1;
       update({ target });
       if (target === 1 || target === 2) { const name = own(value, "name"); update({ nextLabel: typeof name === "string" ? ["Get started", "Agree and continue", "Skip for now", "Continue", "Continue anyway", "Start"].indexOf(name) + 1 || 7 : 0 }); }
     } catch { /* Never inspect unknown node accessors. */ } },
@@ -266,6 +283,7 @@ class Journey {
     const result = answer.result as { nodes: RawNode[]; busy: boolean; truncated: boolean; cut: string[] };
     if (result.busy) return [];
     if (result.truncated || result.cut.length || !result.nodes.length) throw refusal(this.phase);
+    try { this.observation.controls(result.nodes); } catch { /* Cached stage13 controls only. */ }
     return result.nodes;
   }
   private async node(hwnd: number, select: Selector, enabled = true): Promise<RawNode> {
@@ -324,7 +342,20 @@ class Journey {
   private async fill(hwnd: number, select: Selector, value: string, password = false): Promise<void> {
     const node = await this.focus(hwnd, await this.node(hwnd, select));
     if (!!node.isPassword !== password) throw refusal(this.phase);
-    try { this.chord("Control_L", "a"); this.type(value); this.pressKey("Tab"); } finally { this.input!.releaseAll(); }
+    try {
+      this.chord("Control_L", "a"); this.type(value); this.pressKey("Tab");
+      // SendInput confirms insertion, not consumption. Observe owned runtime-focus departure; the next action still validates its own exact target.
+      await this.until(async () => {
+        this.current();
+        if (this.input!.blockedReason?.(hwnd) || this.input!.activeWindow() !== hwnd) throw refusal(this.phase);
+        const focused = await this.bridge!.call<{ element: RawNode | null; hwnd: number | null }>("focused", { values: false, deadlineMs: 2500 }, 5000);
+        this.current();
+        if (this.input!.blockedReason?.(hwnd) || this.input!.activeWindow() !== hwnd) throw refusal(this.phase);
+        return focused;
+      }, result => result.hwnd === hwnd && !!result.element && Number.isSafeInteger(result.element.pid) && result.element.pid! > 0 && result.element.pid === node.pid
+        && result.element.hasKeyboardFocus === true && typeof result.element.runtimeId === "string" && !!result.element.runtimeId && result.element.runtimeId !== node.runtimeId
+        && (!node.automationId || result.element.automationId !== node.automationId), 10_000);
+    } finally { this.input!.releaseAll(); }
   }
   private async homeText(select: Selector): Promise<string> { return this.text(this.home, select); }
   private async accessibleText(accepts: (value: string) => boolean, ms = 30_000): Promise<string> {
@@ -478,7 +509,7 @@ class Journey {
   async send(request: string): Promise<void> { await this.revealHomeControl(id("project-sessions-request"), true, true); await this.fill(this.home, id("project-sessions-request"), request); await this.click(this.home, id("project-sessions-send")); }
   private async command(): Promise<number> { return (await this.until(() => this.windows(), windows => windows.some(window => window.name === "Ember commands"), 45_000)).find(window => window.name === "Ember commands")!.hwnd; }
   async decide(argv: readonly string[], answer: "Allow" | "Not now" = "Allow"): Promise<void> {
-    this.phase = 6; try { this.observation.decision(); } catch { /* Count only this existing call. */ } this.observe({ commandStage: 6, cardFlags: 0 }); const hwnd = await this.command();
+    this.phase = 6; try { this.observation.decision(); } catch { /* Count only this existing call. */ } this.observe({ commandStage: 6, cardFlags: 0, allowFlags: 0, denyFlags: 0, hintFlags: 0 }); const hwnd = await this.command();
     this.observe({ commandStage: 7 });
     const display = (await this.until(() => this.nodes(hwnd), nodes => { try { this.observation.card(nodes, this.previousCard); } catch { /* Cached poll only. */ } return nodes.some(node => node.automationId === "ask-cmd" && !!node.runtimeId && node.runtimeId !== this.previousCard); }, 45_000)).find(id("ask-cmd"))!;
     this.observe({ commandStage: 8 }); await this.focus(hwnd, display);

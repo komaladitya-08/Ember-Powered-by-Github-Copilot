@@ -1772,7 +1772,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await p.locator("#w-count").innerText()).toBe("Step 2 of 6");
     expect(await p.locator("#w-changes").isVisible()).toBe(true);
     const changed = await p.locator("#w-changes-list li").allInnerTexts();
-    expect(changed).toHaveLength(8);
+    expect(changed).toHaveLength(9);
     expect(changed[0]).toContain("“Keep my recent conversation”");
     // Version 8 (owner decision of 2026-11-12): anyone near the computer can answer Ember's questions by voice.
     expect(changed[1]).toContain("anyone near the computer can answer it by voice");
@@ -1788,6 +1788,8 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(changed[6]).toBe("If you choose Save projects, I encrypt project names, goals and session outcomes on this computer until you choose Forget saved projects or Forget everything. Opening a checkpoint never resumes work.");
     // Version 14: coding copies/sends and full-file export retention are agreed before coding can start.
     expect(changed[7]).toBe("When you ask for coding work, I copy the project folder you chose and may send requested files and command output to your model, leaving the original unchanged. Exports keep all captured files, including unchanged files, until you remove them. Private copies I can't verify as removed may remain and block new coding work.");
+    // Version 15: explicit encrypted drafts, historical context and separately enabled exact public dependency sets.
+    expect(changed[8]).toBe("If you choose Save coding draft, I encrypt complete captured files, the last request and summary, and historical check outcomes on this computer until you forget the draft or choose Forget everything. Opening a saved draft never resumes work. Using its edits requires a newly chosen folder, a new import review and a new request. When you start a new request from an imported draft, its saved request and summary may go to your connected model as historical context. If you separately enable public dependencies for a WSL coding project, I may send its locked public npm package names and versions to registry.npmjs.org after the normal approval decision for that exact set. I send no project files or private registry credentials there, and commands remain offline.");
     expect(await p.locator(".w-row").evaluateAll(rows => rows.map(r => (r as HTMLElement).dataset.row))).toEqual(["interactive"]);
     expect(await p.locator("#w-row-interactive").isChecked()).toBe(true);
     // The usual points and the full text are still there; nothing goes on until Agree is saved.
@@ -1838,7 +1840,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     // A returning user after a consent bump: Ember isn't connected yet (nothing is, before the consent).
     const p = await open({ consent: 6, provider: own, providerState: inForce });
     expect(await p.locator("#w-title").innerText()).toBe("What's changed since you last agreed");
-    await expect.poll(() => send(p)).toBe("When you ask something, your request and what I read go to your own model provider (api.example.com). Nothing is sent before you ask. For coding, I use a private copy of the project folder you choose; requested files and command output may go to the connected model. Your original files stay unchanged.");
+    await expect.poll(() => send(p)).toBe("When you ask something, your request and what I read go to your own model provider (api.example.com). Nothing is sent before you ask. For coding, I use a private copy of the project folder you choose; requested files and command output may go to the connected model. Your original files stay unchanged. When you start a new request from an imported draft, its saved request and summary may go to your connected model as historical context. If you separately enable public dependencies for a WSL coding project, I may send its locked public npm package names and versions to registry.npmjs.org after the normal approval decision for that exact set. I send no project files or private registry credentials there, and commands remain offline.");
     expect(await full(p)).toBe("your own model provider (api.example.com)");
     expect(await send(p)).not.toContain("Copilot");
     // Agreed, and Back to the consent from the sign-in step: the same recipient.

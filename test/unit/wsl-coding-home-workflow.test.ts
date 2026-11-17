@@ -41,7 +41,7 @@ it("configures both images, all three distinct leaves and a strict required call
   for (const file of Object.values(WSL_PRODUCT_FILES)) expect(workflow).toContain(file);
   for (const flag of ["EMBER_WSL_CODING_RESOURCES_TEST", "EMBER_ELECTRON_WSL_CODING_PRODUCT_TEST", "EMBER_PACKAGED_WSL_CODING_PRODUCT_TEST"]) expect(workflow).toContain(flag + ': "1"');
 });
-it("retains the exact existing producer/extraction/source-reader programs except the closed proof tuple", () => {
+it("retains the exact existing producer/extraction/source-reader programs except the reviewed proof tuple", () => {
   const original = fs.readFileSync(".github/workflows/windows-node-product.yml", "utf8");
   const normal = (value: string) => value.replace(/ready: (?:true|false),/, "ready: PIN,")
     .replace(/(assetProofCommit|assetProofManifestSha256|verifierFileSha256): (?:"[0-9a-f]+"|null),/g, "$1: PIN,")
@@ -51,13 +51,31 @@ it("retains the exact existing producer/extraction/source-reader programs except
     expect(normal(script(name))).toBe(normal(script(name, original)));
   }
 });
-it("keeps admission false/null and cannot fetch or spawn from the workflow guard", () => {
-  const spawnSync = vi.fn(), execFileSync = vi.fn();
-  expect(() => runInNewContext(script("Require the reviewed POSIX producer and authenticate its exact archive"), {
-    process: { env: {} }, console: { info() {} }, require: (name: string) => name === "node:child_process" ? { spawnSync, execFileSync } : nativeRequire(name),
-  }, { timeout: 1000 })).toThrow();
-  expect(spawnSync).not.toHaveBeenCalled(); expect(execFileSync).not.toHaveBeenCalled();
-  expect(workflow).toContain("ready: false"); for (const field of ["assetProofCommit", "assetProofManifestSha256", "verifierFileSha256"]) expect(workflow).toContain(field + ": null");
+it("binds WSL Home to the reviewed fixed producer and qualified source proof", () => {
+  const literal = script("Require the reviewed POSIX producer and authenticate its exact archive").match(/const reviewed = Object\.freeze\([\s\S]*?\);/)?.[0];
+  expect(literal).toBeDefined();
+  const reviewed = runInNewContext(literal! + "\nreviewed;");
+  expect(reviewed).toEqual({ ready: true, run: 43991252195, commit: "b75c944dec58973d157542e2d4d2db3720667982", artifact: 14289217635, archiveBytes: 38425334,
+    archiveSha256: "cbbbf6c641c41bda8ece457c28a54b9bc4121a068dc376725bcf0e3ac24a2f62",
+    manifestSha256: "d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f",
+    assetProofCommit: "aa5345a934d75d9a7924a4b7984c3b27c9521020",
+    assetProofManifestSha256: "91f162e84a22f199606acee94131bcb605761d2796e57d9148c77311e09e8db6",
+    verifierFileSha256: "9674e7b019cf736024b00593e0a73cfa4c8a30ed57f8135baf749b15b21e2a97" });
+  expect(Object.isFrozen(reviewed)).toBe(true);
+});
+it.each([
+  ["closed", "ready: true,", "ready: false,"],
+  ["missing proof commit", 'assetProofCommit: "aa5345a934d75d9a7924a4b7984c3b27c9521020",', "assetProofCommit: null,"],
+  ["missing source manifest", 'assetProofManifestSha256: "91f162e84a22f199606acee94131bcb605761d2796e57d9148c77311e09e8db6",', "assetProofManifestSha256: null,"],
+  ["missing verifier", 'verifierFileSha256: "9674e7b019cf736024b00593e0a73cfa4c8a30ed57f8135baf749b15b21e2a97",', "verifierFileSha256: null,"],
+] as const)("refuses %s proof before any download, source read or spawn", (_kind, before, after) => {
+  expect(workflow.split(before)).toHaveLength(2);
+  const closed = workflow.replace(before, after), spawnSync = vi.fn(), execFileSync = vi.fn(), readFileSync = vi.fn();
+  expect(() => runInNewContext(script("Require the reviewed POSIX producer and authenticate its exact archive", closed), {
+    process: { env: {} }, console: { info() {} }, require: (name: string) => name === "node:child_process" ? { spawnSync, execFileSync }
+      : name === "node:fs" ? { readFileSync } : nativeRequire(name),
+  }, { timeout: 1000 })).toThrow("blocked pending literal reviewed POSIX producer metadata");
+  expect(spawnSync).not.toHaveBeenCalled(); expect(execFileSync).not.toHaveBeenCalled(); expect(readFileSync).not.toHaveBeenCalled();
 });
 it("uses the latest approved system-prefix provisioning rather than a private unsupported Node prefix", () => {
   expect(workflow).toContain("shell: bash"); expect(workflow).toContain("Vampire/setup-wsl@4c48163d9f981914dd8caa0fc335fe19cca5bff4");
