@@ -80,5 +80,13 @@ it("workflow registration cannot start native cases or replace the fixed authent
   expect(workflow).toContain("actions/artifacts/14224884648/zip"); expect(workflow).toContain("source.stat().st_size != 38424638");
   expect(workflow).toContain("97d34d7260474d71699f6ebca3a5b4a88e1d3663aa4a817a9f02c43a4ff29234");
   expect(workflow).toContain("len(entries) != 4"); expect(workflow).toContain("entry.file_size != pin['bytes']"); expect(workflow).toContain("hashlib.sha256(body).hexdigest() != pin['sha256']");
+  const contracts = workflow.slice(workflow.indexOf("  contracts:"), workflow.indexOf("  native:"));
+  const commands = [...contracts.matchAll(/^\s+run: (npx vitest run .+)$/gm)].map(match => match[1]);
+  const remaining = ["build", "native", "proof", "program", "run", "stage"].map(name => `test/unit/windows-node-asset-enforcement-${name}.test.ts`);
+  expect(commands).toEqual([
+    "npx vitest run test/unit/windows-node-asset-enforcement-c.test.ts --maxWorkers=1",
+    `npx vitest run ${remaining.join(" ")} --maxWorkers=2`,
+  ]);
+  expect(contracts.match(/windows-node-asset-enforcement-c\.test\.ts/g)).toHaveLength(1);
   expect(workflow).not.toMatch(/upload-artifact|continue-on-error|pull_request_target|nodejs\.org/);
 });

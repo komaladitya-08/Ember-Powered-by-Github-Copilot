@@ -12,7 +12,7 @@ export const WINDOWS_NODE_ASSET_ENFORCEMENT_RUN = Object.freeze({ schema: 3, sco
   kind: "fixed-native-node-asset-enforcement-v3", cases: Object.freeze(["natural", "natural-default", "overflow", "cancel", "precreate", "preresume", "sharedcreate"] as const),
 });
 export const WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS: readonly Readonly<{ path: string; bytes: number; sha256: string }>[] = Object.freeze([
-  Object.freeze({"path":".github/workflows/experimental-windows-node-asset-enforcement.yml","bytes":6242,"sha256":"348be6565ee043b860d0a4a8c34f010c0ff26705c390e2cd23b5c98acd0d2e72"}),
+  Object.freeze({"path":".github/workflows/experimental-windows-node-asset-enforcement.yml","bytes":6350,"sha256":"552d7925355a2f08a53c18574faf121d8bb9ce43917517b86a1a700e5a7c4a92"}),
   Object.freeze({"path":"app/main/agent/autonomy-intent.ts","bytes":13554,"sha256":"c2039045f34c9714763420381fa613a02f6e8594f19a2e5b42911269b9ab779e"}),
   Object.freeze({"path":"app/main/agent/coding-artifact-store.ts","bytes":4695,"sha256":"e44df8ab3879314d347b194d64d8e31b61a088dad4e296b074dd72cd8f37108d"}),
   Object.freeze({"path":"app/main/agent/coding-platform.ts","bytes":5597,"sha256":"2716cc34d5c785a0f9ee60cde27bd3d46d6f72b8da8f433af55bbd285443cf08"}),
@@ -92,7 +92,7 @@ export const WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS: readonly Readonly<{ pat
   Object.freeze({"path":"app/shared/vault.ts","bytes":18154,"sha256":"32c4b58420f6ac0d7ba58ba3db0dcadb746c178cb0c440b8754414426fa50a1e"}),
   Object.freeze({"path":"app/shared/visible-text.ts","bytes":9581,"sha256":"596a790a31c8afcc93386343cdfe16247509379e2d233f0b7a80d1562a3c31ef"}),
   Object.freeze({"path":"app/shared/windows-node-toolchain.json","bytes":1442,"sha256":"f46286f5e0915ff2f03642a54afdf0b03f465d6a76f09a15a6fa6a1f9f9cc20d"}),
-  Object.freeze({"path":"docs/EXPERIMENTAL-WINDOWS-NODE-ASSET-ENFORCEMENT.md","bytes":17834,"sha256":"c42eb66dbcf4c9944fd9524ddc1c171a8e19409453dbd4457ba7088b50244509"}),
+  Object.freeze({"path":"docs/EXPERIMENTAL-WINDOWS-NODE-ASSET-ENFORCEMENT.md","bytes":18902,"sha256":"255b430eb12d900dcfb99f95b88573beaeec86bfe05f753e94693b93e0c81f25"}),
   Object.freeze({"path":"docs/WINDOWS-NODE-NATIVE-ASSET-OWNER.md","bytes":10242,"sha256":"cbc9908b3e36d0709e9b78692029569bae85c3c0940f3144f9d3c4bda9fcce85"}),
   Object.freeze({"path":"package-lock.json","bytes":153446,"sha256":"691d75e222d044c6fe87fa5bc84dec081a2a4b95fa8e0564ae0d1cd64f8516d3"}),
   Object.freeze({"path":"package.json","bytes":2847,"sha256":"f25c9180100351970dc3d61308fcfe406c4340e2d9554db62b5d0742b357e725"}),
@@ -119,7 +119,7 @@ export const WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS: readonly Readonly<{ pat
   Object.freeze({"path":"test/unit/windows-node-asset-enforcement-native.test.ts","bytes":53539,"sha256":"68f70fe4a4ebf4f779965aedeea1f03899cc375f83308ceae71e8bf7dc987adb"}),
   Object.freeze({"path":"test/unit/windows-node-asset-enforcement-program.test.ts","bytes":3269,"sha256":"31f88c66a83b6e125d6ebacb12db26347fc056f0023f712985411371aed30eb3"}),
   Object.freeze({"path":"test/unit/windows-node-asset-enforcement-proof.test.ts","bytes":31746,"sha256":"47c2417105cddef195f58aa1ca68d73287ed99b523f1463863f610b7af6975ef"}),
-  Object.freeze({"path":"test/unit/windows-node-asset-enforcement-run.test.ts","bytes":8417,"sha256":"4502a51ccc291aa6e85d0c4f2ff9a6d015fdabd66e35a81d675b6b326806198e"}),
+  Object.freeze({"path":"test/unit/windows-node-asset-enforcement-run.test.ts","bytes":9042,"sha256":"cb22bac806e9fbc4afab82fecfa9dccef6c04f9922b56c265feabcc34dd3f120"}),
   Object.freeze({"path":"test/unit/windows-node-asset-enforcement-stage.test.ts","bytes":11003,"sha256":"3a301ffeed7b4f80d15010e3aec417298763399ed7ad8d3cf802535358ecdb4d"}),
   Object.freeze({"path":"test/warm-text.ts","bytes":912,"sha256":"acc1138d156eb6077a020471a7fc2ac761c8813ad3ef55b061cccc359e6b70c3"}),
   Object.freeze({"path":"tsconfig.json","bytes":686,"sha256":"8ddaa10aa1717c06ea51f880089af7320a8a4d01029dda0b117433da810fb7e7"}),

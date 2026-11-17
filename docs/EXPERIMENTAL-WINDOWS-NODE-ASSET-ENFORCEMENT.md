@@ -180,6 +180,18 @@ leaves the test. A thrown/partial result remains unobserved. The original litera
 750ms model-child bound,128KiB compiler output cap and five-second test bound remain unchanged, with no retry.
 The hook still fails. These fields distinguish finite outcomes without guessing a load or CPU cause.
 
+V3 head `e65e50e7cbee146404e9710a32b645453848a40e` registration `43992720501` failed before any manual
+Windows pair. Contracts job `133737123605` passed542 tests and skipped241 after C-model setup failed. The bounded
+observation was setup5/compiler1/0/1/1: the compiler returned with null status, SIGTERM and ETIMEDOUT at the
+unchanged2500ms limit. This establishes that finite compiler outcome; it does not identify a CPU or load cause.
+The native PR leaf was skipped. This failed registration remains a failure.
+
+Contracts now run the C-model suite alone once with maxWorkers1, then the other six suites once with maxWorkers2.
+Both steps are mandatory, with264 plus519 tests preserved. A failed first step still fails the job; there is no
+retry, continued execution after error, increased compile/model/test bound or C expectation change. This removes
+other-suite overlap during compilation without asserting that overlap caused the observed timeout. Windows
+portable and native leaves are unchanged, and a manual V3 pair remains blocked until registration passes.
+
 Primary references:
 
 - [Mandatory Integrity Control](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control)

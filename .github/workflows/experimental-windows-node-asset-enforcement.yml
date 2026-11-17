@@ -38,8 +38,10 @@ jobs:
       - run: npm ci
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - name: Fixed C witness model and bounded compiler outcome
+        run: npx vitest run test/unit/windows-node-asset-enforcement-c.test.ts --maxWorkers=1
       - name: Fixed asset enforcement ownership, exact source and build contracts
-        run: npx vitest run test/unit/windows-node-asset-enforcement-build.test.ts test/unit/windows-node-asset-enforcement-native.test.ts test/unit/windows-node-asset-enforcement-proof.test.ts test/unit/windows-node-asset-enforcement-program.test.ts test/unit/windows-node-asset-enforcement-run.test.ts test/unit/windows-node-asset-enforcement-stage.test.ts test/unit/windows-node-asset-enforcement-c.test.ts --maxWorkers=2
+        run: npx vitest run test/unit/windows-node-asset-enforcement-build.test.ts test/unit/windows-node-asset-enforcement-native.test.ts test/unit/windows-node-asset-enforcement-proof.test.ts test/unit/windows-node-asset-enforcement-program.test.ts test/unit/windows-node-asset-enforcement-run.test.ts test/unit/windows-node-asset-enforcement-stage.test.ts --maxWorkers=2
   native:
     # PR registration starts no native witness. Only the reviewed branch can run this manual pair.
     if: github.event_name == 'workflow_dispatch' && github.ref_name == 'ember-improve/20261116-node-asset-enforcement'
