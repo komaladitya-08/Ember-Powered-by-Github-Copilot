@@ -318,8 +318,8 @@ class Journey {
     if (!sameNode(await this.node(hwnd, select), before)) throw refusal(this.phase);
     await this.click(hwnd, select);
   }
-  /** UIA does not descend an offscreen group: follow consent order with ordinary forward or reverse Tab navigation. */
-  private async revealWelcomeRow(select: Selector, enabled = true, backwards = false): Promise<RawNode> {
+  /** UIA does not descend an offscreen group: reveal Home controls with ordinary forward or reverse Tab navigation. */
+  private async revealHomeControl(select: Selector, enabled = true, backwards = false): Promise<RawNode> {
     this.current();
     if (!this.input || this.input.blockedReason?.(this.home)) throw refusal(this.phase);
     this.input.activate(this.home);
@@ -394,13 +394,13 @@ class Journey {
       if (next.name === "Agree and continue") {
         for (const row of ["memory", "voice", "screenshots", "interactive"]) {
           this.observe({ operation: 8, target: ["memory", "voice", "screenshots", "interactive"].indexOf(row) + 3 });
-          const field = await this.revealWelcomeRow(id("w-row-" + row), false);
+          const field = await this.revealHomeControl(id("w-row-" + row), false);
           this.observe({ operation: 8 });
           if (field.patterns.toggle === "On" && field.isEnabled) await this.click(this.home, id("w-row-" + row));
           const checked = await this.node(this.home, id("w-row-" + row), false); this.observe({ operation: 9 });
           const toggle = checked.patterns.toggle; this.observeInput(toggle === "Off"); expect(toggle).toBe("Off");
         }
-        this.observe({ target: 7 }); const checked = await this.revealWelcomeRow(id("w-row-commands"), true, true); this.observe({ operation: 9 });
+        this.observe({ target: 7 }); const checked = await this.revealHomeControl(id("w-row-commands"), true, true); this.observe({ operation: 9 });
         const toggle = checked.patterns.toggle; this.observeInput(toggle === "On"); expect(toggle).toBe("On");
       }
       const skip = nodes.find(node => node.automationId === "w-alt" && node.name === "Skip for now" && node.isEnabled);
@@ -446,7 +446,7 @@ class Journey {
   async project(name: string): Promise<void> {
     this.phase = 5; this.observe({ projectStage: 1 }); await this.pane("Projects");
     this.observe({ projectStage: 2 }); await this.fill(this.home, id("project-sessions-name"), "Packaged Node " + name); this.observe({ projectStage: 3 }); await this.click(this.home, id("project-sessions-add"));
-    this.observe({ projectStage: 4 }); await this.click(this.home, id("project-coding-choose")); this.observe({ projectStage: 5 }); await this.folder("Choose a coding folder", this.source);
+    this.observe({ projectStage: 4 }); await this.revealHomeControl(id("project-coding-choose")); await this.click(this.home, id("project-coding-choose")); this.observe({ projectStage: 5 }); await this.folder("Choose a coding folder", this.source);
     this.observe({ projectStage: 6 }); await this.accessibleText(text => text.includes(this.source));
     this.observe({ projectStage: 7 }); await this.accessibleText(text => text.includes("Shells, npm, dependency installation, network access and child processes are unavailable")); this.observe({ projectStage: 16 });
   }

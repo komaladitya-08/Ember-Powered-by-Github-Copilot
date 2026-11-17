@@ -41,7 +41,7 @@ declare global {
 const gate = process.env.EMBER_UIUX_TEST !== "1";
 
 interface Seed { /** How the approval modes stand, as main sends it with the status (absent: main sent none). */ approvals?: ApprovalsState; settings?: Record<string, unknown>; admin?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number }; checks?: { id: string; status: string; label: string; detail: string; fix?: string }[]; platform?: StatusPlatform; updates?: UpdateStatus; provider?: boolean; /** The targets runtime, answering after this many ms as in the app (Computers and Commands show then). */ targets?: number; /** Holds actual native resize deliveries until an already-positioned layout is scrolled. */ holdJumpResize?: boolean }
-interface Seed { sessionReview?: { state: ProjectSessionsState; review: CodingResultReview } }
+interface Seed { sessionReview?: { state: ProjectSessionsState; review: CodingResultReview; create?: boolean } }
 
 /** Interactive chosen, its card agreed to as it reads now: the user's own setting. */
 const INTERACTIVE: ApprovalsSetting = { mode: "interactive", consent: { interactive: { version: FEATURE_CONSENT_VERSION.autonomy, at: "2026-11-04T12:00:00Z" }, assisted: { version: 0, at: null }, autopilot: { version: 0, at: null } } };
@@ -115,6 +115,16 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       if (sessionReview) {
         if (name === "agentStatus") return async () => ({ phase: "ready", detail: "Connected.", models: [], conductorModel: null, workerModel: null, usage: { calls: 0, inputTokens: 0, outputTokens: 0 } });
         if (name === "projectSessionsState") return async () => sessionReview.state;
+        if (sessionReview.create && name === "projectSessionsAction") return async (action: { action: string; name?: string; goal?: string }) => {
+          if (action.action !== "create") throw new Error("The fixed project navigation fixture accepts only Create.");
+          const project = { id: "navigation-project", name: action.name ?? "Navigation project", goal: action.goal ?? "", createdAt: 1, sessions: [] };
+          sessionReview.state.projects.push(project); sessionReview.state.selectedProjectId = project.id;
+          h.emit("onProjectSessionsChanged", structuredClone(sessionReview.state)); return structuredClone(sessionReview.state);
+        };
+        if (sessionReview.create && name === "projectCodingWorkspaceChoose") return async (projectId: string) => {
+          h.calls.push("choose-project-folder:" + projectId);
+          return { projectId, folder: null, available: false, canChoose: true, message: "Fixed public project navigation fixture." };
+        };
         if (name === "projectCodingWorkspaceState") return async (projectId: string) => ({ projectId, folder: null, available: false, canChoose: true, message: "Retained coding reviews are available." });
         if (name === "codingResultsState") return async () => [sessionReview.review];
         if (name === "codingResultReview") return async () => sessionReview.review;
@@ -1546,3 +1556,38 @@ describe.skipIf(gate)("Search settings, typed", () => {
     await page.close();
   });
 });
+
+it.skipIf(gate)("reveals the coding folder control after project creation with bounded ordinary keyboard navigation", async () => {
+  const review: CodingResultReview = { id: "unused-review", projectId: "unused-project", taskId: "unused-task", title: "Public fixture", sourcePath: "/work/public-fixture", status: "done", files: 0, conflicts: 0, patchComplete: true,
+    checks: { ran: 0, passed: 0, failed: 0 }, message: "Fixed public navigation fixture.", changes: [], textPatch: "", limitations: [], previewMessage: "" };
+  const p = await open("project", { viewport: { width: 760, height: 640 }, sessionReview: { state: { projects: [], selectedProjectId: null }, review, create: true } });
+  await expect.poll(() => p.locator("#project-sessions-add").isEnabled()).toBe(true);
+  // As the packaged fixture: focus/type/Tab, then Create. Do not focus or auto-scroll Choose before it is visible.
+  await p.locator("#project-sessions-name").focus(); await p.keyboard.type("Packaged Node navigation"); await p.keyboard.press("Tab");
+  await p.locator("#project-sessions-add").focus(); await p.keyboard.press("Space");
+  await expect.poll(() => p.locator("#project-sessions-select").inputValue()).toBe("navigation-project");
+  await expect.poll(() => p.locator("#project-coding-choose").isEnabled()).toBe(true);
+  expect(await p.evaluate(() => document.activeElement?.id)).toBe("project-sessions-request");
+  const position = (id: string) => p.locator("#" + id).evaluate(node => {
+    const box = node.getBoundingClientRect(); return { top: box.top, bottom: box.bottom, onscreen: box.top < innerHeight && box.bottom > 0 };
+  });
+  expect((await position("project-coding")).onscreen).toBe(false);
+  expect((await position("project-coding-choose")).onscreen).toBe(false);
+  let tabs = 0;
+  while (!(await position("project-coding-choose")).onscreen && tabs < 12) {
+    const before = await p.evaluateHandle(() => document.activeElement);
+    try {
+      await p.keyboard.press("Tab"); tabs++; await p.waitForTimeout(150);
+      await expect.poll(() => p.evaluate(previous => document.activeElement !== previous, before)).toBe(true);
+    } finally { await before.dispose(); }
+  }
+  expect(tabs).toBeGreaterThan(0); expect(tabs).toBeLessThanOrEqual(12);
+  expect((await position("project-coding")).onscreen).toBe(true);
+  expect((await position("project-coding-choose")).onscreen).toBe(true);
+  const box = await p.locator("#project-coding-choose").boundingBox(); expect(box).not.toBeNull();
+  expect(box!.y + box!.height / 2).toBeGreaterThan(0); expect(box!.y + box!.height / 2).toBeLessThan(640);
+  // Coordinate input cannot implicitly reveal an offscreen locator or manufacture the folder result.
+  await p.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await expect.poll(() => p.evaluate(() => window.__pane.calls.filter(call => call.startsWith("choose-project-folder:")))).toEqual(["choose-project-folder:navigation-project"]);
+  expect(p.errors).toEqual([]); await p.close();
+}, 30_000);

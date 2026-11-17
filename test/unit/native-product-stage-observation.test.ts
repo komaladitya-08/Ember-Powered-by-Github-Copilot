@@ -76,6 +76,9 @@ it("preserves the entire native WSL test after reversing only the new observatio
 });
 it("preserves the entire packaged test after reversing only the new project/folder stage field and markers", () => {
   let source = fs.readFileSync("test/integration/windows-node-packaged-product.test.ts", "utf8");
+  source = source.replaceAll("revealHomeControl", "revealWelcomeRow");
+  source = source.replace("reveal Home controls with ordinary forward or reverse Tab navigation.", "follow consent order with ordinary forward or reverse Tab navigation.");
+  source = source.replace('await this.revealWelcomeRow(id("project-coding-choose")); ', "");
   source = source.replace("inputResult: number; bridgeStage: number; projectStage: number;", "inputResult: number; bridgeStage: number;");
   source = source.replace(/^ \* Project\/folder stage0.*\n \* 9dialog-block-check.*\n/m, "");
   source = source.replace(", projectStage: 16", "").replace(", projectStage: 0", "");

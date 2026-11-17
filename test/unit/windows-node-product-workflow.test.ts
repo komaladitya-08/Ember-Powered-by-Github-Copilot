@@ -413,7 +413,7 @@ it("actual fixture click keeps its successful call order and does not turn metad
   expect(trace).toEqual(["node", "focus", "move", "down", "up", "release"]); expect(o.value()).toBeUndefined();
 });
 function welcomeNavigation(options: { blocked?: boolean; active?: number; loseForeground?: boolean; readError?: Error; keyError?: Error; enabled?: boolean; backwards?: boolean } = {}, snapshots: object[][] = []) {
-  const source = read(cases.packaged), begin = source.indexOf("  private async revealWelcomeRow("), end = source.indexOf("  async start():", begin);
+  const source = read(cases.packaged), begin = source.indexOf("  private async revealHomeControl("), end = source.indexOf("  async start():", begin);
   expect(begin > 0 && end > begin).toBe(true);
   const code = transformSync(`module.exports = class {
     constructor(state) {
@@ -430,9 +430,9 @@ function welcomeNavigation(options: { blocked?: boolean; active?: number; loseFo
     ${source.slice(begin, end)}
   };`, { loader: "ts", format: "cjs", target: "node22" }).code;
   const failure = new Error("PRIVATE navigation refusal"), state = { trace: [] as string[], active: 99, reads: 0, snapshots, stale: false, ...options };
-  const module = { exports: undefined as unknown as new (state: object) => { revealWelcomeRow(select: (node: { automationId?: string }) => boolean, enabled: boolean, backwards: boolean): Promise<object> } };
+  const module = { exports: undefined as unknown as new (state: object) => { revealHomeControl(select: (node: { automationId?: string }) => boolean, enabled: boolean, backwards: boolean): Promise<object> } };
   runInNewContext(code, { module, refusal: () => failure });
-  return { run: () => new module.exports(state).revealWelcomeRow(node => node.automationId === "w-row-memory", options.enabled ?? false, options.backwards ?? false), state, failure };
+  return { run: () => new module.exports(state).revealHomeControl(node => node.automationId === "w-row-memory", options.enabled ?? false, options.backwards ?? false), state, failure };
 }
 it("actual consent navigation reveals only the exact onscreen row through bounded ordinary keys without clicking or toggling", async () => {
   const target = { automationId: "w-row-memory", isOffscreen: false, isEnabled: false };
@@ -465,7 +465,30 @@ it("actual consent navigation reverses ordinary Tabs only for returning to the c
   const f = welcomeNavigation({ backwards: true }, [[], [target]]);
   await expect(f.run()).resolves.toBe(target);
   expect(f.state.trace).toEqual(["activate", "snapshot", "Shift_L+Tab", "release", "snapshot"]);
-  expect(read(cases.packaged)).toContain('this.revealWelcomeRow(id("w-row-commands"), true, true)');
+  expect(read(cases.packaged)).toContain('this.revealHomeControl(id("w-row-commands"), true, true)');
+});
+it.each([false, true])("actual project setup reveals Choose before its existing fresh click and propagates reveal failure=%s", async fails => {
+  const source = read(cases.packaged), begin = source.indexOf("  async project("), end = source.indexOf("  async send(", begin);
+  expect(begin > 0 && end > begin).toBe(true);
+  const code = transformSync(`module.exports = class {
+    constructor(trace, failure) { this.trace = trace; this.failure = failure; this.home = 99; this.source = "PUBLIC source"; }
+    observe() {}
+    async pane(name) { this.trace.push("pane:" + name); }
+    async fill(_hwnd, select) { this.trace.push("fill:" + identify(select)); }
+    async click(_hwnd, select) { this.trace.push("click:" + identify(select)); }
+    async revealHomeControl(select) { this.trace.push("reveal:" + identify(select)); if (this.failure) throw this.failure; }
+    async folder() { this.trace.push("folder"); }
+    async accessibleText() { this.trace.push("text"); }
+    ${source.slice(begin, end)}
+  };`, { loader: "ts", format: "cjs", target: "node22" }).code;
+  const module = { exports: undefined as unknown as new (trace: string[], failure?: Error) => { project(name: string): Promise<void> } };
+  const id = (value: string) => (node: { automationId?: string }) => node.automationId === value;
+  const identify = (select: (node: { automationId?: string }) => boolean) => ["project-sessions-name", "project-sessions-add", "project-coding-choose"].find(automationId => select({ automationId }));
+  runInNewContext(code, { module, id, identify }); const trace: string[] = [], failure = new Error("PRIVATE reveal refusal");
+  const work = new module.exports(trace, fails ? failure : undefined).project("public fixture");
+  if (fails) await expect(work).rejects.toBe(failure); else await expect(work).resolves.toBeUndefined();
+  expect(trace).toEqual(["pane:Projects", "fill:project-sessions-name", "click:project-sessions-add", "reveal:project-coding-choose",
+    ...(fails ? [] : ["click:project-coding-choose", "folder", "text", "text"])]);
 });
 it("a transient capture-accessor fault cannot cause outer cleanup to acquire a later first snapshot", async () => {
   const plain = observationHelper(), trace: string[] = [], failure = new Error("PRIVATE original"); let attempts = 0;

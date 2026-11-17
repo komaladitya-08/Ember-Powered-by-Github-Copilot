@@ -97,12 +97,19 @@ jobs:
           archive=$(wslpath -a -u "$1")
           repo=$(wslpath -a -u "$2")
           # Already authenticated above; this provisioning is never run by the product or a coding model.
-          install -d -m 755 /opt/ember-wsl-coding-node
-          tar -xJf "$archive" -C /opt/ember-wsl-coding-node --strip-components=1
-          chown -R root:root /opt/ember-wsl-coding-node
-          chmod -R go-w /opt/ember-wsl-coding-node
+          # Discovery validates the resolved executable against its fixed system prefixes, including /opt/node.
+          test ! -e /opt/node
+          test ! -L /opt/node
+          install -d -m 755 /opt/node
+          tar -xJf "$archive" -C /opt/node --strip-components=1
+          chown -R root:root /opt/node
+          chmod -R go-w /opt/node
+          test -f /opt/node/bin/node
+          test ! -L /opt/node/bin/node
           test ! -e /usr/bin/node
-          ln -s /opt/ember-wsl-coding-node/bin/node /usr/bin/node
+          test ! -L /usr/bin/node
+          ln -s /opt/node/bin/node /usr/bin/node
+          test "$(readlink -f /usr/bin/node)" = /opt/node/bin/node
           cc -O2 "$repo/test/fixtures/coding/wsl-socket-probe.c" -o "$repo/dist/wsl-socket-probe"
           SH
       - name: Require the real Windows-to-WSL helper and native adversarial controls
