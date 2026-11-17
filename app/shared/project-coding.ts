@@ -12,7 +12,11 @@ export interface ProjectCodingExecutionState {
   canSelect: boolean;
   choices: ProjectCodingExecutionChoice[];
   message: string;
+  /** Project intent only; each exact public lockfile set still needs the task's normal approval decision. */
+  publicDependencies?: { enabled: boolean; canChange: boolean; message: string };
 }
+
+export const PUBLIC_DEPENDENCY_DISCLOSURE = "Allow Ember to download this project's locked public npm packages from registry.npmjs.org. Package names and versions are sent to that public registry; project files and credentials are not sent. Each exact dependency set follows your normal approval settings. Commands stay offline, and private registries are unavailable.";
 
 /** Local project folder grants and reviewable coding outcomes; no field grants permission to execute work. */
 export interface ProjectCodingWorkspaceState {

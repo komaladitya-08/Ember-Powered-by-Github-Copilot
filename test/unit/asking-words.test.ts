@@ -194,8 +194,8 @@ describe("Before Ember starts promises no question a mode doesn't put (Settled 2
 
   it("is a new version of the consent, and tells someone who agreed before what changed", async () => {
     const { CONSENT_VERSION, CONSENT_CHANGES, consentChangesSince } = await import("../../app/shared/consent");
-    expect(CONSENT_VERSION).toBe(14);
-    expect(consentChangesSince(10)).toEqual(["I say plainly what I ask before: anything risky in an app, and a command I know is dangerous or code I can't read, even if you asked for it. A command I don't know runs, and I tell you, and Assisted and Autopilot, if you choose them later, ask less.", "In Interactive, I ask before a dangerous command even when you asked for it.", "If you choose Save projects, I encrypt project names, goals and session outcomes on this computer until you choose Forget saved projects or Forget everything. Opening a checkpoint never resumes work.", CONSENT_CHANGES[14]]);
+    expect(CONSENT_VERSION).toBe(15);
+    expect(consentChangesSince(10)).toEqual(["I say plainly what I ask before: anything risky in an app, and a command I know is dangerous or code I can't read, even if you asked for it. A command I don't know runs, and I tell you, and Assisted and Autopilot, if you choose them later, ask less.", "In Interactive, I ask before a dangerous command even when you asked for it.", "If you choose Save projects, I encrypt project names, goals and session outcomes on this computer until you choose Forget saved projects or Forget everything. Opening a checkpoint never resumes work.", CONSENT_CHANGES[14], CONSENT_CHANGES[15]]);
   });
 });
 

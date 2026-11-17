@@ -4,7 +4,7 @@ import path from "node:path";
 import { build } from "esbuild";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { CODING_REVIEW_PATCH_LIMIT, type CodingResultReview, type CodingResultSummary, type ProjectCodingWorkspaceState } from "../../app/shared/project-coding";
+import { CODING_REVIEW_PATCH_LIMIT, PUBLIC_DEPENDENCY_DISCLOSURE, type CodingResultReview, type CodingResultSummary, type ProjectCodingWorkspaceState } from "../../app/shared/project-coding";
 
 interface CodingHarness {
   selected: string | null;
@@ -28,6 +28,10 @@ const executionWorkspace = (projectId = "one"): ProjectCodingWorkspaceState => (
     { id: "wsl:Debian", label: "WSL · Debian", selectable: false, ready: false, message: "Choose a WSL 2 distribution in Computers & apps." },
   ],
 } });
+const publicWorkspace = (projectId = "one"): ProjectCodingWorkspaceState => {
+  const state = executionWorkspace(projectId); state.execution!.selected = "wsl:Ubuntu";
+  state.execution!.publicDependencies = { enabled: false, canChange: true, message: PUBLIC_DEPENDENCY_DISCLOSURE }; return state;
+};
 const result = (projectId = "one", id = "result-one"): CodingResultReview => ({
   id, projectId, taskId: `task-${id}`, title: "Improve the app", sourcePath: "/work/original-app", status: "done", files: 1, conflicts: 1, patchComplete: false,
   checks: { ran: 2, passed: 1, failed: 1 }, message: "Review the proposed changes.",
@@ -67,6 +71,11 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Project coding folders and
             const state = structuredClone(h.workspaces[args[0]]); state.execution!.selected = args[1]; h.workspaces[args[0]] = state;
             return answer(method, state);
           }
+          if (method === "projectCodingPublicDependenciesChoose") {
+            const enabled = (args as unknown[])[1]; if (typeof enabled !== "boolean") throw new Error("Expected a Boolean intent.");
+            const state = structuredClone(h.workspaces[args[0]]); state.execution!.publicDependencies!.enabled = enabled; h.workspaces[args[0]] = state;
+            return answer(method, state);
+          }
           if (method === "codingResultsState") return answer(`results:${args[0]}`, h.results[args[0]] ?? []);
           if (method === "codingResultReview") return answer("review", h.reviews[args[0]]);
           if (method === "codingResultExport") return answer("export", { ok: true, message: "Review exported. The original project is unchanged." });
@@ -83,6 +92,66 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Project coding folders and
     return page;
   }
   const selected = (page: Page, id: string | null) => page.evaluate(id => window.dispatchEvent(new CustomEvent("ember-project-changed", { detail: { projectId: id } })), id);
+
+  it("discloses and saves an explicit project public-download preference without preparing or approving packages", async () => {
+    const page = await open({ workspaces: { one: publicWorkspace(), two: publicWorkspace("two") } });
+    const toggle = page.getByRole("switch", { name: "Download public dependencies for this project" });
+    await expect.poll(() => toggle.isEnabled()).toBe(true); expect(await toggle.isChecked()).toBe(false);
+    expect(await page.locator("#project-coding-public-dependencies-detail").innerText()).toBe(PUBLIC_DEPENDENCY_DISCLOSURE);
+    await toggle.click(); await expect.poll(() => toggle.isChecked()).toBe(true);
+    expect(await page.evaluate(() => window.__codingBoard.calls.filter(call => call.method === "projectCodingPublicDependenciesChoose")))
+      .toEqual([{ method: "projectCodingPublicDependenciesChoose", args: ["one", true] }]);
+    expect(await page.evaluate(() => window.__codingBoard.calls.every(call => ["projectCodingWorkspaceState", "codingResultsState", "projectCodingPublicDependenciesChoose"].includes(call.method)))).toBe(true);
+    await selected(page, "two"); await expect.poll(() => toggle.isChecked()).toBe(false); await page.close();
+  }, 30_000);
+  it("disables public-download changes while the owned metadata action waits and when current policy forbids a change", async () => {
+    const page = await open({ workspaces: { one: publicWorkspace() }, deferred: { projectCodingPublicDependenciesChoose: true } });
+    const toggle = page.getByRole("switch", { name: "Download public dependencies for this project" });
+    await expect.poll(() => toggle.isEnabled()).toBe(true); await toggle.click();
+    await page.waitForFunction(() => !!window.__codingBoard.resolve.projectCodingPublicDependenciesChoose);
+    expect(await toggle.isDisabled()).toBe(true);
+    await page.evaluate(() => { const h = window.__codingBoard; const state = h.workspaces.one; state.execution!.publicDependencies!.canChange = false; h.resolve.projectCodingPublicDependenciesChoose(state); });
+    await expect.poll(() => page.locator("#project-coding-execution-select").isEnabled()).toBe(true);
+    await expect.poll(() => toggle.isDisabled()).toBe(true);
+    await page.evaluate(() => window.__codingBoard.emit("onTasks")); expect(await toggle.isDisabled()).toBe(true); await page.close();
+  }, 30_000);
+  it.each(["metadata", "project"] as const)("keeps a public-download pointer gesture bound to its project through a %s refresh", async change => {
+    const page = await open({ workspaces: { one: publicWorkspace(), two: publicWorkspace("two") } });
+    const toggle = page.getByRole("switch", { name: "Download public dependencies for this project" });
+    await expect.poll(() => toggle.isEnabled()).toBe(true); const box = await toggle.boundingBox(); expect(box).not.toBeNull();
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2); await page.mouse.down();
+    if (change === "project") {
+      await selected(page, "two");
+      await expect.poll(() => page.evaluate(() => window.__codingBoard.calls.some(call => call.method === "projectCodingWorkspaceState" && call.args[0] === "two"))).toBe(true);
+    } else {
+      await page.evaluate(() => { const h = window.__codingBoard; h.workspaces.one.message = "The same project remains ready."; h.emit("onTasks"); });
+      await expect.poll(() => page.locator("#project-coding-state").innerText()).toContain("same project");
+    }
+    await page.mouse.up();
+    if (change === "metadata") {
+      await expect.poll(() => toggle.isChecked()).toBe(true);
+      expect(await page.evaluate(() => window.__codingBoard.calls.filter(call => call.method === "projectCodingPublicDependenciesChoose")))
+        .toEqual([{ method: "projectCodingPublicDependenciesChoose", args: ["one", true] }]);
+    } else {
+      expect(await toggle.isChecked()).toBe(false);
+      expect(await page.evaluate(() => window.__codingBoard.calls.filter(call => call.method === "projectCodingPublicDependenciesChoose"))).toEqual([]);
+    }
+    await page.close();
+  }, 30_000);
+  it.each(["project", "account", "connection"])("ignores a late public-download preference reply after %s changes", async change => {
+    const page = await open({ workspaces: { one: publicWorkspace(), two: publicWorkspace("two") }, deferred: { projectCodingPublicDependenciesChoose: true } });
+    const toggle = page.getByRole("switch", { name: "Download public dependencies for this project" });
+    await expect.poll(() => toggle.isEnabled()).toBe(true); await toggle.click();
+    await page.waitForFunction(() => !!window.__codingBoard.resolve.projectCodingPublicDependenciesChoose);
+    if (change === "project") await selected(page, "two");
+    else if (change === "account") await page.evaluate(() => window.__codingBoard.emit("onConversationForgotten"));
+    else await page.evaluate(() => window.__codingBoard.emit("onAgentStatus", { phase: "off" }));
+    await page.evaluate(() => { const h = window.__codingBoard, state = h.workspaces.one; state.execution!.publicDependencies!.message = "OLD private dependency reply"; h.resolve.projectCodingPublicDependenciesChoose(state); });
+    expect(await page.locator("#project-coding").innerText()).not.toContain("OLD private");
+    if (change === "project") await expect.poll(() => toggle.isChecked()).toBe(false);
+    else expect(await page.locator("#project-coding-public-dependencies").isHidden()).toBe(true);
+    await page.close();
+  }, 30_000);
 
   it("keeps the native default and saves a WSL preparation choice only after Use selection", async () => {
     const page = await open({ workspaces: { one: executionWorkspace() } });

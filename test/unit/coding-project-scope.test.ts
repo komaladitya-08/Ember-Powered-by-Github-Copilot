@@ -42,3 +42,13 @@ it.each([
 ])("rejects an inconsistent, escaping or oversized manifest %#", input => {
   expect(() => codingProjectManifest(input)).toThrow();
 });
+
+it("validates public cache input provenance only in its isolated profile and describes mutable installed contents honestly", () => {
+  const receipt = { access: "verified-offline-cache-input", registry: "https://registry.npmjs.org", packageJsonSha256: "a".repeat(64), lockSha256: "b".repeat(64), setSha256: "c".repeat(64), packages: 2, compressedBytes: 1234, expandedBytes: 4567, entries: 12 };
+  const input = { ...manifest(), dependencies: null, executionProfile: "wsl-public-lock", publicDependencies: receipt };
+  const result = codingProjectManifest(input); receipt.packages = 5; expect(result.publicDependencies?.packages).toBe(2);
+  const disclosure = codingProjectScopeDisclosure([".git", "node_modules"], false, "wsl-public-lock");
+  expect(disclosure).toContain("normal approval of each exact lockfile package set"); expect(disclosure).toContain("not the later installed contents"); expect(disclosure).toContain("Private registries are unavailable");
+  for (const invalid of [{ ...input, executionProfile: "wsl-offline" }, { ...input, dependencies: manifest().dependencies }, { ...input, publicDependencies: { ...receipt, registry: "https://private.example" } },
+    { ...input, publicDependencies: { ...receipt, expandedBytes: 128 * 1024 * 1024 + 1 } }]) expect(() => codingProjectManifest(invalid)).toThrow();
+});

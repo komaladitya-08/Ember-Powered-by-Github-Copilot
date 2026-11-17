@@ -4921,3 +4921,11 @@ leaves individual reports available. New intake, Stop, Forget and captured owner
 work and late answers. The result is one assistant entry, with no fake user intake, memory learning or new task.
 Portable Host/lifecycle tests and a pinned-SDK local-provider journey cover the long parallel case with held disposal.
 This does not implement general dependency graphs, persistent worker conversations or broader coding toolchains.
+
+**Explicit encrypted coding drafts.** Home can explicitly save a certified stopped coding review, open its bounded
+inert view and forget it. Consent 15 discloses complete captured source and bounded original request/result
+retention, plus sharing saved context with the model only after a new request from an imported review. Fresh-folder
+imports compare saved edits against genuine newly captured source, preserve unrelated edits and refuse conflicts
+or late changes. A clean import creates a new stopped private review; a separate typed request captures new task
+permissions. Historical text is quoted data, never approval words, and historical checks are not fresh evidence.
+Source writes remain private-copy only. Native source qualification and physical Windows acceptance remain separate.

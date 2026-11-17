@@ -73,7 +73,8 @@ const finish = (session: any) => call(session, "finish_coding", { success: true,
 
 function fileOnly() {
   const f = fixture();
-  const { commands: _commands, runCommand: _runCommand, runNode: _runNode, toolchain: _toolchain, ...common } = f.options;
+  const { commands: _commands, runCommand: _runCommand, runNode: _runNode, toolchain: _toolchain,
+    executionProfile: _profile, preparePublicDependencies: _preparation, ...common } = f.options;
   const options: FileOnlyCodingControllerOptions = { ...common, mode: "files-only" };
   return { ...f, options };
 }
@@ -481,7 +482,7 @@ it("rejects injected direct-Node capability in file-only mode before starting a 
 
 it("starts a Node-only controller with no shell tool or shell instructions", async () => {
   const runNode = vi.fn<NonNullable<CustomCodingControllerOptions["runNode"]>>(async () => ({ result: "checked", success: true }));
-  const f = fixture(), { runCommand: _runCommand, ...base } = f.options;
+  const f = fixture(), { runCommand: _runCommand, executionProfile: _profile, preparePublicDependencies: _preparation, ...base } = f.options;
   const c = await start({ ...base, commands: { target: "This computer", shells: [], node: true }, runNode });
   expect(sim.sessions[0].config.tools.map((tool: any) => tool.name)).toContain("run_node");
   expect(sim.sessions[0].config.tools.map((tool: any) => tool.name)).not.toContain("run_command");
@@ -491,7 +492,7 @@ it("starts a Node-only controller with no shell tool or shell instructions", asy
 });
 
 it("adds only the fixed host Windows constraints to a genuine Node-only tool inventory", async () => {
-  const f = fixture(), { commands: _commands, runCommand: _runCommand, ...base } = f.options;
+  const f = fixture(), { commands: _commands, runCommand: _runCommand, executionProfile: _profile, preparePublicDependencies: _preparation, ...base } = f.options;
   const runNode = vi.fn<NonNullable<CustomCodingControllerOptions["runNode"]>>(async () => ({ result: "checked", success: true }));
   await start({ ...base, commands: { target: "This computer", shells: [], node: true }, runNode, toolchain: "windows-node" });
   const config = sim.sessions[0].config, text = JSON.stringify(config.systemMessage);
@@ -515,4 +516,45 @@ it("rejects neither-lane and forged Node-only startup before creating the runtim
     await expect(CustomCodingController.start({ ...base, ...capability } as CodingControllerOptions)).rejects.toThrow("capability is invalid");
   }
   expect(sim.inputs).toHaveLength(0);
+});
+
+it("offers exact-set preparation only from the captured host hook and keeps dependency preparation separate from command checks", async () => {
+  const prepare = vi.fn<NonNullable<CustomCodingControllerOptions["preparePublicDependencies"]>>(async context => {
+    expect(context.signal).toBeInstanceOf(AbortSignal); expect(context.waiting).toBeTypeOf("function");
+    return { prepared: true, packages: 1, lockSha256: "a".repeat(64), setSha256: "b".repeat(64) };
+  });
+  const f = fixture({ executionProfile: "wsl-public-lock", preparePublicDependencies: prepare });
+  f.runCommand.mockResolvedValueOnce({ result: "failed", success: false, check: { key: "c".repeat(64), passed: false } });
+  const controller = await start(f.options); f.options.preparePublicDependencies = async () => { throw new Error("mutated callback must not run"); };
+  expect(JSON.stringify(sim.sessions[0].config.systemMessage)).toContain("commands and their child processes");
+  expect(JSON.stringify(sim.sessions[0].config.systemMessage)).toContain("npm ci --offline");
+  sim.drive = async session => {
+    await call(session, "run_command", command);
+    expect((await call(session, "prepare_public_dependencies", {})).resultType).toBe("success");
+    expect((await finish(session)).textResultForLlm).toContain("Finish not recorded");
+  };
+  expect((await controller.run("Repair the copied project")).success).toBe(false); expect(prepare).toHaveBeenCalledTimes(1);
+});
+it.each([{ registry: "https://private.example" }, { packages: ["other"] }, { command: "npm install" }])("refuses model-selected preparation operands %#", async operands => {
+  const prepare = vi.fn<NonNullable<CustomCodingControllerOptions["preparePublicDependencies"]>>(async () => ({ prepared: true, packages: 0, lockSha256: "a".repeat(64), setSha256: "b".repeat(64) }));
+  const f = fixture({ executionProfile: "wsl-public-lock", preparePublicDependencies: prepare }), controller = await start(f.options);
+  sim.drive = async session => { expect((await call(session, "prepare_public_dependencies", operands)).resultType).toBe("failure"); };
+  expect((await controller.run("Prepare dependencies")).success).toBe(false); expect(prepare).not.toHaveBeenCalled();
+});
+it("treats WSL disclosure alone as no package capability and refuses public hooks on incompatible profiles", async () => {
+  const f = fixture({ executionProfile: "wsl-offline" }); await start(f.options);
+  expect(sim.sessions[0].config.tools.map((tool: any) => tool.name)).not.toContain("prepare_public_dependencies");
+  expect(JSON.stringify(sim.sessions[0].config.systemMessage)).toContain("Public package downloads are unavailable");
+  const hook = async () => ({ prepared: true as const, packages: 0, lockSha256: "a".repeat(64), setSha256: "b".repeat(64) });
+  await expect(CustomCodingController.start({ ...fixture().options, preparePublicDependencies: hook })).rejects.toThrow("disclosure is invalid");
+  await expect(CustomCodingController.start(Object.assign(fileOnly().options, { executionProfile: "wsl-public-lock", preparePublicDependencies: hook }))).rejects.toThrow();
+});
+
+it.each([null, false, {}, [], 1])("refuses malformed optional WSL disclosure before any controller runtime starts: %j", executionProfile => {
+  const input = Object.assign(fixture().options, { executionProfile });
+  return expect(CustomCodingController.start(input)).rejects.toThrow("execution disclosure is invalid").then(() => { expect(sim.inputs).toHaveLength(0); });
+});
+it.each([null, false, {}, "prepare"])("refuses malformed public preparation callbacks before any controller runtime starts: %j", preparePublicDependencies => {
+  const input = Object.assign(fixture({ executionProfile: "wsl-public-lock" }).options, { preparePublicDependencies });
+  return expect(CustomCodingController.start(input)).rejects.toThrow("public dependency capability is invalid").then(() => { expect(sim.inputs).toHaveLength(0); });
 });

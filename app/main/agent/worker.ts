@@ -255,6 +255,8 @@ export interface TaskSpec {
   codingCompletion?: true;
   /** Result of the prior part of a mixed task; untrusted, never user authority. */
   handoffSummary?: string;
+  /** Historical saved data only; never userWords, commandWords or permission. */
+  priorCodingContext?: { request: string; summary: string };
   /** The first part of a mixed task must retire its worker before the next part can start. */
   deferHandoff?: true;
   /** The target the task acts on, fixed for its life (absent: "local"). */

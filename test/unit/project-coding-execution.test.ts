@@ -69,3 +69,38 @@ it("keeps one project's captured execution current when only another project's s
   f.value.choose("other", "wsl:Ubuntu"); f.value.choose("other", "local"); expect(receipt.current()).toBe(true);
   f.value.choose(P, "local"); expect(receipt.current()).toBe(false);
 });
+
+it("captures project public-download intent without launching, approving a set or upgrading an older intake", () => {
+  gate.ready = true; const f = setup(); f.value.choose(P, "wsl:Ubuntu"); const offline = f.value.capture(P)!;
+  expect(offline.publicDependencies).toBeUndefined();
+  expect(f.value.state(P).publicDependencies).toMatchObject({ enabled: false, canChange: true });
+  f.value.choosePublicDependencies(P, true); const opted = f.value.capture(P)!;
+  expect(offline.current()).toBe(false); expect(opted.publicDependencies?.current()).toBe(true);
+  expect(Object.isFrozen(opted.publicDependencies)).toBe(true); expect(f.open).not.toHaveBeenCalled();
+  expect(f.value.state(P).message).toContain("normal approvals");
+  expect(f.value.state(P).publicDependencies?.message).toContain("Package names and versions");
+});
+it("latches opt-out and restore without reviving an old public dependency receipt", async () => {
+  gate.ready = true; const f = setup(); f.value.choose(P, "wsl:Ubuntu"); f.value.choosePublicDependencies(P, true); const receipt = f.value.capture(P)!;
+  f.value.choosePublicDependencies(P, false); f.value.choosePublicDependencies(P, true);
+  expect(receipt.current()).toBe(false); expect(receipt.publicDependencies?.current()).toBe(false);
+  await expect(receipt.open()).rejects.toThrow("changed"); expect(f.open).not.toHaveBeenCalled();
+});
+it.each(["owner", "target", "forget", "project"] as const)("does not restore a public dependency opt-in after %s replacement", kind => {
+  gate.ready = true; const f = setup(); f.value.choose(P, "wsl:Ubuntu"); f.value.choosePublicDependencies(P, true); const captured = f.value.capture(P)!;
+  if (kind === "owner") { f.state.owner = "other"; f.value.refresh(); f.state.owner = "owner"; f.value.refresh(); }
+  if (kind === "target") { f.value.choose(P, "local"); f.value.choose(P, "wsl:Ubuntu"); }
+  if (kind === "forget") f.value.reset();
+  if (kind === "project") { f.state.project = false; f.value.refresh(); f.state.project = true; }
+  expect(captured.publicDependencies?.current()).toBe(false);
+  if (f.value.selected(P) === "local") f.value.choose(P, "wsl:Ubuntu");
+  expect(f.value.state(P).publicDependencies?.enabled).toBe(false); expect(f.value.capture(P)?.publicDependencies).toBeUndefined();
+});
+it("requires ready consent for opt-in but always permits withdrawal under a newly closed gate", () => {
+  const f = setup(); f.value.choose(P, "wsl:Ubuntu"); expect(() => f.value.choosePublicDependencies(P, true)).toThrow();
+  gate.ready = true; f.value.choosePublicDependencies(P, true); const receipt = f.value.capture(P)!;
+  f.state.consent = false; f.value.refresh(); expect(receipt.publicDependencies?.current()).toBe(false);
+  expect(f.value.state(P).publicDependencies?.canChange).toBe(true);
+  expect(() => f.value.choosePublicDependencies(P, true)).toThrow(); f.value.choosePublicDependencies(P, false);
+  expect(f.value.state(P).publicDependencies).toMatchObject({ enabled: false, canChange: false });
+});

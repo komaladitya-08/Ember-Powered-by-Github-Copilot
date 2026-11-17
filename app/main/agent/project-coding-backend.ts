@@ -9,7 +9,7 @@ import type { TaskSpec } from "./worker";
 import type { CapturedWslCodingExecution } from "./project-coding-execution";
 
 export type ProjectCodingResourcesPort = Pick<ProjectCodingResources, "folders" | "reviewBase" | "results" |
-  "validateSource" | "workspace" | "captureContinuation" | "continuationCurrent" | "publish" | "invalidate" | "close"> & {
+  "validateSource" | "workspace" | "captureContinuation" | "continuationCurrent" | "publish" | "invalidate" | "close" | "importDraft"> & {
   /** Display only. This argument grants no workspace or execution authority. Linux keeps its existing disclosure. */
   availability(disclosure?: "files-only" | "commands"): ReturnType<ProjectCodingResources["availability"]> & { canContinue?: boolean };
 };
@@ -56,6 +56,7 @@ export function createProjectCodingBackend(options: ProjectCodingResourcesOption
           if (chosen) {
             const binding = chosen;
             return Object.freeze({ mode: "commands", target: binding.target, platform: wslPlatform, current: binding.current,
+              ...(binding.publicDependencies ? { publicDependencies: Object.freeze({ current: () => binding.current() && binding.publicDependencies!.current() }) } : {}),
               createWorkspace: async (spec: TaskSpec, signal: AbortSignal, admit: () => boolean) => {
                 const admitted = () => binding.current() && admit();
                 if (!admitted() || signal.aborted || spec.codingWorkspace?.projectId !== projectId) throw new ScopedCodingFileError("cancelled");

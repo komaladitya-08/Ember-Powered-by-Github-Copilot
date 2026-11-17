@@ -1,4 +1,10 @@
 /** Host-owned Windows copies, fixed Node assets and reviews. No executable discovery or source grant. */
+import { importedSourceUnchanged, CodingDraftImportConflictError } from "./coding-draft-import-data";
+import { prepareCodingDraftImport, type CodingDraftImportResult, type CodingDraftFreshCapture } from "./coding-draft-import";
+import { consumeCodingDraftImportSeed, type CodingDraftImportSeed } from "./coding-draft-import-seed";
+import type { OpenCodingDraft } from "./coding-draft-store";
+import type { CodingDraftOwner } from "./coding-draft-format";
+import { CodingDraftCleanupError, CODING_DRAFT_MAX_REVIEW_BYTES } from "./coding-draft-format";
 import path from "node:path/win32";
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -33,6 +39,7 @@ interface OwnedHandle { handle: WindowsCodingHandle; attempted: boolean; closed:
 interface Pin { value: WindowsCodingPin; info: WindowsCodingInfo; handles: OwnedHandle[]; private: boolean }
 interface Role { name: string; owned: OwnedHandle; info?: WindowsCodingInfo }
 interface Authority {
+  importCurrent?: () => boolean;
   taskId: string; owner: string; projectId: string; source: string; title: string;
   ownerCurrent(): boolean; publicationEpoch: number; projectRevision: number; privacy: CodingPrivacyScope; cancel: AbortController;
   retired?: boolean; publishing?: boolean; workspace?: WindowsOwnedWorkspace; output?: CodingWorkspaceReview;
@@ -62,6 +69,7 @@ export function requireWindowsOwnedCommandParentCurrent(ref: WindowsOwnedCommand
 export interface WindowsWslCodingBinding {
   /** Captured project/distro/consent/policy receipt. False permanently retires this session. */
   current(): boolean;
+  publicDependencies?: { current(): boolean };
   /** Only a trusted installed helper and pinned tool archive may be returned here. */
   open(): Promise<{ connection: WslCodingConnection; typescriptArchive: Buffer }>;
 }
@@ -118,6 +126,7 @@ export class WindowsProjectCodingResources {
   #wslWrappers = new WeakMap<CodingReviewWorkspace, WslCodingWorkspace>();
   #captures = new Set<WindowsFileOnlyWorkspace>();
   #connections = new Set<WslCodingConnection>();
+  #draftImports = new Set<Promise<CodingDraftImportResult>>();
   #creating = new Set<Promise<CodingReviewWorkspace>>(); #exporting = new Set<Promise<unknown>>(); #publishing = new Set<Promise<unknown>>();
   #unadopted = new Map<CodingWorkspaceReview, PendingArtifact>();
   #store: WindowsCodingArtifactStore | null = null; #storeOpening: Promise<WindowsCodingArtifactStore> | null = null;
@@ -151,6 +160,8 @@ export class WindowsProjectCodingResources {
     const selection = options.storage ?? selectCodingStorageBase(); this.#common = selection.common ?? "";
     this.#results = Object.freeze({
       state: projectId => this.#registry?.state(projectId) ?? [],
+      withDraftSnapshot: (id, projectId, current, capture) => this.#registry
+        ? this.#registry.withDraftSnapshot(id, projectId, current, capture) : Promise.reject(new CodingResultRegistryError("stale")),
       review: id => this.#observe(this.#registry?.review(id) ?? Promise.resolve(null)),
       export: (id, destination, current) => this.#observe(this.#registry?.export(id, destination, current) ?? Promise.resolve({ ok: false, message: "No coding review is available to export." })),
       reset: () => { this.#publicationEpoch++; return this.#registryCleanup(this.#resetRegistry()); },
@@ -392,7 +403,8 @@ export class WindowsProjectCodingResources {
   createFileWorkspace(spec: TaskSpec, signal: AbortSignal, admit: () => boolean): Promise<CodingReviewWorkspace> {
     return this.#createWorkspace(spec, signal, admit, false);
   }
-  #createWorkspace(spec: TaskSpec, signal: AbortSignal, admit: () => boolean, node: boolean, wsl?: WindowsWslCodingBinding): Promise<CodingReviewWorkspace> {
+  #createWorkspace(spec: TaskSpec, signal: AbortSignal, admit: () => boolean, node: boolean, wsl?: WindowsWslCodingBinding, imported?: CodingDraftImportSeed): Promise<CodingReviewWorkspace> {
+    const publicDependencies = wsl?.publicDependencies ? { current: wsl.publicDependencies.current.bind(wsl.publicDependencies) } : undefined;
     const grant = spec.codingWorkspace, projectId = grant?.projectId, owner = this.#owner();
     if (!this.availability(node ? "commands" : "files-only").available || !grant || !projectId || !owner || !this.#project(projectId) || this.#tasks.has(spec.id)) return Promise.reject(stale());
     let privacy: CodingPrivacyScope;
@@ -403,7 +415,7 @@ export class WindowsProjectCodingResources {
     const authority: Authority = { taskId: spec.id, owner, projectId, source,
       title: titleOf(spec.goal).replace(/[\p{Cc}\p{Cf}]/gu, value => `\\u${value.codePointAt(0)!.toString(16).padStart(4, "0")}`),
       ownerCurrent: this.folders.ownerCurrent(), publicationEpoch: this.#publicationEpoch, projectRevision: this.#projectRevisions.get(projectId) ?? 0,
-      privacy, cancel: new AbortController(), sourceBoundary: null };
+      privacy, cancel: new AbortController(), sourceBoundary: null, ...(imported ? { importCurrent: admit } : {}) };
     const current = () => {
       this.#known();
       try { assertCodingPrivacyScope(privacy); } catch (error) { if (nativeUncertain(error)) { this.#failure(); throw this.#terminal; } return false; }
@@ -426,9 +438,14 @@ export class WindowsProjectCodingResources {
           if (!current()) throw stale();
           // A previous review describes its own execution environment, never the next task's capability.
           if (continuation.scope?.executionProfile) {
-            const { executionProfile: _profile, ...scope } = continuation.scope;
+            const { executionProfile: _profile, publicDependencies: _cacheInput, ...scope } = continuation.scope;
             continuation = { ...continuation, scope };
           }
+        }
+        if (imported) {
+          if (hasContinuation || !authority.sourceBoundary) throw stale();
+          continuation = await consumeCodingDraftImportSeed(imported, { store, source: authority.sourceBoundary, projectId, path: source, owner, current });
+          if (!current()) throw stale();
         }
         const input: WindowsFileOnlyWorkspaceInput = { source, privateBase: this.#copies, protectedPaths: this.#roots,
           signal: AbortSignal.any([signal, authority.cancel.signal]), current, scope: { excludeRoots: [".git", "node_modules"] }, reviewBase: this.#reviews,
@@ -442,13 +459,15 @@ export class WindowsProjectCodingResources {
           try {
             if (!current()) throw stale();
             if (!seed.scope) throw new ScopedCodingFileError("boundary");
-            const scope = { ...structuredClone(seed.scope), executionProfile: "wsl-offline" as const };
+            const { publicDependencies: _oldReceipt, ...seedScope } = structuredClone(seed.scope);
+            const scope = { ...seedScope, executionProfile: publicDependencies ? "wsl-public-lock" as const : "wsl-offline" as const };
             // The native seed copy and its temporary artifact are closed before any guest is launched.
             const opened = await wsl.open();
             this.#connections.add(opened.connection);
             try {
               if (!current()) throw stale();
-              backend = await WslCodingWorkspace.create({ ...opened, source: seed.proposed, baseline: seed.baseline,
+              backend = await WslCodingWorkspace.create({ ...opened, source: seed.proposed, baseline: seed.baseline, scope,
+                ...(publicDependencies ? { publicDependencies: { current: () => current() && publicDependencies.current() === true } } : {}),
                 signal: input.signal, current, privacyScope: privacy, review: { base: this.#reviews, sourceBoundary: authority.sourceBoundary!,
                   current: () => this.#reviewCurrent(authority),
                   captureCurrent: async () => {
@@ -470,7 +489,7 @@ export class WindowsProjectCodingResources {
                   },
                   write: async data => {
                     if (!this.#reviewCurrent(authority)) throw stale();
-                    const exported = createCodingReviewExport({ ...data, scope }), files = { "review.json": Buffer.from(exported.json), "changes.patch": Buffer.from(exported.review.textPatch) };
+                    const exported = createCodingReviewExport({ ...data, scope: { ...scope, ...(data.scope?.publicDependencies ? { publicDependencies: data.scope.publicDependencies } : {}) } }), files = { "review.json": Buffer.from(exported.json), "changes.patch": Buffer.from(exported.review.textPatch) };
                     try {
                       const artifact = await store.write(files, () => { if (!this.#reviewCurrent(authority)) throw stale(); });
                       return Object.freeze({ ...artifact, review: exported.review, cleanup: "complete" as const });
@@ -565,10 +584,58 @@ export class WindowsProjectCodingResources {
     else this.#fileWrappers.set(wrapped, backend);
     return wrapped;
   }
+  /** Explicit fresh-folder import; completed work is a new stopped review with no saved execution identity. */
+  importDraft(projectId: string, draft: OpenCodingDraft, owner: CodingDraftOwner, signal: AbortSignal, admit: () => boolean): Promise<CodingDraftImportResult> {
+    const grant = this.workspace(projectId), epoch = this.#epoch;
+    const current = () => this.#epoch === epoch && this.#owner() === owner.holder && !!grant && this.#admit(grant.current) && this.#admit(admit) && !signal.aborted;
+    const check = () => { if (!current()) throw stale(); };
+    if (!grant || !current()) return Promise.reject(stale());
+    const makeSpec = (): TaskSpec => ({ id: randomUUID(), goal: "Imported coding draft for review", target: {}, codingWorkspace: grant });
+    const discard = async (spec: TaskSpec, output: CodingWorkspaceReview) => {
+      try { const store = await this.#storeValue(); await store.discard(output); this.#unadopted.delete(output);
+        const authority = this.#authorities.get(spec); if (authority) authority.output = undefined;
+        this.#tasks.delete(spec.id); this.#authorities.delete(spec);
+      } catch (error) { this.#failure(); throw error; }
+    };
+    const capture = async (): Promise<CodingDraftFreshCapture> => {
+      const spec = makeSpec(), workspace = await this.#createWorkspace(spec, signal, current, false);
+      let output: CodingWorkspaceReview | undefined, document: Buffer | undefined;
+      try {
+        await workspace.stop(); await workspace.sealForReview?.(); output = await workspace.exportReview(this.#reviews);
+        await workspace.close(); check();
+        const store = await this.#storeValue(), source = this.#authorities.get(spec)?.sourceBoundary;
+        if (!source) throw stale();
+        const receipt = await store.claim(output, check); check();
+        document = await store.read(receipt, "review.json", CODING_DRAFT_MAX_REVIEW_BYTES, check); check();
+        const binding = { ...output.review.binding };
+        const capturedOutput = output; output = undefined; await discard(spec, capturedOutput);
+        const result = { document, binding, store, source };
+        document = undefined; return result;
+      } finally { document?.fill(0); if (output) await discard(spec, output); await workspace.close(); }
+    };
+    const pending = prepareCodingDraftImport({ draft, owner, projectId, path: grant.path, signal, current, capture,
+      produce: async seed => {
+        check(); const spec = makeSpec(), workspace = await this.#createWorkspace(spec, signal, current, false, undefined, seed);
+        const authority = this.#authorities.get(spec);
+        let output: CodingWorkspaceReview | undefined, publishing = false;
+        try {
+          check(); await workspace.stop(); await workspace.sealForReview?.(); output = await workspace.exportReview(this.#reviews); check();
+          if (!importedSourceUnchanged(output.review) || output.review.changes.some(change => change.conflicts.length)) throw new CodingDraftImportConflictError();
+          publishing = true; const result = await this.publish(spec, output, "done", { ran: 0, passed: 0, failed: 0 }, "Imported saved coding draft for review; checks must run again.");
+          if (!current()) { await (await this.results()).forgetResult(result.id); throw stale(); }
+          if (authority) authority.importCurrent = undefined;
+          return result;
+        } finally { if (output && !publishing) await discard(spec, output); await workspace.close(); }
+      } }).catch(error => {
+      if (error instanceof CodingDraftCleanupError) this.#failure();
+      throw error;
+    });
+    this.#draftImports.add(pending); void pending.then(() => this.#draftImports.delete(pending), () => this.#draftImports.delete(pending)); return pending;
+  }
   #reviewCurrent(authority: Authority): boolean {
     this.#known();
     try { assertCodingPrivacyScope(authority.privacy); } catch (error) { if (nativeUncertain(error)) { this.#failure(); throw this.#terminal; } return false; }
-    return !this.#closed && !this.#failed && !authority.retired && this.#owner() === authority.owner && this.#admit(authority.ownerCurrent) && this.#project(authority.projectId) &&
+    return !this.#closed && !this.#failed && !authority.retired && (!authority.importCurrent || this.#admit(authority.importCurrent)) && this.#owner() === authority.owner && this.#admit(authority.ownerCurrent) && this.#project(authority.projectId) &&
       this.#publicationEpoch === authority.publicationEpoch && (this.#projectRevisions.get(authority.projectId) ?? 0) === authority.projectRevision;
   }
   #storeValue(): Promise<WindowsCodingArtifactStore> {
@@ -587,7 +654,7 @@ export class WindowsProjectCodingResources {
     });
     return this.#registryOpening;
   }
-  publish(spec: TaskSpec, output: CodingWorkspaceReview, status: "done" | "failed" | "stopped", checks: ScopedCodingChecks) {
+  publish(spec: TaskSpec, output: CodingWorkspaceReview, status: "done" | "failed" | "stopped", checks: ScopedCodingChecks, resultSummary = "") {
     const authority = this.#authorities.get(spec), artifact = this.#unadopted.get(output);
     if (!authority || authority.publishing || this.#tasks.get(spec.id) !== authority || authority.output !== output || !artifact) return Promise.reject(stale());
     authority.publishing = true;
@@ -595,7 +662,8 @@ export class WindowsProjectCodingResources {
       try {
         const registry = await this.#registryValue();
         const summary = await registry.put({ expectedOwner: authority.owner, projectId: authority.projectId, taskId: spec.id, title: authority.title,
-          sourcePath: authority.source, sourceBoundary: authority.sourceBoundary, status, checks, current: () => this.#reviewCurrent(authority), output });
+          sourcePath: authority.source, sourceBoundary: authority.sourceBoundary, status, checks,
+          context: { request: spec.userWords ?? "", summary: resultSummary }, current: () => this.#reviewCurrent(authority), output });
         this.#unadopted.delete(output); this.#changed(); return summary;
       } catch (error) {
         try { const registry = await this.#registryValue(); await registry.discard(artifact.input); this.#unadopted.delete(output); }
@@ -660,7 +728,7 @@ export class WindowsProjectCodingResources {
     const closing = backends.map(backend => this.#closeBackend(backend));
     const pending = (async () => {
       try {
-        const settled = await Promise.allSettled([...stopping, ...closing, ...creating, ...captures, ...connections, privacy]);
+        const settled = await Promise.allSettled([...stopping, ...closing, ...creating, ...captures, ...connections, ...[...this.#draftImports].map(pending => pending.then(() => undefined, () => undefined)), privacy]);
         if (settled.some(value => value.status === "rejected")) this.#failure();
         const remaining = await Promise.allSettled([...this.#active.keys()].map(backend => this.#closeBackend(backend)));
         if (remaining.some(value => value.status === "rejected")) this.#failure();

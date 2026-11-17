@@ -1,4 +1,10 @@
 /** Host lifetime for project folder grants, verified command copies and stopped review artifacts. No model factory. */
+import { importedSourceUnchanged, CodingDraftImportConflictError } from "./coding-draft-import-data";
+import { prepareCodingDraftImport, type CodingDraftImportResult, type CodingDraftFreshCapture } from "./coding-draft-import";
+import { consumeCodingDraftImportSeed, type CodingDraftImportSeed } from "./coding-draft-import-seed";
+import type { OpenCodingDraft } from "./coding-draft-store";
+import type { CodingDraftOwner } from "./coding-draft-format";
+import { CodingDraftCleanupError, CODING_DRAFT_MAX_REVIEW_BYTES } from "./coding-draft-format";
 import fs from "node:fs/promises";
 import { constants, type BigIntStats } from "node:fs";
 import path from "node:path";
@@ -37,9 +43,10 @@ export interface ProjectCodingResourcesOptions {
   /** Main shares this immutable selection with every desktop self-protection gate before allocation. */
   storage?: CodingStorageBase;
 }
-export type CodingResultsAccess = Pick<CodingResultRegistry, "state" | "review" | "export" | "reset" | "forgetProject" | "forgetResult">;
+export type CodingResultsAccess = Pick<CodingResultRegistry, "state" | "review" | "export" | "reset" | "forgetProject" | "forgetResult" | "withDraftSnapshot">;
 interface Pin { path: string; handle: fs.FileHandle; stat: BigIntStats; mount: string }
 interface Authority {
+  importCurrent?: () => boolean;
   taskId: string; owner: string; projectId: string; source: string; title: string; ownerCurrent: () => boolean;
   publicationEpoch: number; projectRevision: number;
   sourceBoundary: CodingArtifactSourceRef | null;
@@ -97,6 +104,7 @@ export class ProjectCodingResources {
   #active = new Map<IsolatedCommandWorkspace, Authority>();
   #backendClosing = new WeakMap<IsolatedCommandWorkspace, Promise<void>>();
   #invalidationPending = 0;
+  #draftImports = new Set<Promise<CodingDraftImportResult>>();
   #creating = new Set<Promise<IsolatedCommandWorkspace>>();
   #publishing = new Set<Promise<unknown>>();
   #unadopted = new Map<string, string>();
@@ -111,6 +119,8 @@ export class ProjectCodingResources {
     this.#common = this.#storage.common ?? this.#storage.protectedPaths[0];
     this.#results = Object.freeze({
       state: projectId => this.#registry?.state(projectId) ?? [],
+      withDraftSnapshot: (id, projectId, current, capture) => this.#registry
+        ? this.#registry.withDraftSnapshot(id, projectId, current, capture) : Promise.reject(new CodingResultRegistryError("stale")),
       review: id => this.#observeArtifactCleanup(this.#registry?.review(id) ?? Promise.resolve(null)),
       export: (id, destination, current) => this.#observeArtifactCleanup(this.#registry?.export(id, destination, current) ?? Promise.resolve({ ok: false, message: "No coding review is available to export." })),
       reset: () => { this.#publicationEpoch++; return this.#retryRegistryReset(); },
@@ -285,6 +295,9 @@ export class ProjectCodingResources {
   }
 
   createWorkspace(spec: TaskSpec, signal: AbortSignal, admit: () => boolean): Promise<IsolatedCommandWorkspace> {
+    return this.#createWorkspace(spec, signal, admit);
+  }
+  #createWorkspace(spec: TaskSpec, signal: AbortSignal, admit: () => boolean, imported?: CodingDraftImportSeed): Promise<IsolatedCommandWorkspace> {
     const workspace = spec.codingWorkspace, projectId = workspace?.projectId, owner = this.#owner();
     if (!this.availability().available || !workspace || !projectId || !this.#project(projectId) || !owner || this.#tasks.has(spec.id)) return Promise.reject(stale());
     let privacyScope: CodingPrivacyScope;
@@ -296,7 +309,7 @@ export class ProjectCodingResources {
     const ownerCurrent = this.folders.ownerCurrent(), epoch = this.#epoch;
     const authority: Authority = { taskId: spec.id, owner, projectId, source: path,
       title: titleOf(spec.goal).replace(/[\p{Cc}\p{Cf}]/gu, value => `\\u${value.codePointAt(0)!.toString(16).padStart(4, "0")}`),
-      ownerCurrent, publicationEpoch: this.#publicationEpoch, projectRevision: this.#projectRevisions.get(projectId) ?? 0, sourceBoundary: null };
+      ownerCurrent, publicationEpoch: this.#publicationEpoch, projectRevision: this.#projectRevisions.get(projectId) ?? 0, sourceBoundary: null, ...(imported ? { importCurrent: admit } : {}) };
     const current = () => !this.#closed && !this.#failed && this.#epoch === epoch && !signal.aborted && this.availability().available &&
       this.#owner() === owner && safeCall(ownerCurrent) && this.#project(projectId) && selected?.path === path &&
       safeCall(selected.current) && safeCall(sourceCurrent) && safeCall(admit) &&
@@ -314,6 +327,11 @@ export class ProjectCodingResources {
         if (continuationRef) {
           if (!this.#registry) throw stale();
           continuation = await this.#registry.loadContinuation(continuationRef, projectId, authority.sourceBoundary, current);
+          if (!current()) throw stale();
+        }
+        if (imported) {
+          if (continuationRef || !authority.sourceBoundary) throw stale();
+          continuation = await consumeCodingDraftImportSeed(imported, { store, source: authority.sourceBoundary, projectId, path, owner, current });
           if (!current()) throw stale();
         }
         const scope = await this.#sourceScope(path, current); if (!current()) throw stale();
@@ -408,11 +426,59 @@ export class ProjectCodingResources {
     }
     return this.#registryOpening;
   }
+  /** Explicit fresh-folder import; completed work is a new stopped review with no saved execution identity. */
+  importDraft(projectId: string, draft: OpenCodingDraft, owner: CodingDraftOwner, signal: AbortSignal, admit: () => boolean): Promise<CodingDraftImportResult> {
+    const grant = this.workspace(projectId), epoch = this.#epoch;
+    const current = () => this.#epoch === epoch && this.#owner() === owner.holder && !!grant && safeCall(grant.current) && safeCall(admit) && !signal.aborted;
+    const check = () => { if (!current()) throw stale(); };
+    if (!grant || !current()) return Promise.reject(stale());
+    const makeSpec = (): TaskSpec => ({ id: randomUUID(), goal: "Imported coding draft for review", target: {}, codingWorkspace: grant });
+    const discard = async (spec: TaskSpec, output: IsolatedCommandReview) => {
+      try { const store = await this.#artifactStoreValue(); await store.discard(output); this.#unadopted.delete(output.directory);
+        const authority = this.#authorities.get(spec); if (authority) authority.output = undefined;
+        this.#tasks.delete(spec.id); this.#authorities.delete(spec);
+      } catch (error) { this.#failure(); throw error; }
+    };
+    const capture = async (): Promise<CodingDraftFreshCapture> => {
+      const spec = makeSpec(), workspace = await this.#createWorkspace(spec, signal, current);
+      let output: IsolatedCommandReview | undefined, document: Buffer | undefined;
+      try {
+        await workspace.stop(); output = await workspace.exportReview(this.#reviews);
+        await workspace.close(); check();
+        const store = await this.#artifactStoreValue(), source = this.#authorities.get(spec)?.sourceBoundary;
+        if (!source) throw stale();
+        const receipt = await store.claim(output, check); check();
+        document = await store.read(receipt, "review.json", CODING_DRAFT_MAX_REVIEW_BYTES, check); check();
+        const binding = { ...output.review.binding };
+        const capturedOutput = output; output = undefined; await discard(spec, capturedOutput);
+        const result = { document, binding, store, source };
+        document = undefined; return result;
+      } finally { document?.fill(0); if (output) await discard(spec, output); await workspace.close(); }
+    };
+    const pending = prepareCodingDraftImport({ draft, owner, projectId, path: grant.path, signal, current, capture,
+      produce: async seed => {
+        check(); const spec = makeSpec(), workspace = await this.#createWorkspace(spec, signal, current, seed);
+        const authority = this.#authorities.get(spec);
+        let output: IsolatedCommandReview | undefined, publishing = false;
+        try {
+          check(); await workspace.stop(); output = await workspace.exportReview(this.#reviews); check();
+          if (!importedSourceUnchanged(output.review) || output.review.changes.some(change => change.conflicts.length)) throw new CodingDraftImportConflictError();
+          publishing = true; const result = await this.publish(spec, output, "done", { ran: 0, passed: 0, failed: 0 }, "Imported saved coding draft for review; checks must run again.");
+          if (!current()) { await (await this.results()).forgetResult(result.id); throw stale(); }
+          if (authority) authority.importCurrent = undefined;
+          return result;
+        } finally { if (output && !publishing) await discard(spec, output); await workspace.close(); }
+      } }).catch(error => {
+      if (error instanceof CodingDraftCleanupError) this.#failure();
+      throw error;
+    });
+    this.#draftImports.add(pending); void pending.then(() => this.#draftImports.delete(pending), () => this.#draftImports.delete(pending)); return pending;
+  }
   #reviewCurrent(authority: Authority): boolean {
-    return !this.#closed && this.#owner() === authority.owner && safeCall(authority.ownerCurrent) && this.#project(authority.projectId) &&
+    return !this.#closed && (!authority.importCurrent || safeCall(authority.importCurrent)) && this.#owner() === authority.owner && safeCall(authority.ownerCurrent) && this.#project(authority.projectId) &&
       this.#publicationEpoch === authority.publicationEpoch && (this.#projectRevisions.get(authority.projectId) ?? 0) === authority.projectRevision;
   }
-  publish(spec: TaskSpec, output: IsolatedCommandReview, status: "done" | "failed" | "stopped", checks: ScopedCodingChecks) {
+  publish(spec: TaskSpec, output: IsolatedCommandReview, status: "done" | "failed" | "stopped", checks: ScopedCodingChecks, resultSummary = "") {
     const authority = this.#authorities.get(spec);
     if (!authority || authority.publishing || this.#tasks.get(spec.id) !== authority || authority.output !== output) return Promise.reject(stale());
     authority.publishing = true;
@@ -422,7 +488,7 @@ export class ProjectCodingResources {
       try {
         const registry = await this.#registryValue();
         const summary = await registry.put({ expectedOwner: authority.owner, projectId: authority.projectId, taskId: spec.id, title: authority.title,
-          sourcePath: authority.source, sourceBoundary: authority.sourceBoundary, status, checks, current, output });
+          sourcePath: authority.source, sourceBoundary: authority.sourceBoundary, status, checks, context: { request: spec.userWords ?? "", summary: resultSummary }, current, output });
         this.#unadopted.delete(output.directory); this.#changed(); return summary;
       } catch (error) {
         if (error instanceof CodingArtifactCleanupError) this.#failure();
@@ -494,7 +560,7 @@ export class ProjectCodingResources {
     const closes = backends.map(backend => this.#closeBackend(backend));
     const pending = (async () => {
       try {
-        const results = await Promise.allSettled([...stops, ...closes, ...creations, privacy]);
+        const results = await Promise.allSettled([...stops, ...closes, ...creations, ...[...this.#draftImports].map(pending => pending.then(() => undefined, () => undefined)), privacy]);
         if (results.some(result => result.status === "rejected")) this.#failure();
         const remaining = await Promise.allSettled([...this.#active.keys()].map(backend => this.#closeBackend(backend)));
         if (remaining.some(result => result.status === "rejected")) this.#failure();

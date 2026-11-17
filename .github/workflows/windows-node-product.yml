@@ -43,20 +43,20 @@ jobs:
           const path = require("node:path");
           const { createHash } = require("node:crypto");
           const { spawnSync, execFileSync } = require("node:child_process");
-          // The fixed POSIX producer and expanded current-source graph are independently qualified.
+          // The fixed POSIX producer is authenticated; the expanded current-source graph awaits fresh qualification.
           // Product admission stays closed until seven-case evidence on both images is reviewed.
           // Workflow inputs or caller environment cannot select another producer or proof.
           const reviewed = Object.freeze({
-            ready: true,
+            ready: false,
             run: 43991252195,
             commit: "b75c944dec58973d157542e2d4d2db3720667982",
             artifact: 14289217635,
             archiveBytes: 38425334,
             archiveSha256: "cbbbf6c641c41bda8ece457c28a54b9bc4121a068dc376725bcf0e3ac24a2f62",
             manifestSha256: "d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f",
-            assetProofCommit: "5b89563840479d27b1ba83251fd74652d219d913",
-            assetProofManifestSha256: "3b1f1c4b03aaa44afd617f38a2ea81095ee6e688fa06390daeb6e54529329320",
-            verifierFileSha256: "8dff6a53bca9c2dc39a190a9298f743cbbc40c54f7f24ea456af21498e19c302",
+            assetProofCommit: null,
+            assetProofManifestSha256: null,
+            verifierFileSha256: null,
           });
           if (reviewed.ready !== true || !/^[0-9a-f]{40}$/.test(reviewed.commit ?? "") ||
               !Number.isSafeInteger(reviewed.artifact) || reviewed.artifact < 1 ||

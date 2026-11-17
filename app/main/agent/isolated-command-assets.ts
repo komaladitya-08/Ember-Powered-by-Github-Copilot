@@ -4,17 +4,32 @@ import { constants, type BigIntStats } from "node:fs";
 import path from "node:path";
 import { HOST_ARCH, HOST_PLATFORM } from "../platform/os";
 
+declare const publicNpmToolsBrand: unique symbol;
+/** Host-issued fixed copied utilities only; this identity grants no mount, network or execution permission. */
+export interface IsolatedPublicNpmToolsRef { readonly [publicNpmToolsBrand]: true }
+const publicNpmTools = new WeakSet<object>();
+
+/** A trusted public-dependency runtime may request this fixed set, never caller-supplied paths or arguments. */
+export function issueIsolatedPublicNpmTools(): IsolatedPublicNpmToolsRef {
+  if (new.target || arguments.length !== 0) throw unsupported();
+  const ref = Object.freeze({}) as IsolatedPublicNpmToolsRef;
+  publicNpmTools.add(ref); return ref;
+}
+
 export interface IsolatedCommandAssetInput {
   rootfs: string;
   protectedPaths: readonly string[];
   /** Explicit host choice; only a root-owned ELF with verifiable fixed-system dependencies is accepted. */
   nodePath?: string;
+  /** Optional fixed utilities, accepted only from the host issuer in this module. */
+  publicNpmTools?: IsolatedPublicNpmToolsRef;
   signal?: AbortSignal;
 }
 export interface IsolatedCommandAssetResult { node: boolean; files: number; bytes: number }
 export interface IsolatedCommandElf { interpreter: string | null; needed: string[] }
 const LIBRARIES = ["/lib64", "/usr/lib64", "/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu", "/lib", "/usr/lib"] as const;
 const MAX_ASSET = 256 * 1024 * 1024, MAX_TOTAL = 512 * 1024 * 1024, MAX_FILES = 128;
+const PUBLIC_NPM_TOOLS = ["env", "mkdir", "rm", "cp", "mv", "touch", "ls", "chmod", "ln"] as const;
 
 const within = (file: string, root: string) => { const r = path.relative(root, file); return !r || (r !== ".." && !r.startsWith("../") && !path.isAbsolute(r)); };
 const same = (a: BigIntStats, b: BigIntStats) => a.dev === b.dev && a.ino === b.ino && a.mode === b.mode && a.nlink === b.nlink && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
@@ -101,6 +116,8 @@ async function trustedParents(file: string): Promise<void> {
 /** The caller creates a new private empty rootfs and mounts only these copies, never these host library directories. */
 export async function copyIsolatedCommandAssets(input: IsolatedCommandAssetInput): Promise<IsolatedCommandAssetResult> {
   if (HOST_PLATFORM !== "linux" || HOST_ARCH !== "x64") throw new Error("Isolated command assets require Linux x64.");
+  const extraTools = input.publicNpmTools;
+  if (extraTools !== undefined && !publicNpmTools.has(extraTools)) throw unsupported();
   if (!path.isAbsolute(input.rootfs) || !input.protectedPaths.length || input.protectedPaths.some(p => !path.isAbsolute(p)) || (input.nodePath !== undefined && !path.isAbsolute(input.nodePath))) throw unsupported();
   input.signal?.throwIfAborted();
   const root = await fs.realpath(input.rootfs), stat = await fs.lstat(input.rootfs);
@@ -158,6 +175,7 @@ export async function copyIsolatedCommandAssets(input: IsolatedCommandAssetInput
     for (const library of info.needed) { const resolved = await resolveLibrary(library); await copy(resolved, resolved); }
   };
   for (const file of ["/usr/bin/bash", "/usr/bin/cat", "/usr/bin/sleep"]) await copy(file, file);
+  if (extraTools !== undefined) for (const name of PUBLIC_NPM_TOOLS) await copy(`/usr/bin/${name}`, `/usr/bin/${name}`);
   if (input.nodePath) await copy(input.nodePath, "/usr/bin/node");
   input.signal?.throwIfAborted();
   return { node: input.nodePath !== undefined, files: copied.size, bytes };

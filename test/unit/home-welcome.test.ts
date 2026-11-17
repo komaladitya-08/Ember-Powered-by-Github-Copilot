@@ -147,6 +147,8 @@ describe("the consent in short", () => {
     settings.consent = { version: 13, at: "2026-11-15T00:00:00Z" };
     expect(hasConsent(settings)).toBe(false);
     settings.consent.version = 14;
+    expect(hasConsent(settings)).toBe(false);
+    settings.consent.version = 15;
     expect(hasConsent(settings)).toBe(true);
     const start = PAGE.indexOf('<li data-icon="lock"><b>Coding projects</b>');
     const full = PAGE.slice(start, PAGE.indexOf("</li>", start));
@@ -156,9 +158,37 @@ describe("the consent in short", () => {
     expect(full).toContain("if cleanup cannot be verified, private copies may remain and block new coding work until resolved");
     expect(full).toContain("complete captured project files, including unchanged files, in your chosen folder until you remove them");
     expect(full).toContain("Exporting never applies changes to the original");
-    expect(consentChangesSince(13)).toEqual(["When you ask for coding work, I copy the project folder you chose and may send requested files and command output to your model, leaving the original unchanged. Exports keep all captured files, including unchanged files, until you remove them. Private copies I can't verify as removed may remain and block new coding work."]);
+    expect(consentChangesSince(13)).toEqual([CONSENT_CHANGES[14], CONSENT_CHANGES[15]]);
     expect(points.find(point => point.icon === "send")!.text).toContain("requested files and command output");
     expect(points.find(point => point.icon === "lock")!.text).toContain("including unchanged files, until you remove them");
+  });
+
+  it("asks again before explicit encrypted code/context retention and keeps opening a saved draft inert", () => {
+    expect(CONSENT_VERSION).toBe(15);
+    expect(consentChangesSince(14)).toEqual([CONSENT_CHANGES[15]]);
+    expect(CONSENT_CHANGES[15]).toContain("If you choose Save coding draft");
+    expect(CONSENT_CHANGES[15]).toContain("complete captured files, the last request and summary, and historical check outcomes");
+    expect(CONSENT_CHANGES[15]).toContain("Opening a saved draft never resumes work");
+    expect(PAGE).toContain("locked with your computer's keyring, until you choose Forget saved draft, Forget all saved drafts or Forget everything.");
+    expect(PAGE).toContain("Saved context is untrusted history, never permission for new work.");
+    const sharing = "When you start a new request from an imported draft, its saved request and summary may go to your connected model as historical context.";
+    expect(PAGE).toContain(sharing); expect(CONSENT_CHANGES[15]).toContain(sharing);
+    expect(points.find(point => point.icon === "send")!.text).toContain(sharing);
+    expect(points.find(point => point.icon === "lock")!.text).toContain("Save coding draft encrypts complete captured files");
+  });
+
+  it("uses that same consent version for separately enabled public npm metadata sharing without granting a dependency set", () => {
+    expect(CONSENT_VERSION).toBe(15); expect(consentChangesSince(14)).toEqual([CONSENT_CHANGES[15]]);
+    const start = PAGE.indexOf('<li data-icon="lock"><b>Coding projects</b>'), full = PAGE.slice(start, PAGE.indexOf("</li>", start));
+    expect(full).toContain("If you separately enable public dependencies for a WSL coding project");
+    expect(full).toContain("public npm package names and versions to registry.npmjs.org.");
+    expect(full).toContain("Project files and private registry credentials are never sent there.");
+    expect(full).toContain("Each exact set still follows your normal approval mode, and commands remain offline.");
+    for (const line of [CONSENT_CHANGES[15], points.find(point => point.icon === "send")!.text]) {
+      expect(line).toContain("If you separately enable public dependencies");
+      expect(line).toContain("after the normal approval decision for that exact set");
+      expect(line).toContain("I send no project files or private registry credentials there, and commands remain offline.");
+    }
   });
 
   it("tells someone who agreed to an earlier version what changed since, each line from the full text and true for them (first-run-4, safety-privacy-8, slice4-x9-3)", () => {
@@ -170,17 +200,17 @@ describe("the consent in short", () => {
       for (const source of CONSENT_CHANGE_SOURCES[v]) expect(full, `${v}: ${source}`).toContain(source);
     }
     expect(Object.keys(CONSENT_CHANGES).map(Number).every(v => v >= 2 && v <= CONSENT_VERSION)).toBe(true);
-    expect(consentChangesSince(6)).toEqual([CONSENT_CHANGES[7], CONSENT_CHANGES[8], CONSENT_CHANGES[9], CONSENT_CHANGES[10], CONSENT_CHANGES[11], CONSENT_CHANGES[12], CONSENT_CHANGES[13], CONSENT_CHANGES[14]]);
+    expect(consentChangesSince(6)).toEqual([CONSENT_CHANGES[7], CONSENT_CHANGES[8], CONSENT_CHANGES[9], CONSENT_CHANGES[10], CONSENT_CHANGES[11], CONSENT_CHANGES[12], CONSENT_CHANGES[13], CONSENT_CHANGES[14], CONSENT_CHANGES[15]]);
     expect(consentChangesSince(6)[0]).toContain("“Keep my recent conversation”");
-    expect(consentChangesSince(4)).toEqual([CONSENT_CHANGES[5], CONSENT_CHANGES[6], CONSENT_CHANGES[7], CONSENT_CHANGES[8], CONSENT_CHANGES[9], CONSENT_CHANGES[10], CONSENT_CHANGES[11], CONSENT_CHANGES[12], CONSENT_CHANGES[13], CONSENT_CHANGES[14]]);
+    expect(consentChangesSince(4)).toEqual([CONSENT_CHANGES[5], CONSENT_CHANGES[6], CONSENT_CHANGES[7], CONSENT_CHANGES[8], CONSENT_CHANGES[9], CONSENT_CHANGES[10], CONSENT_CHANGES[11], CONSENT_CHANGES[12], CONSENT_CHANGES[13], CONSENT_CHANGES[14], CONSENT_CHANGES[15]]);
     // Setup says plainly that anyone near the computer can answer Ember by voice (owner decision B of 2026-11-12).
     expect(consentChangesSince(7)[0]).toBe("While one of my questions is up, anyone near the computer can answer it by voice, and for a few seconds after I ask, I listen for that answer without my name. With Voice Match on, only your voice can say yes.");
     // Version 9, said truthfully to someone who agreed before: their settings stay, and they are asked about Interactive
     // only while its card isn't agreed and their organisation allows it, when its row shows (slice4-25, slice4-x9-3).
     expect(consentChangesSince(8)[0]).toBe("If you haven't agreed to Interactive yet, agreeing now turns it on unless you switch it off here or your organisation keeps it off, so I don't ask before ordinary steps in an app. Your other settings stay as they are.");
     // Version 10: what the vault keeps, and that only Autopilot fills it in (vault-4).
-    expect(consentChangesSince(8)).toHaveLength(6);
-    expect(consentChangesSince(9)).toEqual([CONSENT_CHANGES[10], CONSENT_CHANGES[11], CONSENT_CHANGES[12], CONSENT_CHANGES[13], CONSENT_CHANGES[14]]);
+    expect(consentChangesSince(8)).toHaveLength(7);
+    expect(consentChangesSince(9)).toEqual([CONSENT_CHANGES[10], CONSENT_CHANGES[11], CONSENT_CHANGES[12], CONSENT_CHANGES[13], CONSENT_CHANGES[14], CONSENT_CHANGES[15]]);
     expect(consentChangesSince(0)).toEqual([]);
     expect(consentChangesSince(CONSENT_VERSION)).toEqual([]);
     for (const line of Object.values(CONSENT_CHANGES)) expect(line, line).not.toMatch(/\bwe\b|\bus\b|\bour\b|"/i);

@@ -151,6 +151,14 @@ export const IPC = {
   projectCodingWorkspaceChoose: "projects:coding-workspace-choose",
   projectCodingWorkspaceForget: "projects:coding-workspace-forget",
   projectCodingExecutionChoose: "projects:coding-execution-choose",
+  codingDraftsState: "coding-drafts:state",
+  codingDraftSave: "coding-drafts:save",
+  codingDraftOpen: "coding-drafts:open",
+  codingDraftForget: "coding-drafts:forget",
+  codingDraftForgetAll: "coding-drafts:forget-all",
+  codingDraftFolderChoose: "coding-drafts:folder-choose",
+  codingDraftImport: "coding-drafts:import",
+  projectCodingPublicDependenciesChoose: "projects:coding-public-dependencies-choose",
   codingResultsState: "coding:results-state",
   codingResultReview: "coding:result-review",
   codingResultExport: "coding:result-export",
@@ -495,6 +503,14 @@ export interface EmberHomeApi {
   projectCodingWorkspaceChoose(projectId: string): Promise<import("./project-coding").ProjectCodingWorkspaceState>;
   projectCodingWorkspaceForget(projectId: string): Promise<import("./project-coding").ProjectCodingWorkspaceState>;
   projectCodingExecutionChoose(projectId: string, targetId: string): Promise<import("./project-coding").ProjectCodingWorkspaceState>;
+  codingDraftsState(): Promise<import("./coding-drafts").CodingDraftsState>;
+  codingDraftSave(resultId: string, name: string): Promise<import("./coding-drafts").CodingDraftsState>;
+  codingDraftOpen(id: string): Promise<import("./coding-drafts").CodingDraftView>;
+  codingDraftForget(id: string): Promise<import("./coding-drafts").CodingDraftsState>;
+  codingDraftForgetAll(): Promise<import("./coding-drafts").CodingDraftsState>;
+  codingDraftFolderChoose(id: string, projectId: string): Promise<import("./coding-drafts").CodingDraftFolderChoice>;
+  codingDraftImport(id: string, projectId: string): Promise<import("./coding-drafts").CodingDraftImportResult>;
+  projectCodingPublicDependenciesChoose(projectId: string, enabled: boolean): Promise<import("./project-coding").ProjectCodingWorkspaceState>;
   codingResultsState(projectId: string): Promise<import("./project-coding").CodingResultSummary[]>;
   codingResultReview(id: string): Promise<import("./project-coding").CodingResultReview>;
   codingResultExport(id: string): Promise<{ ok: boolean; message: string }>;

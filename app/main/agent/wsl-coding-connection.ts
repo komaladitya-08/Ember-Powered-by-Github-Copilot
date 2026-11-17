@@ -5,6 +5,10 @@ import { pipeline } from "node:stream/promises";
 import { decodeWslCodingMessage, wslCodingFrame, wslCodingFrameSink, WSL_CODING_MAX_PENDING, type WslCodingMethod } from "./wsl-coding-protocol";
 
 const fail = () => new Error("The isolated WSL coding connection could not be verified.");
+/** A helper's explicit ownership/close uncertainty is terminal, unlike a supported request validation refusal. */
+export class WslCodingGuestCleanupError extends Error {
+  constructor() { super("The isolated WSL guest cleanup could not be verified."); this.name = "WslCodingGuestCleanupError"; }
+}
 type Pending = { resolve(value: unknown): void; reject(error: Error): void; method: WslCodingMethod; nonce: string; output?: (bytes: Uint8Array, stream: "stdout" | "stderr") => void; bytes: number; timer: ReturnType<typeof setTimeout> };
 declare const stopped: unique symbol;
 export interface WslStoppedReceiptRef { readonly [stopped]: true }
@@ -25,6 +29,7 @@ export class WslCodingConnection {
   #child: ChildProcessWithoutNullStreams; #next = 0; #pending = new Map<number, Pending>(); #failure: Error | undefined;
   #transport = new AbortController(); #closed = false; #retired = false; #closing?: Promise<void>; #stopping?: Promise<WslStoppedReceiptRef>;
   #episode = randomBytes(16).toString("hex"); #namespaces = 0; #stopNonce?: string;
+  #cleanupFailure?: WslCodingGuestCleanupError;
   #exit: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
   constructor(child: ChildProcessWithoutNullStreams) {
     this.#child = child;
@@ -41,7 +46,10 @@ export class WslCodingConnection {
         pending.output(bytes, message.stream); return;
       }
       const finish = () => { clearTimeout(pending.timer); this.#pending.delete(message.id); };
-      if (message.kind === "failure") { finish(); pending.reject(fail()); }
+      if (message.kind === "failure") {
+        finish(); if (message.code === "cleanup") { this.#retired = true; this.#cleanupFailure ??= new WslCodingGuestCleanupError(); }
+        pending.reject(message.code === "cleanup" ? this.#cleanupFailure! : fail());
+      }
       else if (pending.method === "run" || pending.method === "runNode") {
         if (!message.value || typeof message.value !== "object" || Array.isArray(message.value)) throw fail();
         const value = message.value as Record<string, unknown>, count = kernelWitness(value.witness);
@@ -75,6 +83,7 @@ export class WslCodingConnection {
   stop(): Promise<WslStoppedReceiptRef> {
     this.#retired = true;
     this.#stopping ??= this.call("stop").then(value => {
+      if (this.#cleanupFailure) throw this.#cleanupFailure;
       if (this.#failure || !this.#stopNonce || !value || typeof value !== "object" || Object.keys(value).sort().join(",") !== "stopped,witness" || (value as { stopped?: unknown }).stopped !== true) throw fail();
       const witness = (value as { witness?: unknown }).witness;
       if (!witness || typeof witness !== "object" || Object.keys(witness).sort().join(",") !== "drained,epoch,exited,kind,launched,sealed") throw fail();
@@ -97,6 +106,7 @@ export class WslCodingConnection {
       try {
         const exit = await Promise.race([this.#exit, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(fail()), 5000); })]);
         if (exit.code !== 0 || exit.signal !== null) throw fail();
+        if (this.#cleanupFailure) throw this.#cleanupFailure;
       } finally { clearTimeout(timer); }
       this.#transport.abort();
     })(); return this.#closing;

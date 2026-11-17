@@ -704,14 +704,14 @@ function sourceFixture(selectedScript = Script) {
     } }), close: () => fs.rmSync(repository, { recursive: true, force: false }) };
 }
 
-it("binds the newly qualified expanded source graph before product admission", () => {
+it("keeps product admission closed while the expanded source graph awaits native qualification", () => {
   const reviewed = runInNewContext("(" + producer.match(/const reviewed = Object\.freeze\(([\s\S]*?)\);/)![1] + ")");
-  expect(reviewed).toEqual({ ready: true, run: 43991252195, commit: "b75c944dec58973d157542e2d4d2db3720667982", artifact: 14289217635, archiveBytes: 38425334,
+  expect(reviewed).toEqual({ ready: false, run: 43991252195, commit: "b75c944dec58973d157542e2d4d2db3720667982", artifact: 14289217635, archiveBytes: 38425334,
     archiveSha256: "cbbbf6c641c41bda8ece457c28a54b9bc4121a068dc376725bcf0e3ac24a2f62",
     manifestSha256: "d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f",
-    assetProofCommit: "5b89563840479d27b1ba83251fd74652d219d913",
-    assetProofManifestSha256: "3b1f1c4b03aaa44afd617f38a2ea81095ee6e688fa06390daeb6e54529329320",
-    verifierFileSha256: "8dff6a53bca9c2dc39a190a9298f743cbbc40c54f7f24ea456af21498e19c302" });
+    assetProofCommit: null,
+    assetProofManifestSha256: null,
+    verifierFileSha256: null });
   expect(product).toContain("id: reviewed_input");
   expect(product).toContain("REVIEWED_ASSET_PROOF_COMMIT: ${{ steps.reviewed_input.outputs.proofCommit }}");
   expect(product).toContain("REVIEWED_ASSET_PROOF_MANIFEST: ${{ steps.reviewed_input.outputs.proofManifest }}");
@@ -724,7 +724,7 @@ it.each(["windows-2022", "windows-2025"])("uses the genuine current source reade
   const f = sourceFixture();
   try {
     f.env.EMBER_WINDOWS_NODE_PRODUCT_IMAGE = image;
-    expect(WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS).toHaveLength(131);
+    expect(WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS).toHaveLength(146);
     expect(f.run).not.toThrow(); expect(f.transformed).toHaveBeenCalledTimes(1);
     expect(f.anchored).toHaveBeenCalledExactlyOnceWith(path.join(f.repository, "package.json")); expect(f.requested).toHaveBeenCalledExactlyOnceWith("esbuild");
   } finally { f.close(); }

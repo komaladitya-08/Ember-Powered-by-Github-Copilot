@@ -3,6 +3,7 @@ import type { PathFact, RunnerFacts } from "../commands/types";
 import type { CodingReviewExport } from "./coding-result-export";
 import type { IsolatedCodingCommandPort } from "./isolated-coding-command-runner";
 import type { CodingArtifactRef } from "./coding-artifact-store";
+import type { PublicNpmPreparationAuthorize, PublicNpmPreparationResult } from "./public-npm-lock";
 
 export type ScopedCodingFileFailure = "unavailable" | "cancelled" | "path" | "boundary" | "unsupported" | "privacy" | "binary" |
   "secret" | "limit" | "missing" | "exists" | "conflict" | "ambiguous" | "not-empty" | "io";
@@ -65,6 +66,8 @@ export interface CodingReviewWorkspace extends ScopedCodingWorkspace {
   readonly executionRoot: string;
   /** A remote backend supplies a serialized write-exclusion check without granting a filesystem path on the host. */
   quiescent?(): Promise<boolean>;
+  /** Host-owned public-lock transaction; normal approval runs before any host fetch while the source lease is held. */
+  preparePublicDependencies?(authorize: PublicNpmPreparationAuthorize, signal: AbortSignal): Promise<PublicNpmPreparationResult>;
   stop(): Promise<void>;
   exportReview(exportBase: string): Promise<CodingWorkspaceReview>;
   close(): Promise<void>;

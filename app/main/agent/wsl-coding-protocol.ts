@@ -9,7 +9,7 @@ export const WSL_CODING_PROTOCOL = 1;
 export const WSL_CODING_MAX_PENDING = 8;
 export const WSL_CODING_FRAME_BYTES = 16 * 1024 * 1024;
 const fail = () => new Error("The isolated WSL coding transport could not be verified.");
-const methods = ["hello", "provision", "open", "list", "readText", "writeText", "replaceText", "delete", "mkdir", "searchLiteral", "inspect", "run", "runNode", "stop", "sealFiles", "quiescent", "snapshot", "close"] as const;
+const methods = ["hello", "provision", "open", "list", "readText", "writeText", "replaceText", "delete", "mkdir", "searchLiteral", "inspect", "run", "runNode", "publicBegin", "publicChunk", "publicCommit", "publicCancel", "stop", "sealFiles", "quiescent", "snapshot", "close"] as const;
 export type WslCodingMethod = typeof methods[number];
 const envelope = { episode: z.string().regex(/^[0-9a-f]{32}$/), nonce: z.string().regex(/^[0-9a-f]{32}$/) };
 const requestSchema = z.object({ ...envelope, id: z.number().int().min(1).max(1_000_000), method: z.enum(methods), params: z.record(z.string(), z.unknown()) }).strict();

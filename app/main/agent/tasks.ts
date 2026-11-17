@@ -9,6 +9,7 @@
  */
 
 import crypto from "node:crypto";
+import { copyPriorCodingDraftContext } from "./coding-draft-context";
 import type { TaskWindow } from "./task-controls";
 import { TASK_READING_LEASE_MS, TASK_STOPPING, type TaskCard } from "../../shared/overlay";
 import type { Logger } from "../logger";
@@ -193,6 +194,7 @@ export interface StartOptions {
   codingWorkspace?: TaskSpec["codingWorkspace"];
   codingCompletion?: true;
   handoffSummary?: string;
+  priorCodingContext?: TaskSpec["priorCodingContext"];
   deferHandoff?: true;
   target?: WindowTarget & { app?: string };
   mode?: "do" | "guide";
@@ -427,6 +429,7 @@ export class TaskManager {
    * absent: this computer), and `where` its card's badge when that isn't this computer. `commandWords`: TaskSpec's.
    */
   start(goal: string, opts: StartOptions = {}): Task {
+    if (opts.priorCodingContext) opts = { ...opts, priorCodingContext: copyPriorCodingDraftContext(opts.priorCodingContext) };
     const id = `${++this.n}-${crypto.randomUUID().slice(0, 8)}`;
     // (Said while it waits behind others at work: one that starts at once says "Working…" at once.)
     const task: Task = { id, goal, title: titleOf(goal), status: "queued", detail: opts.mode === "guide" ? "Starts when another guide ends" : "Starts when another task ends", result: null, started: Date.now(), finished: null,
@@ -439,7 +442,7 @@ export class TaskManager {
     this.specs.set(id, { goal, opts: { ...opts, target, userWords: opts.userWords ?? goal,
       ...(opts.userWords === undefined && opts.commandWords === undefined ? { commandWords: "", typedOnly: true } : {}),
       ...(opts.agreed ? { agreed: [...opts.agreed] } : {}) } });
-    this.queue.push({ task, spec: { id, goal, target, mode: opts.mode ?? "do", ...(opts.codingWorkspace ? { codingWorkspace: opts.codingWorkspace } : {}), ...(opts.codingCompletion ? { codingCompletion: true } : {}), ...(opts.handoffSummary ? { handoffSummary: opts.handoffSummary } : {}), ...(opts.deferHandoff ? { deferHandoff: true } : {}), ...(opts.userWords !== undefined ? { userWords: opts.userWords } : {}),
+    this.queue.push({ task, spec: { id, goal, target, mode: opts.mode ?? "do", ...(opts.codingWorkspace ? { codingWorkspace: opts.codingWorkspace } : {}), ...(opts.codingCompletion ? { codingCompletion: true } : {}), ...(opts.handoffSummary ? { handoffSummary: opts.handoffSummary } : {}), ...(opts.priorCodingContext ? { priorCodingContext: opts.priorCodingContext } : {}), ...(opts.deferHandoff ? { deferHandoff: true } : {}), ...(opts.userWords !== undefined ? { userWords: opts.userWords } : {}),
       ...(opts.agreed?.length ? { agreed: opts.agreed } : {}), ...(opts.screen ? { screen: opts.screen } : {}), ...(opts.targetId ? { targetId: opts.targetId } : {}),
       ...(opts.commandWords !== undefined ? { commandWords: opts.commandWords } : {}), ...(opts.typedOnly ? { typedOnly: true } : {}), ...(opts.partWay ? { partWay: true } : {}),
       ...(opts.checkWords !== undefined ? { checkWords: opts.checkWords } : {}) } });

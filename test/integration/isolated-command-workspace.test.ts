@@ -416,3 +416,12 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("an uncertain 
     expect(fs.readdirSync(f.baseDir).some(name => name.startsWith("ember-coding-snapshot-"))).toBe(true);
   } finally { failure.mockRestore(); }
 }, 30_000);
+
+it.skipIf(process.platform !== "linux" || process.arch !== "x64")("keeps actual default Linux Bash/Node HOME and tilde expansion at tmp with no public dependency profile", async ctx => {
+  if (!supported()) { ctx.skip(); return; }
+  const asset = await trustedCodingTestNodeOrSkip(ctx), f = await fixture({ nodePath: asset.nodePath }), workspace = await IsolatedCommandWorkspace.create(f.input);
+  try {
+    expect(await workspace.run("printf '%s\\n' \"$HOME\" ~; node -p 'process.env.HOME'; printf ordinary > ~/home-control; test -f /tmp/home-control && test ! -e /work/home-control; test ! -e /opt/ember-public-cache; test ! -e /usr/bin/env; test ! -e /usr/bin/npm", "/work", () => undefined, signal(), "bash")).toMatchObject({ observed: true, exitCode: 0, output: "/tmp\n/tmp\n/tmp\n" });
+    expect(await workspace.files(async root => fs.existsSync(path.join(root, "home-control")))).toBe(false);
+  } finally { await workspace.close(); }
+}, 30_000);

@@ -68,7 +68,7 @@ it.skipIf(process.platform !== "linux" || process.arch !== "x64")("publishes an 
     if (step === 3) return { tool: { name: "finish_coding", args: { success: true, summary: "Updated the copied heading for review." } } };
     return { text: "Review ready." };
   } });
-  const f = fixture(model, asset.nodePath), { commandService: _service, commandContext: _context, ...base } = f.options;
+  const f = fixture(model, asset.nodePath), { commandService: _service, commandContext: _context, publicDependencies: _publicDependencies, ...base } = f.options;
   const facts = vi.spyOn(_service.runner, "facts");
   const options: FileOnlyScopedCodingWorkerOptions = { ...base, mode: "files-only",
     platform: { files: (workspace, signal) => ScopedCodingFiles.create({ workspace, signal }) } };

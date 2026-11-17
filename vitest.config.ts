@@ -8,8 +8,11 @@ const pkg = (name: string) => fileURLToPath(new URL(`./packages/${name}/src/inde
 const privacyWorker = buildSync({ entryPoints: [fileURLToPath(new URL("./app/main/agent/coding-privacy-worker.ts", import.meta.url))],
   bundle: true, platform: "node", format: "cjs", target: "node22", write: false, logLevel: "silent" }).outputFiles[0].text;
 
+const draftWorker = buildSync({ entryPoints: [fileURLToPath(new URL("./app/main/agent/coding-draft-worker.ts", import.meta.url))],
+  bundle: true, platform: "node", format: "cjs", target: "node22", write: false, logLevel: "silent" }).outputFiles[0].text;
+
 export default defineConfig({
-  define: { __EMBER_CODING_PRIVACY_WORKER_SOURCE__: JSON.stringify(privacyWorker) },
+  define: { __EMBER_CODING_PRIVACY_WORKER_SOURCE__: JSON.stringify(privacyWorker), __EMBER_CODING_DRAFT_WORKER_SOURCE__: JSON.stringify(draftWorker) },
   resolve: {
     alias: {
       "@ember/characters": pkg("characters"),

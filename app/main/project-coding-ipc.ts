@@ -19,6 +19,8 @@ export interface ProjectCodingIpcDeps {
   executionState?(projectId: string): ProjectCodingExecutionState | undefined;
   /** Synchronous metadata choice only; it does not install, start or approve commands. */
   chooseExecution?(projectId: string, targetId: string): void;
+  /** Explicit project intent; no dependency set is approved or fetched by this metadata action. */
+  choosePublicDependencies?(projectId: string, enabled: boolean): void;
   /** Calls the host's synchronous intake capture, then returns its ordinary conversation submission. */
   continueResult?(id: string, projectId: string, request: string): Promise<boolean>;
   chooseFolder(title: string): Promise<string | null>;
@@ -26,9 +28,13 @@ export interface ProjectCodingIpcDeps {
   /** Synchronous host cancellation after a folder capability changes; undefined invalidates every project. */
   folderChanged?(projectId?: string): void;
   changed(): void;
+  resultForgotten?(id: string): void;
+  projectForgotten?(projectId?: string): void;
 }
 
 export interface ProjectCodingIpc {
+  /** Existing guarded picker, reused only by another trusted Home action. */
+  chooseFolder(projectId: string): Promise<ProjectCodingWorkspaceState>;
   /** Invalidates pending chooser/review/export replies synchronously, before private cleanup is awaited. */
   reset(): Promise<void>;
   /** Retires only this project's folder capability and review records. */
@@ -40,6 +46,7 @@ const argsSchema = z.tuple([idSchema]);
 const executionArgsSchema = z.tuple([idSchema, z.string().min(1).max(68).refine(value => {
   const parsed = parseTargetId(value); return parsed?.kind === "local" || parsed?.kind === "wsl";
 })]);
+const publicDependenciesArgsSchema = z.tuple([idSchema, z.boolean()]);
 const continuationArgsSchema = z.tuple([idSchema, idSchema, z.string().min(1).max(2000).refine(value => !!value.trim())]);
 const UNAVAILABLE = "Connect Ember and open Projects to use coding work.";
 const STALE = "The account, project or folder choice changed. Try again.";
@@ -82,7 +89,8 @@ export function registerProjectCodingIpc(d: ProjectCodingIpcDeps): ProjectCoding
     try { availability = d.availability(id); } catch { availability = { available: false, message: "Coding work is unavailable on this computer." }; }
     const folder = d.folders.state(id), busy = liveCoding(id), picking = pickers.has(id);
     let execution: ProjectCodingExecutionState | undefined;
-    try { const state = d.executionState?.(id); if (state) execution = { ...state, canSelect: !!d.chooseExecution && state.canSelect && !busy && !picking }; } catch { /* A missing capability offers no choice. */ }
+    try { const state = d.executionState?.(id); if (state) execution = { ...state, canSelect: !!d.chooseExecution && state.canSelect && !busy && !picking,
+      ...(state.publicDependencies ? { publicDependencies: { ...state.publicDependencies, canChange: !!d.choosePublicDependencies && state.publicDependencies.canChange && !busy && !picking } } : {}) }; } catch { /* A missing capability offers no choice. */ }
     return {
       projectId: id, folder, available: availability.available,
       ...(typeof availability.canContinue === "boolean" ? { canContinue: availability.canContinue } : {}),
@@ -107,8 +115,9 @@ export function registerProjectCodingIpc(d: ProjectCodingIpcDeps): ProjectCoding
   };
 
   d.handle(IPC.projectCodingWorkspaceState, (...args): ProjectCodingWorkspaceState => workspaceState(idFrom(args)));
-  d.handle(IPC.projectCodingWorkspaceChoose, async (...args): Promise<ProjectCodingWorkspaceState> => {
-    const id = idFrom(args); requireFolderChange(id);
+  const chooseFolder = async (id: string): Promise<ProjectCodingWorkspaceState> => {
+    if (!idSchema.safeParse(id).success) throw new Error("Choose an existing project.");
+    requireFolderChange(id);
     const current = capability(id), owner = capability(), token = {};
     pickers.set(id, token); changed();
     const mayBind = () => safe(current) && pickers.get(id) === token && !liveCoding(id);
@@ -135,7 +144,8 @@ export function registerProjectCodingIpc(d: ProjectCodingIpcDeps): ProjectCoding
     } finally {
       if (pickers.get(id) === token) { pickers.delete(id); changed(); }
     }
-  });
+  };
+  d.handle(IPC.projectCodingWorkspaceChoose, (...args) => chooseFolder(idFrom(args)));
   d.handle(IPC.projectCodingWorkspaceForget, (...args): ProjectCodingWorkspaceState => {
     const id = idFrom(args); requireFolderChange(id);
     d.folders.clear(id); d.folderChanged?.(id); changed();
@@ -162,6 +172,26 @@ export function registerProjectCodingIpc(d: ProjectCodingIpcDeps): ProjectCoding
     } catch {
       if (!safe(owner) || !safe(selectionCurrent)) throw new Error(STALE);
       throw new Error("Couldn't change the command environment. Refresh Projects and choose an available option.");
+    }
+  });
+  d.handle(IPC.projectCodingPublicDependenciesChoose, (...args): ProjectCodingWorkspaceState => {
+    const parsed = publicDependenciesArgsSchema.safeParse(args);
+    if (!parsed.success) throw new Error("Choose this project's public dependency setting.");
+    const [id, enabled] = parsed.data; requireFolderChange(id);
+    const current = capability(id), owner = capability(); let selectionCurrent = current;
+    try {
+      const state = d.executionState?.(id);
+      assertCurrent(current); requireFolderChange(id);
+      if (!d.choosePublicDependencies || !state?.publicDependencies?.canChange) throw new Error("unavailable");
+      d.choosePublicDependencies(id, enabled);
+      assertCurrent(() => safe(current) && !liveCoding(id) && !pickers.has(id));
+      revisions.set(id, (revisions.get(id) ?? 0) + 1); selectionCurrent = capability(id);
+      d.folderChanged?.(id); changed();
+      assertCurrent(() => safe(owner) && safe(selectionCurrent) && !liveCoding(id) && !pickers.has(id));
+      return workspaceState(id);
+    } catch {
+      if (!safe(owner) || !safe(selectionCurrent)) throw new Error(STALE);
+      throw new Error("Couldn't change public dependency downloads. Refresh Projects and choose again.");
     }
   });
   d.handle(IPC.codingResultsState, async (...args): Promise<CodingResultSummary[]> => {
@@ -222,6 +252,7 @@ export function registerProjectCodingIpc(d: ProjectCodingIpcDeps): ProjectCoding
   d.handle(IPC.codingResultForget, async (...args): Promise<{ ok: boolean; message: string }> => {
     const id = idFrom(args), owner = capability();
     if (!safe(owner)) return { ok: false, message: UNAVAILABLE };
+    d.resultForgotten?.(id);
     const projects = projectCapabilities();
     try {
       const registry = await registryForUse(); assertCurrent(owner);
@@ -258,8 +289,10 @@ export function registerProjectCodingIpc(d: ProjectCodingIpcDeps): ProjectCoding
   });
 
   return {
+    chooseFolder,
     reset(): Promise<void> {
       const at = ++epoch;
+      d.projectForgotten?.(undefined);
       revisions.clear(); pickers.clear(); d.folders.ownerReset(); d.folderChanged?.(undefined); changed();
       return (async () => {
         try { const registry = await registryForUse(); if (at === epoch) await registry.reset(); return; }
@@ -270,6 +303,7 @@ export function registerProjectCodingIpc(d: ProjectCodingIpcDeps): ProjectCoding
     },
     forgetProject(id: string): Promise<void> {
       if (!idSchema.safeParse(id).success) return Promise.reject(new Error("Choose an existing project."));
+      d.projectForgotten?.(id);
       const at = epoch, ownerCurrent = d.folders.ownerCurrent();
       revisions.set(id, (revisions.get(id) ?? 0) + 1); pickers.delete(id); d.folders.clear(id); d.folderChanged?.(id); changed();
       return (async () => {

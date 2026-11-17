@@ -12,11 +12,13 @@ import type { RunNodeArgs } from "../commands/node-invocation";
 import { IsolatedCodingCommandRunner } from "./isolated-coding-command-runner";
 import type { PrivateControllerRuntimeInput } from "./private-controller-runtime";
 import type { TaskSpec, WorkerResult } from "./worker";
+import { codingDraftContext } from "./coding-draft-context";
 import { handoffContext } from "./handoff-context";
 import { CodingPrivacyCleanupError } from "./coding-privacy-scanner";
 import { WindowsCodingCleanupError } from "./windows-coding-native";
 import { CodingArtifactCleanupError } from "./coding-artifact-store";
 import { CodingSeedCleanupError } from "./coding-seed-snapshot";
+import { PUBLIC_NPM_LIMITS, type PublicNpmPreparationRequest } from "./public-npm-lock";
 
 export interface ScopedCodingChecks { ran: number; passed: number; failed: number }
 interface ScopedCodingWorkerBaseOptions {
@@ -26,7 +28,7 @@ interface ScopedCodingWorkerBaseOptions {
   current(): boolean;
   reviewBase: string;
   /** The registry owns a separate captured account/project capability, including rejection and artifact cleanup. */
-  publish(output: CodingWorkspaceReview, status: "done" | "failed" | "stopped", checks: ScopedCodingChecks): Promise<CodingResultSummary>;
+  publish(output: CodingWorkspaceReview, status: "done" | "failed" | "stopped", checks: ScopedCodingChecks, summary?: string): Promise<CodingResultSummary>;
   progress(text: string): void;
   beforeStart(): Promise<void>;
   onRetiring?(): void;
@@ -46,6 +48,7 @@ export interface ScopedCodingWorkerOptions extends ScopedCodingWorkerBaseOptions
   commandService: CommandService;
   /** Called once. Its original words, refusals, taint, policy and mutable flow state survive every command. */
   commandContext(service: CommandService, signal: AbortSignal): CommandFlowContext;
+  publicDependencies?: { current(): boolean; authorize(request: Readonly<PublicNpmPreparationRequest>, context: CommandFlowContext, signal: AbortSignal): Promise<boolean> };
 }
 export interface FileOnlyScopedCodingWorkerOptions extends ScopedCodingWorkerBaseOptions {
   mode: "files-only";
@@ -53,6 +56,7 @@ export interface FileOnlyScopedCodingWorkerOptions extends ScopedCodingWorkerBas
   platform: Pick<CodingPlatformAdapter, "files">;
   commandService?: never;
   commandContext?: never;
+  publicDependencies?: never;
 }
 export type CodingWorkerOptions = ScopedCodingWorkerOptions | FileOnlyScopedCodingWorkerOptions;
 
@@ -86,6 +90,7 @@ export class ScopedCodingWorker {
   private cleanupFailed = false;
   private completed = false;
   private settled = false;
+  private publicPreparationCurrent: (() => boolean) | null = null;
   private finishDisposed!: (ok: boolean) => void;
   readonly disposed = new Promise<boolean>(resolve => { this.finishDisposed = resolve; });
 
@@ -100,7 +105,7 @@ export class ScopedCodingWorker {
   }
 
   private current = (): boolean => {
-    try { return !this.lifetime.signal.aborted && !this.invalid && this.o.current() === true; } catch { return false; }
+    try { return !this.lifetime.signal.aborted && !this.invalid && (!this.publicPreparationCurrent || this.publicPreparationCurrent()) && this.o.current() === true; } catch { return false; }
   };
   private requireCurrent(): void {
     if (!this.current()) throw new Error("The coding task is no longer current.");
@@ -143,10 +148,12 @@ export class ScopedCodingWorker {
       if (signal.aborted) this.stop();
       this.requireCurrent();
       if (this.o.mode !== undefined && this.o.mode !== "commands" && this.o.mode !== "files-only") throw new Error("The coding capability is invalid.");
-      if (this.o.mode === "files-only" && (this.o.commandService !== undefined || this.o.commandContext !== undefined || typeof this.o.platform?.files !== "function")) throw new Error("The coding capability is invalid.");
+      if (this.o.mode === "files-only" && (this.o.commandService !== undefined || this.o.commandContext !== undefined || this.o.publicDependencies !== undefined || typeof this.o.platform?.files !== "function")) throw new Error("The coding capability is invalid.");
       // Capture execution authority before startup can wait. A later caller mutation cannot upgrade this task.
       const commands = this.o.mode === "files-only" ? null : { service: this.o.commandService, context: this.o.commandContext,
-        toolchain: this.o.toolchain, target: this.o.target ? structuredClone(this.o.target) : undefined, facts: this.o.platform?.facts.bind(this.o.platform), createWorkspace: this.o.createWorkspace.bind(this.o) };
+        toolchain: this.o.toolchain, target: this.o.target ? structuredClone(this.o.target) : undefined, facts: this.o.platform?.facts.bind(this.o.platform), createWorkspace: this.o.createWorkspace.bind(this.o),
+        publicDependencies: this.o.publicDependencies ? { current: this.o.publicDependencies.current.bind(this.o.publicDependencies), authorize: this.o.publicDependencies.authorize.bind(this.o.publicDependencies) } : undefined };
+      this.publicPreparationCurrent = commands?.publicDependencies?.current ?? null;
       const files = this.o.platform?.files.bind(this.o.platform);
       const createWorkspace = this.o.createWorkspace.bind(this.o);
       this.watch = setInterval(() => { if (!this.current() && !this.lifetime.signal.aborted) this.invalidate(); }, 100);
@@ -177,7 +184,7 @@ export class ScopedCodingWorker {
         if (target ? target.kind !== "wsl" || parseTargetId(target.id)?.kind !== "wsl" || target.shellOs !== "linux" ||
           JSON.stringify(target) !== JSON.stringify(original.binding) : original.binding.id !== "local" || original.binding.kind !== "local") throw new Error("The coding command target changed.");
         const hostFacts = await original.runner.facts(); this.requireCurrent();
-        const facts: RunnerFacts = commands.facts?.(commandWorkspace, hostFacts) ?? { ...hostFacts, os: "linux", home: "/state", shells: ["bash"], shellPaths: { bash: "/usr/bin/bash" }, script: null, pty: false, extraPath: [] };
+        const facts: RunnerFacts = commands.facts?.(commandWorkspace, hostFacts) ?? { ...hostFacts, os: "linux", home: "/tmp", shells: ["bash"], shellPaths: { bash: "/usr/bin/bash" }, script: null, pty: false, extraPath: [] };
         if (target && (facts.os !== "linux" || facts.privileged || !facts.shells.includes("bash") || !commandWorkspace.nodeAvailable || !commands.facts)) throw new Error("The WSL coding platform is unavailable.");
         if (facts.shells.some(shell => !["bash", "sh", "zsh", "powershell"].includes(shell))) throw new Error("The coding platform has no supported command shell.");
         this.runner = new IsolatedCodingCommandRunner({ workspace: commandWorkspace, facts, target: target?.id ?? "local", signal: this.lifetime.signal,
@@ -186,7 +193,35 @@ export class ScopedCodingWorker {
         if (commands.toolchain !== undefined && (commands.toolchain !== "windows-node" || facts.os !== "win32" || facts.shells.length || !this.runner.nodeAvailable)) throw new Error("The coding toolchain capability is invalid.");
         const service = isolatedService(original, this.runner, facts.shells), context = commands.context(service, this.lifetime.signal);
         context.state.cwd = facts.os === "win32" ? "\\work" : this.workspace.executionRoot;
+        const dependencies = commands.publicDependencies, prepare = commandWorkspace.preparePublicDependencies?.bind(commandWorkspace);
+        if (dependencies && (!target || !dependencies.current() || !prepare)) throw new Error("Public dependency preparation is unavailable for this coding task.");
+        const preparePublicDependencies = dependencies && prepare ? async (tool: CodingControllerToolContext) => {
+          this.requireCurrent();
+          if (!dependencies.current() || context.state.running) throw new Error("Public dependency preparation is unavailable for this coding task.");
+          const combined = AbortSignal.any([context.signal, tool.signal, this.lifetime.signal]);
+          context.state.running = true;
+          try {
+            const result = await prepare(async (request, requestSignal) => {
+              const signal = AbortSignal.any([combined, requestSignal]);
+              if (!this.current() || !dependencies.current() || signal.aborted) return false;
+              const permitted = await dependencies.authorize(request, { ...context, signal,
+                isOver: () => signal.aborted || !this.current() || !dependencies.current() || context.isOver(),
+                confirmer: { ...context.confirmer, ask: (question, askSignal) => tool.waiting(() => context.confirmer.ask(question,
+                  askSignal ? AbortSignal.any([signal, askSignal]) : signal)) },
+              }, signal);
+              return permitted && this.current() && dependencies.current() && !signal.aborted;
+            }, combined);
+            this.requireCurrent();
+            if (!dependencies.current() || result.prepared !== true || !Number.isInteger(result.packages) || result.packages < 0 || result.packages > PUBLIC_NPM_LIMITS.packages ||
+                !/^[0-9a-f]{64}$/.test(result.lockSha256) || !/^[0-9a-f]{64}$/.test(result.setSha256)) throw new Error("Public dependency preparation did not complete.");
+            context.audit({ event: "action", task: this.spec.id, kind: "public-dependencies-prepared", packages: result.packages, lockSha256: result.lockSha256, setSha256: result.setSha256 });
+            this.requireCurrent(); if (!dependencies.current()) throw new Error("Public dependency preparation is no longer current.");
+            return result;
+          } catch (error) { this.commandFailed = true; this.stop(); throw error; }
+          finally { context.state.running = false; }
+        } : undefined;
         const toolchain = commands.toolchain ? { toolchain: commands.toolchain } : {};
+        const executionProfile = target ? { executionProfile: dependencies ? "wsl-public-lock" as const : "wsl-offline" as const } : {};
         const execute = async (tool: CodingControllerToolContext, invoke: (context: CommandFlowContext) => ReturnType<typeof runCommandTool>) => {
           this.requireCurrent();
           const combined = AbortSignal.any([context.signal, tool.signal, this.lifetime.signal]);
@@ -208,14 +243,14 @@ export class ScopedCodingWorker {
         };
         const runNode = (args: RunNodeArgs, tool: CodingControllerToolContext): Promise<CodingControllerCommandResult> => execute(tool, current => runNodeTool(args, current));
         this.controller = facts.shells.length
-          ? await CustomCodingController.start({ ...controller, ...toolchain,
+          ? await CustomCodingController.start({ ...controller, ...toolchain, ...executionProfile, ...(preparePublicDependencies ? { preparePublicDependencies } : {}),
             commands: { target: service.binding.label, shells: facts.shells, ...(this.runner.nodeAvailable ? { node: true as const } : {}) },
             runCommand: (args, tool) => execute(tool, current => runCommandTool(args, current)), ...(this.runner.nodeAvailable ? { runNode } : {}),
           })
           : await CustomCodingController.start({ ...controller, ...toolchain, commands: { target: service.binding.label, shells: [], node: true }, runNode });
       }
       this.requireCurrent();
-      result = await this.controller.run(this.spec.goal + handoffContext(this.spec.handoffSummary), this.lifetime.signal);
+      result = await this.controller.run(this.spec.goal + handoffContext(this.spec.handoffSummary) + codingDraftContext(this.spec.priorCodingContext), this.lifetime.signal);
     } catch (error) {
       pipelineFailed = true;
       // A failed factory may retain an owner without ever returning its workspace capability.
@@ -241,7 +276,7 @@ export class ScopedCodingWorker {
           const checks = { ran: exits.length, passed: exits.filter(item => item.exit.code === 0).length, failed: exits.filter(item => item.exit.code !== 0).length };
           if (!this.current() && !this.lifetime.signal.aborted) this.invalidate();
           const changed = this.invalid || signal.aborted || this.commandStopped || (this.lifetime.signal.aborted && !this.commandFailed);
-          await this.o.publish(output, changed ? "stopped" : result.success && !pipelineFailed && !this.commandFailed ? "done" : "failed", checks);
+          await this.o.publish(output, changed ? "stopped" : result.success && !pipelineFailed && !this.commandFailed ? "done" : "failed", checks, result.summary);
           published = true;
         } catch (error) { if (error instanceof CodingPrivacyCleanupError) this.cleanupFailed = true; pipelineFailed = true; }
       }

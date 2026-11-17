@@ -3,6 +3,7 @@ import { CODING_REVIEW_PATCH_LIMIT, type CodingResultReview, type CodingResultSu
 import { STATUS_WORDS } from "../../shared/activity";
 import { ipcErrorText, sessionReviewChanged } from "./copy";
 import { codingSessionReview, sameCodingSessionReview, type CodingSessionReviewIdentity, type ProjectSessionReviews } from "./session-reviews";
+import { mountCodingDrafts, type CodingDraftControls } from "./coding-drafts";
 
 export function mountProjectCoding(): ProjectSessionReviews {
   const root = document.getElementById("project-coding")!;
@@ -18,6 +19,9 @@ export function mountProjectCoding(): ProjectSessionReviews {
   const executionChoose = find<HTMLButtonElement>("execution-choose");
   const executionState = find<HTMLParagraphElement>("execution-state");
   const executionDetail = find<HTMLParagraphElement>("execution-detail");
+  const publicDependenciesGroup = find<HTMLElement>("public-dependencies");
+  const publicDependenciesOn = find<HTMLInputElement>("public-dependencies-on");
+  const publicDependenciesDetail = find<HTMLParagraphElement>("public-dependencies-detail");
   const status = find<HTMLParagraphElement>("status");
   const results = find<HTMLOListElement>("results");
   const review = find<HTMLElement>("review");
@@ -56,6 +60,8 @@ export function mountProjectCoding(): ProjectSessionReviews {
   let drawn = "";
   let executionDrawn = "";
   let executionSelected = "";
+  let drafts: CodingDraftControls | null = null;
+  let dependencyGesture: { owner: number; project: string; target: string; folder: string | null } | null = null;
 
   const plain = (tag: string, text: string, className = "") => {
     const node = document.createElement(tag);
@@ -75,12 +81,14 @@ export function mountProjectCoding(): ProjectSessionReviews {
     const execution = workspace?.execution, candidate = execution?.choices.find(choice => choice.id === executionSelect.value);
     executionSelect.disabled = pending || !ready || !execution?.canSelect;
     executionChoose.disabled = executionSelect.disabled || !candidate?.selectable || candidate.id === execution?.selected;
+    publicDependenciesOn.disabled = pending || !ready || !execution?.publicDependencies?.canChange;
     exportReview.disabled = pending || !opened || opened.projectId !== projectId || !ready;
     continueReview.disabled = pending || !continuationAvailable();
     continueRequest.disabled = pending || !continuationAvailable();
     continueCancel.disabled = pending;
     continueSend.disabled = pending || continueForm.hidden || !continuationAvailable() || !validContinuationRequest();
     for (const button of results.querySelectorAll<HTMLButtonElement>("button")) button.disabled = !ready || (pending && !button.dataset.forgetResult);
+    drafts?.changed();
   };
   const render = () => {
     root.hidden = false;
@@ -88,6 +96,10 @@ export function mountProjectCoding(): ProjectSessionReviews {
     stateText.textContent = !projectId ? "Each project keeps its own folder choice and coding reviews." : !ready ? "Connect Ember to manage coding folders and review results." : workspace?.message || (workspace?.available ? "Coding work uses a private copy. Your original project stays unchanged." : "Coding work is currently unavailable. You can prepare a folder when Choose folder is available.");
     const execution = workspace?.execution;
     executionGroup.hidden = !execution;
+    const publicDependencies = execution?.publicDependencies;
+    publicDependenciesGroup.hidden = !publicDependencies;
+    publicDependenciesOn.checked = publicDependencies?.enabled === true;
+    publicDependenciesDetail.textContent = publicDependencies?.message ?? "";
     if (execution) {
       const signature = JSON.stringify({ selected: execution.selected, choices: execution.choices.map(({ id, label, selectable }) => ({ id, label, selectable })) });
       if (signature !== executionDrawn) {
@@ -269,10 +281,39 @@ export function mountProjectCoding(): ProjectSessionReviews {
     } catch (error) { if (current(owner, project) && action === actionEpoch) status.textContent = ipcErrorText(error); }
     finally { if (current(owner, project) && action === actionEpoch) { pending = false; render(); void load(); } }
   };
+  drafts = mountCodingDrafts({
+    context: () => ({ projectId, generation, ready, pending, workspace, result: opened }),
+    workspaceChanged: state => { if (state.projectId === projectId && ready) { workspace = state; render(); } },
+    imported: async id => {
+      const project = projectId, owner = generation;
+      if (!project || !ready) return;
+      await load();
+      if (current(owner, project) && summaries.some(result => result.id === id)) await openResult(id);
+    },
+  });
   choose.addEventListener("click", () => { if (!choose.disabled) void folderAction("choose"); });
   forget.addEventListener("click", () => { if (!forget.disabled) void folderAction("forget"); });
   executionSelect.addEventListener("change", render);
   executionChoose.addEventListener("click", () => { if (!executionChoose.disabled) void executionAction(); });
+  const captureDependencyGesture = () => {
+    dependencyGesture = projectId && workspace?.execution ? { owner: generation, project: projectId, target: workspace.execution.selected, folder: workspace.folder?.path ?? null } : null;
+  };
+  publicDependenciesGroup.addEventListener("pointerdown", captureDependencyGesture);
+  publicDependenciesOn.addEventListener("keydown", event => { if (event.key === " ") captureDependencyGesture(); });
+  publicDependenciesOn.addEventListener("change", () => {
+    const gesture = dependencyGesture; dependencyGesture = null;
+    if (gesture && (!current(gesture.owner, gesture.project) || workspace?.execution?.selected !== gesture.target || (workspace.folder?.path ?? null) !== gesture.folder)) {
+      status.textContent = "The project or its coding environment changed. Choose this setting again."; render(); return;
+    }
+    if (!projectId || publicDependenciesOn.disabled || !workspace?.execution?.publicDependencies) return;
+    const project = projectId, owner = generation, action = ++actionEpoch, enabled = publicDependenciesOn.checked;
+    readEpoch++; pending = true; status.textContent = "Updating public dependency downloads for this project…"; render();
+    void window.ember.projectCodingPublicDependenciesChoose(project, enabled).then(state => {
+      if (current(owner, project) && action === actionEpoch && state.projectId === project) { workspace = state; status.textContent = state.execution?.publicDependencies?.message ?? state.message; }
+    }).catch(error => { if (current(owner, project) && action === actionEpoch) status.textContent = ipcErrorText(error); }).finally(() => {
+      if (current(owner, project) && action === actionEpoch) { pending = false; render(); void load(); }
+    });
+  });
   closeReview.addEventListener("click", () => {
     const id = opened?.id, control = reviewOrigin?.dataset.sessionControl;
     const origin = openedSessionIdentity && sessionIdentityCurrent(openedSessionIdentity)

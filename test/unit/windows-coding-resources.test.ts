@@ -1,6 +1,9 @@
 /** Portable ownership/ordering model only. Real NTFS behavior belongs to the dedicated Windows integration lane. */
 import fs from "node:fs";
 import path from "node:path/win32";
+import hostPath from "node:path";
+import os from "node:os";
+import type { SecretBox } from "../../app/main/agent/auth";
 import { createHash, randomUUID } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import type { WindowsCodingNative, WindowsCodingInfo } from "../../app/main/agent/windows-coding-native";
@@ -31,7 +34,7 @@ afterEach(async () => {
   vi.resetModules();
 });
 
-async function setup(options: { existingCommon?: boolean; unknownChildren?: number; wsl?: boolean; guestScope?: CodingExportInput["scope"] } = {}) {
+async function setup(options: { existingCommon?: boolean; unknownChildren?: number; wsl?: boolean; draftImport?: boolean; lateImportConflict?: boolean; guestScope?: CodingExportInput["scope"] } = {}) {
   vi.resetModules();
   vi.doMock("../../app/main/platform/os", () => ({ HOST_PLATFORM: "win32", HOST_ARCH: "x64" }));
   const native = await import("../../app/main/agent/windows-coding-native");
@@ -237,8 +240,11 @@ async function setup(options: { existingCommon?: boolean; unknownChildren?: numb
         if (base !== input.reviewBase || !backend.sealed || !input.review.current()) return Promise.reject(new errors.CodingResultRegistryError("stale"));
         return exporting ??= (async () => {
           const binding = input.review.binding, tree = (text: string) => ({ binding, entries: [{ path: "app.ts", kind: "file" as const, bytes: Buffer.from(text), executable: false }] });
-          const rendered = createCodingReviewExport({ binding, baseline: tree("original\n"), proposed: tree("changed\n"), current: tree("original\n"),
+          const baseline = options.draftImport && seed ? { ...seed.baseline, binding } : tree("original\n");
+          const proposed = options.draftImport ? seed ? { ...seed.proposed, binding } : tree("original\n") : tree("changed\n");
+          const rendered = createCodingReviewExport({ binding, baseline, proposed, current: tree(options.lateImportConflict && seed ? "concurrent edit\n" : "original\n"),
             ...(options.wsl ? { scope: { version: 1 as const, source: { excludedRoots: [".git", "node_modules"] as (".git" | "node_modules")[], omitted: [{ path: ".git" as const, kind: "directory" as const }, { path: "node_modules" as const, kind: "link" as const }], byteLimit: 10 * 1024 * 1024 }, dependencies: null } } : {}) });
+
           const artifact = await store.write({ "changes.patch": Buffer.from(rendered.review.textPatch), "review.json": Buffer.from(JSON.stringify(rendered.review, null, 2)) }, () => {
             if (!input.review.current()) throw new errors.CodingResultRegistryError("stale");
           });
@@ -712,4 +718,82 @@ it("does not retain a partial WSL review when a known source refusal also retire
   f.createBackend.mockImplementationOnce(async () => { f.setOwner(B); throw new ScopedCodingFileError("missing"); });
   await workspace.sealForReview?.(); await expect(workspace.exportReview(value.reviewBase)).rejects.toThrow("changed");
   expect(f.store.size).toBe(0); await workspace.close();
+});
+
+async function openedImportFixture(f: Awaited<ReturnType<typeof setup>>, value: WindowsProjectCodingResources, conflict = false) {
+  await value.results();
+  const dir = fs.mkdtempSync(hostPath.join(os.tmpdir(), "ember-native-draft-"));
+  const box = { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => "test", encryptString: (text: string) => Buffer.from(text), decryptString: (bytes: Buffer) => bytes.toString() } as SecretBox;
+  const { CodingDraftStore } = await import("../../app/main/agent/coding-draft-store");
+  const drafts = new CodingDraftStore(dir, box, false), binding = { owner: A, session: randomUUID(), snapshot: randomUUID() };
+  const tree = (text: string) => ({ binding, entries: [{ path: "app.ts", kind: "file" as const, bytes: Buffer.from(text), executable: false }] });
+  const { createCodingReviewExport } = await import("../../app/main/agent/coding-result-export");
+  const review = createCodingReviewExport({ binding, baseline: tree(conflict ? "different original\n" : "original\n"), proposed: tree("restored proposal\n") });
+  const output = await f.store.write({ "review.json": Buffer.from(JSON.stringify(review.review, null, 2)), "changes.patch": Buffer.from(review.review.textPatch) }, () => {});
+  const receipt = await f.store.claim(output, () => {}), id = randomUUID();
+  const snapshot = await drafts.capture({ store: f.store, artifact: receipt, current: () => true, metadata: { version: 1, id, owner: { library: A, holder: A }, name: "Saved parser", savedAt: 1,
+    sourceLabel: "Old advisory folder", context: { request: "Historical request", summary: "Historical summary" }, historicalChecks: { ran: 1, passed: 1, failed: 0 }, binding } });
+  try { await drafts.save({ library: A, holder: A }, snapshot, () => true); } finally { snapshot.close(); await f.store.discard(output); }
+  const draft = (await drafts.open({ library: A, holder: A }, id, () => true))!;
+  return { draft, binding, async close() { draft.close(); await drafts.close(); fs.rmSync(dir, { recursive: true, force: true }); } };
+}
+it("imports a saved proposal under new Windows source/binding/result authority with fresh checks only", async () => {
+  const f = await setup({ draftImport: true }), value = await f.open(); await f.bind(value); const saved = await openedImportFixture(f, value);
+  try {
+    const imported = await value.importDraft(P, saved.draft, { library: A, holder: A }, new AbortController().signal, () => true);
+    if (!imported.ok) throw new Error(imported.message);
+    expect(imported.result.projectId).toBe(P); expect(imported.result.checks).toEqual({ ran: 0, passed: 0, failed: 0 });
+    expect(f.backends).toHaveLength(2); expect(JSON.parse([...f.store.records.values()][0].files["review.json"].toString()).proposed[0].base64).toBe(Buffer.from("restored proposal\n").toString("base64"));
+    expect(f.backends[1].input.review.binding).not.toEqual(saved.binding); expect(f.backends[1].input).not.toHaveProperty("userWords");
+    expect(f.backends[0].close).toHaveBeenCalled(); expect(f.store.size).toBe(1);
+  } finally { await saved.close(); }
+});
+it("keeps conflicting saved data inert and removes its temporary Windows source artifact", async () => {
+  const f = await setup({ draftImport: true }), value = await f.open(); await f.bind(value); const saved = await openedImportFixture(f, value, true);
+  try {
+    expect(await value.importDraft(P, saved.draft, { library: A, holder: A }, new AbortController().signal, () => true)).toMatchObject({ ok: false, message: expect.stringContaining("conflict") });
+    expect(f.backends).toHaveLength(1); expect(f.store.size).toBe(0); expect((await value.results()).state(P)).toEqual([]);
+  } finally { await saved.close(); }
+});
+it("refuses a replaced fresh Windows source before materialising saved proposal bytes", async () => {
+  const f = await setup({ draftImport: true }), value = await f.open(); await f.bind(value); const saved = await openedImportFixture(f, value);
+  let replaced = false;
+  try {
+    await expect(value.importDraft(P, saved.draft, { library: A, holder: A }, new AbortController().signal, () => {
+      if (!replaced && f.backends.length === 1 && f.store.size === 0) { replaced = true; f.nodes.get(f.key(SOURCE))!.info.id = "replacement"; }
+      return true;
+    })).rejects.toThrow();
+    expect(replaced).toBe(true); expect(f.backends).toHaveLength(1); expect(f.store.size).toBe(0);
+  } finally { await saved.close(); }
+});
+
+it("refuses original-content changes after the clean comparison and discards the unpublished seeded artifact", async () => {
+  const f = await setup({ draftImport: true, lateImportConflict: true }), value = await f.open(); await f.bind(value); const saved = await openedImportFixture(f, value);
+  try {
+    expect(await value.importDraft(P, saved.draft, { library: A, holder: A }, new AbortController().signal, () => true)).toMatchObject({ ok: false, message: expect.stringContaining("changed") });
+    expect(f.backends).toHaveLength(2); expect(f.store.size).toBe(0); expect((await value.results()).state(P)).toEqual([]);
+  } finally { await saved.close(); }
+});
+
+it("continues a public-cache review as a fresh file-only copy without inheriting profile, cache provenance or download authority", async () => {
+  const receipt = { access: "verified-offline-cache-input" as const, registry: "https://registry.npmjs.org" as const, packageJsonSha256: "a".repeat(64), lockSha256: "b".repeat(64), setSha256: "c".repeat(64), packages: 1, compressedBytes: 100, expandedBytes: 2048, entries: 2 };
+  // The modeled host workspace supplies disclosure metadata; the real cache issuer/transport has separate proofs.
+  const priorScope = { version: 1 as const, source: { excludedRoots: [".git", "node_modules"] as (".git" | "node_modules")[], omitted: [], byteLimit: 10 * 1024 * 1024 }, dependencies: null, executionProfile: "wsl-public-lock" as const, publicDependencies: receipt };
+  const f = await setup({ wsl: true, guestScope: priorScope }), value = await f.open(); await f.bind(value); const task = f.spec(value);
+  let publicCurrent = true;
+  const open = vi.fn(async () => ({ connection: {} as never, typescriptArchive: Buffer.from("archive") }));
+  const workspace = await value.createWslWorkspace(task, new AbortController().signal, () => true, { current: () => true, publicDependencies: { current: () => publicCurrent }, open });
+  const nativeScope = f.backends[0].output!.review.scope; expect(nativeScope).toBeDefined();
+  await workspace.sealForReview?.(); const output = await workspace.exportReview(value.reviewBase);
+  expect(output.review.scope).toEqual({ ...nativeScope!, executionProfile: "wsl-public-lock", publicDependencies: receipt });
+  await workspace.close(); const summary = await value.publish(task, output, "done", { ran: 0, passed: 0, failed: 0 });
+  const ref = value.captureContinuation(summary.id, P); expect(ref).not.toBeNull(); publicCurrent = false;
+  const next = f.spec(value); next.codingWorkspace = { ...next.codingWorkspace!, continuation: ref! };
+  const fresh = await value.createFileWorkspace(next, new AbortController().signal, () => true);
+  try {
+    const backend = f.backends.at(-1)!; expect(backend.seed?.scope).toEqual(nativeScope);
+    expect(backend.seed?.scope).not.toHaveProperty("executionProfile"); expect(backend.seed?.scope).not.toHaveProperty("publicDependencies");
+    expect(backend.input).not.toHaveProperty("publicDependencies"); expect(backend.input).not.toHaveProperty("commandParent"); expect(backend.input).not.toHaveProperty("nodePath");
+    expect(treeText(backend.seed?.proposed)).toBe("changed\n"); expect(open).toHaveBeenCalledTimes(1); expect(f.wslInputs).toHaveLength(1);
+  } finally { await fresh.close(); }
 });

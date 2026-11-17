@@ -62,9 +62,58 @@ imports only `wsl-coding-archive.ts`, without download, installer or CLI code.
 
 The application never fetches tools or accepts a model-selected tool version. The
 selected distro must already provide trusted root-owned Node/npm and Bubblewrap.
-Public dependency acquisition is a separate, currently unsupported capability:
-Windows `node_modules` cannot provide Linux native dependencies. The initially
-proven TypeScript project has no external dependencies. Runtime networking is off.
+Windows `node_modules` cannot provide Linux native dependencies. Public dependency
+preparation is a separate captured project opt-in. It remains behind the same closed
+Windows admission gate. Opt-in alone approves no download: both the accepted baseline
+and every changed exact package set use the normal mode-sensitive policy before host
+acquisition. Commands, npm lifecycle scripts and children always remain offline.
+
+## Public lockfile preparation
+
+`prepare_public_dependencies` accepts no URLs, package names, versions or shell
+commands. Under a held engine file lease, the guest reads the copied `package.json`,
+lockfile v3 and declared copied workspace package identities. The Windows host
+independently validates the exact bytes, source digests and sorted artifact-set digest.
+The lease blocks command/file writers while the normal approval, acquisition and cache
+transfer are pending. Neither an SDK idle event nor a Boolean quiescence claim grants
+that lease. Original source, credentials and a prior draft receipt never grant a fetch.
+
+Acquisition accepts only exact HTTPS `registry.npmjs.org/<name>/-/<name>-<version>.tgz`
+URLs with a canonical single SHA-512 SRI. There are no redirects, credentials, query
+parameters, alternate ports, local/git sources, private registries or general fetch RPC.
+The registry receives requested names/versions; source files are not uploaded. Normal
+host TLS/system proxy settings stay on the host. The host executes no npm, lifecycle
+script, package binary or archive member and never extracts packages into its filesystem.
+
+The bounded data-only archive inspector refuses traversal/aliases, links, special files,
+PAX/GNU path extensions, bundled node_modules and mismatched package identities.
+Limits are 512 artifacts, 16 MiB per compressed archive, 64 MiB compressed and 128 MiB
+**full inflated tar bytes** per batch, including headers and zero padding, 50,000 entries,
+16 MiB per member and depth 64. The remaining aggregate inflation budget is supplied
+before the next gunzip; large scans yield and check cancellation. Inputs are limited to
+256 KiB package JSON and 2 MiB lock JSON; duplicate keys, malformed UTF-8 and unsupported
+lock layouts fail closed. Linux x64/glibc optional-platform selection is explicit.
+
+An opaque guest-issued runtime owns fresh writable dependency/cache mounts, separate
+from the source copy and from the default read-only dependency capability. Only this
+profile adds verified root-owned env/mkdir/rm/cp/mv/touch/ls/chmod/ln tools; the default
+three-tool set and asset bounds remain unchanged. Authenticated content-only npm cacache
+bytes are transferred through bounded fixed-purpose frames, reverified by the guest,
+and installed later by the separately checked `npm ci --offline` command inside bwrap.
+No tool or dependency acquisition occurs inside a command. Native packages requiring
+unprovided compilers/system libraries, install-time network downloads, unsupported tar
+formats or private registries remain unsupported.
+
+Stop seals admission, aborts host acquisition, releases the held guest transaction and
+drains **all** accepted lease/chunk/commit/file work before a positive stopped receipt.
+Accepted cache loans and partial chunks are wiped; lost acknowledgement, inode/close
+uncertainty or helper loss prevents positive cleanup/publication. Forget, sign-out,
+folder/target/policy/consent changes keep the existing captured capability fences.
+Cache and installed dependencies are mutable only inside the private namespace and
+excluded from review exports; copied/derived source outputs may contain their bytes.
+Host review metadata records verified archive **input provenance**, not a digest of
+later command-mutated installed contents. A continuation starts a fresh runtime and
+must reapprove its exact set; the old manifest is disclosure only.
 
 ## Verification and release gate
 
@@ -95,8 +144,27 @@ and change a Windows canary. Inside, direct/forged/fallback interop attempts mus
 fail, the canary must stay unchanged, and native VSOCK denial must pass. Empty,
 skipped or failed evidence fails the job; it cannot automatically open admission.
 
-The workflow has not been dispatched or qualified by the Linux development proofs.
+Linux development proofs do not qualify the separate native Windows workflow.
 Before enabling WSL coding, review complete native evidence, refresh the source
 inventory and requalify touched existing Node enforcement sources. Final laptop
 testing must verify actual Windows desktop/app interaction, distro/tool availability,
 consent/revocation, Stop and review in the user's environment before merging main.
+
+
+The public-dependency integration additionally uses real approved public picocolors
+and yocto-queue archives: baseline preparation, offline lifecycle/install/TypeScript
+import, a failed child test, repair/pass, denied changed-set preparation with zero
+fetch, approved same-session changed-set refresh, descendant Stop and host source-only
+review custody. Held-approval, host acquisition and partial-chunk Stop controls verify
+queue draining and buffer wiping. Run it with the same trusted Node/TypeScript inputs:
+
+```sh
+EMBER_WSL_PUBLIC_DEPENDENCIES_TEST=1 EMBER_REQUIRE_CODING_ISOLATION=1 \
+EMBER_TEST_CODING_NODE=/absolute/root-owned/node \
+EMBER_WSL_TYPESCRIPT_ARCHIVE=/absolute/typescript-5.9.3.tgz \
+node scripts/run-integration.mjs test/integration/wsl-public-dependencies.test.ts
+```
+
+This opt-in does not qualify native WSL interop, desktop integration or broad package
+compatibility. Keep admission closed until the expanded native/current-source evidence
+has been independently reviewed.

@@ -62,17 +62,19 @@ it("never confirms cleanup after a synchronous Stop failure even when no runtime
 
 function fakeHost(wait: () => Promise<void>) { return { codingCleanupReceipt: vi.fn(() => Object.freeze({ wait })) }; }
 function resetHarness(firstHost: { codingCleanupReceipt(): CodingCleanupReceipt }) {
-  const main = fs.readFileSync("app/main/main.ts", "utf8"), start = main.indexOf("  const resetProjectCoding = (): Promise<void> => {");
-  const reset = main.slice(start, main.indexOf("\n  let projectCodingOwner", start)).replace("const resetProjectCoding = (): Promise<void> =>", "const resetProjectCoding = () =>");
+  const main = fs.readFileSync("app/main/main.ts", "utf8"), start = main.indexOf("  const resetProjectCoding = (");
+  const reset = main.slice(start, main.indexOf("\n  let projectCodingOwner", start)).replace("const resetProjectCoding = (eraseDrafts = false): Promise<void> =>", "const resetProjectCoding = (eraseDrafts = false) =>");
+  const hasWsl = main.includes("const codingExecution =");
   const ipc = deferred<void>(), resources = deferred<void>();
+  const codingDrafts = { invalidate: vi.fn(async (): Promise<void> => undefined), forgetAll: vi.fn(async (): Promise<void> => undefined) }, importedDraftContexts = { clear: vi.fn() };
   const codingExecution = { reset: vi.fn() }, projectCodingFolders = { ownerReset: vi.fn() }, projectCoding = { reset: vi.fn(() => ipc.promise) }, resource = { invalidate: vi.fn(() => resources.promise) }, changed = vi.fn();
-  const install = new Function("initialHost", "codingExecution", "projectCodingFolders", "projectCoding", "codingResourcesReady", "projectCodingChanged", "unconfirmedCodingCleanupReceipt", `
+  const install = new Function("initialHost", "codingDrafts", "importedDraftContexts", "codingExecution", "projectCodingFolders", "projectCoding", "codingResourcesReady", "projectCodingChanged", "unconfirmedCodingCleanupReceipt", `
     let agent = initialHost, codingCleanupPending = 0, codingCleanupFailed = false, codingCleanupAttempt = 0;
     const codingCleanupReceipts = new Set(), codingCleanupReceiptsByHost = new WeakMap();
     ${reset}
     return { resetProjectCoding, setHost(next) { agent = next; }, state() { return { codingCleanupPending, codingCleanupFailed }; } };
-  `) as (...args: unknown[]) => { resetProjectCoding(): Promise<void>; setHost(host: unknown): void; state(): { codingCleanupPending: number; codingCleanupFailed: boolean } };
-  return { ...install(firstHost, codingExecution, projectCodingFolders, projectCoding, Promise.resolve(resource), changed, unconfirmedCodingCleanupReceipt), ipc, resources, codingExecution, projectCodingFolders, projectCoding, resource };
+  `) as (...args: unknown[]) => { resetProjectCoding(eraseDrafts?: boolean): Promise<void>; setHost(host: unknown): void; state(): { codingCleanupPending: number; codingCleanupFailed: boolean } };
+  return { hasWsl, codingDrafts, importedDraftContexts, ...install(firstHost, codingDrafts, importedDraftContexts, codingExecution, projectCodingFolders, projectCoding, Promise.resolve(resource), changed, unconfirmedCodingCleanupReceipt), ipc, resources, codingExecution, projectCodingFolders, projectCoding, resource };
 }
 
 it("main captures the exact host at erasure intake and waits for its held controller after copies and IPC finish", async () => {
@@ -214,4 +216,29 @@ it("drops terminal baseline references even when cleanup fails while retaining t
   const closed = closeBackend.call(backend); await expect(closed).rejects.toBe(failure);
   expect(backend.baseline.entries).toEqual([]); expect(backend.exporting).toBeNull(); expect(closeBackend.call(backend)).toBe(closed);
   expect(owned).toEqual(Buffer.alloc(owned.length)); expect(externalReview.bytes.toString()).toBe("owned review");
+});
+
+it("main drains saved-draft operations and clears imported context before acknowledging account cleanup", async () => {
+  const held = deferred<void>(), main = resetHarness(fakeHost(async () => undefined));
+  main.codingDrafts.invalidate.mockReturnValueOnce(held.promise);
+  let complete = false; const cleanup = main.resetProjectCoding().then(() => { complete = true; });
+  expect(main.importedDraftContexts.clear).toHaveBeenCalledOnce(); expect(main.codingDrafts.invalidate).toHaveBeenCalledOnce();
+  main.ipc.resolve(); main.resources.resolve(); await Promise.resolve(); expect(complete).toBe(false);
+  held.resolve(); await cleanup; expect(complete).toBe(true);
+});
+it("main routes explicit Forget everything to draft erasure and retains unknown draft cleanup failure", async () => {
+  const held = deferred<void>(), main = resetHarness(fakeHost(async () => undefined));
+  main.codingDrafts.forgetAll.mockReturnValueOnce(held.promise);
+  const cleanup = main.resetProjectCoding(true).catch(error => error);
+  expect(main.codingDrafts.forgetAll).toHaveBeenCalledOnce(); expect(main.codingDrafts.invalidate).not.toHaveBeenCalled();
+  main.ipc.resolve(); main.resources.resolve(); held.reject(new Error("private coding draft canary"));
+  expect(String(await cleanup)).toBe("Error: Ember couldn't finish clearing its private coding work. Try Forget everything again.");
+  expect(main.state()).toEqual({ codingCleanupPending: 0, codingCleanupFailed: true });
+});
+
+it("captures the original Host before a synchronous saved-draft cleanup callback can switch the connection", async () => {
+  const first = fakeHost(async () => undefined), replacement = fakeHost(async () => undefined), main = resetHarness(first);
+  main.codingDrafts.invalidate.mockImplementationOnce(async () => { main.setHost(replacement); });
+  const cleanup = main.resetProjectCoding(); main.ipc.resolve(); main.resources.resolve(); await cleanup;
+  expect(first.codingCleanupReceipt).toHaveBeenCalledOnce(); expect(replacement.codingCleanupReceipt).not.toHaveBeenCalled();
 });

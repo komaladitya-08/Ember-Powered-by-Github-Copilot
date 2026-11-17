@@ -1038,6 +1038,21 @@ starts it just to read one). A command in WSL may start Windows programs and rea
 `wsl.exe`'s own options (another user, `--shutdown`, `--unregister`, `--export`…) and changes to `.wslconfig` or
 `/etc/wsl.conf` ask.
 
+### 3.5 Public dependencies for a copied project
+
+The Projects public-dependency path is under development and remains subject to Windows isolation verification.
+Where it is available, select a WSL coding environment and explicitly enable **Download public dependencies for this
+project**. This project preference grants no package approval and is not saved in a draft or imported project context.
+Both the initial lockfile and later dependency changes follow the normal approval mode for their exact public npm
+package set before any download: Interactive asks, Assisted checks the original request, and Autopilot announces,
+subject to your own or your organisation's ask-every setting and any prior refusal.
+
+Preparation sends the locked public package names and versions to `registry.npmjs.org`; it sends no project files or
+private registry credentials. It does not execute package code. Commands and their child processes remain offline;
+an install uses `npm ci --offline` in the private copy and follows its own command decision. Private registries and
+arbitrary download addresses are unavailable. Changing the project preference does not upgrade an already accepted
+request, and turning it back on does not revive a retired request.
+
 ## 4. Other computers over SSH
 
 ### 4.1 Connecting

@@ -510,6 +510,26 @@ jobs:
       actions: read
     uses: ./.github/workflows/windows-node-product.yml
 
+  windows-wsl-coding-home:
+    name: Windows WSL coding Home
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'windows'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/wsl-coding-home.yml
+    with:
+      required-ci: true
+
+  windows-coding-draft-product:
+    name: Windows encrypted coding draft Home
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'windows'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/windows-coding-draft-product.yml
+    with:
+      required-ci: true
+
   windows:
     name: Windows (unit tests, build, smoke, UI Automation, zip)
     if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'windows'
@@ -1197,7 +1217,7 @@ jobs:
     name: Publish the release (v* tags, after every other job passed)
     # docs/DEVELOPING.md §15. Only a v* tag gets here, and only once every platform's checks and packages are green.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [checks, el8, voice-e2e, package, eval, windows, windows-node-product, macos, macos-x64]
+    needs: [checks, el8, voice-e2e, package, eval, windows, windows-node-product, windows-wsl-coding-home, windows-coding-draft-product, macos, macos-x64]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:

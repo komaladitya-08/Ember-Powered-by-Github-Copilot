@@ -1,34 +1,77 @@
 # Conductor progress and remaining work
 
-Software progress updated on 17 November 2026, following published checkpoint `c3307603`. The original submitted
-baseline was `audit/beta-readiness` at `76d0a2c9`; main was `85b5bd56` at that audit. The native-proof baseline is
-`546793a3f94d89ae2ed2593727d9c35aa5571831`;
+Software progress updated on 17 November 2026, following published diagnostic checkpoint `a0a7c707`. The original submitted
+baseline was `audit/beta-readiness` at `76d0a2c9`; main was `85b5bd56` at that audit.
 [draft #262](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/262) targets main and records
-the latest head and its exact checks. The candidate includes conductor/project/session work, the Windows
-Node resource/coordinator implementation and a disabled optional WSL coding backend. This is not merge readiness.
-The legacy native-SDK `codingAvailable()` gate remains false.
+the latest head and its exact checks. The local integration adds reviewed WSL/public-dependency and saved-draft
+work to the published conductor/project/session and Windows Node foundations. These local changes have not yet
+qualified their expanded native source graph or complete Windows product journeys. The legacy native-SDK
+`codingAvailable()` gate remains false. This is not merge readiness.
 
 ## Current software work on 17 November 2026
 
-Draft #262 records the current published head and exact hosted checks. The latest completed product-journey checkpoint is
-`fe2406f4`: both native coding leaves passed two cases and both source Home leaves passed seven cases, zero skips,
-on Windows Server 2022 and 2025. Both packaged leaves now complete UIA readiness, then fail on the consent
-memory-row path: 18 of 20 required cases passed. A built Home witness shows the rows begin below the default
-760 by 640 viewport and ordinary keyboard navigation reveals them. The fixture now reveals rows with bounded ordinary Tab navigation, preserving fresh focus, identity, consent and
-arming guards. It passed 192 unit and four focused browser cases; actual packaged Windows verification remains
-required. The witness does not by itself prove the earlier hosted failure's cause.
+Checkpoint `a0a7c707` adds only bounded cached diagnostics for the two packaged failures. Its exact source passed
+342 targeted cases, lint and the full 1,517-file TypeScript check. Its six Windows product leaves completed at
+18 of 20: Server 2022 stopped at the second command decision's answer-button path, and Server 2025 at a project-flow
+focus identity check after provider setup. The earlier
+published 131-file qualification remains unchanged.
+
+Published `106d1353` completed all seven ordinary CI jobs, including the actual Windows UIA suite's 24 cases.
+Its [product run 44101175837](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44101175837)
+passed 18 of 20 required Node cases: both Windows images passed two native and seven source Home cases, zero skips.
+The packaged cases failed at distinct stages: Server 2025 at phase 4/provider setup and Server 2022 at phase 6/command-card
+interaction; neither hit the outer timeout. These frames do not establish the exact failed assertion or a shared cause.
+The ordinary UIA pass does not certify either packaged case or the unpublished integration.
+
+The local combined source expands the native catalog from 131 to 146 files (4,238,563 bytes), manifest
+`064ef709…`, with whole-verifier hash `edf0877f…`. All current source bytes and worker recipes were independently
+checked, but that is source verification, not native enforcement evidence. Both Node product proof gates are closed
+with null proof metadata; WSL readiness is also closed. The published 131-file qualification below does not qualify
+this new graph. Fresh current-source qualification is required before promotion.
+
+The earlier [WSL native run 44093857380](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44093857380)
+at `b7e8e54b` passed its one real Windows-to-WSL case on each image, zero skips: non-root helper provisioning,
+offline TypeScript repair, interop/socket denials, drained writer Stop, snapshot and cleanup. The new public-dependency
+guest was not in that run and needs a fresh actual Windows-to-WSL proof. WSL keeps source custody, model access
+and final artifacts on Windows; unknown host or guest cleanup retains the owner and blocks further work.
+
+The local public-dependency integration captures per-project opt-in separately from normal mode-sensitive approval
+of each baseline or changed exact lock set before host downloads. Commands remain offline; private registries and
+general fetch are unavailable. Encrypted coding-draft Save/Open/Forget and fresh-folder import are implemented
+locally under consent 15. Opening is inert; old code/context grants no task, folder or execution authority, and work
+requires fresh source checks and a new explicit request. Neither implementation yet has its complete Windows Home proof.
+
+Two real pinned-SDK/public-dependency cases and five real Linux guest cases passed; these overlapping scopes are
+not Windows product evidence. The local full unit attempt passed 22,783 cases, skipped 107 and failed two stale
+source/workflow contract assertions. The corrected focused scope passed 379 cases; the full suite has not been
+recertified. Renderer validation passed 145 cases and timed out one built named-session appearance case at its
+unchanged 60-second bound. That focused case later passed alone (57 other cases unselected), and a subsequent full
+four-suite run passed all 146 cases with the same source and original bounds. The prior failure and its unknown
+cause remain. No load or CPU explanation is established.
+
+New acceptance requires two resource, nine source Home and one shipped Home WSL case per image, plus a separate
+one-case saved-draft source Home journey per image that restarts the real app and OS keyring. The local CI caller
+and release dependencies require both new workflows; their native admission remains closed pending qualification.
+The integrated source passed its full 1,568-file TypeScript check and 458 targeted cases with no skips, plus scoped
+lint. The preceding three fixture typing errors and one exact-comment contract mismatch remain in their failed
+attempt receipts; those test-only corrections do not establish native behavior.
+The existing Node two/seven/one inventories remain separate and unchanged. Portable tests and reviewed fixtures
+are preparation, not execution of these new Windows cases.
 
 Automatic combined completion was published at `7830febd`. Two to eight tasks from the current request can produce
 one tool-free synthesis after terminal results and cleanup settle. New intake, Stop and captured ownership/context
 changes retire it. Settled foreground joins suppress duplication; existing questions and replies retain priority.
 The feature passed affected units, two real pinned-SDK/local-provider cases and normal-sandbox app smoke.
 
-This candidate adds explicit per-project WSL2 coding selection and its credential-free isolated helper. Windows
-retains source custody, account/model access and final review artifacts. The guest receives copied source and
-verified offline Node/npm/TypeScript; Stop requires a matching drained-queue/namespace-exit receipt. Unknown host
-or guest cleanup retains the owner and blocks further work. Actual helper UID must match the user captured before
-any awaited handshake. Native Windows and default Linux behavior remain separate. See
-[the WSL backend boundary and verification plan](WSL-CODING-BACKEND.md).
+The product is not merge-ready. Remaining software includes the distinct packaged failures, fresh public-guest and
+146-file native qualification, all required new Home/draft journeys, and affected Linux, macOS and Windows regressions.
+No accepted live-provider credential is available; no chosen-account live request or acceptance is claimed. That
+verification is not intrinsically Windows-only. Physical device acceptance follows the software work. Main remains
+unchanged; no merge, tag or release.
+
+## Historical 131-file qualification at `5b895638`
+
+The following results qualify their named older source and do not certify the local 146-file integration.
 
 WSL admission remains `false` with null proof metadata. Its first toolchain supports offline TypeScript projects
 without external dependencies; public dependency acquisition is still separate work. The fixed native asset bundle
@@ -44,16 +87,6 @@ The merged candidate passed full TypeScript over 1,515 unchanged inputs, an app 
 Both real Linux helper cases passed, including npm/TypeScript repair, child-process Stop and artifact cleanup.
 Actual Windows-to-WSL and final product proofs remain required.
 Earlier failed compile/check attempts remain recorded; later passes do not establish their cause.
-
-Explicit encrypted coding-draft Save/Open/Forget is being integrated in a separate worktree. The reviewed
-foundation passed 29 cases, but that is not a completed product flow. Opening saved context is inert; using it
-requires a newly selected folder, fresh source checks, conflict review and a new explicit request. Stored code or
-context cannot restore an old task, source grant or continuation identity. Consent disclosure and Forget/cleanup
-checks are part of that implementation.
-
-The product is not merge-ready. Software work remains before laptop acceptance, including packaged navigation,
-broader repository dependencies and durable coding context. No accepted live-provider credential is available;
-no live request or chosen-account acceptance is claimed. Main remains unchanged; no merge, tag or release.
 
 ## Historical checkpoint at `b294347e`
 
@@ -322,10 +355,11 @@ Home-to-Host coding session or physical client acceptance; see [development chec
 
 ## What still needs implementation or verification
 
-1. **Production coding isolation and toolchains.** The exact Windows Node asset proof has passed; product acceptance
-   additionally requires the complete gates above against that authenticated build and source. Its resource/coordinator,
-   stopped output and canonical transfer implementations are present. Linux supplies a small offline bash/Node environment; npm, arbitrary compilers
-   and external or cyclic dependency links remain unsupported; validated internal links can be materialized. Packaged
+1. **Production coding isolation and toolchains.** The published 131-file Windows Node asset proof passed; the local
+   146-file integration requires fresh qualification and complete product gates against its authenticated source.
+   Resource/coordinator, stopped output and canonical transfer implementations are present. The optional WSL backend
+   supports isolated offline npm/TypeScript work and approval-bound public lock sets; general downloads, private
+   registries, arbitrary compilers and external or cyclic dependency links remain unsupported. Packaged
    Electron is not a substitute for a real Node binary. The earlier Windows child-process and PowerShell failures remain
    in the separate [native prototype proof](ISOLATED-WINDOWS-COMMAND-PROOF.md). macOS coding remains a separate extension.
    Do not enable coding by changing
@@ -691,3 +725,17 @@ the original narrow-row assertion and the badge-growth case; no assertion or tim
 Final check results are recorded with the follow-up commit/PR. The real runtime tests intentionally include successful
 reproductions of unsafe isolation behavior; a green result there means the probe behaved as expected, not that native
 coding is safe. Synthetic audio, mock providers and Chromium with a fake preload do not certify physical desktop I/O.
+
+### Explicit saved coding drafts and fresh-folder imports
+
+The draft product branch connects certified stopped-review snapshots to encrypted Save/Open/Forget controls in
+Home, under consent 15. Full-file privacy validation and fresh-folder three-way comparison run in a fixed trusted
+worker. Opening remains inert; a successful import is a new stopped private review with new identity and zero
+fresh checks. A later explicit request captures current execution authority and receives old request/summary only
+as quoted untrusted history. Conflicts, unavailable current source, late source changes, credential-holder changes
+and incomplete cleanup refuse the corresponding operation. Original source folders are never written.
+
+This work changes the native source graph (including consent, registry, TaskManager and Windows resources) and
+requires fresh qualification after composition with the optional WSL/public-dependency work. It does not refresh
+native proof metadata or claim physical Windows acceptance. See `docs/CODING-DRAFT-FOUNDATION.md` for custody,
+bounds, erasure and the separation between saved data and new task authority.

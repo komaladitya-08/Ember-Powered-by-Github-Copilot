@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ImportedCodingDraftContexts } from "../../app/main/agent/coding-draft-context";
 import { registerProjectCodingIpc } from "../../app/main/project-coding-ipc";
 import { ProjectCodingWorkspaces } from "../../app/main/agent/project-coding-workspaces";
 import { projectCommandFolder } from "../../app/main/agent/project";
@@ -40,22 +41,25 @@ function setup() {
   const results = vi.fn(async () => registry);
   const chooseFolder = vi.fn(async (_title: string): Promise<string | null> => source);
   const validateFolder = vi.fn<(selected: string) => CodingWorkspace | Promise<CodingWorkspace>>(selected => projectCommandFolder(selected, privateDir));
-  const changed = vi.fn();
+  const changed = vi.fn(), draftContexts = new ImportedCodingDraftContexts();
+  draftContexts.put(record, "owner-a", first, { request: "Historical request", summary: "Historical result" });
   const folderChanged = vi.fn<(projectId?: string) => void>();
   const continueResult = vi.fn(async (_id: string, _projectId: string, _request: string) => true);
   const availability = vi.fn((_projectId?: string) => ({ available, canContinue, message: "Coding work is unavailable, but a folder can be prepared." }));
   const executionState = vi.fn((_projectId: string) => execution!);
   const chooseExecution = vi.fn((_projectId: string, targetId: string) => { execution!.selected = targetId; });
+  const choosePublicDependencies = vi.fn((_projectId: string, enabled: boolean) => { execution!.publicDependencies!.enabled = enabled; });
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const api = registerProjectCodingIpc({ handle: (channel, handler) => handlers.set(channel, handler), projects: () => state, folders, results,
-    canUse: () => allowed, availability, executionState, chooseExecution, continueResult,
-    chooseFolder, validateFolder, folderChanged, changed });
+    canUse: () => allowed, availability, executionState, chooseExecution, choosePublicDependencies, continueResult,
+    chooseFolder, validateFolder, folderChanged, changed,
+    resultForgotten: id => draftContexts.forgetResult(id), projectForgotten: id => draftContexts.forgetProject(id) });
   const call = async <T>(channel: string, ...args: unknown[]): Promise<T> => await handlers.get(channel)!(...args) as T;
   const live = (id: string, status: ProjectSession["status"], kind: ProjectSession["kind"] = "coding") => {
     state.projects.find(project => project.id === id)!.sessions = [{ id: randomUUID(), taskId: randomUUID(), title: "Work", kind, status, detail: "", startedAt: 1 }];
   };
-  return { root, source, other, privateDir, first, second, record, review, state, folders, registry, results, chooseFolder, validateFolder, folderChanged, changed, handlers, api, call, live,
-    continueResult, availability, executionState, chooseExecution, execution: (value: ProjectCodingExecutionState) => { execution = value; }, available: (value: boolean) => { available = value; }, canContinue: (value: boolean) => { canContinue = value; },
+  return { draftContexts, root, source, other, privateDir, first, second, record, review, state, folders, registry, results, chooseFolder, validateFolder, folderChanged, changed, handlers, api, call, live,
+    continueResult, availability, executionState, chooseExecution, choosePublicDependencies, execution: (value: ProjectCodingExecutionState) => { execution = value; }, available: (value: boolean) => { available = value; }, canContinue: (value: boolean) => { canContinue = value; },
     owner: (value: string | null) => { owner = value; }, allowed: (value: boolean) => { allowed = value; },
     records: (value: CodingResultSummary[]) => { records = value; } };
 }
@@ -119,6 +123,43 @@ describe("Home's project coding IPC", () => {
     f.executionState.mockImplementationOnce(() => { f.live(f.first, "queued"); return execution(); });
     await expect(f.call(IPC.projectCodingExecutionChoose, f.first, "wsl:Ubuntu")).rejects.toThrow("Couldn't change the command environment.");
     expect(f.chooseExecution).not.toHaveBeenCalled(); expect(f.folderChanged).not.toHaveBeenCalled();
+  });
+
+  const publicExecution = (): ProjectCodingExecutionState => ({ ...execution(), selected: "wsl:Ubuntu",
+    publicDependencies: { enabled: false, canChange: true, message: "Only exact public lockfile sets follow normal approvals; commands stay offline." } });
+  it("records only an explicit Boolean public-download preference through the owned Home project handler", async () => {
+    const f = setup(); f.execution(publicExecution());
+    const state = await f.call<ProjectCodingWorkspaceState>(IPC.projectCodingPublicDependenciesChoose, f.first, true);
+    expect(state.execution?.publicDependencies?.enabled).toBe(true);
+    expect(f.choosePublicDependencies).toHaveBeenCalledExactlyOnceWith(f.first, true);
+    expect(f.folderChanged).toHaveBeenCalledExactlyOnceWith(f.first); expect(f.results).not.toHaveBeenCalled();
+  });
+  it.each(["queued", "running", "waiting"] as const)("cannot change public downloads while this project's coding is %s", async status => {
+    const f = setup(); f.execution(publicExecution()); f.live(f.first, status);
+    expect((await f.call<ProjectCodingWorkspaceState>(IPC.projectCodingWorkspaceState, f.first)).execution?.publicDependencies?.canChange).toBe(false);
+    await expect(f.call(IPC.projectCodingPublicDependenciesChoose, f.first, true)).rejects.toThrow("Stop");
+    expect(f.choosePublicDependencies).not.toHaveBeenCalled();
+  });
+  it("refuses forged and unavailable public-download choices without invoking the setter", async () => {
+    const f = setup(); f.execution(publicExecution());
+    for (const args of [[f.first, "true"], [f.first, 1], [f.first, { enabled: true }], [f.first, true, "extra"], ["../project", true]])
+      await expect(f.call(IPC.projectCodingPublicDependenciesChoose, ...args)).rejects.toThrow();
+    f.execution({ ...publicExecution(), publicDependencies: { enabled: false, canChange: false, message: "Unavailable" } });
+    await expect(f.call(IPC.projectCodingPublicDependenciesChoose, f.first, true)).rejects.toThrow("Couldn't change");
+    expect(f.choosePublicDependencies).not.toHaveBeenCalled();
+  });
+  it.each(["task", "owner"] as const)("rechecks %s changes after reading public-download capability metadata", async kind => {
+    const f = setup(); f.execution(publicExecution());
+    f.executionState.mockImplementationOnce(() => { if (kind === "task") f.live(f.first, "queued"); else f.owner("replacement"); return publicExecution(); });
+    await expect(f.call(IPC.projectCodingPublicDependenciesChoose, f.first, true)).rejects.toThrow();
+    expect(f.choosePublicDependencies).not.toHaveBeenCalled();
+  });
+  it("retires delayed review replies when the project public-download preference changes", async () => {
+    const f = setup(); f.execution(publicExecution()); const reply = deferred<CodingResultReview>(); f.registry.review.mockReturnValueOnce(reply.promise);
+    const pending = f.call(IPC.codingResultReview, f.record);
+    await vi.waitFor(() => expect(f.registry.review).toHaveBeenCalledOnce());
+    await f.call(IPC.projectCodingPublicDependenciesChoose, f.first, true); reply.resolve(f.review);
+    await expect(pending).rejects.toThrow("no longer available");
   });
 
   const prepareContinuation = (f: ReturnType<typeof setup>) => {
@@ -187,7 +228,7 @@ describe("Home's project coding IPC", () => {
 
   it("registers only bounded metadata/review channels and prepares a folder without executing or reading source files", async () => {
     const f = setup();
-    expect([...f.handlers.keys()]).toEqual([IPC.projectCodingWorkspaceState, IPC.projectCodingWorkspaceChoose, IPC.projectCodingWorkspaceForget, IPC.projectCodingExecutionChoose, IPC.codingResultsState, IPC.codingResultReview, IPC.codingResultExport, IPC.codingResultForget, IPC.codingResultContinue]);
+    expect([...f.handlers.keys()]).toEqual([IPC.projectCodingWorkspaceState, IPC.projectCodingWorkspaceChoose, IPC.projectCodingWorkspaceForget, IPC.projectCodingExecutionChoose, IPC.projectCodingPublicDependenciesChoose, IPC.codingResultsState, IPC.codingResultReview, IPC.codingResultExport, IPC.codingResultForget, IPC.codingResultContinue]);
     const before = fs.readFileSync(path.join(f.source, "unchanged.txt"), "utf8");
     const state = await f.call<ProjectCodingWorkspaceState>(IPC.projectCodingWorkspaceState, f.first);
     expect(state).toMatchObject({ available: false, canChoose: true, folder: null });
@@ -218,7 +259,8 @@ describe("Home's project coding IPC", () => {
     const f = setup();
     for (const channel of f.handlers.keys()) {
       for (const args of [[], ["../project"], ["x".repeat(10_000)], [{ projectId: f.first, path: f.source }], [f.first, f.source]]) {
-        await expect(f.call(channel, ...args)).rejects.toThrow(channel === IPC.projectCodingExecutionChoose ? "Choose a command environment listed for this project." : "Choose an existing project or coding result.");
+        await expect(f.call(channel, ...args)).rejects.toThrow(channel === IPC.projectCodingExecutionChoose ? "Choose a command environment listed for this project."
+          : channel === IPC.projectCodingPublicDependenciesChoose ? "Choose this project's public dependency setting." : "Choose an existing project or coding result.");
       }
     }
     await expect(f.call(IPC.projectCodingWorkspaceChoose, randomUUID())).rejects.toThrow("Connect Ember");
@@ -459,4 +501,17 @@ describe("Home's project coding IPC", () => {
     await f.api.reset();
     expect(f.changed).toHaveBeenCalled();
   });
+});
+
+it("drops imported prior context synchronously when a result is forgotten, before its artifact wait", async () => {
+  const f = setup(), gate = deferred<typeof f.registry>(); f.results.mockReturnValueOnce(gate.promise);
+  expect(f.draftContexts.get(f.record, "owner-a", f.first)).toBeDefined();
+  const forgetting = f.call(IPC.codingResultForget, f.record);
+  expect(f.draftContexts.get(f.record, "owner-a", f.first)).toBeUndefined(); gate.resolve(f.registry); await forgetting;
+});
+it("drops exact imported project contexts on project Forget and all on reset", async () => {
+  const f = setup(), other = randomUUID(); f.draftContexts.put(other, "owner-a", f.second, { request: "Other", summary: "Other" });
+  const forgetting = f.api.forgetProject(f.first);
+  expect(f.draftContexts.get(f.record, "owner-a", f.first)).toBeUndefined(); expect(f.draftContexts.get(other, "owner-a", f.second)).toBeDefined(); await forgetting;
+  const reset = f.api.reset(); expect(f.draftContexts.get(other, "owner-a", f.second)).toBeUndefined(); await reset;
 });

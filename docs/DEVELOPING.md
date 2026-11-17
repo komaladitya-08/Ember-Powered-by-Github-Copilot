@@ -5,7 +5,7 @@ Ember's first platform; §10 covers Windows 10 and 11, §11 macOS 13 and later, 
 §13 CI, and §14 working on SSH, WSL and commands. What §5 says about using Ember holds on every OS, with that OS's
 shortcuts (README.md has the table). What users and administrators see of commands, WSL and other computers is in
 [COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md). The optional isolated WSL coding backend,
-its offline tools and its separate native qualification gate are documented in
+its offline tools, explicit public-lock dependency preparation and separate native qualification gate are documented in
 [WSL-CODING-BACKEND.md](WSL-CODING-BACKEND.md).
 
 ## 1. Log in to "GNOME on Xorg"
@@ -3662,3 +3662,26 @@ the cache's version that runs when `ps` shows it; where `ps` isn't read, on Wind
 installed from the zip, which shares the single-instance lock, or any older one when the cache holds another version).
 Tests in
 `test/unit/npm-install-rollback.test.ts` inject filesystem errors without downloading or running a release.
+
+### Explicit encrypted coding drafts
+
+Home's coding review offers **Save coding draft…**. Consent 15 covers keeping complete captured baseline,
+proposal and current-source files (unchanged files included), the actual last request/result summary and historical
+checks, encrypted with a random envelope key sealed by the system keyring. `basic_text` and unavailable keyrings
+refuse retention. There are at most eight drafts per account/service library and 32 MiB of complete canonical
+review JSON per draft; oversize or privacy-refused data is never partially saved. Names and context have no
+plaintext index. Files live under the private user-data `coding-drafts` directory.
+
+**Refresh saved drafts** and **Open** are explicit, inert reads. They start no task, restore no source/command
+permission and send no content to the model. To use edits, choose a folder again for that opened draft and prepare
+an import. A fresh source capture is compared with the saved changes in the fixed trusted worker; unrelated
+current files are preserved and conflicts/unknown or late-changing source refuse import. Only a clean import
+becomes a new private review. Review it, then type a new request; saved request/summary may then go to the model
+as quoted historical context, with all task permissions and required checks established anew. No source folder
+is overwritten and no old SDK session, source identity, task or continuation capability is restored.
+
+**Forget saved draft** and **Forget all saved drafts** revoke corresponding pending reads/imports before erasure
+is acknowledged. They do not delete separately imported reviews or exported copies. **Forget everything** also
+clears those private reviews and drains all draft/import operations. Account changes and quit close decrypted
+views without automatically deleting encrypted drafts; both account/service library and exact credential-holder
+identity must match on Open. Unknown worker/artifact cleanup stays blocked and is reported as incomplete.

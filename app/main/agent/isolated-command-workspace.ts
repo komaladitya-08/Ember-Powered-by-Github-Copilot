@@ -20,6 +20,7 @@ import { copyIsolatedCommandAssets } from "./isolated-command-assets";
 import { isolatedCommandSeccomp } from "./isolated-command-seccomp";
 import { prepareWslCodingTools, type WslCodingToolProfile } from "./wsl-coding-tools";
 import { wslCodingSeccomp } from "./wsl-coding-seccomp";
+import { requireWslPublicDependencyRuntime, type WslPublicDependencyRuntime } from "./wsl-public-dependency-runtime";
 import { codingWorkspaceFilePathProblem, codingWorkspaceFileProblemAsync } from "./scoped-coding-files";
 import { CodingPrivacyScanner, CodingPrivacyCleanupError, CodingPrivacyScanError, captureCodingPrivacyScope, assertCodingPrivacyScope, type CodingPrivacyScope } from "./coding-privacy-scanner";
 import { codingProjectManifest, type CodingProjectManifest, type CodingProjectScope, type CodingExcludedRoot } from "./coding-project-scope";
@@ -34,6 +35,8 @@ export interface IsolatedCommandWorkspaceInput {
   nodePath?: string;
   /** Opaque guest-owned offline tools. Absence preserves the ordinary Linux asset and syscall policy. */
   wslProfile?: WslCodingToolProfile;
+  /** Fresh opaque guest-owned mutable dependency/cache mounts; valid only with the WSL tool profile. */
+  publicDependencies?: WslPublicDependencyRuntime;
   limits?: Partial<IsolatedCommandLimits>;
   signal?: AbortSignal;
   /** Host capability for this accepted task, checked again before each lease and native command release. */
@@ -130,7 +133,8 @@ export class IsolatedCommandWorkspace {
     private baseline: CodingExportTree, private readonly limits: IsolatedCommandLimits, readonly nodeAvailable: boolean,
     private readonly privacy: CodingPrivacyScanner, private readonly privacyScope: CodingPrivacyScope,
     private readonly admit?: () => boolean, readonly excludedRoots: readonly CodingExcludedRoot[] = [],
-    private readonly manifest?: CodingProjectManifest, private readonly dependencies?: CodingDependencySnapshot, private readonly reviewCurrent?: () => boolean) {}
+    private readonly manifest?: CodingProjectManifest, private readonly dependencies?: CodingDependencySnapshot, private readonly reviewCurrent?: () => boolean,
+    private readonly publicDependencies?: WslPublicDependencyRuntime) {}
   get scopeManifest(): CodingProjectManifest | undefined { return this.manifest ? codingProjectManifest(this.manifest) : undefined; }
 
   static async create(input: IsolatedCommandWorkspaceInput): Promise<IsolatedCommandWorkspace> {
@@ -152,6 +156,12 @@ export class IsolatedCommandWorkspace {
     const signal = input.signal, hostAdmit = input.admit?.bind(input), excludedRoots = Object.freeze([...(input.scope?.excludeRoots ?? [])]);
     if (excludedRoots.length > 2 || new Set(excludedRoots).size !== excludedRoots.length || excludedRoots.some(name => name !== ".git" && name !== "node_modules")) throw new Error("Invalid explicit coding source scope.");
     const dependencyGrant = input.scope?.dependencies ? Object.freeze({ path: input.scope.dependencies.path, current: input.scope.dependencies.current.bind(input.scope.dependencies) }) : undefined;
+    const publicDependencies = input.publicDependencies;
+    if (publicDependencies) {
+      requireWslPublicDependencyRuntime(publicDependencies);
+      if (!input.wslProfile || dependencyGrant || !excludedRoots.includes("node_modules")) throw new Error("Invalid isolated public dependency capability.");
+      await publicDependencies.current();
+    }
     if (dependencyGrant && !excludedRoots.includes("node_modules")) throw new Error("Separate dependencies require excluding node_modules from the source scope.");
     const admit = hostAdmit || dependencyGrant ? () => (!hostAdmit || hostAdmit() === true) && (!dependencyGrant || dependencyGrant.current() === true) : undefined;
     const admitted = () => {
@@ -212,10 +222,12 @@ export class IsolatedCommandWorkspace {
       scratch = await fs.mkdtemp(path.join(base, "ember-command-state-")); await fs.chmod(scratch, 0o700);
       const rootfs = path.join(scratch, "rootfs"); await fs.mkdir(rootfs, { mode: 0o700 });
       const assets = input.wslProfile
-        ? await prepareWslCodingTools(input.wslProfile, { rootfs, protectedPaths: roots, nodePath: input.nodePath, signal: input.signal })
+        ? await prepareWslCodingTools(input.wslProfile, { rootfs, protectedPaths: roots, nodePath: input.nodePath, signal: input.signal,
+          ...(publicDependencies ? { publicNpmTools: publicDependencies.paths().tools } : {}) })
         : await copyIsolatedCommandAssets({ rootfs, protectedPaths: roots, ...(input.nodePath ? { nodePath: input.nodePath } : {}), signal: input.signal });
       admitted();
       for (const folder of ["work", "tmp", "proc", "dev"]) await fs.mkdir(path.join(rootfs, folder), { mode: 0o700 });
+      if (publicDependencies) await fs.mkdir(path.join(rootfs, "opt/ember-public-cache"), { mode: 0o700 });
       if (excludedRoots.length) {
         await fs.mkdir(path.join(rootfs, "excluded"), { mode: 0o700 });
         for (const name of excludedRoots) await fs.mkdir(path.join(rootfs, "excluded", name), { mode: 0o700 });
@@ -225,7 +237,7 @@ export class IsolatedCommandWorkspace {
       admitted();
       if (!await sameRoot(source, sourceIdentity) || !await sameRoot(base, baseIdentity)) throw new Error("The project or private coding folder changed while preparing commands.");
       admitted();
-      workspace = new IsolatedCommandWorkspace(source, { dev: sourceIdentity.dev, ino: sourceIdentity.ino }, base, roots, snapshot, scratch, rootfs, baseline, limits, assets.node, privacy, privacyScope, admit, excludedRoots, manifest, dependencies, reviewCurrent);
+      workspace = new IsolatedCommandWorkspace(source, { dev: sourceIdentity.dev, ino: sourceIdentity.ino }, base, roots, snapshot, scratch, rootfs, baseline, limits, assets.node, privacy, privacyScope, admit, excludedRoots, manifest, dependencies, reviewCurrent, publicDependencies);
     } catch (error) {
       // Scanner closure must remain observable even when startup fails before a workspace capability is returned.
       if (error instanceof CodingPrivacyCleanupError) unsafeCleanup = error;
@@ -300,6 +312,7 @@ export class IsolatedCommandWorkspace {
       await refuseCredentialTree(tree, this.privacy, check, signal); check();
     } finally { await checked.dispose(); }
     this.check();
+    await this.publicDependencies?.current(); this.check();
     if (signal.aborted || this.retired) return { exitCode: null, signal: "SIGKILL", stopped: true, timedOut: false, outputLimited: false, output: "", observed: true };
     // Refuse cwd aliases before handing the path to Bubblewrap. The scoped file broker performs its own fd checks.
     let folder = this.snapshot.directory;
@@ -320,8 +333,12 @@ export class IsolatedCommandWorkspace {
       receiptFd = openSync(receiptFile, constants.O_WRONLY | constants.O_NOFOLLOW);
       child = spawn(BWRAP, ["--seccomp", "3", "--info-fd", "4", "--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-net", "--new-session", "--die-with-parent", "--clearenv",
         "--setenv", "HOME", "/tmp", "--setenv", "PATH", "/usr/bin:/bin", "--setenv", "TMPDIR", "/tmp", "--setenv", "LC_ALL", "C",
+        ...(this.publicDependencies ? ["--setenv", "NPM_CONFIG_CACHE", "/opt/ember-public-cache"] : []),
         "--ro-bind", this.rootfs, "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--bind", this.snapshot.directory, "/work",
-        ...this.excludedRoots.flatMap(name => ["--ro-bind", name === "node_modules" && this.dependencies ? this.dependencies.directory : path.join(this.rootfs, "excluded", name), `/work/${name}`]), "--chdir", cwd,
+        ...this.excludedRoots.flatMap(name => name === "node_modules" && this.publicDependencies
+          ? ["--bind", this.publicDependencies.paths().dependencies, "/work/node_modules"]
+          : ["--ro-bind", name === "node_modules" && this.dependencies ? this.dependencies.directory : path.join(this.rootfs, "excluded", name), `/work/${name}`]),
+        ...(this.publicDependencies ? ["--bind", this.publicDependencies.paths().cache, "/opt/ember-public-cache"] : []), "--chdir", cwd,
         "--", "/usr/bin/bash", "--noprofile", "--norc", "-c",
         ...(invocation.kind === "shell" ? [BARRIER, "ember-command", invocation.command] : [NODE_BARRIER, "ember-node", ...invocation.argv])],
       { shell: false, env: { HOME: "/tmp", PATH: "/usr/bin:/bin", LC_ALL: "C" }, stdio: ["pipe", "pipe", "pipe", filter, receiptFd] });

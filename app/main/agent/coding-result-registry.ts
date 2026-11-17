@@ -14,6 +14,8 @@ export interface CodingResultRegistration {
   expectedOwner: string; projectId: string; taskId: string; title: string; sourcePath: string;
   status: "done" | "failed" | "stopped";
   checks: { ran: number; passed: number; failed: number };
+  /** Actual host-captured prior request/result; inert data only, never future approval words. */
+  context?: { request: string; summary: string };
   /** Original host intake receipt. Undefined preserves Linux legacy callers; null withholds all export. */
   sourceBoundary?: CodingArtifactSourceRef | null;
   /** Task-intake account/provider/project capability. A Stop alone does not revoke an inert result. */
@@ -29,6 +31,7 @@ export interface CodingResultRegistryOptions {
   store?: CodingArtifactStore;
 }
 interface RecordEntry {
+  context?: { request: string; summary: string };
   owner: string; epoch: number; projectRevision: number; source: CodingArtifactSourceRef | null;
   binding: CodingExportBinding;
   /** Empty identity only: a selected token must not retain this record's private preview after Forget. */
@@ -179,7 +182,7 @@ export class CodingResultRegistry {
           }
           this.#assert(context);
           this.#records.set(id, { owner: context.owner, epoch: context.epoch, projectRevision: context.projectRevision, source,
-            binding: Object.freeze({ ...captured.output.review.binding }), generation: Object.freeze({}),
+            binding: Object.freeze({ ...captured.output.review.binding }), ...(captured.context ? { context: { ...captured.context } } : {}), generation: Object.freeze({}),
             summary: rendered.summary, review: rendered.review, artifact });
           return structuredClone(rendered.summary);
         } catch (error) {
@@ -218,6 +221,23 @@ export class CodingResultRegistry {
     if (!record || !owner || record.owner !== owner || record.epoch !== this.#epoch || !this.#exists(record.summary.projectId)) return null;
     return { record, context: { owner, projectId: record.summary.projectId, epoch: this.#epoch,
       projectRevision: record.projectRevision, current: () => true, record: { id, entry: record } } };
+  }
+  /** Host-only access to an already verified stopped result. No bytes, receipts or capabilities reach IPC. */
+  withDraftSnapshot<T>(id: string, projectId: string, current: () => boolean, capture: (input: {
+    store: CodingArtifactStore; artifact: CodingArtifactReceipt; binding: CodingExportBinding;
+    summary: CodingResultSummary; context: { request: string; summary: string }; current(): boolean;
+  }) => Promise<T>): Promise<T> {
+    const found = this.#record(id);
+    if (!found || found.record.summary.projectId !== projectId) return Promise.reject(new CodingResultRegistryError("stale"));
+    const context = { ...found.context, current };
+    return this.#queue(async () => {
+      const check = () => this.#assert(context);
+      check(); await this.#store.verify(found.record.artifact, check); check();
+      const value = await capture({ store: this.#store, artifact: found.record.artifact, binding: { ...found.record.binding },
+        summary: structuredClone(found.record.summary), context: { ...(found.record.context ?? { request: "", summary: "" }) },
+        current: () => { try { check(); return true; } catch { return false; } } });
+      check(); return value;
+    });
   }
   review(id: string): Promise<CodingResultReview | null> {
     const found = this.#record(id); if (!found) return Promise.resolve(null);

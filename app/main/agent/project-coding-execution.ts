@@ -1,5 +1,5 @@
 /** Project metadata and immutable WSL execution receipts. A selection never grants command consent. */
-import type { ProjectCodingExecutionState } from "../../shared/project-coding";
+import { PUBLIC_DEPENDENCY_DISCLOSURE, type ProjectCodingExecutionState } from "../../shared/project-coding";
 import { parseTargetId, type TargetId } from "../../shared/targets";
 import { WSL_CODING_READINESS } from "../../shared/wsl-coding-readiness";
 import type { CommandService } from "../commands/types";
@@ -23,6 +23,7 @@ const key = (value: unknown) => JSON.stringify(value);
 export class ProjectCodingExecution {
   private owner: string | null = null;
   private choices = new Map<string, TargetId>();
+  private publicDependencies = new Set<string>();
   private revision = 0;
   private projectRevisions = new Map<string, number>();
   private observed = "";
@@ -35,11 +36,11 @@ export class ProjectCodingExecution {
       const facts = this.o.facts();
       next = key({ owner, policy: this.o.policy(), exe: facts?.wslExe, distros: facts?.distros.map(d => ({ name: d.name, version: d.version, defaultUid: d.defaultUid, needsSetup: d.needsSetup, tool: d.tool })) });
     } catch { next = "unavailable"; }
-    if (owner !== this.owner) { this.owner = owner; this.choices.clear(); this.projectRevisions.clear(); }
+    if (owner !== this.owner) { this.owner = owner; this.choices.clear(); this.publicDependencies.clear(); this.projectRevisions.clear(); }
     if (next !== this.observed) { this.observed = next; this.revision++; }
-    for (const id of new Set([...this.choices.keys(), ...this.projectRevisions.keys()])) if (!this.o.projectExists(id)) { this.choices.delete(id); this.projectRevisions.delete(id); }
+    for (const id of new Set([...this.choices.keys(), ...this.projectRevisions.keys(), ...this.publicDependencies])) if (!this.o.projectExists(id)) { this.choices.delete(id); this.publicDependencies.delete(id); this.projectRevisions.delete(id); }
   }
-  reset(): void { this.choices.clear(); this.projectRevisions.clear(); this.revision++; }
+  reset(): void { this.choices.clear(); this.publicDependencies.clear(); this.projectRevisions.clear(); this.revision++; }
   selected(projectId: string | null): TargetId { this.refresh(); return projectId ? this.choices.get(projectId) ?? "local" : "local"; }
   private distro(id: string): WslDistro | undefined {
     const parsed = parseTargetId(id);
@@ -69,16 +70,27 @@ export class ProjectCodingExecution {
       if (parseTargetId(id)?.kind !== "wsl") continue;
       const message = this.reason(id);
       choices.push({ id, label: `${distro.name} (WSL${distro.version})`, selectable: distro.version === 2 && !distro.needsSetup && !distro.tool,
-        ready: message === null, message: `${message ?? "Commands use this distro's consent and approval settings."} ${disclosure}` });
+        ready: message === null, message: `${message ?? "Commands use this distro's consent and approval settings."} ${id === selected && this.publicDependencies.has(projectId)
+          ? "Commands stay offline. Locked public dependencies can be prepared for this project under its normal approvals. Captures and reviews exclude .git and node_modules." : disclosure}` });
     }
     if (!choices.some(choice => choice.id === selected)) choices.push({ id: selected, label: "Unavailable WSL selection", selectable: false, ready: false, message: `${unavailable} ${disclosure}` });
-    return { selected, choices, canSelect: !!this.owner && this.o.projectExists(projectId),
+    const canSelect = !!this.owner && this.o.projectExists(projectId);
+    return { selected, choices, canSelect,
+      ...(parseTargetId(selected)?.kind === "wsl" ? { publicDependencies: { enabled: this.publicDependencies.has(projectId),
+        canChange: canSelect && (this.publicDependencies.has(projectId) || !this.reason(selected)), message: PUBLIC_DEPENDENCY_DISCLOSURE } } : {}),
       message: choices.find(choice => choice.id === selected)!.message };
   }
   choose(projectId: string, target: string): void {
     const state = this.state(projectId), choice = state.choices.find(value => value.id === target);
     if (!state.canSelect || !choice?.selectable || !parseTargetId(target)) throw new Error(unavailable);
     if (target === "local") this.choices.delete(projectId); else this.choices.set(projectId, target as TargetId);
+    this.publicDependencies.delete(projectId);
+    this.projectRevisions.set(projectId, (this.projectRevisions.get(projectId) ?? 0) + 1);
+  }
+  choosePublicDependencies(projectId: string, enabled: boolean): void {
+    const state = this.state(projectId);
+    if (typeof enabled !== "boolean" || !state.publicDependencies?.canChange || enabled && this.reason(state.selected as TargetId)) throw new Error(unavailable);
+    if (enabled) this.publicDependencies.add(projectId); else this.publicDependencies.delete(projectId);
     this.projectRevisions.set(projectId, (this.projectRevisions.get(projectId) ?? 0) + 1);
   }
   /** undefined preserves the native capability; null refuses the explicitly selected WSL backend. */
@@ -97,7 +109,8 @@ export class ProjectCodingExecution {
       } catch { live = false; }
       return live;
     };
-    return Object.freeze({ target, current, open: () => {
+    const publicDependencies = this.publicDependencies.has(projectId);
+    return Object.freeze({ target, current, ...(publicDependencies ? { publicDependencies: Object.freeze({ current }) } : {}), open: () => {
       if (!current()) return Promise.reject(new Error("The WSL coding selection changed. Start a new request."));
       return this.o.open(distro, exe, current);
     } });

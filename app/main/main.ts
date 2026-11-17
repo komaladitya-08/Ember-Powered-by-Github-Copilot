@@ -91,6 +91,9 @@ import { WslCodingCleanupError } from "./agent/wsl-coding-workspace";
 import type { WslFacts } from "./wsl/types";
 import { selectCodingStorageBase } from "./agent/coding-storage";
 import { registerProjectCodingIpc, type ProjectCodingIpc } from "./project-coding-ipc";
+import { registerCodingDraftIpc, type CodingDraftIpc } from "./coding-draft-ipc";
+import { CodingDraftStore } from "./agent/coding-draft-store";
+import { ImportedCodingDraftContexts } from "./agent/coding-draft-context";
 import { memoryRefusal } from "./memory/guard";
 import { correctMemoryRequest } from "./memory/correction";
 import { expandedBubble, expandedSuggest, keysLanding, questionAloud, readKeyWords, readTimeOf } from "./agent/presenter";
@@ -1378,6 +1381,7 @@ function start(): void {
   let historyStore: HistoryStore | null = null;
   /** Where tasks act besides this screen (WSL, SSH) and the commands on each (§2); made once the hands are. */
   let targets: (TargetsRuntime & TargetsRuntimeExtra) | null = null;
+  let codingDrafts: CodingDraftIpc | null = null;
   let perception: Perception | null = null;
   let voice: VoiceService | null = null;
   let availableNaturalModels = naturalVoiceChoices(sys.voice.naturalVoice && process.env.EMBER_VOICE_BACKEND !== "wasm", false);
@@ -1557,6 +1561,7 @@ function start(): void {
     // Every command stops, on every target, and every remote is told to stop (at once, whatever the network does).
     { name: "targets", stop: () => targets?.stopAll() },
     { name: "project", stop: () => projectJob?.abort() },
+    { name: "coding-drafts", stop: () => codingDrafts?.invalidate() },
     // Every extension call is refused from now on, its questions dropped, and every extension server ended.
     { name: "extensions", stop: () => extensionsRef?.stopPart().stop() },
     // The vault's Secure Form closes, and nothing more is asked in it.
@@ -2392,6 +2397,7 @@ function start(): void {
   });
   let projectCoding: ProjectCodingIpc | null = null;
   let codingResources: ProjectCodingResourcesPort | null = null;
+  const importedDraftContexts = new ImportedCodingDraftContexts();
   let codingCleanupPending = 0;
   let codingCleanupFailed = false;
   const codingCleanupReceipts = new Set<CodingCleanupReceipt>();
@@ -2404,7 +2410,8 @@ function start(): void {
     projectExists: id => agent?.projectSessionsState().projects.some(project => project.id === id) === true,
     facts: () => codingWslFacts,
     commands: id => { const selected = targets?.agent.handsFor(id); return selected?.ok ? selected.hands.commands : null; },
-    policy: () => ({ wsl: settings.get().targets.wsl, commands: settings.get().commands, features: policy.features, commandPolicy: policy.commands }),
+    policy: () => ({ wsl: settings.get().targets.wsl, commands: settings.get().commands, consent: settings.get().consent,
+      approvals: settings.get().approvals, features: policy.features, commandPolicy: policy.commands }),
     open: async (distro, wslExe, current) => {
       const missing = () => new Error("The installed WSL coding helper or offline tools are unavailable. Reinstall Ember.");
       const scriptWindowsPath = path.join(__dirname, "wsl-coding.cjs"), jobHost = { execPath: process.execPath, script: path.join(__dirname, "job-host.cjs") };
@@ -2447,10 +2454,12 @@ function start(): void {
     const execution = codingExecution!.state(selectedProject), choice = execution.choices.find(value => value.id === target);
     return { ...base, available: choice?.ready === true, message: choice?.message ?? execution.message };
   };
-  const resetProjectCoding = (): Promise<void> => {
-    codingExecution?.reset();
+  const resetProjectCoding = (eraseDrafts = false): Promise<void> => {
     const attempt = ++codingCleanupAttempt;
     const host = agent;
+    codingExecution?.reset();
+    importedDraftContexts.clear();
+    const draftsCleanup = (() => { try { return eraseDrafts ? codingDrafts?.forgetAll() ?? Promise.resolve() : codingDrafts?.invalidate() ?? Promise.resolve(); } catch (error) { return Promise.reject(error); } })();
     const failed = () => Promise.reject(new Error("Ember couldn't finish clearing its private coding work. Try Forget everything again."));
     if (host) {
       // Capture fresh Stop authority before releasing the earlier witness for this same retirement tracker.
@@ -2471,7 +2480,7 @@ function start(): void {
     let foldersCleanup = Promise.resolve();
     try { projectCodingFolders.ownerReset(); } catch { foldersCleanup = failed(); }
     const ipcCleanup = (() => { try { return projectCoding?.reset() ?? Promise.resolve(); } catch { return failed(); } })();
-    const cleanup = Promise.allSettled([...controllerCleanup, foldersCleanup, ipcCleanup, codingResourcesReady.then(resources => resources.invalidate())]).then(results => {
+    const cleanup = Promise.allSettled([...controllerCleanup, foldersCleanup, ipcCleanup, draftsCleanup, codingResourcesReady.then(resources => resources.invalidate())]).then(results => {
       if (results.some(result => result.status === "rejected") || codingCleanupReceipts.size > 0) {
         if (attempt === codingCleanupAttempt) codingCleanupFailed = true;
         throw new Error("Ember couldn't finish clearing its private coding work. Try Forget everything again.");
@@ -2765,11 +2774,13 @@ function start(): void {
     results: async () => (await codingResourcesReady).results(),
     canUse: () => projectAvailable() === true && codingCleanupPending === 0 && !codingCleanupFailed,
     availability: scopedCodingAvailability,
-    ...(codingExecution ? { executionState: (id: string) => codingExecution.state(id), chooseExecution: (id: string, target: string) => codingExecution.choose(id, target) } : {}),
+    ...(codingExecution ? { executionState: (id: string) => codingExecution.state(id), chooseExecution: (id: string, target: string) => codingExecution.choose(id, target),
+      choosePublicDependencies: (id: string, enabled: boolean) => codingExecution.choosePublicDependencies(id, enabled) } : {}),
     continueResult: (id, projectId, request) => {
       if (!agent || projectAvailable() !== true || codingCleanupPending !== 0 || codingCleanupFailed) throw new Error("Open Projects and reconnect Ember before continuing a coding result.");
       // This method captures the reviewed result and selected folder before its first conversation wait.
-      return agent.askCodingContinuation(request, id, projectId);
+      const context = importedDraftContexts.get(id, agent.projectWorkspaceScope(), projectId);
+      return agent.askCodingContinuation(request, id, projectId, context);
     },
     chooseFolder: async title => {
       const owner = home, host = agent;
@@ -2785,7 +2796,32 @@ function start(): void {
       return codingResources.validateSource(projectCommandFolder(selected, userData));
     },
     changed: projectCodingChanged,
-    folderChanged: id => agent?.codingWorkspaceChanged(id),
+    resultForgotten: id => importedDraftContexts.forgetResult(id),
+    projectForgotten: id => importedDraftContexts.forgetProject(id),
+    folderChanged: id => { codingDrafts?.folderChanged(id); agent?.codingWorkspaceChanged(id); },
+  });
+  codingDrafts = registerCodingDraftIpc({
+    handle: (channel, handler) => { ipcMain.handle(channel, guard(handler)); },
+    createStore: () => new CodingDraftStore(userData, safeStorage, platform.os === "darwin"),
+    owner: () => { const library = agent?.projectLibraryScope(), holder = agent?.projectWorkspaceScope(); return library && holder ? { library, holder } : null; },
+    consented,
+    canUse: () => screenLock?.locked === false && !!home && !home.isDestroyed() && home.isVisible() && !home.isMinimized() &&
+      codingCleanupPending === 0 && !codingCleanupFailed,
+    canRetain: () => projectAvailable() === true,
+    storageAvailable: async () => {
+      try {
+        if (safeStorage.getSelectedStorageBackend?.() === "basic_text") return false;
+        return platform.os === "darwin" ? await safeStorage.isAsyncEncryptionAvailable?.() === true : safeStorage.isEncryptionAvailable();
+      } catch { return false; }
+    },
+    projects: () => agent?.projectSessionsState() ?? { projects: [], selectedProjectId: null },
+    folders: projectCodingFolders, resources: () => codingResourcesReady,
+    chooseFolder: id => projectCoding!.chooseFolder(id),
+    imported: (id, projectId, context) => {
+      const owner = agent?.projectWorkspaceScope(); if (!owner) return;
+      importedDraftContexts.put(id, owner, projectId, context);
+    },
+    changed: projectCodingChanged,
   });
   ipcMain.handle(IPC.projectSessionsCheckpoint, guard(async (action: unknown) => {
     if (action !== "save" && action !== "open" && action !== "forget") throw new Error("Choose Save, Open or Forget saved projects.");
@@ -3181,7 +3217,7 @@ function start(): void {
     agent?.forgetProjectSessions();
     const projectsGone = projectSessionStore.forgetAll(() => true).then(() => true, () => false);
     const codingGone = forgetCurrentCoding().then(() => true, () => false);
-    const privateCodingGone = resetProjectCoding().then(() => true, () => false);
+    const privateCodingGone = resetProjectCoding(true).then(() => true, () => false);
     learning.forgetAll();
     // What was asked this session is about the person too: no suggestion comes from it afterwards (memory-r9-2).
     forgetSessionWords();
@@ -3534,7 +3570,7 @@ function start(): void {
     // close retains any private data whose stopped/cleanup witness cannot finish before the OS ends the process.
     agent?.codingWorkspaceChanged();
     projectCodingFolders.ownerReset();
-    const codingClose = codingResources ? codingResources.close() : codingResourcesReady.then(resources => resources.close());
+    const codingClose = Promise.all([codingDrafts?.close(), codingResources ? codingResources.close() : codingResourcesReady.then(resources => resources.close())]);
     void codingClose.catch(() => log.warn("coding.private_cleanup_incomplete"));
     log.info("app.session_end", { source });
     endThisRun("session-end");
@@ -3574,7 +3610,7 @@ function start(): void {
     const clip = emberXid && clipboardBridge
       ? clipboardBridge.handOff(emberXid).then(result => log.info("clipboard.handoff", { result }), err => log.warn("clipboard.handoff_failed", { err }))
       : Promise.resolve();
-    const codingClose = codingResources ? codingResources.close() : codingResourcesReady.then(resources => resources.close());
+    const codingClose = Promise.all([codingDrafts?.close(), codingResources ? codingResources.close() : codingResourcesReady.then(resources => resources.close())]);
     const coding = within(codingClose, 3000).then(result => {
       if (result === "timeout") log.warn("coding.private_cleanup_incomplete");
     }, () => log.warn("coding.private_cleanup_incomplete"));
@@ -4114,7 +4150,7 @@ function start(): void {
         captureContinuation: (id, projectId) => codingResources?.captureContinuation(id, projectId) ?? null,
         continuationCurrent: (ref, projectId) => codingResources?.continuationCurrent(ref, projectId) === true,
         get reviewBase() { return codingResources?.reviewBase ?? ""; },
-        publish: async (spec, output, status, checks) => (await codingResourcesReady).publish(spec, output, status, checks),
+        publish: async (spec, output, status, checks, summary) => (await codingResourcesReady).publish(spec, output, status, checks, summary),
       }, () => settings.get().commands.local?.on === true),
       codingWorkspace: codingCurrent,
       codingClarify: (request, signal) => targets?.codingClarify(request, signal) ?? Promise.resolve(null),

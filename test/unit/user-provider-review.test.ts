@@ -309,11 +309,58 @@ describe("the keyring at a start (macOS second-instance hang in CI)", () => {
     // The key store that can ask the keyring is made inside start(), which runs only once the lock is held; the setup
     // check (its own process, --doctor) only reads the host beside the key file, which asks no keyring.
     const start = main.indexOf("function start(): void {");
+    expect(start).toBeGreaterThan(lock);
     expect(main.indexOf("const providers = createProviderService({")).toBeGreaterThan(start);
     expect(main.indexOf("providers.ensureKey()")).toBeGreaterThan(start);
     const before = main.slice(0, start);
     expect(before.match(/new ProviderKeyStore\([^\n]*/g) ?? []).toEqual([expect.stringMatching(/\)\.savedHost\(\)\);$/)]);
-    expect(main).not.toMatch(/providerKeys\.canPersist\(\)|safeStorage\.isEncryptionAvailable\(\)/);
+    expect(before).not.toMatch(/safeStorage\.(?:is(?:Async)?EncryptionAvailable|encryptString(?:Async)?|decryptString(?:Async)?)(?:\?\.)?\s*\(/);
+    expect(main).not.toMatch(/providerKeys\.canPersist\(\)/);
+  });
+
+  /** Execute Main's actual lazy callback without starting Electron or touching the machine's keyring. */
+  function draftStorageAvailable(keyring: SecretBox, os: string): () => Promise<boolean> {
+    const main = readFileSync("app/main/main.ts", "utf8");
+    const registration = main.indexOf("codingDrafts = registerCodingDraftIpc({");
+    expect(registration).toBeGreaterThan(main.indexOf("function start(): void {"));
+    const callback = main.slice(registration).match(/storageAvailable: (async \(\) => \{[\s\S]*?\n {4}\}),/)?.[1];
+    expect(callback).toBeDefined();
+    const install = new Function("safeStorage", "platform", `return (${callback});`) as (box: SecretBox, platform: { os: string }) => () => Promise<boolean>;
+    return install(keyring, { os });
+  }
+
+  it("checks draft storage lazily and waits for the asynchronous Keychain answer on macOS", async () => {
+    let release!: (available: boolean) => void;
+    const held = new Promise<boolean>(yes => { release = yes; });
+    const backend = vi.fn(() => "keychain"), asyncAvailable = vi.fn(() => held);
+    const syncAvailable = vi.fn(() => { throw new Error("sync Keychain access"); });
+    const available = draftStorageAvailable(box({ getSelectedStorageBackend: backend, isEncryptionAvailable: syncAvailable, isAsyncEncryptionAvailable: asyncAvailable }).box, "darwin");
+    expect(backend).not.toHaveBeenCalled(); expect(asyncAvailable).not.toHaveBeenCalled(); expect(syncAvailable).not.toHaveBeenCalled();
+    let settled = false;
+    const pending = available().then(value => { settled = true; return value; });
+    expect(asyncAvailable).toHaveBeenCalledOnce(); expect(syncAvailable).not.toHaveBeenCalled();
+    await Promise.resolve(); expect(settled).toBe(false);
+    release(true); await expect(pending).resolves.toBe(true);
+  });
+
+  it.each(["linux", "win32"])("checks draft encryption on request on %s without using the macOS API", async os => {
+    const syncAvailable = vi.fn(() => true), asyncAvailable = vi.fn(async () => { throw new Error("macOS-only API"); });
+    const available = draftStorageAvailable(box({ isEncryptionAvailable: syncAvailable, isAsyncEncryptionAvailable: asyncAvailable }).box, os);
+    expect(syncAvailable).not.toHaveBeenCalled(); expect(asyncAvailable).not.toHaveBeenCalled();
+    await expect(available()).resolves.toBe(true);
+    expect(syncAvailable).toHaveBeenCalledOnce(); expect(asyncAvailable).not.toHaveBeenCalled();
+  });
+
+  it("refuses plaintext, missing asynchronous support and failed draft keyring checks", async () => {
+    const syncAvailable = vi.fn(() => true), asyncAvailable = vi.fn(async () => true);
+    for (const os of ["darwin", "linux", "win32"]) {
+      await expect(draftStorageAvailable(box({ getSelectedStorageBackend: () => "basic_text", isEncryptionAvailable: syncAvailable, isAsyncEncryptionAvailable: asyncAvailable }).box, os)()).resolves.toBe(false);
+    }
+    expect(syncAvailable).not.toHaveBeenCalled(); expect(asyncAvailable).not.toHaveBeenCalled();
+    await expect(draftStorageAvailable(box({ isEncryptionAvailable: syncAvailable, isAsyncEncryptionAvailable: undefined }).box, "darwin")()).resolves.toBe(false);
+    expect(syncAvailable).not.toHaveBeenCalled();
+    await expect(draftStorageAvailable(box({ isAsyncEncryptionAvailable: async () => { throw new Error("private Keychain refusal"); } }).box, "darwin")()).resolves.toBe(false);
+    await expect(draftStorageAvailable(box({ isEncryptionAvailable: () => { throw new Error("private keyring refusal"); } }).box, "linux")()).resolves.toBe(false);
   });
 });
 

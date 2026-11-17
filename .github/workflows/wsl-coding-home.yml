@@ -1,0 +1,356 @@
+name: Windows WSL Home qualification
+
+on:
+  workflow_call:
+    inputs:
+      required-ci:
+        description: Configure every native leaf as mandatory for the trusted CI caller; this grants no product authority.
+        type: boolean
+        required: false
+        default: true
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/wsl-coding-home.yml'
+      - 'test/integration/wsl-coding-product-*.test.ts'
+      - 'test/fixtures/wsl-coding-product-*.ts'
+      - 'test/fixtures/wsl-coding-packaged-*.ts'
+      - 'test/unit/wsl-coding-home-workflow.test.ts'
+      - 'test/unit/wsl-coding-product-*.test.ts'
+      - 'test/unit/wsl-coding-packaged-*.test.ts'
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22.23.5"
+      - run: npm ci
+      - name: Register portable contracts only
+        run: node node_modules/vitest/vitest.mjs run test/unit/wsl-coding-home-workflow.test.ts test/unit/wsl-coding-product-contract.test.ts test/unit/wsl-coding-product-model.test.ts test/unit/wsl-coding-product-boundaries.test.ts test/unit/wsl-coding-packaged-uia.test.ts test/unit/wsl-coding-packaged-product.test.ts --maxWorkers=1
+
+  product:
+    name: WSL Home ${{ matrix.journey }} (${{ matrix.image }})
+    if: github.event_name == 'workflow_dispatch' || inputs.required-ci == true
+    needs: contracts
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [windows-2022, windows-2025]
+        journey: [resources, source, packaged]
+    runs-on: ${{ matrix.image }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: read
+      actions: read
+    env:
+      EMBER_WINDOWS_NODE_PRODUCT_IMAGE: ${{ matrix.image }}
+      EMBER_WSL_CODING_PRODUCT_IMAGE: ${{ matrix.image }}
+      EMBER_WSL_CODING_PRODUCT_JOURNEY: ${{ matrix.journey }}
+      EMBER_WSL_CODING_TEST_DISTRO: Ubuntu-22.04
+    steps:
+      - name: Keep reviewed source line endings
+        shell: bash
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22.23.5"
+      - name: Require the reviewed POSIX producer and authenticate its exact archive
+        id: reviewed_input
+        shell: node {0}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const { createHash } = require("node:crypto");
+          const { spawnSync, execFileSync } = require("node:child_process");
+          // The fixed POSIX producer and current source graph must be independently qualified.
+          // Product admission stays closed until seven-case evidence on both images is reviewed.
+          // Workflow inputs or caller environment cannot select another producer or proof.
+          const reviewed = Object.freeze({
+            ready: false,
+            run: 43991252195,
+            commit: "b75c944dec58973d157542e2d4d2db3720667982",
+            artifact: 14289217635,
+            archiveBytes: 38425334,
+            archiveSha256: "cbbbf6c641c41bda8ece457c28a54b9bc4121a068dc376725bcf0e3ac24a2f62",
+            manifestSha256: "d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f",
+            assetProofCommit: null,
+            assetProofManifestSha256: null,
+            verifierFileSha256: null,
+          });
+          if (reviewed.ready !== true || !/^[0-9a-f]{40}$/.test(reviewed.commit ?? "") ||
+              !Number.isSafeInteger(reviewed.artifact) || reviewed.artifact < 1 ||
+              !Number.isSafeInteger(reviewed.archiveBytes) || reviewed.archiveBytes < 1 || reviewed.archiveBytes > 256 * 1024 * 1024 ||
+              !/^[0-9a-f]{64}$/.test(reviewed.archiveSha256 ?? "") || !/^[0-9a-f]{64}$/.test(reviewed.manifestSha256 ?? "") ||
+              !/^[0-9a-f]{40}$/.test(reviewed.assetProofCommit ?? "") || !/^[0-9a-f]{64}$/.test(reviewed.assetProofManifestSha256 ?? "") ||
+              !/^[0-9a-f]{64}$/.test(reviewed.verifierFileSha256 ?? "")) {
+            throw new Error("Windows Node product CI is blocked pending literal reviewed POSIX producer metadata.");
+          }
+          try {
+            const head = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", timeout: 10_000, maxBuffer: 128 }).trim();
+            if (head !== process.env.GITHUB_SHA) throw new Error("The product checkout is not the required workflow commit.");
+            const manifestBytes = fs.readFileSync("app/shared/windows-node-toolchain.json");
+            const digest = bytes => createHash("sha256").update(bytes).digest("hex");
+            const manifest = JSON.parse(manifestBytes);
+            if (digest(manifestBytes) !== reviewed.manifestSha256 || manifest.producerRun !== reviewed.run ||
+                manifest.producerCommit !== reviewed.commit || manifest.producerArtifact !== reviewed.artifact ||
+                manifest.platform !== "win32" || manifest.arch !== "x64" || manifest.scope !== "offline-root-only-node") {
+              throw new Error("The product toolchain manifest is not the reviewed POSIX producer.");
+            }
+            const download = spawnSync("gh", ["api", "repos/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/artifacts/" + reviewed.artifact + "/zip"],
+              { encoding: "buffer", timeout: 120_000, maxBuffer: reviewed.archiveBytes + 1, windowsHide: true });
+            if (download.error || download.status !== 0 || download.signal || !Buffer.isBuffer(download.stdout) ||
+                download.stdout.length !== reviewed.archiveBytes || digest(download.stdout) !== reviewed.archiveSha256) {
+              throw new Error("The reviewed Windows Node producer archive is unavailable or changed.");
+            }
+            fs.writeFileSync(path.join(process.env.RUNNER_TEMP, "windows-node-product-producer.zip"), download.stdout, { flag: "wx" });
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, "proofCommit=" + reviewed.assetProofCommit + "\nproofManifest=" +
+              reviewed.assetProofManifestSha256 + "\nproofVerifier=" + reviewed.verifierFileSha256 + "\n");
+            console.info("Authenticated Windows Node product input", JSON.stringify({ head, producerRun: reviewed.run,
+              producerCommit: reviewed.commit, producerArtifact: reviewed.artifact, manifestSha256: reviewed.manifestSha256 }));
+          } catch { throw new Error("Windows Node product input could not be verified."); }
+      - name: Extract only the authenticated producer members
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          try {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $manifest = Get-Content -LiteralPath app/shared/windows-node-toolchain.json -Raw | ConvertFrom-Json
+            $expected = @{}
+            foreach ($file in $manifest.files) {
+              if ($file.source -notmatch '^[A-Za-z0-9.-]+$' -or $expected.ContainsKey($file.source)) { throw "Invalid fixed producer members." }
+              $expected[$file.source] = $file
+            }
+            if ($expected.Count -ne 4) { throw "The fixed producer member set changed." }
+            $destination = Join-Path $PWD ".cache/windows-node-toolchain"
+            if (Test-Path -LiteralPath $destination) { throw "The producer cache must be fresh." }
+            $archive = [System.IO.Compression.ZipFile]::OpenRead((Join-Path $env:RUNNER_TEMP "windows-node-product-producer.zip"))
+            try {
+              if ($archive.Entries.Count -ne 4) { throw "The producer archive member count changed." }
+              $seen = @{}
+              foreach ($entry in $archive.Entries) {
+                $pin = $expected[$entry.FullName]
+                if ($null -eq $pin -or $seen.ContainsKey($entry.FullName) -or $entry.Length -ne $pin.bytes -or
+                    (($entry.ExternalAttributes -shr 16) -band 0xf000) -eq 0xa000) { throw "An archived producer member is unsupported." }
+                $seen[$entry.FullName] = $true
+              }
+              [System.IO.Directory]::CreateDirectory($destination) | Out-Null
+              foreach ($entry in $archive.Entries) {
+                $outputPath = Join-Path $destination $entry.FullName
+                $inputFile = $entry.Open()
+                try {
+                  $outputFile = [System.IO.File]::Open($outputPath, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+                  try { $inputFile.CopyTo($outputFile) } finally { $outputFile.Dispose() }
+                } finally { $inputFile.Dispose() }
+                if ((Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected[$entry.FullName].sha256) {
+                  throw "An extracted producer member changed."
+                }
+              }
+            } finally { $archive.Dispose() }
+            $verification = & node --input-type=module -e 'import path from "node:path"; import { verifyWindowsNodeToolchain } from "./scripts/package/windows-node-toolchain.mjs"; verifyWindowsNodeToolchain(path.resolve(".cache/windows-node-toolchain"), "producer");' 2>&1
+            if ($LASTEXITCODE -ne 0) { throw "The exact producer package verification failed." }
+          } catch { throw "The authenticated Windows Node producer members could not be verified." }
+      - run: npm install -g npm@11.6.2
+      # The actual Electron executable and its normal sandbox are required for the source and ZIP journeys.
+      - run: npm ci
+      - name: Bind all product journeys to the reviewed native source catalog
+        shell: node {0}
+        env:
+          REVIEWED_ASSET_PROOF_COMMIT: ${{ steps.reviewed_input.outputs.proofCommit }}
+          REVIEWED_ASSET_PROOF_MANIFEST: ${{ steps.reviewed_input.outputs.proofManifest }}
+          REVIEWED_ASSET_PROOF_VERIFIER: ${{ steps.reviewed_input.outputs.proofVerifier }}
+        run: |
+          try {
+            const fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto");
+            const { createRequire } = require("node:module"), { Script } = require("node:vm");
+            const proofCommit = process.env.REVIEWED_ASSET_PROOF_COMMIT, catalog = process.env.REVIEWED_ASSET_PROOF_MANIFEST;
+            const verifierSha256 = process.env.REVIEWED_ASSET_PROOF_VERIFIER, image = process.env.EMBER_WINDOWS_NODE_PRODUCT_IMAGE;
+            if (!/^[0-9a-f]{40}$/.test(proofCommit ?? "") || !/^[0-9a-f]{64}$/.test(catalog ?? "") ||
+                !/^[0-9a-f]{64}$/.test(verifierSha256 ?? "") || !["windows-2022", "windows-2025"].includes(image)) throw new Error();
+            const repository = fs.realpathSync.native(process.cwd());
+            const file = path.join(repository, "test/fixtures/windows-node-asset-enforcement-run.ts");
+            const same = (a, b) => a.isFile() && b.isFile() && !a.isSymbolicLink() && !b.isSymbolicLink() &&
+              a.nlink === 1n && b.nlink === 1n && a.dev === b.dev && a.ino === b.ino && a.size === b.size;
+            const clock = (a, b) => same(a, b) && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
+            const before = fs.lstatSync(file, { bigint: true });
+            if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1n || before.size < 1n || before.size > 1024n * 1024n ||
+                fs.realpathSync.native(file).toLowerCase() !== file.toLowerCase()) throw new Error();
+            let bytes, fd;
+            try {
+              fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
+              const opened = fs.fstatSync(fd, { bigint: true }); if (!same(before, opened)) throw new Error();
+              bytes = Buffer.alloc(Number(before.size) + 1); let count = 0;
+              while (count < bytes.length) {
+                const read = fs.readSync(fd, bytes, count, bytes.length - count, count);
+                if (!Number.isInteger(read) || read < 0 || read > bytes.length - count) throw new Error();
+                if (!read) break; count += read;
+              }
+              const after = fs.fstatSync(fd, { bigint: true }), named = fs.lstatSync(file, { bigint: true });
+              if (count !== Number(before.size) || !clock(opened, after) || !clock(before, named) || !same(after, named)) throw new Error();
+              bytes = bytes.subarray(0, count);
+            } finally { if (fd !== undefined) fs.closeSync(fd); }
+            if (crypto.createHash("sha256").update(bytes).digest("hex") !== verifierSha256) throw new Error();
+            const source = bytes.toString("utf8"); if (!Buffer.from(source, "utf8").equals(bytes)) throw new Error();
+            // The node shell script is temporary; resolve dependencies from the canonical checkout.
+            const { transformSync } = createRequire(path.join(repository, "package.json"))("esbuild");
+            const compiled = transformSync(source, { loader: "ts", format: "cjs", target: "node22", sourcemap: false, logLevel: "silent" }).code;
+            const module = { exports: {} }, allowed = { "node:fs": fs, "node:path": path, "node:crypto": crypto };
+            const facts = new Script(compiled + "\nmodule.exports.verifyWindowsNodeAssetEnforcementRun(repository, input);",
+              { filename: "reviewed-native-source-catalog.cjs" }).runInNewContext({ module, exports: module.exports, Buffer, repository, input: { commit: proofCommit, image },
+              require: name => { if (!Object.hasOwn(allowed, name)) throw new Error(); return allowed[name]; } },
+              { timeout: 10_000, contextCodeGeneration: { strings: false, wasm: false } });
+            if (facts.compileCommit !== proofCommit || facts.sourceManifestSha256 !== catalog) throw new Error();
+          } catch { throw new Error("The Windows Node product checkout does not match the reviewed native source catalog."); }
+      - uses: Vampire/setup-wsl@4c48163d9f981914dd8caa0fc335fe19cca5bff4 # v7.2.0
+        with:
+          distribution: Ubuntu-22.04
+          wsl-version: 2
+          wsl-shell-user: ember
+          wsl-conf: |
+            [user]
+            default=ember
+            [boot]
+            systemd=true
+          additional-packages: bubblewrap gcc libc6-dev util-linux
+      - name: Apply the dedicated qualification distro configuration
+        run: wsl.exe --terminate Ubuntu-22.04
+      - name: Mark this CI-created distro's completed noninteractive setup
+        shell: pwsh
+        run: |
+          Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss' | ForEach-Object {
+            $v = Get-ItemProperty $_.PSPath
+            if ($v.DistributionName -eq 'Ubuntu-22.04') { Set-ItemProperty $_.PSPath -Name RunOOBE -Value 0 -Type DWord }
+          }
+      - name: Prepare only the lock-pinned offline TypeScript asset
+        run: node scripts/package/wsl-coding-tools.mjs
+      - name: Authenticate the existing reviewed Linux Node runtime pin
+        shell: pwsh
+        run: |
+          $pin = Get-Content scripts/package/remote-runtime.json -Raw | ConvertFrom-Json
+          $asset = $pin.targets.'linux-x64'.xz
+          $archive = Join-Path $env:RUNNER_TEMP $asset.file
+          Invoke-WebRequest -Uri "https://nodejs.org/dist/v$($pin.pinned)/$($asset.file)" -OutFile $archive
+          if ((Get-Item $archive).Length -ne $asset.bytes) { throw 'Pinned Linux runtime size mismatch.' }
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $asset.sha256) { throw 'Pinned Linux runtime digest mismatch.' }
+          "EMBER_WSL_CODING_NODE_ARCHIVE=$archive" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Explicit CI-only root provisioning of the authenticated runtime
+        run: |
+          set -euo pipefail
+          MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu-22.04 -u root --exec /bin/bash -euo pipefail -s "$EMBER_WSL_CODING_NODE_ARCHIVE" <<'SH'
+          archive=$(wslpath -a -u "$1")
+          # Already authenticated above; this provisioning is never run by the product or a coding model.
+          # Discovery validates the resolved executable against its fixed system prefixes, including /opt/node.
+          test ! -e /opt/node
+          test ! -L /opt/node
+          install -d -m 755 /opt/node
+          tar -xJf "$archive" -C /opt/node --strip-components=1
+          chown -R root:root /opt/node
+          chmod -R go-w /opt/node
+          test -f /opt/node/bin/node
+          test ! -L /opt/node/bin/node
+          test ! -e /usr/bin/node
+          test ! -L /usr/bin/node
+          ln -s /opt/node/bin/node /usr/bin/node
+          test "$(readlink -f /usr/bin/node)" = /opt/node/bin/node
+          SH
+      - name: Stage exact development assets and build current source
+        shell: bash
+        run: |
+          set -euo pipefail
+          node node_modules/electron/install.js
+          node scripts/package/windows-node-toolchain-dev.mjs
+          npm run build
+      - name: Build the complete Windows ZIP for the configured packaged leaf
+        if: matrix.journey == 'packaged'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/voice/prepare.mjs --voice ryan
+          node scripts/package/runtimes.mjs
+          node scripts/package/remote-parts.mjs
+          node scripts/package/wsl-coding-tools.mjs
+          node scripts/package/stage.mjs --with-models --with-runtimes --with-windows-node-toolchain --with-wsl-coding-tools
+          node scripts/package/archive.mjs
+      - name: Run exactly the configured WSL product cases
+        id: proof
+        shell: node {0}
+        run: |
+          const fs = require("node:fs"), path = require("node:path"), { spawnSync } = require("node:child_process");
+          const files = { resources: "test/integration/wsl-coding-product-resources.test.ts", source: "test/integration/wsl-coding-product-electron.test.ts", packaged: "test/integration/wsl-coding-product-packaged.test.ts" };
+          const journey = process.env.EMBER_WSL_CODING_PRODUCT_JOURNEY, file = files[journey];
+          if (!file || !fs.existsSync(file)) throw new Error("The configured WSL product case is unavailable.");
+          const env = { ...process.env, EMBER_WSL_CODING_RESOURCES_TEST: "1", EMBER_ELECTRON_WSL_CODING_PRODUCT_TEST: "1", EMBER_PACKAGED_WSL_CODING_PRODUCT_TEST: "1" };
+          const report = path.join(process.env.RUNNER_TEMP, "wsl-product-" + journey + ".json");
+          if (fs.existsSync(report)) throw new Error("The WSL proof report must be fresh.");
+          if (journey === "packaged") {
+            const version = JSON.parse(fs.readFileSync("package.json", "utf8")).version;
+            if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) throw new Error("The product version is invalid.");
+            const zip = path.resolve("dist/package/Ember-" + version + "-win-x64.zip"), info = fs.lstatSync(zip);
+            if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) throw new Error("The packaged WSL proof requires the exact current ZIP.");
+            env.EMBER_WSL_CODING_PACKAGE = zip;
+          }
+          const outcome = spawnSync(process.execPath, ["scripts/run-integration.mjs", file, "--maxWorkers=1", "--reporter=default", "--reporter=json", "--outputFile=" + report],
+            { env, stdio: ["ignore", "pipe", "pipe"], encoding: "buffer", maxBuffer: 2 * 1024 * 1024, windowsHide: true, timeout: 20 * 60_000 });
+          if (outcome.error || outcome.status !== 0 || outcome.signal) {
+            console.info("WSL product child refused", JSON.stringify({ schema: 1, child: outcome.error ? 3 : outcome.signal ? 2 : 1, timeout: outcome.error?.code === "ETIMEDOUT" ? 1 : 0 }));
+            throw new Error("The required WSL product child failed; private output is withheld.");
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, "report=" + report + "\n");
+          if (journey === "packaged") fs.appendFileSync(process.env.GITHUB_OUTPUT, "zip=" + env.EMBER_WSL_CODING_PACKAGE + "\n");
+      - name: Reject skipped, partial, foreign or extra WSL cases
+        shell: node {0}
+        env:
+          PRODUCT_REPORT: ${{ steps.proof.outputs.report }}
+        run: |
+          try {
+            const fs = require("node:fs"), path = require("node:path"), { Script } = require("node:vm"), { createRequire } = require("node:module");
+            const reportPath = process.env.PRODUCT_REPORT, info = fs.lstatSync(reportPath);
+            if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size > 16 * 1024 * 1024) throw new Error();
+            const report = JSON.parse(fs.readFileSync(reportPath, "utf8")), module = { exports: {} }, repository = process.cwd();
+            const { transformSync } = createRequire(path.join(repository, "package.json"))("esbuild");
+            const compiled = transformSync(fs.readFileSync("test/fixtures/wsl-coding-product-contract.ts", "utf8"), { loader: "ts", format: "cjs", target: "node22" }).code;
+            const context = { module, exports: module.exports, report, journey: process.env.EMBER_WSL_CODING_PRODUCT_JOURNEY, repository: process.cwd(), require(name) { if (!["node:path", "node:util"].includes(name)) throw new Error(); return require(name); } };
+            new Script(compiled + "\nmodule.exports.requireWslProductReport(report, journey, repository);").runInNewContext(context, { timeout: 1000, contextCodeGeneration: { strings: false, wasm: false } });
+            console.info("All configured WSL product cases passed without skips.");
+          } catch { throw new Error("The complete current WSL product inventory is required."); }
+      - name: Retain only the ZIP which passed the WSL packaged proof
+        if: matrix.journey == 'packaged'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ember-wsl-home-${{ matrix.image }}
+          path: ${{ steps.proof.outputs.zip }}
+          if-no-files-found: error
+          retention-days: 3
+
+  required:
+    name: Required complete WSL Home qualification
+    if: always() && (github.event_name == 'workflow_dispatch' || inputs.required-ci == true)
+    needs: [contracts, product]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every configured product leaf
+        shell: node {0}
+        env:
+          REQUIRED_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          const result = JSON.parse(process.env.REQUIRED_RESULTS ?? "{}");
+          if (Object.keys(result).sort().join("|") !== "contracts|product" || result.contracts?.result !== "success" || result.product?.result !== "success") {
+            throw new Error("Every configured product leaf must pass; failures, cancellation and skips block the gate.");
+          }

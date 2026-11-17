@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { copyIsolatedCommandAssets, inspectIsolatedCommandElf } from "../../app/main/agent/isolated-command-assets";
+import { copyIsolatedCommandAssets, inspectIsolatedCommandElf, issueIsolatedPublicNpmTools, type IsolatedPublicNpmToolsRef } from "../../app/main/agent/isolated-command-assets";
 import { trustedCodingTestNodeOrSkip } from "../fixtures/coding/trusted-node";
 
 const roots: string[] = [];
@@ -47,6 +47,16 @@ describe("bounded ELF dependency inspection", () => {
   });
 });
 
+describe("fixed public npm utility capability", () => {
+  it("issues an empty frozen identity without accepting paths, arguments or constructor minting", () => {
+    const ref = issueIsolatedPublicNpmTools();
+    expect(Object.isFrozen(ref)).toBe(true); expect(Object.keys(ref)).toEqual([]);
+    expect(Reflect.ownKeys(ref)).toEqual([]); expect(issueIsolatedPublicNpmTools()).not.toBe(ref);
+    expect(() => Reflect.apply(issueIsolatedPublicNpmTools, undefined, ["/usr/bin/other"])).toThrow("unsupported");
+    expect(() => Reflect.construct(issueIsolatedPublicNpmTools, [])).toThrow("unsupported");
+  });
+});
+
 describe.skipIf(process.platform !== "linux" || process.arch !== "x64")("copied isolated command assets", () => {
   it("copies fixed binaries and their libraries as new inodes without exposing host directories", async () => {
     const f = fixture();
@@ -57,6 +67,39 @@ describe.skipIf(process.platform !== "linux" || process.arch !== "x64")("copied 
     expect(fs.lstatSync(path.join(f.rootfs, "lib64/ld-linux-x86-64.so.2")).isSymbolicLink()).toBe(false);
     expect(fs.existsSync(path.join(f.rootfs, "etc"))).toBe(false);
     expect(fs.existsSync(path.join(f.rootfs, "usr/bin/node"))).toBe(false);
+    for (const name of ["env", "mkdir", "rm", "cp", "mv", "touch", "ls", "chmod", "ln"]) expect(fs.existsSync(path.join(f.rootfs, "usr/bin", name))).toBe(false);
+  });
+
+  it("copies only the host-issued fixed public utilities as new inodes with verified ELF dependencies", async () => {
+    const f = fixture(), ref = issueIsolatedPublicNpmTools();
+    const result = await copyIsolatedCommandAssets({ rootfs: f.rootfs, protectedPaths: [f.privateDir], publicNpmTools: ref });
+    expect(result.node).toBe(false); expect(result.files).toBeLessThanOrEqual(128); expect(result.bytes).toBeLessThanOrEqual(512 * 1024 * 1024);
+    for (const name of ["env", "mkdir", "rm", "cp", "mv", "touch", "ls", "chmod", "ln"]) {
+      const copied = path.join(f.rootfs, "usr/bin", name), source = `/usr/bin/${name}`;
+      expect(fs.lstatSync(copied).isSymbolicLink()).toBe(false);
+      expect(fs.statSync(copied).ino).not.toBe(fs.statSync(source).ino);
+      expect(fs.readFileSync(copied)).toEqual(fs.readFileSync(source));
+    }
+    expect(fs.existsSync(path.join(f.rootfs, "usr/bin/node"))).toBe(false);
+    expect(fs.existsSync(path.join(f.rootfs, "etc"))).toBe(false);
+  });
+
+  it("rejects forged, serialised and proxy identities before touching an invalid root", async () => {
+    const ref = issueIsolatedPublicNpmTools(); let observed = 0;
+    const proxy = new Proxy(ref, { get() { observed++; throw new Error("A capability has no public authority fields."); },
+      getPrototypeOf() { observed++; throw new Error("A capability has no public authority prototype."); } });
+    for (const candidate of [{}, Object.freeze({}), Object.create(Object.getPrototypeOf(ref)), JSON.parse(JSON.stringify(ref)), proxy]) {
+      await expect(copyIsolatedCommandAssets({ rootfs: "/does-not-exist/ember-assets", protectedPaths: ["/does-not-exist/private"],
+        publicNpmTools: candidate as IsolatedPublicNpmToolsRef })).rejects.toThrow("unsupported");
+    }
+    expect(observed).toBe(0);
+  });
+
+  it("captures the selected capability once before asynchronous asset copying", async () => {
+    const f = fixture(), ref = issueIsolatedPublicNpmTools(); let reads = 0;
+    const input = { rootfs: f.rootfs, protectedPaths: [f.privateDir], get publicNpmTools() { return ++reads === 1 ? ref : undefined; } };
+    await copyIsolatedCommandAssets(input);
+    expect(reads).toBe(1); expect(fs.existsSync(path.join(f.rootfs, "usr/bin/ln"))).toBe(true);
   });
 
   it("rejects protected or unverifiable Node selections, non-empty roots and a stopped setup", async () => {

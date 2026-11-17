@@ -21,8 +21,10 @@ if (windowsNodeDevelopment.status === "staged" || windowsNodeDevelopment.status 
 // A fixed trusted worker program embedded in the app, with no runtime path/source fallback or project-code loader.
 const privacyWorker = buildSync({ entryPoints: ["app/main/agent/coding-privacy-worker.ts"], absWorkingDir: fileURLToPath(root),
   bundle: true, platform: "node", format: "cjs", target: "node22", write: false, logLevel: "silent" }).outputFiles[0].text;
+const draftWorker = buildSync({ entryPoints: ["app/main/agent/coding-draft-worker.ts"], absWorkingDir: fileURLToPath(root),
+  bundle: true, platform: "node", format: "cjs", target: "node22", write: false, logLevel: "silent" }).outputFiles[0].text;
 const common = { bundle: true, sourcemap: true, logLevel: "info", absWorkingDir: fileURLToPath(root),
-  define: { __EMBER_CODING_PRIVACY_WORKER_SOURCE__: JSON.stringify(privacyWorker) } };
+  define: { __EMBER_CODING_PRIVACY_WORKER_SOURCE__: JSON.stringify(privacyWorker), __EMBER_CODING_DRAFT_WORKER_SOURCE__: JSON.stringify(draftWorker) } };
 
 const pages = ["home", "overlay", "handle", "ask", "mic", "desk", "command", "prompt", "vault"];
 

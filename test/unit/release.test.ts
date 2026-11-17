@@ -280,6 +280,20 @@ describe("ci.yml's release job", () => {
     expect(required).toContain('results.product?.result !== "success"');
   });
 
+  it("requires WSL Home and encrypted draft acceptance in Windows CI and before release", () => {
+    const needs = /\n {4}needs: \[([^\]]+)\]/.exec(job)?.[1].split(/,\s*/) ?? [];
+    for (const [id, workflow] of [["windows-wsl-coding-home", "wsl-coding-home"], ["windows-coding-draft-product", "windows-coding-draft-product"]]) {
+      const caller = ci.split(`\n  ${id}:\n`)[1]?.split(/\n {2}[\w-]+:\n/)[0];
+      expect(caller).toBeDefined();
+      expect(caller).toContain(`uses: ./.github/workflows/${workflow}.yml`);
+      expect(caller).toContain("with:\n      required-ci: true");
+      expect(caller).toContain("if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'windows'");
+      expect(caller).toContain("permissions:\n      contents: read\n      actions: read");
+      expect(caller).not.toContain("continue-on-error");
+      expect(needs).toContain(id);
+    }
+  });
+
   it("checks the files and writes SHA256SUMS with §15's command before publishing them", () => {
     const publish = read("docs/DEVELOPING.md").split("## 15. Publishing a release")[1].split("\n## ")[0];
     const cmd = /^ *(sha256sum [^\n>]+? > SHA256SUMS)$/m.exec(publish)?.[1];

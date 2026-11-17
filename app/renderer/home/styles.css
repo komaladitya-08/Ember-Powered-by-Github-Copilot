@@ -156,6 +156,16 @@ h2[tabindex="-1"]:focus, .w-lead:focus { outline: none; }
   font: var(--type-footnote); font-family: var(--ember-mono);
 }
 #project-coding-patch:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+/* Saved coding drafts stay inert; their context and previews wrap within the Projects pane. */
+#coding-drafts, #coding-drafts-view:not([hidden]), #coding-drafts-save-form:not([hidden]) { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
+#coding-drafts :is(h5, p), #coding-drafts-save-form p { margin: 0; }
+#coding-drafts h5 { font: var(--type-callout); font-weight: 600; overflow-wrap: anywhere; }
+#coding-drafts-list { list-style: none; padding-inline: 0; margin: 0; }
+#coding-drafts-list > li { padding-block: 10px; }
+#coding-drafts-list > li + li { border-top: 1px solid var(--separator); }
+#coding-drafts :is(ul, ol) { min-width: 0; }
+#coding-drafts pre { max-width: 100%; max-height: 24em; margin: 0; padding: 10px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: var(--type-footnote); background: var(--surface-2); border: 1px solid var(--control-edge); border-radius: var(--r-xs); }
+#coding-drafts pre:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 @media (forced-colors: active) {
   #project-sessions :is(input[type="text"], textarea, select), #project-sessions-list li + li { border-color: ButtonText; }
   #project-coding-patch, #project-coding-continue-request, #project-coding-results li + li { border-color: ButtonText; }

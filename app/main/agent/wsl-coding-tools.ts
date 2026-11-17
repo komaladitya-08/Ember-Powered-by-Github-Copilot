@@ -5,7 +5,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { gunzip } from "node:zlib";
 import { promisify } from "node:util";
-import { copyIsolatedCommandAssets, type IsolatedCommandAssetResult } from "./isolated-command-assets";
+import { copyIsolatedCommandAssets, type IsolatedCommandAssetResult, type IsolatedPublicNpmToolsRef } from "./isolated-command-assets";
 import { HOST_ARCH, HOST_PLATFORM } from "../platform/os";
 
 import toolManifest from "../../shared/wsl-coding-tools.json";
@@ -141,7 +141,7 @@ export class WslCodingToolProfile {
 }
 
 /** A genuine profile is consumed only by the trusted Linux workspace factory, before any untrusted command starts. */
-export async function prepareWslCodingTools(profile: WslCodingToolProfile, input: { rootfs: string; nodePath?: string; protectedPaths: readonly string[]; signal?: AbortSignal }): Promise<IsolatedCommandAssetResult> {
+export async function prepareWslCodingTools(profile: WslCodingToolProfile, input: { rootfs: string; nodePath?: string; protectedPaths: readonly string[]; signal?: AbortSignal; publicNpmTools?: IsolatedPublicNpmToolsRef }): Promise<IsolatedCommandAssetResult> {
   const value = profiles.get(profile); if (!value || input.nodePath !== value.node) throw bad();
   const assets = await copyIsolatedCommandAssets(input);
   const root = await fs.realpath(input.rootfs), folder = path.join(root, "opt/ember-coding-tools");

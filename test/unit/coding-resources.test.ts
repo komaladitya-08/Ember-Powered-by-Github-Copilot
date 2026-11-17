@@ -20,6 +20,8 @@ vi.mock("../../app/main/agent/isolated-command-workspace", () => ({ IsolatedComm
 import { ProjectCodingResources, type ProjectCodingResourcesOptions } from "../../app/main/agent/coding-resources";
 import { selectCodingStorageBase } from "../../app/main/agent/coding-storage";
 import { CodingPrivacyCleanupError, CodingPrivacyScanError } from "../../app/main/agent/coding-privacy-scanner";
+import { CodingDraftStore } from "../../app/main/agent/coding-draft-store";
+import type { SecretBox } from "../../app/main/agent/auth";
 
 const A = "a".repeat(64), B = "b".repeat(64), P = "11111111-1111-4111-8111-111111111111", Q = "22222222-2222-4222-8222-222222222222";
 const verified = { available: true, nodePath: "/usr/bin/node", version: "v24.1.0", message: "Verified fixture tools." };
@@ -84,6 +86,47 @@ resourceIt("uses one supplied folder manager and keeps unused result access meta
   expect((await results.export("unknown", source, () => true)).ok).toBe(false);
   await results.reset(); await results.forgetProject(P); await results.forgetResult("unknown"); await value.invalidate();
   expect(factory).not.toHaveBeenCalled();
+});
+
+resourceIt("imports an encrypted saved proposal through fresh Linux store/source authority without changing the source", async () => {
+  const value = await open(); await ready(value); await bind(value);
+  sim.create.mockImplementation(async (input: IsolatedCommandWorkspaceInput) => {
+    const backend = makeBackend(input), binding = input.binding;
+    // A real backend takes its own private copy before the resource wipes transferred seed buffers.
+    const copy = (tree: CodingExportTree): CodingExportTree => ({ binding, entries: tree.entries.map(entry => entry.kind === "file" ? { ...entry, bytes: Buffer.from(entry.bytes) } : { ...entry }) });
+    const tree = (text: string): CodingExportTree => ({ binding, entries: [{ path: "app.ts", kind: "file", bytes: Buffer.from(text), executable: false }] });
+    const baseline = input.continuation ? copy(input.continuation.baseline) : tree("original\n");
+    const proposed = input.continuation ? copy(input.continuation.proposed) : tree("original\n");
+    backend.exportReview.mockImplementation(async base => {
+      const rendered = createCodingReviewExport({ binding, baseline, proposed, current: tree("original\n") });
+      const directory = await fs.mkdtemp(path.join(base, "ember-coding-review-"));
+      await fs.writeFile(path.join(directory, "review.json"), rendered.json, { mode: 0o600 });
+      await fs.writeFile(path.join(directory, "changes.patch"), rendered.review.textPatch, { mode: 0o600 });
+      return { directory, review: rendered.review, cleanup: "complete" };
+    });
+    return backend as unknown as IsolatedCommandWorkspace;
+  });
+  const binding = { owner: A, session: randomUUID(), snapshot: randomUUID() }, id = randomUUID();
+  const tree = (text: string): CodingExportTree => ({ binding, entries: [{ path: "app.ts", kind: "file", bytes: Buffer.from(text), executable: false }] });
+  const rendered = createCodingReviewExport({ binding, baseline: tree("original\n"), proposed: tree("saved change\n"), current: tree("original\n") });
+  const store = await LinuxCodingArtifactStore.create(value.reviewBase), output = await store.write({ "review.json": Buffer.from(rendered.json), "changes.patch": Buffer.from(rendered.review.textPatch) }, () => {});
+  const box = { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => "test-keyring", encryptString: (text: string) => Buffer.from(text), decryptString: (bytes: Buffer) => bytes.toString() } as SecretBox;
+  const drafts = new CodingDraftStore(userData, box, false), receipt = await store.claim(output, () => {});
+  const snapshot = await drafts.capture({ store, artifact: receipt, current: () => true, metadata: { version: 1, id, owner: { library: A, holder: A }, name: "Saved app", savedAt: 1,
+    sourceLabel: "source", binding, context: { request: "Prior request", summary: "Prior result" }, historicalChecks: { ran: 2, passed: 2, failed: 0 } } });
+  try { await drafts.save({ library: A, holder: A }, snapshot, () => true); } finally { snapshot.close(); await store.discard(output); }
+  const draft = (await drafts.open({ library: A, holder: A }, id, () => true))!;
+  try {
+    const imported = await value.importDraft(P, draft, { library: A, holder: A }, new AbortController().signal, () => true);
+    if (!imported.ok) throw new Error(imported.message);
+    expect(imported.result.checks).toEqual({ ran: 0, passed: 0, failed: 0 });
+    expect(imported.context).toEqual({ request: "Prior request", summary: "Prior result" });
+    expect(backends).toHaveLength(2); expect(backends[0].stop).toHaveBeenCalled(); expect(backends[0].close).toHaveBeenCalled();
+    expect(backends[1].input.binding).not.toEqual(binding);
+    expect(await fs.readFile(path.join(source, "app.ts"), "utf8")).toBe("original\n");
+    const review = await (await value.results()).review(imported.result.id); expect(review?.textPatch).toContain("saved change");
+    expect(await fs.readdir(value.reviewBase)).toHaveLength(1);
+  } finally { draft.close(); await drafts.close(); await store.close(); }
 });
 
 resourceIt("keeps availability false until the verified kernel/Node discovery resolves, with no Electron fallback", async () => {
