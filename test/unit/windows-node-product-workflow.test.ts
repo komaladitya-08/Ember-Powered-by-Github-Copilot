@@ -5,6 +5,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { types } from "node:util";
 import { runInNewContext, Script } from "node:vm";
 import { transformSync } from "esbuild";
 import { expect, it, vi } from "vitest";
@@ -122,27 +123,96 @@ function passing(journey: Journey) {
 }
 function proofFixture(journey: Journey = "native", report: unknown = passing(journey), options: {
   missing?: boolean; status?: number | null; signal?: string | null; readFailure?: boolean; malformed?: boolean;
+  attempt?: unknown; utilFailure?: boolean; globals?: Record<string, unknown>;
 } = {}) {
-  const outputs: string[] = [], printed = vi.fn(), invoked = vi.fn(() => ({ status: options.status === undefined ? 0 : options.status, signal: options.signal ?? null,
-    stdout: Buffer.from("PRIVATE synthetic child output"), stderr: Buffer.from("PRIVATE synthetic child failure") }));
+  const outputs: string[] = [], queries: string[] = [], printed = vi.fn(), invoked = vi.fn(() => "attempt" in options ? options.attempt :
+    { status: options.status === undefined ? 0 : options.status, signal: options.signal ?? null,
+      stdout: Buffer.from("PRIVATE synthetic child output"), stderr: Buffer.from("PRIVATE synthetic child failure") });
   const info = { isFile: () => true, isSymbolicLink: () => false, nlink: 1, size: 100 };
-  const io = { existsSync: (file: string) => Object.values(cases).includes(file as typeof cases[Journey]) && !options.missing,
+  const io = { existsSync: (file: string) => { queries.push("exists"); return Object.values(cases).includes(file as typeof cases[Journey]) && !options.missing; },
     readFileSync: (file: string) => {
+      queries.push("read");
       if (options.readFailure) throw new Error("PRIVATE synthetic file path");
       return file === "package.json" ? '{"version":"0.1.1"}' : options.malformed ? "{PRIVATE invalid report" : JSON.stringify(report);
     },
-    lstatSync: () => info, appendFileSync: (_file: string, output: string) => outputs.push(output) };
+    lstatSync: () => { queries.push("lstat"); return info; }, appendFileSync: (_file: string, output: string) => { queries.push("append"); outputs.push(output); } };
   const env = { EMBER_WINDOWS_NODE_PRODUCT_IMAGE: "windows-2022", EMBER_WINDOWS_NODE_PRODUCT_JOURNEY: journey,
     EMBER_WINDOWS_NODE_PRODUCT_TEST: "1", EMBER_ELECTRON_WINDOWS_NODE_TEST: "1", EMBER_PACKAGED_WINDOWS_NODE_TEST: "1",
     RUNNER_TEMP: path.join(root, "synthetic-ci-temp"), GITHUB_OUTPUT: "synthetic-output", GITHUB_SHA: "1".repeat(40) };
-  return { invoked, outputs, printed, run: () => runInNewContext(proof, { process: { env, execPath: "/host/node" }, console: { info: printed },
+  return { invoked, outputs, printed, queries, run: () => runInNewContext(proof, { Buffer, process: { env, execPath: "/host/node" }, console: { info: printed },
     require: (name: string) => {
       if (name === "node:fs") return io;
       if (name === "node:path") return path;
       if (name === "node:child_process") return { spawnSync: invoked };
+      if (name === "node:util") { if (options.utilFailure) throw new Error("PRIVATE diagnostic import"); return { types }; }
       throw new Error("Unexpected workflow import");
-    } }) };
+    }, ...options.globals }) };
 }
+
+const sourceFrame = (sourceCase: number, phase: number) => `Error: Windows Node source journey refused (case ${sourceCase}, phase ${phase}).`;
+const sourceAttempt = (stdout = "", stderr = "") => ({ status: 1, signal: null, stdout: Buffer.from(stdout), stderr: Buffer.from(stderr) });
+const sourceDiagnostic = (fixture: ReturnType<typeof proofFixture>) => {
+  const rows = fixture.printed.mock.calls.filter(call => call[0] === "Windows Node source proof failure facts"); expect(rows).toHaveLength(1);
+  return JSON.parse(rows[0][1] as string) as { child: number; timeout: number; phases: number[] };
+};
+it("observes only closed source phases while preserving the fatal child guard, invocation and absent report reads", () => {
+  const attempt = sourceAttempt("PRIVATE prefix\n\x1b[31m" + sourceFrame(1, 4) + "\x1b[0m\r\n" + sourceFrame(2, 1), sourceFrame(1, 4) + "\n" + sourceFrame(7, 9));
+  const f = proofFixture("source", passing("source"), { attempt });
+  expect(f.run).toThrow("The required Windows Node product proof could not be verified.");
+  expect(sourceDiagnostic(f)).toEqual({ child: 2, timeout: 0, phases: [4, 1, 0, 0, 0, 0, 9] });
+  expect(f.queries).toEqual(["exists", "exists"]); expect(f.invoked).toHaveBeenCalledTimes(1); expect(f.outputs).toEqual([]);
+  const invocation = f.invoked.mock.calls[0] as unknown as [string, string[], object];
+  expect(invocation[2]).toMatchObject({ timeout: 20 * 60_000, maxBuffer: 2 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+  expect(JSON.stringify(f.printed.mock.calls)).not.toContain("PRIVATE");
+});
+it("conflicting phases remain unknown even when a later duplicate agrees with an earlier frame", () => {
+  const f = proofFixture("source", passing("source"), { attempt: sourceAttempt([sourceFrame(1, 4), sourceFrame(1, 5), sourceFrame(1, 4), sourceFrame(2, 1)].join("\n")) });
+  expect(f.run).toThrow("could not be verified"); expect(sourceDiagnostic(f).phases).toEqual([0, 1, 0, 0, 0, 0, 0]);
+});
+it.each([sourceFrame(8, 1), sourceFrame(1, 0), sourceFrame(1, 11), "PRIVATE " + sourceFrame(1, 4), sourceFrame(1, 4) + " PRIVATE",
+  "Windows Node source journey refused (case 1, phase 4).", "Error: another journey refused (case 1, phase 4)."])("ignores a foreign or malformed source frame %#", text => {
+  const f = proofFixture("source", passing("source"), { attempt: sourceAttempt(text) });
+  expect(f.run).toThrow("could not be verified"); expect(sourceDiagnostic(f).phases).toEqual([0, 0, 0, 0, 0, 0, 0]);
+});
+it.each(["string", "oversized", "invalid-utf8", "proxy", "length-getter", "byte-length-getter", "slice-getter", "output-getter"] as const)("refuses %s output without invoking hostile accessors or projecting raw bytes", selected => {
+  let calls = 0; const bytes = Buffer.from(sourceFrame(1, 4)), attempt: Record<string, unknown> = sourceAttempt();
+  if (selected === "string") attempt.stdout = sourceFrame(1, 4);
+  if (selected === "oversized") attempt.stdout = Buffer.alloc(2 * 1024 * 1024 + 1);
+  if (selected === "invalid-utf8") attempt.stdout = Buffer.concat([Buffer.from([255, 10]), bytes]);
+  if (selected === "proxy") attempt.stdout = new Proxy(bytes, { get() { calls++; throw new Error("PRIVATE buffer getter"); }, getOwnPropertyDescriptor() { calls++; throw new Error("PRIVATE descriptor"); } });
+  if (selected === "length-getter" || selected === "byte-length-getter" || selected === "slice-getter") {
+    Object.defineProperty(bytes, selected === "length-getter" ? "length" : selected === "byte-length-getter" ? "byteLength" : "utf8Slice", { get() { calls++; throw new Error("PRIVATE buffer accessor"); } }); attempt.stdout = bytes;
+  }
+  if (selected === "output-getter") Object.defineProperty(attempt, "stdout", { get() { calls++; throw new Error("PRIVATE output accessor"); } });
+  const f = proofFixture("source", passing("source"), { attempt }); expect(f.run).toThrow("could not be verified");
+  expect(sourceDiagnostic(f)).toEqual({ child: 2, timeout: 0, phases: [0, 0, 0, 0, 0, 0, 0] }); expect(calls).toBe(0);
+});
+it.each(["native", "cross-realm", "getter", "impostor", "proxy"] as const)("only a genuine %s timeout with own data is observed without reading message or accessors", selected => {
+  let calls = 0; let error: object = selected === "cross-realm" ? runInNewContext('Object.assign(new Error("PRIVATE"), { code: "ETIMEDOUT" })') : Object.assign(new Error("PRIVATE"), { code: "ETIMEDOUT" });
+  if (selected === "getter") Object.defineProperty(error, "code", { get() { calls++; throw new Error("PRIVATE code getter"); } });
+  if (selected === "impostor") error = Object.create(Error.prototype, { code: { value: "ETIMEDOUT" } }) as object;
+  if (selected === "proxy") error = new Proxy(error, { get() { calls++; throw new Error("PRIVATE error proxy"); }, getOwnPropertyDescriptor() { calls++; throw new Error("PRIVATE descriptor"); } });
+  else Object.defineProperty(error, "message", { get() { calls++; throw new Error("PRIVATE message getter"); } });
+  const f = proofFixture("source", passing("source"), { attempt: { ...sourceAttempt(), status: null, error } });
+  expect(f.run).toThrow("could not be verified"); expect(sourceDiagnostic(f)).toEqual({ child: 3, timeout: selected === "native" || selected === "cross-realm" ? 1 : 0, phases: [0, 0, 0, 0, 0, 0, 0] }); expect(calls).toBe(0);
+});
+it("does not add getter or proxy traps to the original child guard", () => {
+  let reads = 0, descriptors = 0;
+  const attempt = new Proxy({}, { get() { reads++; throw new Error("PRIVATE original guard"); }, getOwnPropertyDescriptor() { descriptors++; throw new Error("PRIVATE diagnostic trap"); } });
+  const f = proofFixture("source", passing("source"), { attempt }); expect(f.run).toThrow("could not be verified");
+  expect(reads).toBe(1); expect(descriptors).toBe(0); expect(sourceDiagnostic(f)).toEqual({ child: 0, timeout: 0, phases: [0, 0, 0, 0, 0, 0, 0] });
+});
+it.each(["import", "print", "stringify"] as const)("a diagnostic %s fault leaves the same fixed fatal refusal and filesystem sequence", selected => {
+  const f = proofFixture("source", passing("source"), { attempt: sourceAttempt(sourceFrame(1, 4)), utilFailure: selected === "import",
+    globals: selected === "stringify" ? { JSON: { stringify() { throw new Error("PRIVATE diagnostic serialization"); } } } : undefined });
+  if (selected === "print") f.printed.mockImplementation(() => { throw new Error("PRIVATE diagnostic output"); });
+  expect(f.run).toThrow("The required Windows Node product proof could not be verified."); expect(f.invoked).toHaveBeenCalledTimes(1); expect(f.queries).toEqual(["exists", "exists"]);
+  if (selected === "import") expect(sourceDiagnostic(f)).toEqual({ child: 0, timeout: 0, phases: [0, 0, 0, 0, 0, 0, 0] });
+});
+it("unchanged successful source reporting accepts only its complete seven-case inventory and emits no failure observation", () => {
+  const f = proofFixture("source", passing("source"), { attempt: { ...sourceAttempt(sourceFrame(1, 4)), status: 0, error: false } });
+  expect(f.run).not.toThrow(); expect(f.printed).toHaveBeenCalledTimes(1); expect(f.printed.mock.calls[0][0]).toBe("Required Windows Node product proof passed");
+});
 
 // Exact public source bytes, copied into an ordinary private test tree. This checks source binding only, never a
 // successful Windows proof, process, DLL, model, issuer or cleanup receipt.

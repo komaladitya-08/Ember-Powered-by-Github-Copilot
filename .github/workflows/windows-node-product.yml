@@ -205,6 +205,38 @@ jobs:
         id: proof
         shell: node {0}
         run: |
+          let sourceSelected = false, sourceAttempt;
+          const sourceFailureFacts = attempt => {
+            const facts = { child: 0, timeout: 0, phases: [0, 0, 0, 0, 0, 0, 0] };
+            try {
+              const { types } = require("node:util"), missing = Symbol();
+              const own = (object, key) => {
+                if (!object || typeof object !== "object" || types.isProxy(object)) return missing;
+                const descriptor = Object.getOwnPropertyDescriptor(object, key);
+                return descriptor && Object.hasOwn(descriptor, "value") ? descriptor.value : missing;
+              };
+              const status = own(attempt, "status"), error = own(attempt, "error");
+              facts.child = status === null ? 3 : Number.isSafeInteger(status) ? status === 0 ? 1 : 2 : 0;
+              if (error && typeof error === "object" && !types.isProxy(error) && types.isNativeError(error) && own(error, "code") === "ETIMEDOUT") facts.timeout = 1;
+              const texts = [];
+              for (const key of ["stdout", "stderr"]) {
+                const bytes = own(attempt, key);
+                if (!bytes || types.isProxy(bytes) || !Buffer.isBuffer(bytes) || Object.getPrototypeOf(bytes) !== Buffer.prototype ||
+                    ["length", "byteLength", "byteOffset", "buffer", "toString", "utf8Slice"].some(name => Object.getOwnPropertyDescriptor(bytes, name)) || bytes.length > 2 * 1024 * 1024) return facts;
+                const decoded = Buffer.prototype.toString.call(bytes, "utf8");
+                if (!Buffer.prototype.equals.call(Buffer.from(decoded, "utf8"), bytes)) return facts;
+                texts.push(decoded.replace(/\x1b\[[0-9;]*m/g, "").replace(/\r\n/g, "\n"));
+              }
+              const conflicts = new Set();
+              for (const text of texts) for (const match of text.matchAll(/^[ \t]*Error: Windows Node source journey refused \(case ([1-7]), phase ([1-9]|10)\)\.$/gm)) {
+                const index = Number(match[1]) - 1, phase = Number(match[2]);
+                if (conflicts.has(index)) continue;
+                if (facts.phases[index] && facts.phases[index] !== phase) { facts.phases[index] = 0; conflicts.add(index); }
+                else facts.phases[index] = phase;
+              }
+            } catch { /* Observation cannot replace the original failure or change its authority. */ }
+            return facts;
+          };
           try {
             const fs = require("node:fs");
             const path = require("node:path");
@@ -216,6 +248,7 @@ jobs:
             };
             const expectedCases = { native: 2, source: 7, packaged: 1 };
             const journey = process.env.EMBER_WINDOWS_NODE_PRODUCT_JOURNEY, image = process.env.EMBER_WINDOWS_NODE_PRODUCT_IMAGE;
+            sourceSelected = journey === "source";
             const files = suites[journey];
             if (!files || !["windows-2022", "windows-2025"].includes(image) || files.some(file => !fs.existsSync(file))) {
               throw new Error("A required Windows Node product proof is unavailable.");
@@ -234,6 +267,7 @@ jobs:
             const executed = spawnSync(process.execPath, ["scripts/run-integration.mjs", ...files, "--maxWorkers=1",
               "--reporter=default", "--reporter=json", "--outputFile=" + reportPath],
               { env, stdio: ["ignore", "pipe", "pipe"], encoding: "buffer", maxBuffer: 2 * 1024 * 1024, windowsHide: true, timeout: 20 * 60_000 });
+            sourceAttempt = executed;
             if (executed.error || executed.status !== 0 || executed.signal) throw new Error("The required Windows Node product proof failed.");
             const reportInfo = fs.lstatSync(reportPath);
             if (!reportInfo.isFile() || reportInfo.isSymbolicLink() || reportInfo.nlink !== 1 || reportInfo.size > 16 * 1024 * 1024) {
@@ -253,7 +287,11 @@ jobs:
             console.info("Required Windows Node product proof passed", JSON.stringify({ commit: process.env.GITHUB_SHA, image, journey,
               files, passed: report.numPassedTests, skipped: 0 }));
             if (journey === "packaged") fs.appendFileSync(process.env.GITHUB_OUTPUT, "zip=" + env.EMBER_WINDOWS_NODE_PACKAGE + "\n");
-          } catch { throw new Error("The required Windows Node product proof could not be verified."); }
+          } catch {
+            try { if (sourceSelected) console.info("Windows Node source proof failure facts", JSON.stringify(sourceFailureFacts(sourceAttempt))); }
+            catch { /* Diagnostic storage or projection faults do not replace the original refusal. */ }
+            throw new Error("The required Windows Node product proof could not be verified.");
+          }
       - name: Retain only the exact ZIP which passed the packaged product journey
         if: matrix.journey == 'packaged'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
