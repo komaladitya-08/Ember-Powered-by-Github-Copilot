@@ -300,19 +300,27 @@ The unregistered Node coordinator [#259](https://github.com/komaladitya-08/Ember
 at `68860d55` composes the real canonical copy, native assets, stopped output and one-shot adoption. Its disjoint
 local gates passed 1,248 cases across 27 files and full types; hosted regression checks passed all six existing
 Windows controller, ZIP and files-only Electron jobs. Those jobs do not exercise the new Node command path.
-Host/resource integration remains local and unpublished. The protected-ancestor allocation conflict is corrected
+Host/resource integration is now [blocked draft #262](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/262), with both reviewed Windows prerequisites still closed. The protected-ancestor allocation conflict is corrected
 with a narrow, one-use owned-parent capability while preserving the full protected set. Independent review is
 closed on the six runtime modules, including namespace uniqueness and cross-input refusal. Workspace-first,
 resource-first and platform-first import regressions now pass. Atomic request intake keeps commands-off requests
 file-only and prevents later enablement or failed Node startup from upgrading them. Local gates passed 74 runtime,
 14 resource/readiness, 68 controller, 53 host, three actual SDK/model and twelve Linux SDK/isolation cases; these
 are separate scopes, not a single non-overlapping total. The application build and one normal-sandbox Linux
-Electron journey passed (13.10 seconds). Final integrated types passed across all 1,469 sources/declarations after
+Electron journey passed (13.10 seconds). At `8f12ec82`, final integrated types passed across all 1,469 sources/declarations after
 the packaged-test naming correction, native harness provenance fix and legacy file-only packaging job correction.
 The native harness now reads fixed installed Electron metadata and a bounded PE prefix without executing Electron's
 index or accepting its executable override; 49 focused cases passed. The old file-only ZIP recipe and its unchanged
 assertions remain separate from the strict Node product/release gate; 30 workflow contracts passed. Source Home and
 ordinary packaged Windows UI journeys have reviewed test implementations but no Windows execution receipt.
+Full Linux CI at `8f12ec82` passed 21,181 units and found two stale release/import fixture expectations; their
+correction passed 281 affected cases and is published at `fbbac1f4`. Completed Windows logs also showed 51 resource
+model failures from a test spy calling itself when node:path and win32 alias. A same-object control reproduced the
+RangeError; the new regression was red before the module-initial predicate capture and passed with that fix.
+Its 249 affected cases passed; test-only correction `4de1889b` is published and awaiting hosted verification.
+The full remote matrix and six existing controller/ZIP/files-only Electron jobs passed on the earlier head.
+Cancelled or unfinished platform jobs are not passes. Current Node-product leaves refuse reviewed-producer
+metadata as designed; these regression successes do not certify Windows Node execution.
 
 The additive four-patch Node producer [#260](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/260)
 preserves the three reviewed startup patches and adds the fixed POSIX regular-file rename operation. Six distinct
@@ -324,7 +332,13 @@ Current `e56aa8c9` replaces that comparison with separate real compile-time asse
 each equal literal ABI class 22. Both equality and fixed numeric value remain required; SDK/private 23 negatives
 fail. Headers, source adapter, flags and warning policy are unchanged. Its 352 local contracts, full types and 234
 registration cases passed. One [ABI-only run 43984400533](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43984400533)
-is pending. Both actual SDK targets must pass before the full source build, artifact authentication and runtime validation.
+passed both actual SDK targets, fresh x64 COFF and source/tool/recipe checks under C11. The separately issued
+ABI-only route produced no artifact. One subsequent same-head
+[full source attempt 43985674098](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43985674098)
+failed at identify-tools, before ABI or vcbuild in that fresh attempt. The prior SDK pass remains valid. A fixed
+checkpoint/outcome observer around the existing calls is reviewed and locally passing; its full types and next
+ABI-only prefix observation are pending. No reader, tool pin, timeout or production source has been changed to
+infer a cause. A complete source build, authenticated artifact and native runtime validation remain required.
 
 The native asset proof [#261](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/261)
 retains all four failed V1 native pairs. A separately issued V2 at `bcce66ad` added identical-owner/DACL Low/Medium

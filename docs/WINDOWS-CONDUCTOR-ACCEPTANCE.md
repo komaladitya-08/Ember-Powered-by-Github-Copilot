@@ -51,17 +51,22 @@ cleanup correction is published at `46fed893` with 1,142 affected cases, full ty
 The unregistered Node workspace `68860d55` passed 1,248 local cases and full types; its six existing hosted
 controller/ZIP/files-only Electron jobs passed. Local product resource, atomic intake, protected-parent allocation,
 import-cycle and SDK/model work is reviewed and passing its scoped gates. The build and existing normal-sandbox
-Linux Electron journey pass. Final integrated types passed across 1,469 sources/declarations after the packaged-test
+Linux Electron journey pass. At `8f12ec82`, final integrated types passed across 1,469 sources/declarations after the packaged-test
 naming fix, native installed-Electron provenance correction and old file-only ZIP workflow correction. Windows source
 Home and packaged normal-UI tests are source-reviewed but remain unrun on Windows. These results do not establish
-native canonical transfer.
+native canonical transfer. The integration is now blocked draft #262; its required Windows prerequisites remain
+closed. Later test-only corrections `fbbac1f4` and `4de1889b` fix stale release/import assertions and a reproduced
+Windows path-spy alias recursion. Their affected 281/249-case gates pass; full hosted verification is pending.
 
 Four-patch producer `e56aa8c9` passed 352 local contracts, full types and 234 registration cases. Diagnostic
 [43982542556](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43982542556)
 identified the exact failed enum-comparison line despite both casts. Separate real assertions now require adapter
 and SDK values each equal ABI class 22, with unchanged headers/flags/warning policy. One
 [ABI-only run 43984400533](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43984400533)
-is pending; no complete dual-target preflight, full Node build or new artifact has passed.
+passed both actual SDK targets and fresh COFF/source/tool/recipe checks, with no artifact. The subsequent
+[full source attempt 43985674098](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43985674098)
+failed at identify-tools before ABI/vcbuild in that fresh attempt. A bounded checkpoint observation is being
+prepared; no full Node build or new artifact has passed.
 
 Asset V2 `bcce66ad` passed 562 local/registration cases and full types, then failed its first C prelude on both
 images in [43983628743](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43983628743).
