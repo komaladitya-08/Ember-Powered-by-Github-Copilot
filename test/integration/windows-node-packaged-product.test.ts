@@ -16,6 +16,7 @@ import { verifyWindowsNodeToolchain, WINDOWS_NODE_TOOLCHAIN } from "../../script
 import { openWin32Input } from "../../app/main/platform/win32/input";
 import { titleOf } from "../../app/main/agent/tasks";
 import { UiaBridge, bridgeEnv, type RawNode, type UiaWindow } from "./uia-client";
+import { readCommandCardObservationLog, type PackagedCommandCardObservation } from "../fixtures/command-card-observation-log";
 import {
   createWindowsNodeProductModel, windowsNodeSourceScenarios, WINDOWS_NODE_REPAIR, WINDOWS_NODE_CONTINUATION,
   WINDOWS_NODE_TEST_ARGV, WINDOWS_NODE_WRITER_ARGV, WINDOWS_NODE_WRITER_READY, WINDOWS_NODE_PRODUCT_TOOLS,
@@ -237,11 +238,15 @@ class Journey {
   private watchdog?: ReturnType<typeof setTimeout>;
   private readonly observation = packagedObservation();
   private failureCaptured = false;
+  private commandObservation?: Readonly<PackagedCommandCardObservation>;
+  private cleanupStarted = false;
   assertionsComplete = false;
   private observe(values: Partial<PackagedObservation>): void { try { this.observation.update(values); } catch { /* Observation cannot change control flow. */ } }
   private observeInput<T>(value: T, rejection = false): T { try { this.observation.input(value, rejection); } catch { /* Preserve the exact result. */ } return value; }
-  captureFailure(): void { if (this.failureCaptured) return; this.failureCaptured = true; try { this.observe({ repairStep: this.model.steps.get("repair") ?? 0, repairResults: this.model.results.get("repair")?.length ?? 0 }); } catch { /* Cached local fixture counts only. */ } try { this.observation.capture(); } catch { /* Never retry with later cleanup state. */ } }
+  captureFailure(): void { if (this.failureCaptured) return; this.failureCaptured = true; try { this.observe({ repairStep: this.model.steps.get("repair") ?? 0, repairResults: this.model.results.get("repair")?.length ?? 0 }); } catch { /* Cached local fixture counts only. */ } try { this.observation.capture(); } catch { /* Never retry with later cleanup state. */ } if (!this.cleanupStarted) try { this.commandObservation = readCommandCardObservationLog(this.profile); } catch { /* Unknown; never read again during cleanup. */ } }
   failureObservation(): Readonly<PackagedObservation> | undefined { try { return this.observation.value(); } catch { return undefined; } }
+  commandFailureObservation(): Readonly<PackagedCommandCardObservation> | undefined { return this.commandObservation; }
+  beginCleanup(): void { this.cleanupStarted = true; }
   constructor(readonly root: string, readonly model: Model) {
     const selected = process.env.EMBER_WINDOWS_NODE_PACKAGE;
     if (!selected || !path.isAbsolute(selected) || path.extname(selected).toLowerCase() !== ".zip" || !ordinary(selected)) throw refusal(1);
@@ -701,6 +706,7 @@ it.skipIf(!required)("uses the shipped Windows Home for normal provider setup, e
     await fixture.start(); await fixture.repair(); await fixture.deny(); await fixture.writer("stop"); await fixture.writer("mode"); await fixture.writer("account"); await fixture.finish();
   } catch { try { fixture?.captureFailure(); } catch { /* Failure observation cannot replace the original path. */ } failed = true; phase = fixture?.phase ?? phase; }
   finally {
+    fixture?.beginCleanup();
     let clean = false; try { clean = !!fixture && await fixture.close(); } catch { failed = true; phase = 12; }
     try { await model?.close(); } catch { failed = true; phase = 12; }
     if (!failed && clean && root) { try { fs.rmSync(root, { recursive: true, force: false }); } catch { failed = true; phase = 12; } }
@@ -709,6 +715,8 @@ it.skipIf(!required)("uses the shipped Windows Home for normal provider setup, e
   if (failed) {
     try { fixture?.captureFailure(); const observation = fixture?.failureObservation(); if (observation) console.info("Windows Node packaged cached observation", JSON.stringify(observation)); }
     catch { /* No diagnostic fault changes the original refusal or retained state. */ }
+    try { const observation = fixture?.commandFailureObservation(); if (observation) console.info("Windows Node packaged command observation", JSON.stringify(observation)); }
+    catch { /* The separate numeric record cannot change the primary failure. */ }
     throw refusal(phase);
   }
   quarantined = false;

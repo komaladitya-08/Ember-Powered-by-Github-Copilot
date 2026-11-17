@@ -13,6 +13,9 @@ export interface ProjectCodingExecutionOptions {
   projectExists(id: string): boolean;
   facts(): WslFacts | null;
   commands(id: TargetId): CommandService | null;
+  /** Trusted Home selection only: fixed user facts from an already-running distro, never a command or launch. */
+  userPreparationAllowed?(target: TargetId): boolean;
+  prepareDefaultUser?(input: Readonly<{ distro: Readonly<WslDistro>; wslExe: string; current(): boolean }>): Promise<void>;
   /** Relevant settings/admin/consent values, observed synchronously on every settings notification. */
   policy(): unknown;
   open(distro: WslDistro, wslExe: string, current: () => boolean): ReturnType<WindowsWslCodingBinding["open"]>;
@@ -27,20 +30,25 @@ export class ProjectCodingExecution {
   private revision = 0;
   private projectRevisions = new Map<string, number>();
   private observed = "";
+  private preparationObserved = "";
+  private preparationRevision = 0;
   constructor(private readonly o: ProjectCodingExecutionOptions) { this.refresh(); }
   /** Synchronous notifications latch change-and-restore before a queued model/task resumes. */
   refresh(): void {
-    let owner: string | null = null, next: string;
+    let owner: string | null = null, next: string, preparation: string;
     try {
       owner = this.o.owner();
       const facts = this.o.facts();
-      next = key({ owner, policy: this.o.policy(), exe: facts?.wslExe, distros: facts?.distros.map(d => ({ name: d.name, version: d.version, defaultUid: d.defaultUid, needsSetup: d.needsSetup, tool: d.tool })) });
-    } catch { next = "unavailable"; }
+      const policy = this.o.policy();
+      next = key({ owner, policy, exe: facts?.wslExe, distros: facts?.distros.map(d => ({ name: d.name, version: d.version, defaultUid: d.defaultUid, needsSetup: d.needsSetup, tool: d.tool })) });
+      preparation = key({ owner, policy, exe: facts?.wslExe, distros: facts?.distros.map(d => ({ name: d.name, version: d.version, running: d.running, needsSetup: d.needsSetup, tool: d.tool })) });
+    } catch { next = preparation = "unavailable"; }
     if (owner !== this.owner) { this.owner = owner; this.choices.clear(); this.publicDependencies.clear(); this.projectRevisions.clear(); }
     if (next !== this.observed) { this.observed = next; this.revision++; }
+    if (preparation !== this.preparationObserved) { this.preparationObserved = preparation; this.preparationRevision++; }
     for (const id of new Set([...this.choices.keys(), ...this.projectRevisions.keys(), ...this.publicDependencies])) if (!this.o.projectExists(id)) { this.choices.delete(id); this.publicDependencies.delete(id); this.projectRevisions.delete(id); }
   }
-  reset(): void { this.choices.clear(); this.publicDependencies.clear(); this.projectRevisions.clear(); this.revision++; }
+  reset(): void { this.choices.clear(); this.publicDependencies.clear(); this.projectRevisions.clear(); this.revision++; this.preparationRevision++; }
   selected(projectId: string | null): TargetId { this.refresh(); return projectId ? this.choices.get(projectId) ?? "local" : "local"; }
   private distro(id: string): WslDistro | undefined {
     const parsed = parseTargetId(id);
@@ -52,7 +60,7 @@ export class ProjectCodingExecution {
     if (distro.version !== 2) return "WSL coding requires WSL2. This distro uses WSL1.";
     if (distro.needsSetup) return "Open this distro from the Start menu once to finish its setup.";
     if (distro.tool) return "Choose a personal WSL2 distro. Tool-owned distros cannot host coding sessions.";
-    if (distro.defaultUid === null) return "Open this distro once so Ember can verify its non-root user, then refresh Computers.";
+    if (distro.defaultUid === null) return "Start this distro if needed, then use Check environment to verify its non-root user.";
     if (distro.defaultUid <= 0) return "WSL coding requires a non-root default user in the selected distro.";
     const commands = this.o.commands(id), binding = commands?.binding;
     if (!commands || binding?.id !== id || binding.kind !== "wsl" || binding.shellOs !== "linux") return "Turn on WSL in Computers and allow commands for this distro.";
@@ -63,14 +71,14 @@ export class ProjectCodingExecution {
   }
   state(projectId: string): ProjectCodingExecutionState {
     const selected = this.selected(projectId), facts = this.o.facts();
-    const choices = [{ id: "local", label: "This computer", selectable: true, ready: true,
+    const choices: ProjectCodingExecutionState["choices"] = [{ id: "local", label: "This computer", selectable: true, ready: true,
       message: "Use the available Windows coding tools and this computer's command settings." }];
     for (const distro of facts?.distros ?? []) {
       const id = `wsl:${distro.name}` as const;
       if (parseTargetId(id)?.kind !== "wsl") continue;
       const message = this.reason(id);
       choices.push({ id, label: `${distro.name} (WSL${distro.version})`, selectable: distro.version === 2 && !distro.needsSetup && !distro.tool,
-        ready: message === null, message: `${message ?? "Commands use this distro's consent and approval settings."} ${id === selected && this.publicDependencies.has(projectId)
+        ready: message === null, ...(this.canPrepare(projectId, id) ? { canPrepare: true } : {}), message: `${message ?? "Commands use this distro's consent and approval settings."} ${id === selected && this.publicDependencies.has(projectId)
           ? "Commands stay offline. Locked public dependencies can be prepared for this project under its normal approvals. Captures and reviews exclude .git and node_modules." : disclosure}` });
     }
     if (!choices.some(choice => choice.id === selected)) choices.push({ id: selected, label: "Unavailable WSL selection", selectable: false, ready: false, message: `${unavailable} ${disclosure}` });
@@ -86,6 +94,30 @@ export class ProjectCodingExecution {
     if (target === "local") this.choices.delete(projectId); else this.choices.set(projectId, target as TargetId);
     this.publicDependencies.delete(projectId);
     this.projectRevisions.set(projectId, (this.projectRevisions.get(projectId) ?? 0) + 1);
+  }
+  private canPrepare(projectId: string, id: TargetId): boolean {
+    try {
+      const d = this.distro(id);
+      return !!this.o.prepareDefaultUser && this.o.userPreparationAllowed?.(id) === true && !!this.owner && this.o.projectExists(projectId) &&
+        !!this.o.facts()?.wslExe && !!d && d.version === 2 && !d.needsSetup && !d.tool && d.running && d.defaultUid === null;
+    } catch { return false; }
+  }
+  /** An explicit trusted Home selection may learn a running distro's user. Facts never become execution authority. */
+  async prepareSelected(projectId: string, targetId: string, callerCurrent: () => boolean): Promise<void> {
+    this.refresh();
+    const target = this.selected(projectId), prepare = this.o.prepareDefaultUser?.bind(this.o), distro = this.distro(target), exe = this.o.facts()?.wslExe;
+    if (!prepare || target !== targetId || !this.canPrepare(projectId, target) || !distro || !exe) return;
+    const owner = this.owner, revision = this.preparationRevision, projectRevision = this.projectRevisions.get(projectId) ?? 0;
+    const current = () => {
+      try {
+        this.refresh();
+        return callerCurrent() === true && this.owner === owner && this.o.owner() === owner && this.o.projectExists(projectId) &&
+          this.preparationRevision === revision && (this.projectRevisions.get(projectId) ?? 0) === projectRevision && this.selected(projectId) === target && this.o.userPreparationAllowed?.(target) === true;
+      } catch { return false; }
+    };
+    if (!current()) throw new Error(unavailable);
+    await prepare(Object.freeze({ distro: Object.freeze({ ...distro }), wslExe: exe, current }));
+    if (!current()) throw new Error(unavailable);
   }
   choosePublicDependencies(projectId: string, enabled: boolean): void {
     const state = this.state(projectId);

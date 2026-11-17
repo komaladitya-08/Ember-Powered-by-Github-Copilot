@@ -76,6 +76,17 @@ it("preserves the entire native WSL test after reversing only the new observatio
 });
 it("preserves the entire packaged test after reversing only the new project/folder stage field and markers", () => {
   let source = fs.readFileSync("test/integration/windows-node-packaged-product.test.ts", "utf8");
+  const commandAdditions = [
+    'import { readCommandCardObservationLog, type PackagedCommandCardObservation } from "../fixtures/command-card-observation-log";\n',
+    '  private commandObservation?: Readonly<PackagedCommandCardObservation>;\n',
+    '  private cleanupStarted = false;\n',
+    '  beginCleanup(): void { this.cleanupStarted = true; }\n',
+    '    fixture?.beginCleanup();\n',
+    ' if (!this.cleanupStarted) try { this.commandObservation = readCommandCardObservationLog(this.profile); } catch { /* Unknown; never read again during cleanup. */ }',
+    '  commandFailureObservation(): Readonly<PackagedCommandCardObservation> | undefined { return this.commandObservation; }\n',
+    '    try { const observation = fixture?.commandFailureObservation(); if (observation) console.info("Windows Node packaged command observation", JSON.stringify(observation)); }\n    catch { /* The separate numeric record cannot change the primary failure. */ }\n',
+  ];
+  for (const addition of commandAdditions) { expect(source.split(addition)).toHaveLength(2); source = source.replace(addition, ""); }
   const fillStart = source.indexOf("  private async fill("), fillEnd = source.indexOf("\n  private async homeText", fillStart);
   expect(fillStart >= 0 && fillEnd > fillStart).toBe(true);
   expect(digest(source.slice(fillStart, fillEnd))).toBe("abd3b6dc6c3466b966b0b9b0086b7d361ebddf59b496b0a49b3ec3462cec3754");
@@ -126,6 +137,12 @@ it("preserves the entire packaged test after reversing only the new project/fold
 });
 it("preserves the whole workflow after reversing only the known diagnostic fields and exact reviewed source-proof promotion", () => {
   let source = fs.readFileSync(".github/workflows/windows-node-product.yml", "utf8").replace(", projectStage: 16", "").replace(", projectStage: 0", "");
+  const commandStart = source.indexOf("          const commandFailureFacts ="), commandEnd = source.indexOf("          const failureFacts =", commandStart);
+  expect(commandStart > 0 && commandEnd > commandStart).toBe(true);
+  expect(digest(source.slice(commandStart, commandEnd))).toBe("94e358f8a718555de5b57a702e6d7d61bbbbdf78d92ead7ca4be43a93246b716");
+  source = source.slice(0, commandStart) + source.slice(commandEnd);
+  const commandPrint = '            try { if (failureJourney === 2) console.info("Windows Node packaged command failure facts", JSON.stringify(commandFailureFacts(failureAttempt))); }\n            catch { /* Never replace the primary failure or print a private log line. */ }\n';
+  expect(source.split(commandPrint)).toHaveLength(2); source = source.replace(commandPrint, "");
   source = source.replace('welcomeStep: 6, nextLabel: 7, target: 9, bridgeError:', 'welcomeStep: 6, nextLabel: 7, target: 7, bridgeError:');
   source = source.replace(', allowFlags: 31, denyFlags: 31, hintFlags: 3', "").replace(', allowFlags: 0, denyFlags: 0, hintFlags: 0', "");
   source = source.replace(', providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15', "");

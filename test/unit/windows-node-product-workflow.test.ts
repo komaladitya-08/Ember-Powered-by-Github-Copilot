@@ -689,12 +689,12 @@ it("the actual outer failure catch captures before close and does not replace th
   const source = read(cases.packaged), start = source.lastIndexOf("  } catch { try { fixture?.captureFailure();"), end = source.indexOf("  if (failed)", start);
   expect(start > 0 && end > start).toBe(true);
   const o = observationHelper(), trace: string[] = []; o.update({ operation: 7, welcomeStep: 2 });
-  const fixture = { phase: 3, captureFailure() { trace.push("capture"); o.capture(); }, async close() { trace.push("close"); o.update({ operation: 0 }); return false; } };
+  const fixture = { phase: 3, captureFailure() { trace.push("capture"); o.capture(); }, beginCleanup() { trace.push("cleanup-start"); }, async close() { trace.push("close"); o.update({ operation: 0 }); return false; } };
   const code = transformSync(`module.exports = async function(fixture, model) { let failed = false, phase = 1, root;
     try { throw new Error("PRIVATE original"); ${source.slice(start, end)} return { failed, phase }; };`, { loader: "ts", format: "cjs", target: "node22" }).code;
   const module = { exports: undefined as unknown as (fixture: object, model: object) => Promise<{ failed: boolean; phase: number }> }; runInNewContext(code, { module });
   expect(await module.exports(fixture, { async close() { trace.push("model"); } })).toEqual({ failed: true, phase: 3 });
-  expect(trace).toEqual(["capture", "close", "model"]); expect(o.value()?.operation).toBe(7);
+  expect(trace).toEqual(["capture", "cleanup-start", "close", "model"]); expect(o.value()?.operation).toBe(7);
 });
 it.each(Object.entries({ operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 9, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30, projectStage: 16, providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15, allowFlags: 31, denyFlags: 31, hintFlags: 3 }))("the pure helper refuses out-of-domain %s metadata", (field, maximum) => {
   for (const invalid of [-1, maximum + 1, 0.5, Infinity, "PRIVATE"]) {

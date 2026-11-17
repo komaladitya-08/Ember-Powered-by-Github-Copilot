@@ -6,13 +6,17 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { COMMANDS_IPC } from "../../app/shared/commands";
 import { COMMANDS_EXTRA_IPC, type AnswerMsg, type OutputMsg, type Snapshot, type WindowView } from "../../app/renderer/command/model";
 import { ANNOUNCE_SCREEN_READER_MS, MAX_TABS, WAITING_MS, awaitsTyping, cardSha256, placeOnDisplay, createCommandWindowController, createCommandWindowPort, outcomeOf, typedPieces, validCard } from "../../app/main/commands/window";
 import { statusLine, headerLine } from "../../app/renderer/command/copy";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../../app/main/targets/types";
 import type { CommandCard, RunExit, RunningCommand } from "../../app/main/commands/types";
-import type { Logger } from "../../app/main/logger";
+import { createLogger, type Logger } from "../../app/main/logger";
+import { readCommandCardObservationLog } from "../fixtures/command-card-observation-log";
 import { Confirmer, type Question } from "../../app/main/agent/confirm";
 
 type Handler = (event: { sender: WebContentsLike }, ...args: unknown[]) => unknown;
@@ -1353,5 +1357,97 @@ describe("direct Node command cards", () => {
     h.ipc.send(COMMANDS_IPC.answer, h.page(), { n: 21, answer: "once", sha256: c.sha256 }); expect(h.answers).toHaveLength(0);
     h.seen(21); h.ipc.send(COMMANDS_IPC.answer, h.page(), { n: 21, answer: "once", sha256: SHA }); expect(h.answers).toHaveLength(0);
     h.ipc.send(COMMANDS_IPC.answer, h.page(), { n: 21, answer: "once", sha256: c.sha256 }); expect(h.answers).toEqual([{ n: 21, answer: "once", sha256: c.sha256 }]);
+  });
+});
+
+describe("bounded diagnostic-only command-card observations", () => {
+  const data = { schema: 1, source: 1, model: 7, ui: 27, geometry: 503, arm: 2, capped: 0 };
+  const observations = () => logs.filter(line => line.msg === "commands.card_observation");
+  const send = (h: ReturnType<typeof setup>, n: number, fields: object = data) => h.ipc.send(COMMANDS_IPC.cardSeen, h.page(), { n, diagnostic: fields });
+
+  it("logs only a fixed numeric projection and cannot mark a card seen or permit an answer", () => {
+    const h = setup(), c = card(); h.ctl.showCard(9001, c); vi.advanceTimersByTime(1000);
+    const before = h.page().states().length; send(h, 9001);
+    expect(h.ctl.cardReady(9001)).toBe(false); expect(h.page().states()).toHaveLength(before);
+    h.ipc.send(COMMANDS_IPC.answer, h.page(), { n: 9001, answer: "once", sha256: c.sha256 }); expect(h.answers).toEqual([]);
+    expect(observations()).toEqual([{ level: "info", msg: "commands.card_observation", fields: { schema: 1, card: 1, sample: 1,
+      source: 1, model: 7, ui: 27, geometry: 503, arm: 2, capped: 0, host: 0 } }]);
+    expect(JSON.stringify(observations())).not.toMatch(/9001|rm -r|deploy|Clean the build|sha256|runId|taskId/);
+    h.seen(9001); send(h, 9001);
+    expect(h.ctl.cardReady(9001)).toBe(true); expect(observations()[1].fields).toMatchObject({ host: 7, card: 1, sample: 2 });
+  });
+  it("preserves the valid old seen report and never touches an invalid optional diagnostic accessor", () => {
+    const h = setup(); h.ctl.showCard(9, card()); let reads = 0;
+    h.ipc.send(COMMANDS_IPC.cardSeen, h.page(), { n: 9, seen: true, inView: true, get diagnostic() { reads++; throw new Error("PRIVATE"); } });
+    expect(reads).toBe(0); expect(h.ctl.cardReady(9)).toBe(true); expect(observations()).toEqual([]);
+  });
+  it("ignores hostile, malformed and stale standalone observations without reading private accessors", () => {
+    const h = setup(); h.ctl.showCard(9, card()); let reads = 0;
+    const trap = () => { reads++; throw new Error("PRIVATE"); };
+    const values: unknown[] = [new Proxy({}, { get: trap, ownKeys: trap, getOwnPropertyDescriptor: trap }),
+      { n: 9, get diagnostic() { return trap(); } }, { n: 9, diagnostic: new Proxy({}, { get: trap, ownKeys: trap, getOwnPropertyDescriptor: trap }) },
+      { n: 9, diagnostic: { ...data, get arm() { return trap(); } } }, { n: 8, diagnostic: data }, { n: 9, diagnostic: { ...data, secret: "PRIVATE" } },
+      { n: 9, diagnostic: { ...data, [Symbol("PRIVATE")]: 1 } }, { n: 9, diagnostic: { ...data, schema: 2 } },
+      { n: 9, diagnostic: { ...data, model: 128 } }, { n: 9, diagnostic: { ...data, ui: -1 } }, { n: 9, diagnostic: { ...data, geometry: 512 } },
+      { n: 9, diagnostic: { ...data, source: "PRIVATE" } }, { n: 9, diagnostic: { ...data, arm: 0.5 } }];
+    for (const value of values) expect(() => h.ipc.send(COMMANDS_IPC.cardSeen, h.page(), value)).not.toThrow();
+    expect(reads).toBe(0); expect(observations()).toEqual([]); expect(h.ctl.cardReady(9)).toBe(false);
+  });
+  it("retains ownership, current-card, page-down and disposal fences", () => {
+    const h = setup(); h.ctl.showCard(9, card());
+    h.ipc.send(COMMANDS_IPC.cardSeen, new FakeContents(99999), { n: 9, diagnostic: data });
+    h.win().crash(); send(h, 9); expect(observations()).toEqual([]);
+    h.ipc.invoke(COMMANDS_IPC.state, h.page()); send(h, 9); expect(observations()).toHaveLength(1);
+    h.ctl.hideCard(9); send(h, 9, { ...data, arm: 1 }); expect(observations()).toHaveLength(1);
+    h.ctl.showCard(10, card()); h.ctl.dispose(); send(h, 10); expect(observations()).toHaveLength(1);
+  });
+  it("deduplicates provenance-only changes and preserves a genuine same-card re-show's counters", () => {
+    const h = setup(), c = card(); h.ctl.showCard(55, c);
+    send(h, 55); send(h, 55, { ...data, source: 2 }); h.ctl.showCard(55, c); send(h, 55);
+    expect(observations()).toHaveLength(1);
+    send(h, 55, { ...data, ui: 15 }); expect(observations()[1].fields).toMatchObject({ card: 1, sample: 2 });
+    h.ctl.showCard(56, c); send(h, 56); expect(observations()[2].fields).toMatchObject({ card: 2, sample: 1, host: 0 });
+  });
+  it("caps changes per card and across the controller without dropping a later legitimate seen report", () => {
+    const h = setup(), c = card();
+    for (let n = 1; n <= 6; n++) {
+      h.ctl.showCard(n, c);
+      for (let i = 0; i < 20; i++) send(h, n, { ...data, model: i });
+    }
+    expect(observations()).toHaveLength(64);
+    expect(observations().filter(line => (line.fields as { card: number }).card === 1)).toHaveLength(16);
+    expect(observations()[15].fields).toMatchObject({ capped: 1 }); expect(observations().at(-1)?.fields).toMatchObject({ capped: 1 });
+    h.seen(6); expect(h.ctl.cardReady(6)).toBe(true);
+  });
+  it("retires last known state at the host ordinal cap through the actual Logger and failure reader", () => {
+    const profile = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "ember-card-ordinal-")));
+    let restoreLog = () => {};
+    try {
+      const logger = createLogger({ dir: path.join(profile, "logs") }).child("command-window");
+      const spy = vi.spyOn(log, "info").mockImplementation((msg, fields) => logger.info(msg, fields));
+      restoreLog = () => { spy.mockRestore(); };
+      const h = setup();
+      for (let ordinal = 1; ordinal <= 39; ordinal++) { h.ctl.showCard(9000 + ordinal, card()); send(h, 9000 + ordinal); }
+      expect(readCommandCardObservationLog(profile)).toMatchObject({ known: 1, card: 39, capped: 0 });
+      h.ctl.showCard(9040, card()); send(h, 9040);
+      expect(readCommandCardObservationLog(profile)).toMatchObject({ known: 0, card: 0, capped: 1 });
+      h.ctl.showCard(9041, card()); send(h, 9041);
+      expect(readCommandCardObservationLog(profile)).toMatchObject({ known: 0, card: 0, capped: 1 });
+      expect(h.ctl.cardReady(9041)).toBe(false);
+      h.ipc.send(COMMANDS_IPC.cardSeen, h.page(), { n: 9041, seen: true, inView: true });
+      expect(h.ctl.cardReady(9041)).toBe(true); h.ctl.dispose();
+    } finally { restoreLog(); fs.rmSync(profile, { recursive: true, force: true }); }
+  });
+  it("bounds host card ordinals without logging incoming identifiers", () => {
+    const h = setup(); for (let n = 1; n <= 45; n++) { h.ctl.showCard(9000 + n, card()); send(h, 9000 + n); }
+    expect(observations()).toHaveLength(40); expect(observations().at(-1)?.fields).toMatchObject({ card: 40, capped: 1 });
+    expect(JSON.stringify(observations())).not.toContain("900");
+  });
+  it("consumes its cap before a failing or reentrant logger and leaves approval state untouched", () => {
+    const h = setup(); h.ctl.showCard(1, card()); let writes = 0;
+    const spy = vi.spyOn(log, "info").mockImplementation(() => { writes++; send(h, 1); throw new Error("PRIVATE log failure"); });
+    try { for (let i = 0; i < 30; i++) expect(() => send(h, 1, { ...data, model: i })).not.toThrow(); }
+    finally { spy.mockRestore(); }
+    expect(writes).toBe(16); expect(h.ctl.cardReady(1)).toBe(false); h.seen(1); expect(h.ctl.cardReady(1)).toBe(true);
   });
 });

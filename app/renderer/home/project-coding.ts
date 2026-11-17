@@ -80,7 +80,8 @@ export function mountProjectCoding(): ProjectSessionReviews {
     forget.disabled = pending || !workspace?.folder || !workspace.canChoose;
     const execution = workspace?.execution, candidate = execution?.choices.find(choice => choice.id === executionSelect.value);
     executionSelect.disabled = pending || !ready || !execution?.canSelect;
-    executionChoose.disabled = executionSelect.disabled || !candidate?.selectable || candidate.id === execution?.selected;
+    executionChoose.disabled = executionSelect.disabled || !candidate?.selectable || (candidate.id === execution?.selected && candidate.canPrepare !== true);
+    executionChoose.textContent = candidate?.canPrepare === true && candidate.id === execution?.selected ? "Check environment" : "Use selection";
     publicDependenciesOn.disabled = pending || !ready || !execution?.publicDependencies?.canChange;
     exportReview.disabled = pending || !opened || opened.projectId !== projectId || !ready;
     continueReview.disabled = pending || !continuationAvailable();
@@ -188,7 +189,7 @@ export function mountProjectCoding(): ProjectSessionReviews {
   };
   const executionAction = async () => {
     const candidate = workspace?.execution?.choices.find(choice => choice.id === executionSelect.value);
-    if (!projectId || pending || !ready || !workspace?.execution?.canSelect || !candidate?.selectable || candidate.id === workspace.execution.selected) return;
+    if (!projectId || pending || !ready || !workspace?.execution?.canSelect || !candidate?.selectable || (candidate.id === workspace.execution.selected && candidate.canPrepare !== true)) return;
     const id = projectId, owner = generation, action = ++actionEpoch, targetId = candidate.id;
     clearContinuation(); readEpoch++; pending = true; status.textContent = "Saving this project's command environment…"; render();
     try {

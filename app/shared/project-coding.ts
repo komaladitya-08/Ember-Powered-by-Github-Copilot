@@ -4,6 +4,8 @@ export interface ProjectCodingExecutionChoice {
   label: string;
   selectable: boolean;
   ready: boolean;
+  /** Host-derived availability of an explicit read-only running-distro user check; grants no execution. */
+  canPrepare?: boolean;
   message: string;
 }
 

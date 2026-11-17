@@ -49,9 +49,10 @@ function setup() {
   const executionState = vi.fn((_projectId: string) => execution!);
   const chooseExecution = vi.fn((_projectId: string, targetId: string) => { execution!.selected = targetId; });
   const choosePublicDependencies = vi.fn((_projectId: string, enabled: boolean) => { execution!.publicDependencies!.enabled = enabled; });
+  const prepareExecution = vi.fn(async (_id: string, _target: string, _current: () => boolean) => undefined);
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const api = registerProjectCodingIpc({ handle: (channel, handler) => handlers.set(channel, handler), projects: () => state, folders, results,
-    canUse: () => allowed, availability, executionState, chooseExecution, choosePublicDependencies, continueResult,
+    canUse: () => allowed, availability, executionState, chooseExecution, prepareExecution, choosePublicDependencies, continueResult,
     chooseFolder, validateFolder, folderChanged, changed,
     resultForgotten: id => draftContexts.forgetResult(id), projectForgotten: id => draftContexts.forgetProject(id) });
   const call = async <T>(channel: string, ...args: unknown[]): Promise<T> => await handlers.get(channel)!(...args) as T;
@@ -59,7 +60,7 @@ function setup() {
     state.projects.find(project => project.id === id)!.sessions = [{ id: randomUUID(), taskId: randomUUID(), title: "Work", kind, status, detail: "", startedAt: 1 }];
   };
   return { draftContexts, root, source, other, privateDir, first, second, record, review, state, folders, registry, results, chooseFolder, validateFolder, folderChanged, changed, handlers, api, call, live,
-    continueResult, availability, executionState, chooseExecution, choosePublicDependencies, execution: (value: ProjectCodingExecutionState) => { execution = value; }, available: (value: boolean) => { available = value; }, canContinue: (value: boolean) => { canContinue = value; },
+    continueResult, availability, executionState, chooseExecution, prepareExecution, choosePublicDependencies, execution: (value: ProjectCodingExecutionState) => { execution = value; }, available: (value: boolean) => { available = value; }, canContinue: (value: boolean) => { canContinue = value; },
     owner: (value: string | null) => { owner = value; }, allowed: (value: boolean) => { allowed = value; },
     records: (value: CodingResultSummary[]) => { records = value; } };
 }
@@ -79,6 +80,15 @@ describe("Home's project coding IPC", () => {
     expect(f.availability).toHaveBeenLastCalledWith(f.first); expect(f.folderChanged).toHaveBeenLastCalledWith(f.first);
     expect(f.results).not.toHaveBeenCalled(); expect(f.continueResult).not.toHaveBeenCalled(); expect(f.chooseFolder).not.toHaveBeenCalled();
     expect(fs.readFileSync(path.join(f.source, "unchanged.txt"), "utf8")).toBe("The original is unchanged.");
+  });
+
+  it("holds explicit user preparation under the current source/project/selection context and refuses a late reply", async () => {
+    const f = setup(); f.execution(execution()); const held = deferred<void>(); let captured: (() => boolean) | undefined;
+    f.prepareExecution.mockImplementationOnce(async (_id, _target, current) => { captured = current; await held.promise; });
+    const selecting = f.call(IPC.projectCodingExecutionChoose, f.first, "wsl:Ubuntu"); const rejected = expect(selecting).rejects.toThrow();
+    expect(captured?.()).toBe(true); expect(f.prepareExecution).toHaveBeenCalledExactlyOnceWith(f.first, "wsl:Ubuntu", expect.any(Function));
+    await f.api.forgetProject(f.first); expect(captured?.()).toBe(false); held.resolve(); await rejected;
+    expect(f.continueResult).not.toHaveBeenCalled(); expect(f.chooseFolder).not.toHaveBeenCalled();
   });
 
   it("accepts only an exact currently selectable target, without a fallback or renderer-supplied authority", async () => {

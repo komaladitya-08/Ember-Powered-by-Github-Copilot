@@ -137,6 +137,7 @@ import type { OneShot } from "./memory/learn";
 import { memoryActionOpens } from "./memory/questions";
 import { BetterRecall } from "./memory/better-recall";
 import { CONSENT_VERSION, FEATURE_CONSENT_VERSION } from "../shared/consent";
+import { wslCodingUserPreparationAllowed } from "./agent/wsl-coding-user-preparation";
 import { installKind, releasePage, UpdateChecker, updateNotice } from "./updates";
 import { ExtensionsService } from "./extensions/service";
 import { registerExtensionsIpc } from "./extensions-ipc";
@@ -2410,6 +2411,16 @@ function start(): void {
     projectExists: id => agent?.projectSessionsState().projects.some(project => project.id === id) === true,
     facts: () => codingWslFacts,
     commands: id => { const selected = targets?.agent.handsFor(id); return selected?.ok ? selected.hands.commands : null; },
+    userPreparationAllowed: id => wslCodingUserPreparationAllowed(admin, settings.get(), id),
+    prepareDefaultUser: async ({ distro, wslExe, current }) => {
+      const owner = targets, wsl = owner?.wsl, id = `wsl:${distro.name}` as const;
+      const allowed = () => {
+        return current() && targets === owner && !!wsl && codingWslFacts?.wslExe === wslExe && wslCodingUserPreparationAllowed(admin, settings.get(), id);
+      };
+      if (!allowed() || !wsl) return;
+      await wsl.defaultUid(distro.name);
+      if (!allowed()) throw new Error("The project or WSL settings changed. Choose the environment again.");
+    },
     policy: () => ({ wsl: settings.get().targets.wsl, commands: settings.get().commands, consent: settings.get().consent,
       approvals: settings.get().approvals, features: policy.features, commandPolicy: policy.commands }),
     open: async (distro, wslExe, current) => {
@@ -2775,6 +2786,7 @@ function start(): void {
     canUse: () => projectAvailable() === true && codingCleanupPending === 0 && !codingCleanupFailed,
     availability: scopedCodingAvailability,
     ...(codingExecution ? { executionState: (id: string) => codingExecution.state(id), chooseExecution: (id: string, target: string) => codingExecution.choose(id, target),
+      prepareExecution: (id: string, target: string, current: () => boolean) => codingExecution.prepareSelected(id, target, current),
       choosePublicDependencies: (id: string, enabled: boolean) => codingExecution.choosePublicDependencies(id, enabled) } : {}),
     continueResult: (id, projectId, request) => {
       if (!agent || projectAvailable() !== true || codingCleanupPending !== 0 || codingCleanupFailed) throw new Error("Open Projects and reconnect Ember before continuing a coding result.");

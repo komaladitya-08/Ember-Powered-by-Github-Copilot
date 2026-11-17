@@ -19,6 +19,8 @@ export interface ProjectCodingIpcDeps {
   executionState?(projectId: string): ProjectCodingExecutionState | undefined;
   /** Synchronous metadata choice only; it does not install, start or approve commands. */
   chooseExecution?(projectId: string, targetId: string): void;
+  /** Explicit Home selection only; may read the user of a running distro under the captured current context. */
+  prepareExecution?(projectId: string, targetId: string, current: () => boolean): Promise<void>;
   /** Explicit project intent; no dependency set is approved or fetched by this metadata action. */
   choosePublicDependencies?(projectId: string, enabled: boolean): void;
   /** Calls the host's synchronous intake capture, then returns its ordinary conversation submission. */
@@ -151,7 +153,7 @@ export function registerProjectCodingIpc(d: ProjectCodingIpcDeps): ProjectCoding
     d.folders.clear(id); d.folderChanged?.(id); changed();
     return workspaceState(id);
   });
-  d.handle(IPC.projectCodingExecutionChoose, (...args): ProjectCodingWorkspaceState => {
+  d.handle(IPC.projectCodingExecutionChoose, async (...args): Promise<ProjectCodingWorkspaceState> => {
     const parsed = executionArgsSchema.safeParse(args);
     if (!parsed.success) throw new Error("Choose a command environment listed for this project.");
     const [id, targetId] = parsed.data; requireFolderChange(id);
@@ -167,7 +169,10 @@ export function registerProjectCodingIpc(d: ProjectCodingIpcDeps): ProjectCoding
       revisions.set(id, (revisions.get(id) ?? 0) + 1);
       selectionCurrent = capability(id);
       d.folderChanged?.(id); changed();
-      assertCurrent(() => safe(owner) && safe(selectionCurrent) && !liveCoding(id) && !pickers.has(id));
+      const preparedCurrent = () => safe(owner) && safe(selectionCurrent) && !liveCoding(id) && !pickers.has(id) && d.executionState?.(id)?.selected === targetId;
+      assertCurrent(preparedCurrent);
+      if (d.prepareExecution) await d.prepareExecution(id, targetId, preparedCurrent);
+      assertCurrent(preparedCurrent);
       return workspaceState(id);
     } catch {
       if (!safe(owner) || !safe(selectionCurrent)) throw new Error(STALE);

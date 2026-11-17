@@ -6,7 +6,7 @@ vi.mock("../../app/shared/wsl-coding-readiness", () => ({ WSL_CODING_READINESS: 
 import { ProjectCodingExecution } from "../../app/main/agent/project-coding-execution";
 const P = "11111111-1111-4111-8111-111111111111";
 beforeEach(() => { gate.ready = false; });
-function setup() {
+function setup(prepareDefaultUser?: import("../../app/main/agent/project-coding-execution").ProjectCodingExecutionOptions["prepareDefaultUser"]) {
   const state = { otherProject: false, owner: "owner" as string | null, policy: "on", consent: true, project: true };
   const facts: WslFacts = { installed: true, wslExe: "C:\\Windows\\System32\\wsl.exe", wslVersion: "2", wslg: { available: false, disabledByUser: false, version: null },
     distros: [{ name: "Ubuntu", version: 2, isDefault: true, defaultUid: 1000, running: false, needsSetup: false }] };
@@ -14,7 +14,7 @@ function setup() {
   let service = { binding, capability: () => ({ state: state.consent ? "on" : "needs-consent", why: "Accept this distro's command consent.", askEvery: null }) } as unknown as CommandService;
   const open = vi.fn(async () => ({ connection: {} as never, typescriptArchive: Buffer.from("pinned") }));
   const value = new ProjectCodingExecution({ owner: () => state.owner, projectExists: id => state.project && (id === P || state.otherProject && id === "other"),
-    facts: () => facts, commands: id => id === "wsl:Ubuntu" ? service : null, policy: () => ({ policy: state.policy, consent: state.consent }), open });
+    facts: () => facts, commands: id => id === "wsl:Ubuntu" ? service : null, policy: () => ({ policy: state.policy, consent: state.consent }), open, prepareDefaultUser, userPreparationAllowed: () => state.consent && state.policy !== "off" });
   return { value, state, facts, binding, open, replaceService: (next: CommandService) => { service = next; } };
 }
 it("keeps the real Windows qualification gate closed while allowing explicit preparation metadata", () => {
@@ -103,4 +103,42 @@ it("requires ready consent for opt-in but always permits withdrawal under a newl
   expect(f.value.state(P).publicDependencies?.canChange).toBe(true);
   expect(() => f.value.choosePublicDependencies(P, true)).toThrow(); f.value.choosePublicDependencies(P, false);
   expect(f.value.state(P).publicDependencies).toMatchObject({ enabled: false, canChange: false });
+});
+
+const heldUserProbe = () => { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; };
+it("learns only through explicit selected running-personal-distro preparation and preserves unknown/root refusal", async () => {
+  gate.ready = true; let observed: (() => boolean) | undefined;
+  const prepare = vi.fn(async (input: Parameters<NonNullable<import("../../app/main/agent/project-coding-execution").ProjectCodingExecutionOptions["prepareDefaultUser"]>>[0]) => { observed = input.current; });
+  const f = setup(prepare); f.facts.distros[0].defaultUid = null; f.facts.distros[0].running = true; f.value.choose(P, "wsl:Ubuntu");
+  f.value.state(P); f.value.capture(P); expect(prepare).not.toHaveBeenCalled();
+  await f.value.prepareSelected(P, "wsl:Ubuntu", () => true);
+  expect(prepare).toHaveBeenCalledOnce(); expect(observed?.()).toBe(true); expect(f.value.capture(P)).toBeNull(); expect(f.open).not.toHaveBeenCalled();
+  f.facts.distros[0].defaultUid = 0; await f.value.prepareSelected(P, "wsl:Ubuntu", () => true); expect(prepare).toHaveBeenCalledOnce(); expect(f.value.capture(P)).toBeNull();
+});
+it.each(["local", "other-target", "stopped", "setup", "tool", "wsl1", "known-user", "consent", "policy"] as const)("does not probe ineligible %s metadata", async kind => {
+  const prepare = vi.fn(async () => undefined), f = setup(prepare); f.facts.distros[0].defaultUid = null; f.facts.distros[0].running = true;
+  if (kind !== "local") f.value.choose(P, "wsl:Ubuntu");
+  if (kind === "stopped") f.facts.distros[0].running = false;
+  if (kind === "setup") f.facts.distros[0].needsSetup = true;
+  if (kind === "tool") f.facts.distros[0].tool = "podman";
+  if (kind === "wsl1") f.facts.distros[0].version = 1;
+  if (kind === "known-user") f.facts.distros[0].defaultUid = 1000;
+  if (kind === "consent") f.state.consent = false;
+  if (kind === "policy") f.state.policy = "off";
+  await f.value.prepareSelected(P, kind === "other-target" ? "wsl:Missing" : "wsl:Ubuntu", () => true);
+  expect(prepare).not.toHaveBeenCalled(); expect(f.open).not.toHaveBeenCalled();
+});
+it.each(["caller", "owner", "project", "selection", "policy-restore", "running-restore", "reset-restore"] as const)("retires held user preparation after %s without reviving its current callback", async kind => {
+  const held = heldUserProbe(); let captured: (() => boolean) | undefined;
+  const f = setup(async input => { captured = input.current; await held.promise; }); let caller = true;
+  f.facts.distros[0].defaultUid = null; f.facts.distros[0].running = true; f.value.choose(P, "wsl:Ubuntu");
+  const work = f.value.prepareSelected(P, "wsl:Ubuntu", () => caller); const rejected = expect(work).rejects.toThrow(); expect(captured?.()).toBe(true);
+  if (kind === "caller") caller = false;
+  if (kind === "owner") { f.state.owner = "other"; f.value.refresh(); f.state.owner = "owner"; f.value.refresh(); }
+  if (kind === "project") f.state.project = false;
+  if (kind === "selection") { f.value.choose(P, "local"); f.value.choose(P, "wsl:Ubuntu"); }
+  if (kind === "policy-restore") { f.state.policy = "off"; f.value.refresh(); f.state.policy = "on"; f.value.refresh(); }
+  if (kind === "running-restore") { f.facts.distros[0].running = false; f.value.refresh(); f.facts.distros[0].running = true; f.value.refresh(); }
+  if (kind === "reset-restore") { f.value.reset(); f.value.choose(P, "wsl:Ubuntu"); }
+  expect(captured?.()).toBe(false); held.resolve(); await rejected; expect(f.open).not.toHaveBeenCalled();
 });

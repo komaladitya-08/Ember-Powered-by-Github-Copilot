@@ -207,6 +207,42 @@ jobs:
         shell: node {0}
         run: |
           let failureJourney = 0, failureAttempt;
+          const commandFailureFacts = attempt => {
+            const limits = { schema: 1, known: 1, card: 40, sample: 16, source: 2, model: 127, ui: 31, geometry: 511, arm: 2, capped: 1, host: 7 };
+            const empty = { schema: 1, known: 0, card: 0, sample: 0, source: 0, model: 0, ui: 0, geometry: 0, arm: 0, capped: 0, host: 0 };
+            try {
+              const { types } = require("node:util");
+              const own = (value, key) => {
+                if (!value || typeof value !== "object" || types.isProxy(value)) return undefined;
+                const field = Object.getOwnPropertyDescriptor(value, key);
+                return field && Object.hasOwn(field, "value") ? field.value : undefined;
+              };
+              let found, bad = false;
+              for (const key of ["stdout", "stderr"]) {
+                const bytes = own(attempt, key);
+                if (!bytes || types.isProxy(bytes) || !Buffer.isBuffer(bytes) || Object.getPrototypeOf(bytes) !== Buffer.prototype ||
+                    ["length", "byteLength", "byteOffset", "buffer", "toString", "utf8Slice"].some(name => Object.getOwnPropertyDescriptor(bytes, name)) || bytes.length > 2 * 1024 * 1024) return empty;
+                const text = Buffer.prototype.toString.call(bytes, "utf8");
+                if (!Buffer.prototype.equals.call(Buffer.from(text, "utf8"), bytes)) return empty;
+                for (const line of text.replace(/\x1b\[[0-9;]*m/g, "").replace(/\r\n/g, "\n").split("\n")) {
+                  if (!/^[ \t]*Windows Node packaged command observation /.test(line)) continue;
+                  try {
+                    const match = /^[ \t]*Windows Node packaged command observation (\{[^\r\n]{1,512}\})$/.exec(line);
+                    if (!match) { bad = true; continue; }
+                    const candidate = JSON.parse(match[1]);
+                    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate) || Object.keys(candidate).length !== Object.keys(limits).length) { bad = true; continue; }
+                    const next = { ...empty };
+                    if (Object.keys(limits).some(key => { const value = own(candidate, key); if (!Number.isInteger(value) || value < 0 || value > limits[key]) return true; next[key] = value; return false; }) || next.schema !== 1
+                        || next.known === 1 && (!next.card || !next.sample || next.sample >= 16 || !next.source || next.capped)
+                        || next.known === 0 && Object.keys(limits).some(key => !["schema", "known", "capped"].includes(key) && next[key] !== 0)) { bad = true; continue; }
+                    if (found && Object.keys(limits).some(key => found[key] !== next[key])) bad = true;
+                    else found = next;
+                  } catch { bad = true; }
+                }
+              }
+              return !bad && found ? found : empty;
+            } catch { return empty; }
+          };
           const failureFacts = (attempt, packaged = false) => {
             const limits = { operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 9, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30, projectStage: 16, providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15, allowFlags: 31, denyFlags: 31, hintFlags: 3 };
             const empty = { operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0, projectStage: 0, providerStage: 0, commandStage: 0, commandDecision: 0, repairStep: 0, repairResults: 0, focusIdentity: 0, cardFlags: 0, allowFlags: 0, denyFlags: 0, hintFlags: 0 };
@@ -315,6 +351,8 @@ jobs:
             try { if (failureJourney) console.info(failureJourney === 1 ? "Windows Node source proof failure facts" : "Windows Node packaged proof failure facts",
               JSON.stringify(failureFacts(failureAttempt, failureJourney === 2))); }
             catch { /* Diagnostic storage or projection faults do not replace the original refusal. */ }
+            try { if (failureJourney === 2) console.info("Windows Node packaged command failure facts", JSON.stringify(commandFailureFacts(failureAttempt))); }
+            catch { /* Never replace the primary failure or print a private log line. */ }
             throw new Error("The required Windows Node product proof could not be verified.");
           }
       - name: Retain only the exact ZIP which passed the packaged product journey

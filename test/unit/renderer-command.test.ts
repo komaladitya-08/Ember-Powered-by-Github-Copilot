@@ -735,7 +735,7 @@ describe("the question card's layout (review #265)", () => {
     expect(block(".window.cards-only .cards")).toMatch(/max-height:\s*none/);
     const main = read("main.ts");
     expect(main).toMatch(/actions\.append\(hint, row, keys\)/);
-    expect(main).toMatch(/clip\.bottom = Math\.min\(clip\.bottom, ask\.actions\.getBoundingClientRect\(\)\.top\)/);
+    expect(main).toMatch(/const actionsTop = ask\.actions\.getBoundingClientRect\(\)\.top;\n {2}clip\.bottom = Math\.min\(clip\.bottom, actionsTop\)/);
     expect(main).toMatch(/classList\.toggle\("cards-only"/);
   });
 

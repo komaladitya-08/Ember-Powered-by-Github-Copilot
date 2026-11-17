@@ -172,6 +172,26 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Project coding folders and
     await page.close();
   }, 30_000);
 
+  it("offers an explicit running-distro user recheck only when the host marks it preparable, then returns to ready", async () => {
+    const state = executionWorkspace(); state.execution!.selected = "wsl:Ubuntu"; state.available = false;
+    state.execution!.choices[1].canPrepare = true; state.execution!.message = "Check this running distro's non-root user.";
+    const page = await open({ workspaces: { one: state }, deferred: { projectCodingExecutionChoose: true } });
+    const button = page.getByRole("button", { name: "Check environment", exact: true });
+    await expect.poll(() => button.isEnabled()).toBe(true);
+    expect(await page.evaluate(() => window.__codingBoard.calls.some(call => call.method === "projectCodingExecutionChoose"))).toBe(false);
+    await button.click(); await page.waitForFunction(() => !!window.__codingBoard.resolve.projectCodingExecutionChoose);
+    expect(await button.isDisabled()).toBe(true);
+    await page.evaluate(() => {
+      const state = window.__codingBoard.workspaces.one; state.available = true;
+      state.execution!.choices[1].ready = true; delete state.execution!.choices[1].canPrepare; state.execution!.message = "Commands use this distro's consent and approval settings.";
+      window.__codingBoard.resolve.projectCodingExecutionChoose(state);
+    });
+    await expect.poll(() => page.locator("#project-coding-execution-state").textContent()).toContain("Ready.");
+    expect(await page.getByRole("button", { name: "Use selection", exact: true }).isDisabled()).toBe(true);
+    expect(await page.evaluate(() => window.__codingBoard.calls.filter(call => call.method === "projectCodingExecutionChoose"))).toEqual([{ method: "projectCodingExecutionChoose", args: ["one", "wsl:Ubuntu"] }]);
+    await page.close();
+  }, 30_000);
+
   it("preserves an unsaved environment choice and keyboard focus through metadata refresh, with refusal states", async () => {
     const page = await open({ workspaces: { one: executionWorkspace() } });
     const select = page.getByRole("combobox", { name: "Run coding commands in", exact: true });

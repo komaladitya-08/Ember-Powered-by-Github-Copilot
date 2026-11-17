@@ -1987,41 +1987,81 @@ describe("guide words and highlights (live retest: font chooser)", () => {
   }, 10_000);
 
   it("a press on Close in “Find and Replace” is a cancel; a press elsewhere in a titled window, or on the page, is no search box (review)", async () => {
-    // The sidecar lists the window itself first: its title as its name, the whole window as its box.
-    const dialog: AxNode = { id: 9, parent: null, depth: 0, role: "dialog", name: "Find and Replace", states: [], bounds: { x: 0, y: 0, width: 800, height: 600 } };
-    const close: AxNode = { id: 2, parent: 9, depth: 2, role: "push button", name: "Close", states: ["enabled"], bounds: { x: 600, y: 560, width: 80, height: 28 } };
-    const find: AxNode = { id: 3, parent: 9, depth: 2, role: "combo box", name: "Find:", states: ["enabled"], bounds: { x: 120, y: 130, width: 400, height: 24 } };
-    const pressAt = (x: number, y: number) => {
-      let down = false;
-      setTimeout(() => { down = true; }, 100);
-      return () => ({ x, y, mask: down ? 256 : 0 });
-    };
-    const closing = makeWorker({ role: "check box", name: "Match case", mode: "guide", more: [dialog, close, find], pointer: pressAt(620, 570) });
-    await closing.call("perceive_window", {});
-    expect((await closing.call("wait_for_click", { id: 1, timeoutSeconds: 5 })).textResultForLlm).toMatch(/^The user pressed .Close/);
-    expect(resultOf(closing.w)).toEqual({ success: false, stopped: true, summary: "The guide was cancelled." });
-    // Its "Find:" box is the search box, by its own name.
-    const searching = makeWorker({ role: "check box", name: "Match case", mode: "guide", more: [dialog, close, find], pointer: pressAt(200, 140) });
-    await searching.call("perceive_window", {});
-    expect((await searching.call("wait_for_click", { id: 1, timeoutSeconds: 5 })).textResultForLlm).toMatch(/^The user clicked the search box \("Find:"\)/);
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    const workers: Worker[] = [];
+    const waiting = new Set<Promise<unknown>>();
+    try {
+      // Exercise the real five-second guard without depending on host timer scheduling. Each wait gets a finite
+      // seven-second virtual budget, including its slow initial capture and the 400 ms reaction pause.
+      const finish = async <T>(pending: Promise<T>): Promise<T> => {
+        let settled = false;
+        waiting.add(pending);
+        const ended = () => { settled = true; waiting.delete(pending); };
+        void pending.then(ended, ended);
+        for (let ticks = 0; ticks < 140 && !settled; ticks++) await vi.advanceTimersByTimeAsync(50);
+        expect(settled).toBe(true);
+        return pending;
+      };
+      // The sidecar lists the window itself first: its title as its name, the whole window as its box.
+      const dialog: AxNode = { id: 9, parent: null, depth: 0, role: "dialog", name: "Find and Replace", states: [], bounds: { x: 0, y: 0, width: 800, height: 600 } };
+      const close: AxNode = { id: 2, parent: 9, depth: 2, role: "push button", name: "Close", states: ["enabled"], bounds: { x: 600, y: 560, width: 80, height: 28 } };
+      const find: AxNode = { id: 3, parent: 9, depth: 2, role: "combo box", name: "Find:", states: ["enabled"], bounds: { x: 120, y: 130, width: 400, height: 24 } };
+      const pressAt = (x: number, y: number) => {
+        let baseline = true;
+        return () => { const mask = baseline ? 0 : 256; baseline = false; return { x, y, mask }; };
+      };
+      const closing = makeWorker({ role: "check box", name: "Match case", mode: "guide", more: [dialog, close, find], pointer: pressAt(620, 570) });
+      workers.push(closing.w);
+      await closing.call("perceive_window", {});
+      expect((await finish(closing.call("wait_for_click", { id: 1, timeoutSeconds: 5 }))).textResultForLlm).toMatch(/^The user pressed .Close/);
+      expect(resultOf(closing.w)).toEqual({ success: false, stopped: true, summary: "The guide was cancelled." });
+      // Its "Find:" box is the search box, by its own name.
+      const searching = makeWorker({ role: "check box", name: "Match case", mode: "guide", more: [dialog, close, find], pointer: pressAt(200, 140) });
+      workers.push(searching.w);
+      await searching.call("perceive_window", {});
+      expect((await finish(searching.call("wait_for_click", { id: 1, timeoutSeconds: 5 }))).textResultForLlm).toMatch(/^The user clicked the search box \("Find:"\)/);
 
-    // Pointed at Bold in "Research notes.odt": a press on Italic, then one on the page, then one on Bold.
-    const frame: AxNode = { id: 9, parent: null, depth: 0, role: "frame", name: "Research notes.odt - LibreOffice Writer", states: [], bounds: { x: 0, y: 0, width: 800, height: 600 } };
-    const italic: AxNode = { id: 2, parent: 9, depth: 3, role: "toggle button", name: "Italic", states: ["enabled"], bounds: { x: 60, y: 10, width: 20, height: 20 } };
-    const page: AxNode = { id: 3, parent: 9, depth: 5, role: "document text", name: "", states: ["enabled", "editable"], bounds: { x: 100, y: 150, width: 600, height: 400 } };
-    const para: AxNode = { id: 4, parent: 3, depth: 6, role: "paragraph", name: "", states: ["enabled", "editable"], bounds: { x: 120, y: 200, width: 500, height: 20 } };
-    let t0 = 0;
-    const presses: [number, number, number][] = [[100, 70, 20], [400, 300, 205], [800, 20, 15]];
-    const pointer = () => {
-      const t = t0 ? Date.now() - t0 : 0;
-      const at = presses.find(([s]) => t > s && t < s + 60);
-      return at ? { x: at[1], y: at[2], mask: 256 } : { x: 0, y: 0, mask: 0 };
-    };
-    const writer = makeWorker({ mode: "guide", more: [frame, italic, page, para], pointer });
-    await writer.call("perceive_window", {});
-    t0 = Date.now();
-    expect((await writer.call("wait_for_click", { id: 1, timeoutSeconds: 5 })).textResultForLlm).toMatch(/^The user clicked it/);
-    expect(Date.now() - t0).toBeGreaterThan(750);
+      // Pointed at Bold in "Research notes.odt": a press on Italic, then one on the page, then one on Bold.
+      const frame: AxNode = { id: 9, parent: null, depth: 0, role: "frame", name: "Research notes.odt - LibreOffice Writer", states: [], bounds: { x: 0, y: 0, width: 800, height: 600 } };
+      const italic: AxNode = { id: 2, parent: 9, depth: 3, role: "toggle button", name: "Italic", states: ["enabled"], bounds: { x: 60, y: 10, width: 20, height: 20 } };
+      const page: AxNode = { id: 3, parent: 9, depth: 5, role: "document text", name: "", states: ["enabled", "editable"], bounds: { x: 100, y: 150, width: 600, height: 400 } };
+      const para: AxNode = { id: 4, parent: 3, depth: 6, role: "paragraph", name: "", states: ["enabled", "editable"], bounds: { x: 120, y: 200, width: 500, height: 20 } };
+      const presses = [{ x: 70, y: 20 }, { x: 300, y: 205 }, { x: 20, y: 15 }];
+      const observed: number[] = [];
+      let nextPress = 0, baseline = true, awaitingRead = false, looksAfterPress = 0;
+      const pointer = () => {
+        if (baseline) { baseline = false; return { x: 0, y: 0, mask: 0 }; }
+        if (awaitingRead) return { x: 0, y: 0, mask: 0 };
+        awaitingRead = true; observed.push(nextPress);
+        return { ...presses[nextPress], mask: 256 };
+      };
+      const writerOptions: NonNullable<Parameters<typeof makeWorker>[0]> = { mode: "guide", more: [frame, italic, page, para], pointer, readMs: 900,
+        live: id => {
+          // Only setup is slow, after the former 800–860 ms pulse. Later looks run normally. Two looks after each
+          // unrelated press ensure a full loop checked it, even if it arrived during a look. A wrong early result
+          // never releases the next press; usedIt's 400 ms pause must not drain later inputs.
+          writerOptions.readMs = 0;
+          if (id === 1 && awaitingRead && nextPress < presses.length - 1 && ++looksAfterPress === 2) {
+            nextPress++; baseline = true; awaitingRead = false; looksAfterPress = 0;
+          }
+          return {};
+        },
+      };
+      const writer = makeWorker(writerOptions);
+      workers.push(writer.w);
+      await writer.call("perceive_window", {});
+      expect((await finish(writer.call("wait_for_click", { id: 1, timeoutSeconds: 5 }))).textResultForLlm).toMatch(/^The user clicked it/);
+      expect(observed).toEqual([0, 1, 2]);
+    } finally {
+      // Retire this case's tools before returning to real time, including when an assertion or its finite budget fails.
+      try {
+        for (const w of workers) (w as unknown as { stopNow: (reason: string | null) => void }).stopNow(null);
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(waiting.size).toBe(0);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally { vi.clearAllTimers(); vi.useRealTimers(); }
+    }
   }, 15_000);
 
   it("with the app not answering, the highlight and the click stay on the control pointed at, never another of the same name (review)", async () => {
