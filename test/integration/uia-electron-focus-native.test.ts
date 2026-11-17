@@ -41,6 +41,22 @@ function focusStartupObservation(app: unknown, bridgeReady: unknown, bridgeStage
     appError: bounded(own("appError"), 1), appStage: bounded(own("appStage"), 9), bridgeReady: bounded(bridgeReady, 2), bridgeStage: bounded(bridgeStage, 30),
     loadCode: bounded(own("loadCode"), 7), quit: bounded(own("quit"), 4), fixtureFlags: bounded(fixtureFlags, 7) });
 }
+// Last boundary entered: 1 guard/activate, 2 foreground wait, 3 snapshot/select, 4 perform, 5 focused poll.
+interface PrimeObservation { schema: 1; window: 1 | 2; stage: 1 | 2 | 3 | 4 | 5; target: number; focus: number; identity: number; foreground: number }
+/** Bits 1 runtime, 2 PID, 4 control type, 8 focusable, 16 onscreen, 32 positive bounds. Absent facts leave bits clear. */
+function focusPrimeTarget(node: unknown): number {
+  const own = (value: unknown, key: string) => {
+    if (!value || typeof value !== "object" || types.isProxy(value)) return undefined;
+    const property = Object.getOwnPropertyDescriptor(value, key);
+    return property && Object.hasOwn(property, "value") ? property.value : undefined;
+  };
+  const runtime = own(node, "runtimeId"), pid = own(node, "pid"), controlType = own(node, "controlType"), bounds = own(node, "bounds");
+  const width = own(bounds, "width"), height = own(bounds, "height");
+  return (typeof runtime === "string" && runtime ? 1 : 0) | (typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0 ? 2 : 0)
+    | (typeof controlType === "string" && controlType ? 4 : 0) | (own(node, "isKeyboardFocusable") === true ? 8 : 0)
+    | (own(node, "isOffscreen") === false ? 16 : 0)
+    | (typeof width === "number" && Number.isFinite(width) && width > 0 && typeof height === "number" && Number.isFinite(height) && height > 0 ? 32 : 0);
+}
 /** Fixed checkout files only: bits1HTML/2package/4main each observed ordinary, single-link, small and canonical. No admission authority. */
 function fixtureCustody(directory: string): number {
   let flags = 0;
@@ -107,9 +123,16 @@ it.skipIf(!required)("compares one native focus per fixed Electron target and ac
   const ownership: { root?: string; application?: OwnedChild; bridge?: UiaBridge; input?: ReturnType<typeof openWin32Input>; control?: NativeFocusControl; work?: Promise<void> } = {};
   retainedFocusOwners.add(ownership);
   let completed = 0, matchedMask = 0, cleanup: boolean, bridgeReady = 0, fixtureFlags = 0;
+  let primeObservation: PrimeObservation | undefined;
   const fail = () => {
     if (!failed) {
       firstFailure = phase;
+      try {
+        if (phase === 4 && primeObservation) {
+          const fixed = Object.freeze({ ...primeObservation });
+          console.info("Windows UIA focus prime", JSON.stringify(fixed));
+        }
+      } catch { /* Preserve the original failure. */ }
       let app: unknown, stage: unknown;
       try { app = owned?.startup(); } catch { /* Unknown cached application startup. */ }
       try { stage = bridge?.startupStage; } catch { /* Unknown cached bridge startup. */ }
@@ -154,25 +177,50 @@ it.skipIf(!required)("compares one native focus per fixed Electron target and ac
       throw refusal(phase);
     };
     const guard = (hwnd: number) => { current(); if (native.blockedReason?.(hwnd)) throw refusal(phase); };
-    const foreground = async (hwnd: number) => { await poll(async () => { guard(hwnd); return native.activeWindow(); }, value => value === hwnd, 5000); };
+    const foreground = async (hwnd: number) => {
+      await poll(async () => {
+        guard(hwnd); const value = native.activeWindow();
+        if (primeObservation?.stage === 2) primeObservation.foreground = value === hwnd ? 1 : 0;
+        return value;
+      }, value => value === hwnd, 5000);
+    };
     const snapshot = async (hwnd: number) => {
       guard(hwnd); const result = await ui.call<{ nodes: RawNode[]; busy: boolean; truncated: boolean; cut: string[] }>("snapshot", { hwnd, values: false, maxNodes: 2000, maxChildren: 500, deadlineMs: 3000 }, 5000); current();
       if (result.busy || result.truncated || result.cut.length || !result.nodes.length) throw refusal(phase); return result.nodes;
     };
     const select = (nodes: RawNode[], id: string) => {
       const node = nodes.find(value => value.automationId === id);
+      if (primeObservation?.stage === 3) {
+        try { primeObservation.target = focusPrimeTarget(node); } catch { /* Unknown cached target. */ }
+      }
       if (!node || !node.runtimeId || typeof node.runtimeId !== "string" || !Number.isSafeInteger(node.pid) || node.pid! <= 0 || !node.controlType || node.isKeyboardFocusable !== true || node.isOffscreen !== false || !node.bounds || node.bounds.width <= 0 || node.bounds.height <= 0) throw refusal(phase);
       return node;
     };
     const focusOnce = async (hwnd: number, node: RawNode) => { guard(hwnd); expect(await ui.call("perform", { handle: node.h, op: "focus", deadlineMs: 2500 }, 5000)).toEqual({ ok: true }); current(); };
     const focusSample = async (hwnd: number, target: RawNode) => {
       guard(hwnd); const result = await ui.call("focused", { values: false, deadlineMs: 2500 }, 5000); guard(hwnd);
-      return { ...nativeFocusObservation(result, target, hwnd), foreground: native.activeWindow() === hwnd ? 1 : 0 };
+      const sample = { ...nativeFocusObservation(result, target, hwnd), foreground: native.activeWindow() === hwnd ? 1 : 0 };
+      if (primeObservation?.stage === 5) {
+        primeObservation.focus = sample.focus;
+        primeObservation.identity = sample.identity;
+        primeObservation.foreground = sample.foreground;
+      }
+      return sample;
     };
-    const prime = async (hwnd: number) => {
-      guard(hwnd); native.activate(hwnd); await foreground(hwnd);
-      const old = select(await snapshot(hwnd), "prior-input"); await focusOnce(hwnd, old);
+    const prime = async (hwnd: number, window: 1 | 2) => {
+      const observation: PrimeObservation = { schema: 1, window, stage: 1, target: 0, focus: 0, identity: 0, foreground: 0 };
+      primeObservation = observation;
+      guard(hwnd); native.activate(hwnd);
+      observation.stage = 2;
+      await foreground(hwnd);
+      observation.stage = 3;
+      const old = select(await snapshot(hwnd), "prior-input");
+      observation.stage = 4;
+      await focusOnce(hwnd, old);
+      observation.stage = 5;
+      observation.foreground = 0;
       await poll(() => focusSample(hwnd, old), sample => sample.matched && sample.foreground === 1, 10_000);
+      primeObservation = undefined;
     };
     const body = async () => {
       await bounded(Promise.all([Promise.race([ui.ready, bridgeError]), application.ready]), 30_000).then(([, sandboxed]) => { current(); if (!sandboxed) throw refusal(phase); });
@@ -182,7 +230,7 @@ it.skipIf(!required)("compares one native focus per fixed Electron target and ac
       const first = windows.windows.find(window => window.name === "Ember native focus A")!, other = windows.windows.find(window => window.name === "Ember native focus B")!;
       // Predetermined conditions, never a retry of a failed focus. Each target receives exactly one SetFocus per mode.
       for (const mode of [1, 2, 3]) for (const target of [1, 2]) {
-        phase = 4; await prime(first.hwnd); if (mode !== 3) await prime(other.hwnd);
+        phase = 4; await prime(first.hwnd, 1); if (mode !== 3) await prime(other.hwnd, 2);
         const node = select(await snapshot(first.hwnd), target === 1 ? "focus-link" : "ask-cmd");
         phase = 5; if (mode !== 3) { guard(first.hwnd); if (native.activeWindow() !== other.hwnd) throw refusal(phase); native.activate(first.hwnd); if (mode === 2) await foreground(first.hwnd); }
         else if (native.activeWindow() !== first.hwnd) throw refusal(phase);

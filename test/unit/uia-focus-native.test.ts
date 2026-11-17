@@ -270,13 +270,86 @@ it.each(["load", "stdin", "typed", "windows", "first-event", "subframe"] as cons
   expect(after.stdout).toEqual([`EMBER_UIA_FOCUS_LOAD_V1:${code}:${quit}\nEMBER_UIA_FOCUS_READY_V1:0\n`]);
   expect(before.stdout).toEqual(["EMBER_UIA_FOCUS_READY_V1:0\n"]); expect(JSON.stringify(after.stdout)).not.toContain("PRIVATE");
 });
-it("preserves the entire original readiness/conditions operation block and binds the explicit local-control teardown", () => {
+it("recovers the entire original readiness/conditions operation block by reversing only passive cache plumbing", () => {
   const begin = native.indexOf("    const poll ="), end = native.indexOf("    work = body();", begin), cleanup = native.indexOf("    retired = true;");
   expect(begin > 0 && end > begin && cleanup > end).toBe(true);
-  expect(createHash("sha256").update(native.slice(begin, end)).digest("hex")).toBe("35f8d1eddc313eb36150027f8a103fb3507ff415feb58c57e14d63171e28c15c");
+  const restored = native.slice(begin, end)
+    .replace(/ {4}const foreground = async \(hwnd: number\) => \{\n {6}await poll\(async \(\) => \{\n {8}guard\(hwnd\); const value = native\.activeWindow\(\);\n {8}if \(primeObservation\?\.stage === 2\) primeObservation\.foreground = value === hwnd \? 1 : 0;\n {8}return value;\n {6}\}, value => value === hwnd, 5000\);\n {4}\};/,
+      "    const foreground = async (hwnd: number) => { await poll(async () => { guard(hwnd); return native.activeWindow(); }, value => value === hwnd, 5000); };")
+    .replace(/ {6}if \(primeObservation\?\.stage === 3\) \{\n {8}try \{ primeObservation\.target = focusPrimeTarget\(node\); \} catch \{ [^\n]+\n {6}\}\n/, "")
+    .replace(", window: 1 | 2) => {", ") => {")
+    .replace(/ {6}const observation: PrimeObservation = [^\n]+\n {6}primeObservation = observation;\n/, "")
+    .replace("native.activate(hwnd);\n      observation.stage = 2;\n      await foreground(hwnd);", "native.activate(hwnd); await foreground(hwnd);")
+    .replace("      observation.stage = 3;\n", "")
+    .replace('select(await snapshot(hwnd), "prior-input");\n      observation.stage = 4;\n      await focusOnce(hwnd, old);', 'select(await snapshot(hwnd), "prior-input"); await focusOnce(hwnd, old);')
+    .replace(/ {6}const sample = (\{ \.\.\.nativeFocusObservation[^\n]+\});\n {6}if \(primeObservation\?\.stage === 5\) \{\n {8}primeObservation\.focus = sample\.focus;\n {8}primeObservation\.identity = sample\.identity;\n {8}primeObservation\.foreground = sample\.foreground;\n {6}\}\n {6}return sample;/,
+      "      return $1;")
+    .replace("      observation.stage = 5;\n      observation.foreground = 0;\n", "")
+    .replace("      primeObservation = undefined;\n", "")
+    .replace("prime(first.hwnd, 1)", "prime(first.hwnd)").replace("prime(other.hwnd, 2)", "prime(other.hwnd)");
+  expect(createHash("sha256").update(restored).digest("hex")).toBe("35f8d1eddc313eb36150027f8a103fb3507ff415feb58c57e14d63171e28c15c");
   expect(createHash("sha256").update(native.slice(cleanup)).digest("hex")).toBe("f84e1845985278585528583e4c57e578476d95da62d4ebdad79a42905129164c");
   expect(createHash("sha256").update(bench).digest("hex")).toBe("cfaff3cb8dcee55af46e7fba8fe69ffeabf83c9019473e9b9ac7c76176428272");
 });
+const primeHelper = native.slice(native.indexOf("function focusPrimeTarget("), native.indexOf("/** Fixed checkout files"));
+it("projects each existing target conjunct without invoking traps or retaining any identity", () => {
+  const module = { exports: undefined as unknown as (node: unknown) => number };
+  runInNewContext(transformSync(primeHelper + "\nmodule.exports=focusPrimeTarget;", { loader: "ts", format: "cjs", target: "node22" }).code, { module, types });
+  const node = { ...target, isKeyboardFocusable: true, isOffscreen: false, bounds: { width: 1, height: 1 } };
+  expect(module.exports(node)).toBe(63);
+  for (const [change, flag] of [[{ runtimeId: "" }, 1], [{ pid: 0 }, 2], [{ controlType: undefined }, 4],
+    [{ isKeyboardFocusable: false }, 8], [{ isOffscreen: true }, 16], [{ bounds: { width: 0, height: 1 } }, 32],
+    [{ bounds: { width: 1, height: Infinity } }, 32]] as const) expect(module.exports({ ...node, ...change })).toBe(63 - flag);
+  let reads = 0; const trap = () => { reads++; throw new Error("PRIVATE"); };
+  expect(module.exports(new Proxy(node, { get: trap, getOwnPropertyDescriptor: trap }))).toBe(0);
+  expect(module.exports({ ...node, get runtimeId() { return trap(); }, bounds: new Proxy(node.bounds, { get: trap, getOwnPropertyDescriptor: trap }) })).toBe(30);
+  expect(reads).toBe(0);
+});
+it.each(["activate", "foreground", "snapshot", "select", "perform", "focused-read", "focused", "positive", "later-failure"] as const)(
+  "the actual prime and first-failure helpers record the last reached boundary for %s without extra operations", async fault => {
+    const failStart = native.indexOf("  const fail ="), failEnd = native.indexOf("  const current =", failStart);
+    const start = native.indexOf("    const guard ="), end = native.indexOf("    const body =", start);
+    expect(failStart > 0 && failEnd > failStart && start > failEnd && end > start).toBe(true);
+    const calls: string[] = [], frames: unknown[][] = [];
+    const module = { exports: undefined as unknown as (mode: string) => Promise<{ failed: boolean; firstFailure: number }> };
+    runInNewContext(transformSync(primeHelper + `\nmodule.exports = async fault => {
+      let phase=4,failed=false,firstFailure=0,primeObservation,owned,bridge,bridgeReady=1,fixtureFlags=7,reads=0;
+      const current=()=>{};
+      const native={blockedReason(){},activate(){calls.push("activate");if(fault==="activate") throw refusal(phase);},
+        activeWindow(){calls.push("foreground");return fault==="foreground" ? 100 : 99;}};
+      const ui={async call(op){calls.push(op);
+        if(op==="snapshot"){if(fault==="snapshot") throw refusal(phase);return {busy:false,truncated:false,cut:[],nodes:[{...node,isKeyboardFocusable:fault!=="select"}]};}
+        if(op==="perform")return {ok:fault!=="perform"};
+        if(fault==="focused-read")throw refusal(phase);
+        reads++;
+        const element=fault==="focused" ? {...node,runtimeId:"PRIVATE wrong runtime",automationId:"PRIVATE wrong id",controlType:"Document"} : node;
+        return {hwnd:reads===1&&fault==="focused"?123:99,element};}};
+      const poll=async(read,accept,ms)=>{calls.push("poll:"+ms);for(let i=0;i<(fault==="focused"&&ms===10000?2:1);i++){const value=await read();if(accept(value))return value;}throw refusal(phase);};
+      ${native.slice(failStart, failEnd)}${native.slice(start, end)}
+      try { await prime(99, 2); if(fault==="later-failure") throw refusal(phase); } catch { fail(); }
+      if(primeObservation) primeObservation.target=0;
+      if(failed){phase=8;fail();}
+      return {failed,firstFailure};
+    };`, { loader: "ts", format: "cjs", target: "node22" }).code, {
+      module, calls, expect, types, nativeFocusObservation, refusal: () => new Error("Existing strict failure."),
+      focusStartupObservation: startupProjection, console: { info: (...args: unknown[]) => frames.push(args) },
+      node: { ...target, automationId: "prior-input", h: 1, isOffscreen: false, bounds: { width: 100, height: 30 } },
+    });
+    const stages = { activate: 1, foreground: 2, snapshot: 3, select: 3, perform: 4, "focused-read": 5, focused: 5, positive: 0, "later-failure": 0 };
+    const stage = stages[fault], failure = fault !== "positive";
+    expect(await module.exports(fault)).toEqual({ failed: failure, firstFailure: failure ? 4 : 0 });
+    const primes = frames.filter(frame => frame[0] === "Windows UIA focus prime");
+    if (stage) expect(primes.map(([, data]) => JSON.parse(String(data)))).toEqual([{
+      schema: 1, window: 2, stage, target: fault === "select" ? 55 : stage >= 4 ? 63 : 0, focus: fault === "focused" ? 11 : 0,
+      identity: fault === "focused" ? 59 : 0, foreground: stage >= 3 && fault !== "focused-read" ? 1 : 0,
+    }]);
+    else expect(primes).toHaveLength(0);
+    const full = ["activate", "poll:5000", "foreground", "snapshot", "perform", "poll:10000", "focused", "foreground"];
+    const called = { activate: 1, foreground: 3, snapshot: 4, select: 4, perform: 5, "focused-read": 7, focused: 8, positive: 8, "later-failure": 8 };
+    expect(calls).toEqual([...full.slice(0, called[fault]), ...(fault === "focused" ? ["focused", "foreground"] : [])]);
+    expect(JSON.stringify(frames)).not.toContain("PRIVATE");
+  },
+);
 it("recovers the whole original synthetic app by removing only the fixed observer helper and nine marker calls", () => {
   expect(createHash("sha256").update(oldBench).digest("hex")).toBe("31e7d5aa484c95a8ec95f0c54d7877db6bde5495bcd08e662bab488bc418b75a");
   expect(bench.match(/^ *startup\([1-9]\);$/gm)).toHaveLength(9);

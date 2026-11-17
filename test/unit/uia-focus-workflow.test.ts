@@ -203,8 +203,46 @@ it("accepts agreeing startup duplicates only for the original failure and withho
     refused(f); expect(messages(f).filter(value => value === "Windows UIA focus startup")).toHaveLength(conflict ? 0 : 1);
   }
 });
-it("recovers the entire original strict workflow by reversing only the optional startup frame parser/projection", () => {
-  let old = focusSource.replace('          let startup, startupConflict = false, startupInvalid = false;\n', "")
+const withoutPrime = (() => {
+  const start = focusSource.indexOf('                if (/^[ \\t]*Windows UIA focus prime'), end = focusSource.indexOf('                const boot =', start);
+  if (start < 0 || end <= start) throw new Error("Missing fixed prime parser.");
+  return (focusSource.slice(0, start) + focusSource.slice(end))
+    .replace(/^ {10}let prime, primeInvalid = false;\n/m, "")
+    .replace(/^ {10}const primeLimits = [^\n]+\n/m, "")
+    .replace(/^ {10}if \(!passed && prime && !primeInvalid\) console\.info\([^\n]+\n/m, "");
+})();
+const prime = () => ({ schema: 1, window: 2, stage: 5, target: 63, focus: 11, identity: 59, foreground: 1 });
+const primeLine = (value: unknown) => "Windows UIA focus prime " + JSON.stringify(value);
+const primeFailedSummary = { schema: 1, completed: 0, matchedMask: 0, negative: 0, phase: 4 };
+it("projects exactly one closed prime when the original native experiment fails", () => {
+  const line = primeLine(prime()), f = fixture({ child: attempt({ status: 1, stdout: Buffer.from(line + "\n" + summaryLine(primeFailedSummary)),
+    stderr: Buffer.from("\u001b[32m" + line + "\u001b[0m\r\nPRIVATE ignored") }) });
+  refused(f); expect(projected(f)).toEqual([["Windows UIA focus summary", primeFailedSummary], ["Windows UIA focus prime", prime()]]);
+  expect(f.queries.some(query => query.startsWith("read:"))).toBe(false);
+});
+it.each([
+  primeLine({ ...prime(), schema: 2 }), primeLine({ ...prime(), window: 0 }), primeLine({ ...prime(), stage: 6 }), primeLine({ ...prime(), target: 64 }),
+  primeLine({ ...prime(), focus: 16 }), primeLine({ ...prime(), identity: 256 }), primeLine({ ...prime(), foreground: 2 }),
+  primeLine({ ...prime(), target: 1.5 }), primeLine({ ...prime(), stage: "PRIVATE" }), primeLine({ ...prime(), stage: undefined }),
+  primeLine({ ...prime(), extra: "PRIVATE" }), "Windows UIA focus prime {PRIVATE}", "Windows UIA focus prime",
+  "Windows UIA focus prime " + JSON.stringify(prime()).replace('"window":2', '"window":1,"window":2'),
+  "Windows UIA focus prime {" + " ".repeat(257) + "}", primeLine({ ...prime(), window: 1 }),
+])("withholds malformed or conflicting prime evidence and leaves the native verdict unchanged %#", line => {
+  for (const status of [0, 1]) {
+    const f = fixture({ child: attempt({ status, stdout: Buffer.from((status ? summaryLine(primeFailedSummary) : output()) + "\n" + primeLine(prime()) + "\n" + line) }) });
+    if (status) refused(f); else f.run();
+    expect(messages(f)).not.toContain("Windows UIA focus prime");
+    expect(messages(f).includes("Required Windows UIA focus primitive passed")).toBe(status === 0);
+  }
+});
+it("suppresses legitimate prime evidence on success and emits nothing when the original failure has no cached prime", () => {
+  const passed = fixture({ child: attempt({ stdout: Buffer.from(output() + "\n" + primeLine(prime())) }) });
+  passed.run(); expect(messages(passed)).not.toContain("Windows UIA focus prime");
+  const failed = fixture({ child: attempt({ status: 1, stdout: Buffer.from(summaryLine(primeFailedSummary)) }) });
+  refused(failed); expect(projected(failed)).toEqual([["Windows UIA focus summary", primeFailedSummary]]);
+});
+it("recovers the entire original strict workflow by reversing only the optional frame parsers and projections", () => {
+  let old = withoutPrime.replace('          let startup, startupConflict = false, startupInvalid = false;\n', "")
     .replace('          const startupLimits = { schema: [1, 1], phase: [0, 8], appReady: [0, 6], appExit: [0, 3], appError: [0, 1], appStage: [0, 9], bridgeReady: [0, 2], bridgeStage: [0, 30], loadCode: [0, 7], quit: [0, 4], fixtureFlags: [0, 7] };\n', "");
   const begin = old.indexOf('                const boot ='), end = old.indexOf('                const condition =', begin); expect(begin > 0 && end > begin).toBe(true);
   old = old.slice(0, begin) + old.slice(end);
@@ -356,8 +394,8 @@ function commandsRefused(f: ReturnType<typeof commandsFixture>) {
   expect(JSON.stringify(f.printed.mock.calls)).not.toContain("PRIVATE");
 }
 
-it("preserves the complete published load-diagnostic workflow prefix and adds only the fixed manual two-image Commands job", () => {
-  expect(createHash("sha256").update(focusSource).digest("hex")).toBe("d53f85ce186d7847867a637acab539f6103099cedf0248f74cc0aae77ee52cff");
+it("recovers the complete published Focus prefix by removing the prime observation and preserves the Commands job byte-for-byte", () => {
+  expect(createHash("sha256").update(withoutPrime).digest("hex")).toBe("d53f85ce186d7847867a637acab539f6103099cedf0248f74cc0aae77ee52cff");
   expect(createHash("sha256").update(commandsSource).digest("hex")).toBe("37089133291c244f0c9e9b15f633ac99dbb487809fad859baba7dfc9c1541561");
   expect(commandsSource).toContain("    if: github.event_name == 'workflow_dispatch'");
   expect(commandsSource).toContain("image: [windows-2022, windows-2025]");

@@ -44,6 +44,7 @@ jobs:
           const conditions = new Map(), conflicts = new Set();
           let summary, summaryConflict = false, malformed = false, executed, reportPath, suite;
           let startup, startupConflict = false, startupInvalid = false;
+          let prime, primeInvalid = false;
           const own = (value, key) => {
             if (!value || typeof value !== "object" || types.isProxy(value)) return undefined;
             const descriptor = Object.getOwnPropertyDescriptor(value, key);
@@ -65,6 +66,7 @@ jobs:
             focus: [0, 15], identity: [0, 255], foreground: [0, 1], performed: [0, 1] };
           const summaryLimits = { schema: [1, 1], completed: [0, 6], matchedMask: [0, 63], negative: [0, 1], phase: [1, 8] };
           const startupLimits = { schema: [1, 1], phase: [0, 8], appReady: [0, 6], appExit: [0, 3], appError: [0, 1], appStage: [0, 9], bridgeReady: [0, 2], bridgeStage: [0, 30], loadCode: [0, 7], quit: [0, 4], fixtureFlags: [0, 7] };
+          const primeLimits = { schema: [1, 1], window: [1, 2], stage: [1, 5], target: [0, 63], focus: [0, 15], identity: [0, 255], foreground: [0, 1] };
           const readFrames = attempt => {
             let total = 0;
             for (const key of ["stdout", "stderr"]) {
@@ -75,6 +77,17 @@ jobs:
               const text = Buffer.prototype.toString.call(bytes, "utf8");
               if (!Buffer.prototype.equals.call(Buffer.from(text, "utf8"), bytes)) { malformed = true; continue; }
               for (const line of text.replace(/\x1b\[[0-9;]*m/g, "").replace(/\r\n/g, "\n").split("\n")) {
+                if (/^[ \t]*Windows UIA focus prime(?:[ \t]|$)/.test(line)) {
+                  try {
+                    const cached = /^[ \t]*Windows UIA focus prime (\{[^\r\n]*\})$/.exec(line);
+                    if (!cached) throw new Error("Unsupported prime observation.");
+                    const next = frame(cached[1], primeLimits);
+                    // The leaf emits a canonical record. Reject duplicate keys, other spellings and conflicting observations.
+                    if (JSON.stringify(next) !== cached[1] || prime && JSON.stringify(prime) !== cached[1]) primeInvalid = true;
+                    else prime = next;
+                  } catch { primeInvalid = true; }
+                  continue;
+                }
                 const boot = /^[ \t]*Windows UIA focus startup (\{[^\r\n]*\})$/.exec(line);
                 if (boot || /^[ \t]*Windows UIA focus startup /.test(line)) {
                   try {
@@ -153,6 +166,7 @@ jobs:
           }
           if (summary && !summaryConflict) console.info("Windows UIA focus summary", JSON.stringify(summary));
           if (!passed && startup && !startupConflict && !startupInvalid) console.info("Windows UIA focus startup", JSON.stringify(startup));
+          if (!passed && prime && !primeInvalid) console.info("Windows UIA focus prime", JSON.stringify(prime));
           if (!passed) throw new Error("The required Windows UIA focus primitive could not be verified.");
           console.info("Required Windows UIA focus primitive passed", JSON.stringify({ schema: 1, passed: 1, skipped: 0 }));
 
