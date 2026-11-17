@@ -5,7 +5,13 @@ import { WSL_CODING_READINESS } from "../../app/shared/wsl-coding-readiness";
 
 it("keeps native qualification separate, manual and required on both Windows images", () => {
   const source = fs.readFileSync(".github/workflows/wsl-coding-product.yml", "utf8");
-  expect(source).toContain("workflow_dispatch:"); expect(source).not.toMatch(/^ {2}(?:push|pull_request):/m);
+  expect(source).toContain("workflow_dispatch:"); expect(source).toContain("  pull_request:"); expect(source).not.toMatch(/^ {2}push:/m);
+  const native = source.slice(source.indexOf("  native:"));
+  expect(native).toContain("if: github.event_name == 'workflow_dispatch' && github.ref_name == 'ember-improve/20261116-windows-node-product'");
+  expect(native).toContain("needs: contracts");
+  const contracts = source.slice(source.indexOf("  contracts:"), source.indexOf("  native:"));
+  expect(contracts).toContain("test/unit/wsl-coding-protocol.test.ts test/unit/wsl-coding-seccomp.test.ts test/unit/wsl-coding-workflow.test.ts --maxWorkers=1");
+  expect(contracts).not.toContain("wsl.exe"); expect(contracts).not.toContain("EMBER_WSL_CODING_NATIVE_TEST");
   expect(source).toContain("image: [windows-2022, windows-2025]");
   expect(source).toContain("EMBER_WSL_CODING_NATIVE_TEST: \"1\"");
   expect(source).toContain("test/integration/wsl-coding-native.test.ts");

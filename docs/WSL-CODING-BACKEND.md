@@ -85,8 +85,9 @@ EMBER_WSL_TYPESCRIPT_ARCHIVE=/absolute/typescript-5.9.3.tgz \
 node scripts/run-integration.mjs test/integration/wsl-coding-guest.test.ts
 ```
 
-`.github/workflows/wsl-coding-product.yml` is a separate manual qualification job
-on Windows 2022 and 2025. Explicit CI setup provisions an existing reviewed Linux
+`.github/workflows/wsl-coding-product.yml` registers portable protocol, syscall and
+admission contracts on pull requests. Its native qualification remains manual,
+restricted to the reviewed integration branch, on Windows 2022 and 2025. Explicit CI setup provisions an existing reviewed Linux
 Node pin and compiles a socket fixture. The suite requires real Windows discovery,
 job host and helper, offline TypeScript repair/testing, child execution and Stop.
 An identical owned PE must first launch through WSL interop outside the sandbox
