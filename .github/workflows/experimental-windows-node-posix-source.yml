@@ -44,7 +44,7 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
       - name: Four-patch source, ABI recipe and actual rename-body contracts
-        run: npx vitest run test/unit/windows-node-posix-source.test.ts test/unit/windows-node-posix-source-build.test.ts test/unit/windows-node-posix-rename.test.ts test/unit/windows-node-posix-abi-diagnostic.test.ts --maxWorkers=2
+        run: npx vitest run test/unit/windows-node-posix-source.test.ts test/unit/windows-node-posix-source-build.test.ts test/unit/windows-node-posix-rename.test.ts test/unit/windows-node-posix-abi-diagnostic.test.ts test/unit/windows-node-posix-tool-identity.test.ts --maxWorkers=2
   source-node:
     # No build on PR registration. A reviewed long build needs one exact-branch manual dispatch.
     needs: contracts
@@ -75,7 +75,7 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - name: Four-patch source and mandatory dual-target ABI contracts
-        run: npx vitest run test/unit/windows-node-posix-source.test.ts test/unit/windows-node-posix-source-build.test.ts test/unit/windows-node-posix-rename.test.ts test/unit/windows-node-posix-abi-diagnostic.test.ts --maxWorkers=1
+        run: npx vitest run test/unit/windows-node-posix-source.test.ts test/unit/windows-node-posix-source-build.test.ts test/unit/windows-node-posix-rename.test.ts test/unit/windows-node-posix-abi-diagnostic.test.ts test/unit/windows-node-posix-tool-identity.test.ts --maxWorkers=1
       - name: Fetch only the fixed signed Node source and separately pinned NASM archive
         timeout-minutes: 3
         shell: pwsh

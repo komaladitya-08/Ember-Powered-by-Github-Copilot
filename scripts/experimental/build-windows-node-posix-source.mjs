@@ -81,6 +81,27 @@ export function validateWindowsNodePosixRenameAbiReceipt(value) {
 }
 /** Read only own data fields from child results; compiler text is never public output. */
 const own = (value, key) => { try { return value && typeof value === "object" ? Object.getOwnPropertyDescriptor(value, key)?.value : undefined; } catch { return undefined; } };
+/** Closed observations only; pure guards never inspect an error object. */
+export function windowsNodePosixToolIdentityObservation(checkpoint, result, childFailure = false) {
+  const point = Number.isInteger(checkpoint) && checkpoint >= 1 && checkpoint <= 8 ? checkpoint : 0;
+  const tools = [0, 1, 1, 1, 2, 2, 3, 4, 0];
+  if (childFailure !== true) return freeze({ schema: 1, checkpoint: point, tool: tools[point], childOutcome: 0, exitCode: null });
+  const status = own(result, "status"), code = own(result, "code"), valid = Number.isInteger(status) && status >= 0 && status <= 0xffffffff;
+  const childOutcome = code === "ETIMEDOUT" ? status === null || status === undefined ? 2 : 3 : valid ? 1 : 3;
+  return freeze({ schema: 1, checkpoint: point, tool: tools[point], childOutcome, exitCode: valid ? status : null });
+}
+/** Catch-only observer shared by real tool checks; no operation or accepted result can be replaced. */
+export function createWindowsNodePosixToolIdentityObserver() {
+  let first, noted = false;
+  const note = (checkpoint, error, childFailure) => { if (noted) return; noted = true; try { first = windowsNodePosixToolIdentityObservation(checkpoint, error, childFailure); } catch { /* Observation cannot replace the original outcome. */ } };
+  return Object.freeze({
+    step(checkpoint, operation) {
+      try { return operation(error => note(checkpoint, error, true)); }
+      catch (error) { note(checkpoint, error, false); throw error; }
+    },
+    failure() { return first; },
+  });
+}
 const abiSourceContexts = new WeakMap();
 /** Private diagnostic context only; these path identities do not admit files, assets or execution. */
 export function windowsNodePosixRenameAbiSourceContext(value) {
@@ -298,10 +319,12 @@ function inputBytes(file, maximum, pe = false) {
   } finally { fs.closeSync(fd); }
 }
 const snapshot = file => { const bytes = inputBytes(file, buildPin.maximumToolBytes); return { bytes: bytes.length, sha256: hash(bytes) }; };
-const captured = (program, args, env, cwd, timeout = 30_000) => {
+const captured = (program, args, env, cwd, timeout = 30_000, observe) => {
   try { return execFileSync(program, args, { env, cwd, encoding: "utf8", timeout, maxBuffer: 65_536, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }).trim(); }
-  catch { fail(); }
+  catch (error) { try { observe?.(error); } catch { /* Keep the original captured refusal. */ } fail(); }
 };
+const identifyCapture = (checkpoint, program, args, env, cwd, timeout = 30_000) =>
+  toolIdentityObserver.step(checkpoint, observe => captured(program, args, env, cwd, timeout, observe));
 /** Caller-selected executables are not an interpreter trust root; this experiment accepts only the hosted image path. */
 export function trustedWindowsNodePosixSourcePythonPath(value) {
   ordinary(value);
@@ -354,9 +377,10 @@ export function windowsNodePosixSourceCompileOutcome(result) {
   } catch { return outcome("malformed"); }
 }
 let compileOutcome;
+let toolIdentityObserver = createWindowsNodePosixToolIdentityObserver();
 let buildStage = "inputs";
 async function prepareWindowsNodePosixSourceBuild({ sourceArchivePath, nasmArchivePath, destination, pythonPath }) {
-  buildStage = "inputs"; compileOutcome = undefined; renameAbiObservation = undefined;
+  buildStage = "inputs"; compileOutcome = undefined; renameAbiObservation = undefined; toolIdentityObserver = createWindowsNodePosixToolIdentityObserver();
   if (process.platform !== "win32" || process.arch !== "x64") fail();
   for (const value of [sourceArchivePath, nasmArchivePath, destination, pythonPath]) ordinary(value);
   pythonPath = trustedWindowsNodePosixSourcePythonPath(pythonPath);
@@ -387,14 +411,16 @@ async function prepareWindowsNodePosixSourceBuild({ sourceArchivePath, nasmArchi
   if (!equal(tools.python, python.fingerprint)) fail();
   buildStage = "identify-tools";
   const powerShell = path.join(env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  const metadata = JSON.parse(captured(powerShell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+  const metadataText = identifyCapture(1, powerShell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
     "$ErrorActionPreference='Stop';[pscustomobject]@{compilerVersion=[Diagnostics.FileVersionInfo]::GetVersionInfo($env:EMBER_BUILD_COMPILER).FileVersion;linkerVersion=[Diagnostics.FileVersionInfo]::GetVersionInfo($env:EMBER_BUILD_LINKER).FileVersion}|ConvertTo-Json -Compress"],
-  { ...env, EMBER_BUILD_COMPILER: toolsPaths.compiler, EMBER_BUILD_LINKER: toolsPaths.linker }, destination, 60_000));
-  if (!strict(metadata, ["compilerVersion", "linkerVersion"])) fail();
-  const nasmLine = captured(nasm.nasmPath, ["-v"], env, destination); if (nasmLine.length > 256 || !/^NASM version 2\.16\.03(?: compiled on [A-Za-z0-9 :]+)?$/.test(nasmLine)) fail();
-  const observed = versions({ visualStudioVersion: captured(vswhere, [...selection, "-property", "installationVersion"], env, destination),
-    compilerVersion: metadata.compilerVersion, linkerVersion: metadata.linkerVersion, msbuildVersion: captured(toolsPaths.msbuild, ["-version", "-nologo"], env, destination),
-    pythonVersion: python.version, nasmVersion: buildPin.nasmVersion });
+  { ...env, EMBER_BUILD_COMPILER: toolsPaths.compiler, EMBER_BUILD_LINKER: toolsPaths.linker }, destination, 60_000);
+  const metadata = toolIdentityObserver.step(2, () => JSON.parse(metadataText));
+  toolIdentityObserver.step(3, () => { if (!strict(metadata, ["compilerVersion", "linkerVersion"])) fail(); });
+  const nasmLine = identifyCapture(4, nasm.nasmPath, ["-v"], env, destination);
+  toolIdentityObserver.step(5, () => { if (nasmLine.length > 256 || !/^NASM version 2\.16\.03(?: compiled on [A-Za-z0-9 :]+)?$/.test(nasmLine)) fail(); });
+  const observed = toolIdentityObserver.step(8, () => versions({ visualStudioVersion: identifyCapture(6, vswhere, [...selection, "-property", "installationVersion"], env, destination),
+    compilerVersion: metadata.compilerVersion, linkerVersion: metadata.linkerVersion, msbuildVersion: identifyCapture(7, toolsPaths.msbuild, ["-version", "-nologo"], env, destination),
+    pythonVersion: python.version, nasmVersion: buildPin.nasmVersion }));
   buildStage = "validate-before";
   await validateNodePosixSourceInputs(source.baselineDir, "stock", execution); await validateNodePosixSourceInputs(source.workingDir, "offline", execution);
   buildStage = "compile-rename-abi";
@@ -462,5 +488,5 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       const receipt = await buildWindowsNodePosixSource(options);
       console.log(JSON.stringify({ issuer: receipt.issuer, version: receipt.sourceVersion, compilerVersion: receipt.build.compilerVersion, nodeBytes: receipt.assets.node.bytes, bootstrapBytes: receipt.assets.bootstrap.bytes }));
     }
-  } catch { console.error(JSON.stringify({ status: "failed", stage: buildStage, ...(compileOutcome ? { compile: compileOutcome } : {}), ...(renameAbiObservation ? { renameAbi: renameAbiObservation } : {}) })); process.exitCode = 1; }
+  } catch { console.error(JSON.stringify({ status: "failed", stage: buildStage, ...(compileOutcome ? { compile: compileOutcome } : {}), ...(renameAbiObservation ? { renameAbi: renameAbiObservation } : {}), ...(toolIdentityObserver.failure() ? { identifyTools: toolIdentityObserver.failure() } : {}) })); process.exitCode = 1; }
 }

@@ -288,3 +288,52 @@ with the same 2,500 ms natural-child bound. This proves assertion logic only;
 the next actual MSVC/SDK outcome remains pending. All 352 composed contracts
 (234 new producer and 118 unchanged producer cases), scoped lint, Root/independent
 review and normal full `npm run typecheck` pass (session `22619`).
+
+## Successful ABI gate and earlier tool-identity refusal
+
+The sole literal-assertion ABI-only run `43984400533` at
+`e56aa8c974134ed9fca7ae454fceffebb3dcd63e` succeeded. Its completed Windows job
+`133709355405` emitted the separately issued ABI-only success with language c11
+and both targets (Win8 0x0602/0x06020000, Win10RS1 0x0a00/0x0a000002). This
+establishes both actual compilations, fresh x64 COFF checks and source/tool/recipe
+readback. Windows contracts passed 202 with 32 expected skips. The artifact API
+returned an empty list: ABI-only did not build or admit a Node image.
+
+The subsequent sole full source attempt `43985674098`, same commit, refused in
+Windows job `133713603946` at identify-tools. Windows contracts again passed
+202 with 32 expected skips, but ABI and vcbuild were not reached in that attempt,
+and no artifact was produced. The prior successful ABI witness remains valid.
+The broad identify-tools stage does not establish which existing call or version
+check refused; no PowerShell, version or timeout cause is being guessed.
+
+The next observation wraps only the existing calls and pure checks. Its fixed
+checkpoint/tool map is:
+
+| Checkpoint | Existing operation | Tool enum |
+| --- | --- | --- |
+| 1 | PowerShell metadata invocation | 1 |
+| 2 | Metadata JSON parse | 1 |
+| 3 | Exact metadata object shape | 1 |
+| 4 | NASM version invocation | 2 |
+| 5 | NASM version pattern | 2 |
+| 6 | Visual Studio version invocation | 3 |
+| 7 | MSBuild version invocation | 4 |
+| 8 | Existing final version validation | 0 |
+
+Checkpoint 0 is unknown. The immutable first observation contains only these
+fixed enums, `childOutcome` and a validated own-data DWORD exitCode or null.
+Outcome 0 is a pure check, 1 means a valid numeric child status was returned,
+2 is the exact existing ETIMEDOUT condition with no numeric status, and 3 is an
+unknown/other/contradictory child refusal. No signal, banner, path, raw text or
+unknown version value is projected. Exit 0 remains failure evidence when capture
+itself refused; it cannot validate a tool. Pure checks never inspect the error.
+
+The catch observer is best-effort: original operation return/error identity and
+call/evaluation order stay intact. Nested call failures at 6/7 remain the first
+observation rather than being replaced by outer validation 8. All original
+arguments, private pipes, timeouts, tool pins, version requirements and readers
+remain unchanged. The next reviewed run is ABI-only prefix diagnosis, not a blind
+full-build retry. That diagnostic outcome remains pending. The frozen observer
+passed 382 composed contracts (264 new producer and 118 unchanged producer
+cases), scoped lint, syntax, YAML and Root/independent review. Normal full
+`npm run typecheck` passed (session `7723`), with durable exit receipt 0.
