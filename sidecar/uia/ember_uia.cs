@@ -3096,6 +3096,9 @@ namespace Ember.Uia
         AutomationElement top = focused;
         for (int i = 0; i < 64 && !c.Abandoned; i++)
         {
+          // An owned dialog can appear under its owner in the UIA tree. Keep a positive cached match for the
+          // request's native foreground window instead of walking past it to the owner.
+          if (c.Window != IntPtr.Zero && Props.Hwnd(top) == c.Window) break;
           AutomationElement parent = TreeWalker.ControlViewWalker.GetParent(top, request);
           if (parent == null || IsDesktop(parent, desktop)) break;
           top = parent;

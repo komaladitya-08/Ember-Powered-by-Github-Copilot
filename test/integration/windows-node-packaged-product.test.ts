@@ -450,7 +450,7 @@ class Journey {
     this.observe({ projectStage: 6 }); await this.accessibleText(text => text.includes(this.source));
     this.observe({ projectStage: 7 }); await this.accessibleText(text => text.includes("Shells, npm, dependency installation, network access and child processes are unavailable")); this.observe({ projectStage: 16 });
   }
-  async send(request: string): Promise<void> { await this.fill(this.home, id("project-sessions-request"), request); await this.click(this.home, id("project-sessions-send")); }
+  async send(request: string): Promise<void> { await this.revealHomeControl(id("project-sessions-request"), true, true); await this.fill(this.home, id("project-sessions-request"), request); await this.click(this.home, id("project-sessions-send")); }
   private async command(): Promise<number> { return (await this.until(() => this.windows(), windows => windows.some(window => window.name === "Ember commands"), 45_000)).find(window => window.name === "Ember commands")!.hwnd; }
   async decide(argv: readonly string[], answer: "Allow" | "Not now" = "Allow"): Promise<void> {
     this.phase = 6; const hwnd = await this.command();
@@ -464,6 +464,7 @@ class Journey {
   }
   private async review(goal: string, counts: string): Promise<string> {
     this.phase = 7; await this.pane("Projects");
+    await this.revealHomeControl(id("project-coding"), false); await this.revealHomeControl(named("Review result: " + titleOf(goal)));
     await this.click(this.home, named("Review result: " + titleOf(goal)));
     const region: Selector = node => node.automationId === "project-coding-review" || (["Group", "Pane"].includes(node.controlType ?? "") && node.name === titleOf(goal));
     return this.until(() => this.homeText(region), text => text.includes(counts), 45_000);
@@ -488,6 +489,7 @@ class Journey {
   private async exportReview(cumulative: boolean): Promise<void> {
     await this.idle();
     const before = this.model.requests.length;
+    await this.revealHomeControl(id("project-coding"), false); await this.revealHomeControl(id("project-coding-export"));
     await this.click(this.home, id("project-coding-export")); await this.folder("Export coding review", this.exported);
     await this.accessibleText(text => text.includes("Exported the coding review"));
     expect(this.model.requests.length).toBe(before); this.assertExport(cumulative);
@@ -496,7 +498,7 @@ class Journey {
     await this.project("repair"); await this.send(WINDOWS_NODE_REPAIR.request); await this.decide(WINDOWS_NODE_TEST_ARGV); await this.decide(WINDOWS_NODE_TEST_ARGV);
     expect(await this.review(WINDOWS_NODE_REPAIR.goal, "Checks: 2 run, 1 passed, 1 failed")).toContain("Done ·");
     expect(await this.homeText(id("project-coding-patch"))).toContain("1 + 1, 2"); await this.exportReview(false); this.assertUnchanged();
-    await this.click(this.home, id("project-coding-continue")); await this.fill(this.home, id("project-coding-continue-request"), WINDOWS_NODE_CONTINUATION.request);
+    await this.click(this.home, id("project-coding-continue")); await this.revealHomeControl(id("project-coding-continue-request")); await this.fill(this.home, id("project-coding-continue-request"), WINDOWS_NODE_CONTINUATION.request);
     await this.click(this.home, id("project-coding-continue-send")); await this.decide(WINDOWS_NODE_TEST_ARGV); await this.decide(WINDOWS_NODE_TEST_ARGV);
     expect(await this.review(WINDOWS_NODE_CONTINUATION.goal, "Checks: 2 run, 2 passed, 0 failed")).toContain("Done ·");
     expect(await this.homeText(id("project-coding-patch"))).toContain("continued sum"); await this.exportReview(true);

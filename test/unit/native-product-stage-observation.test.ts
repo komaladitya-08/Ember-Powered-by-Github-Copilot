@@ -79,13 +79,38 @@ it("preserves the entire packaged test after reversing only the new project/fold
   source = source.replaceAll("revealHomeControl", "revealWelcomeRow");
   source = source.replace("reveal Home controls with ordinary forward or reverse Tab navigation.", "follow consent order with ordinary forward or reverse Tab navigation.");
   source = source.replace('await this.revealWelcomeRow(id("project-coding-choose")); ', "");
+  source = source.replace('await this.revealWelcomeRow(id("project-sessions-request"), true, true); ', "");
+  source = source.replace('    await this.revealWelcomeRow(id("project-coding"), false); await this.revealWelcomeRow(named("Review result: " + titleOf(goal)));\n', "");
+  source = source.replace('    await this.revealWelcomeRow(id("project-coding"), false); await this.revealWelcomeRow(id("project-coding-export"));\n', "");
+  source = source.replace('await this.revealWelcomeRow(id("project-coding-continue-request")); ', "");
   source = source.replace("inputResult: number; bridgeStage: number; projectStage: number;", "inputResult: number; bridgeStage: number;");
   source = source.replace(/^ \* Project\/folder stage0.*\n \* 9dialog-block-check.*\n/m, "");
   source = source.replace(", projectStage: 16", "").replace(", projectStage: 0", "");
   source = source.replace(" this.observe({ projectStage: 16 });", "").replace(/this\.observe\(\{ projectStage: (?:[1-9]|1[0-5]) \}\); /g, "");
   expect(digest(source)).toBe("c4d7503b2d57490a95de5e78b2357bd6b8329e15c04b719f193ab7caf2c9c447");
 });
-it("preserves the whole workflow after reversing only the closed project/folder field", () => {
-  const source = fs.readFileSync(".github/workflows/windows-node-product.yml", "utf8").replace(", projectStage: 16", "").replace(", projectStage: 0", "");
+it("preserves the whole workflow after reversing only the closed project/folder field and reviewed source-proof demotion", () => {
+  let source = fs.readFileSync(".github/workflows/windows-node-product.yml", "utf8").replace(", projectStage: 16", "").replace(", projectStage: 0", "");
+  const closed = `          const reviewed = Object.freeze({
+            ready: false,
+            run: 43991252195,
+            commit: "b75c944dec58973d157542e2d4d2db3720667982",
+            artifact: 14289217635,
+            archiveBytes: 38425334,
+            archiveSha256: "cbbbf6c641c41bda8ece457c28a54b9bc4121a068dc376725bcf0e3ac24a2f62",
+            manifestSha256: "d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f",
+            assetProofCommit: null,
+            assetProofManifestSha256: null,
+            verifierFileSha256: null,
+          });`;
+  if (source.includes(closed)) {
+    expect(source.split(closed)).toHaveLength(2);
+    source = source.replace(closed, closed.replace("ready: false", "ready: true")
+      .replace("assetProofCommit: null", 'assetProofCommit: "5b89563840479d27b1ba83251fd74652d219d913"')
+      .replace("assetProofManifestSha256: null", 'assetProofManifestSha256: "3b1f1c4b03aaa44afd617f38a2ea81095ee6e688fa06390daeb6e54529329320"')
+      .replace("verifierFileSha256: null", 'verifierFileSha256: "8dff6a53bca9c2dc39a190a9298f743cbbc40c54f7f24ea456af21498e19c302"'));
+    source = source.replace("// The fixed POSIX producer is authenticated; the expanded current-source graph awaits fresh qualification.",
+      "// The fixed POSIX producer and expanded current-source graph are independently qualified.");
+  }
   expect(digest(source)).toBe("54d77bc05dbb2d2d3a9b684709da9b8f8d4fbd196cee0f1809487afdb3f23271");
 });

@@ -525,6 +525,12 @@ describe.skipIf(!available && !required)("the UI Automation bridge on a real Win
     const inside = await ui().call<{ nodes: RawNode[] }>("snapshot", { handle: dialog.h, deadlineMs: 2000 });
     const ok = inside.nodes.find(n => n.controlType === "Button" && n.name === "OK");
     expect(ok, shown(inside.nodes)).toBeTruthy();
+    expect(dialog.owner).toBe(main().hwnd);
+    expect(await ui().call("perform", { handle: ok!.h, op: "focus", deadlineMs: 2000 })).toEqual({ ok: true });
+    const focused = await ui().call<{ element: RawNode | null; window: number | null; hwnd: number | null }>("focused", { deadlineMs: 2000 });
+    expect(focused.element).toMatchObject({ runtimeId: ok!.runtimeId, hasKeyboardFocus: true });
+    expect(focused.window).toBeGreaterThan(0);
+    expect(focused.hwnd).toBe(dialog.hwnd);
     expect(await ui().call("perform", { handle: ok!.h, op: "invoke", deadlineMs: 2000 })).toEqual({ ok: true });
     await waitFor("the dialog to close", async () => {
       const { windows } = await ui().call<{ windows: UiaWindow[] }>("topWindows", { pid: main().pid, deadlineMs: 2000 });

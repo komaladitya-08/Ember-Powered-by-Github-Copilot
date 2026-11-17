@@ -41,7 +41,7 @@ declare global {
 const gate = process.env.EMBER_UIUX_TEST !== "1";
 
 interface Seed { /** How the approval modes stand, as main sends it with the status (absent: main sent none). */ approvals?: ApprovalsState; settings?: Record<string, unknown>; admin?: Record<string, unknown>; activity?: ActivityEntry[] | "fail"; viewport?: { width: number; height: number }; checks?: { id: string; status: string; label: string; detail: string; fix?: string }[]; platform?: StatusPlatform; updates?: UpdateStatus; provider?: boolean; /** The targets runtime, answering after this many ms as in the app (Computers and Commands show then). */ targets?: number; /** Holds actual native resize deliveries until an already-positioned layout is scrolled. */ holdJumpResize?: boolean }
-interface Seed { sessionReview?: { state: ProjectSessionsState; review: CodingResultReview; create?: boolean } }
+interface Seed { sessionReview?: { state: ProjectSessionsState; review: CodingResultReview; create?: boolean; navigationFolder?: string; navigationFolderSelected?: boolean } }
 
 /** Interactive chosen, its card agreed to as it reads now: the user's own setting. */
 const INTERACTIVE: ApprovalsSetting = { mode: "interactive", consent: { interactive: { version: FEATURE_CONSENT_VERSION.autonomy, at: "2026-11-04T12:00:00Z" }, assisted: { version: 0, at: null }, autopilot: { version: 0, at: null } } };
@@ -108,6 +108,10 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
       if (name === "list") return () => new Promise(resolve => setTimeout(() => resolve([{ id: "local", kind: "local", label: "This computer", state: "ready" }]), targets));
       return () => new Promise(() => undefined);
     } });
+    let navigationFolderChosen = sessionReview?.navigationFolderSelected ?? false;
+    const navigationWorkspace = (projectId: string) => ({ projectId, folder: navigationFolderChosen ? { path: sessionReview!.navigationFolder!, label: "Public navigation fixture", valid: true } : null,
+      available: true, canChoose: true, canContinue: true, message: "Only bundled Node is supplied. Shells, npm, dependency installation, network access and child processes are unavailable.",
+      execution: { selected: "local", canSelect: true, message: "Windows", choices: [{ id: "local", label: "Windows", selectable: true, ready: true, message: "Use the fixed Windows coding environment." }] } });
     const status = () => ({ appVersion: "0.1.1", settings, environment: { checks: h.checks, versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin, ...(platform ? { platform } : {}), ...(approvals ? { approvals } : {}) });
     window.ember = new Proxy({}, { get: (_t, name: string) => {
       if (name.startsWith("on")) return (fn: (v: unknown) => void) => { (subs[name] ??= []).push(fn); return () => undefined; };
@@ -123,8 +127,13 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
         };
         if (sessionReview.create && name === "projectCodingWorkspaceChoose") return async (projectId: string) => {
           h.calls.push("choose-project-folder:" + projectId);
+          if (sessionReview.navigationFolder) { navigationFolderChosen = true; return navigationWorkspace(projectId); }
           return { projectId, folder: null, available: false, canChoose: true, message: "Fixed public project navigation fixture." };
         };
+        if (sessionReview.navigationFolder && name === "projectCodingWorkspaceState") return async (projectId: string) => navigationWorkspace(projectId);
+        if (sessionReview.navigationFolder && name === "conversationSend") return async (text: string) => { h.calls.push("send-project-request:" + text); return "sent"; };
+        if (sessionReview.navigationFolder && name === "codingResultExport") return async (id: string) => { h.calls.push("export-project-review:" + id); return { message: "Exported the coding review." }; };
+        if (sessionReview.navigationFolder && name === "codingResultContinue") return async (id: string, projectId: string, request: string) => { h.calls.push("continue-project-review:" + id + ":" + projectId + ":" + request); return { ok: true, message: "Fixed new request received." }; };
         if (name === "projectCodingWorkspaceState") return async (projectId: string) => ({ projectId, folder: null, available: false, canChoose: true, message: "Retained coding reviews are available." });
         if (name === "codingResultsState") return async () => [sessionReview.review];
         if (name === "codingResultReview") return async () => sessionReview.review;
@@ -1589,5 +1598,93 @@ it.skipIf(gate)("reveals the coding folder control after project creation with b
   // Coordinate input cannot implicitly reveal an offscreen locator or manufacture the folder result.
   await p.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
   await expect.poll(() => p.evaluate(() => window.__pane.calls.filter(call => call.startsWith("choose-project-folder:")))).toEqual(["choose-project-folder:navigation-project"]);
+  expect(p.errors).toEqual([]); await p.close();
+}, 30_000);
+
+it.skipIf(gate)("returns from the chosen coding folder to an offscreen Sessions request using bounded reverse Tab navigation", async () => {
+  const review: CodingResultReview = { id: "unused-review", projectId: "unused-project", taskId: "unused-task", title: "Public fixture", sourcePath: "C:\\public-fixture", status: "done", files: 0, conflicts: 0, patchComplete: true,
+    checks: { ran: 0, passed: 0, failed: 0 }, message: "Fixed public navigation fixture.", changes: [], textPatch: "", limitations: [], previewMessage: "" };
+  const platform: StatusPlatform = { os: "win32", shortcuts: shownShortcuts(SHORTCUTS.win32, heldShortcuts(SHORTCUTS.win32, FALLBACK_SHORTCUTS.win32, [])),
+    dataDir: "%LOCALAPPDATA%\\ember", settingsFile: "%LOCALAPPDATA%\\ember\\settings.json", auditCopy: null, micIndicator: "", permissionsNote: "", speakerRejection: false, outputLevel: true, fixLabels: {}, desk: false, autostartNote: null };
+  const folder = "C:\\public-fixture", request = "Inspect only the explicitly selected private copy.";
+  const p = await open("project", { viewport: { width: 760, height: 640 }, platform, sessionReview: { state: { projects: [], selectedProjectId: null }, review, create: true, navigationFolder: folder } });
+  const box = (id: string) => p.locator("#" + id).evaluate(node => { const r = node.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, onscreen: r.top < innerHeight && r.bottom > 0 }; });
+  await expect.poll(() => p.locator("#project-sessions-add").isEnabled()).toBe(true);
+  await p.locator("#project-sessions-name").focus(); await p.keyboard.type("Packaged request navigation"); await p.keyboard.press("Tab");
+  await p.locator("#project-sessions-add").focus(); await p.keyboard.press("Space");
+  await expect.poll(() => p.locator("#project-sessions-select").inputValue()).toBe("navigation-project");
+  let forwards = 0;
+  while (!(await box("project-coding-choose")).onscreen && forwards < 12) { await p.keyboard.press("Tab"); forwards++; await p.waitForTimeout(150); }
+  expect((await box("project-coding-choose")).onscreen).toBe(true);
+  const choose = (await p.locator("#project-coding-choose").boundingBox())!;
+  expect(choose.y + choose.height / 2).toBeGreaterThan(0); expect(choose.y + choose.height / 2).toBeLessThan(640);
+  await p.mouse.click(choose.x + choose.width / 2, choose.y + choose.height / 2);
+  await expect.poll(() => p.locator("#project-coding-folder").textContent()).toContain(folder);
+  // Native UIA omits an offscreen group's descendants. Read geometry only: do not focus/fill/auto-scroll the request.
+  const before = { sessions: await box("project-sessions"), request: await box("project-sessions-request"), focused: await p.evaluate(() => document.activeElement?.id) };
+  expect(before.sessions.onscreen).toBe(false); expect(before.request.onscreen).toBe(false);
+  if (process.env.EMBER_UI_EVIDENCE) await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "project-chosen-folder-request-viewport-760.png") });
+  await evidence(p, "project-chosen-folder-request-offscreen-760");
+  let backwards = 0;
+  while (!(await box("project-sessions-request")).onscreen && backwards < 12) { await p.keyboard.press("Shift+Tab"); backwards++; await p.waitForTimeout(150); }
+  expect(backwards).toBeGreaterThan(0); expect(backwards).toBeLessThanOrEqual(12);
+  const after = { sessions: await box("project-sessions"), request: await box("project-sessions-request"), focused: await p.evaluate(() => document.activeElement?.id) };
+  expect(after.sessions.onscreen).toBe(true); expect(after.request.onscreen).toBe(true);
+  if (process.env.EMBER_UI_EVIDENCE) {
+    await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "project-request-revealed-viewport-760.png") });
+    fs.writeFileSync(path.join(process.env.EMBER_UI_EVIDENCE, "project-request-navigation-760.json"), JSON.stringify({ viewport: { width: 760, height: 640 }, forwards, backwards, before, after }, null, 2) + "\n");
+  }
+  // Only after ordinary navigation exposes the field may the existing driver focus/type/Tab and coordinate-click Send.
+  await p.locator("#project-sessions-request").focus(); await p.keyboard.type(request); await p.keyboard.press("Tab");
+  const send = (await p.locator("#project-sessions-send").boundingBox())!;
+  expect(send.y + send.height / 2).toBeGreaterThan(0); expect(send.y + send.height / 2).toBeLessThan(640);
+  await p.mouse.click(send.x + send.width / 2, send.y + send.height / 2);
+  await expect.poll(() => p.evaluate(() => window.__pane.calls.filter(call => call.startsWith("send-project-request:")))).toEqual(["send-project-request:" + request]);
+  await evidence(p, "project-request-revealed-760"); expect(p.errors).toEqual([]); await p.close();
+}, 30_000);
+
+it.skipIf(gate)("reveals the result and review controls after ordinary Projects pane navigation", async () => {
+  const review: CodingResultReview = { id: "navigation-review", projectId: "navigation-project", taskId: "navigation-task", title: "Public navigation review", sourcePath: "C:\\public-fixture", status: "done", files: 1, conflicts: 0, patchComplete: true,
+    checks: { ran: 2, passed: 1, failed: 1 }, message: "Private copy ready for review.", changes: [{ path: "test.cjs", kind: "modify", conflicts: [], patchUnsupported: [] }], textPatch: "--- a/test.cjs\n+++ b/test.cjs\n-1 + 1, 3\n+1 + 1, 2", limitations: [], previewMessage: "Text patch preview." };
+  const state: ProjectSessionsState = { selectedProjectId: "navigation-project", projects: [{ id: "navigation-project", name: "Public navigation project", goal: "", createdAt: 1, sessions: [] }] };
+  const p = await open("project", { viewport: { width: 760, height: 640 }, sessionReview: { state, review, navigationFolder: "C:\\public-fixture", navigationFolderSelected: true } });
+  const position = (select: string) => p.locator(select).evaluate(node => { const box = node.getBoundingClientRect(); return { top: box.top, bottom: box.bottom, onscreen: box.top < innerHeight && box.bottom > 0 }; });
+  const click = async (select: string) => {
+    const at = (await p.locator(select).boundingBox())!;
+    expect(at.y + at.height / 2).toBeGreaterThan(0); expect(at.y + at.height / 2).toBeLessThan(640);
+    await p.mouse.click(at.x + at.width / 2, at.y + at.height / 2);
+  };
+  const action = '[aria-label="Review result: Public navigation review"]';
+  await expect.poll(() => p.locator(action).isEnabled()).toBe(true);
+  const before = { coding: await position("#project-coding"), action: await position(action) };
+  expect(before.coding.onscreen).toBe(false); expect(before.action.onscreen).toBe(false);
+  const reveal = async (select: string) => {
+    let tabs = 0;
+    while (!(await position(select)).onscreen && tabs < 12) { await p.keyboard.press("Tab"); tabs++; await p.waitForTimeout(150); }
+    expect((await position(select)).onscreen).toBe(true); return tabs;
+  };
+  const groupTabs = await reveal("#project-coding"), tabs = await reveal(action);
+  expect((await position(action)).onscreen).toBe(true);
+  await click(action);
+  await expect.poll(() => p.locator("#project-coding-review").isVisible()).toBe(true);
+  const opened = { coding: await position("#project-coding"), review: await position("#project-coding-review"), patch: await position("#project-coding-patch"), export: await position("#project-coding-export") };
+  expect(opened.review.onscreen).toBe(true); expect(opened.patch.onscreen).toBe(true);
+  // The packaged export helper checks Ready on Home, then returns to the top of Projects.
+  await click('a[href="#home-h"]'); await click('a[href="#project-h"]');
+  const beforeExport = { coding: await position("#project-coding"), export: await position("#project-coding-export") };
+  expect(beforeExport.coding.onscreen).toBe(false); expect(beforeExport.export.onscreen).toBe(false);
+  const exportGroupTabs = await reveal("#project-coding"), exportTabs = await reveal("#project-coding-export");
+  await click("#project-coding-export");
+  await expect.poll(() => p.evaluate(() => window.__pane.calls.includes("export-project-review:navigation-review"))).toBe(true);
+  await click("#project-coding-continue");
+  const beforeContinue = await position("#project-coding-continue-request");
+  const continueTabs = await reveal("#project-coding-continue-request");
+  await p.locator("#project-coding-continue-request").focus(); await p.keyboard.type("Check the newly requested change."); await p.keyboard.press("Tab");
+  await click("#project-coding-continue-send");
+  await expect.poll(() => p.evaluate(() => window.__pane.calls.includes("continue-project-review:navigation-review:navigation-project:Check the newly requested change."))).toBe(true);
+  if (process.env.EMBER_UI_EVIDENCE) {
+    fs.writeFileSync(path.join(process.env.EMBER_UI_EVIDENCE, "project-review-navigation-final-760.json"), JSON.stringify({ before, groupTabs, tabs, opened, beforeExport, exportGroupTabs, exportTabs, beforeContinue, continueTabs }, null, 2) + "\n");
+    await p.screenshot({ path: path.join(process.env.EMBER_UI_EVIDENCE, "project-review-open-viewport-760.png") });
+  }
   expect(p.errors).toEqual([]); await p.close();
 }, 30_000);
