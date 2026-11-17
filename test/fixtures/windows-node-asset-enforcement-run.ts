@@ -125,7 +125,7 @@ export const WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS: readonly Readonly<{ pat
   Object.freeze({"path":"app/shared/vault.ts","bytes":18154,"sha256":"32c4b58420f6ac0d7ba58ba3db0dcadb746c178cb0c440b8754414426fa50a1e"}),
   Object.freeze({"path":"app/shared/visible-text.ts","bytes":9581,"sha256":"596a790a31c8afcc93386343cdfe16247509379e2d233f0b7a80d1562a3c31ef"}),
   Object.freeze({"path":"app/shared/windows-node-toolchain.json","bytes":1442,"sha256":"d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f"}),
-  Object.freeze({"path":"app/shared/wsl-coding-readiness.ts","bytes":370,"sha256":"4894fc0d0dd313ccdbeb084c69c5c20d79728a1d774efaa1e66daf105b97534e"}),
+  Object.freeze({"path":"app/shared/wsl-coding-readiness.ts","bytes":431,"sha256":"c8f6121ec1293c38c507dd97c66cd7b2f8807537437859f37fe55e5e03641348"}),
   Object.freeze({"path":"docs/EXPERIMENTAL-WINDOWS-NODE-ASSET-ENFORCEMENT.md","bytes":27352,"sha256":"88e9c214e9de566b9311034ff7332c52b8a3129a140b370f8291e02c8fa4f59c"}),
   Object.freeze({"path":"docs/WINDOWS-NODE-NATIVE-ASSET-OWNER.md","bytes":10242,"sha256":"cbc9908b3e36d0709e9b78692029569bae85c3c0940f3144f9d3c4bda9fcce85"}),
   Object.freeze({"path":"package-lock.json","bytes":153446,"sha256":"691d75e222d044c6fe87fa5bc84dec081a2a4b95fa8e0564ae0d1cd64f8516d3"}),

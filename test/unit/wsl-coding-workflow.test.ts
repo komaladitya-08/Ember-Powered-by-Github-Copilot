@@ -28,7 +28,13 @@ it("keeps native qualification separate, manual and required on both Windows ima
     'test "$(readlink -f /usr/bin/node)" = /opt/node/bin/node']) expect(native).toContain(marker);
   expect(native).not.toContain("/opt/ember-wsl-coding-node");
   for (const found of source.matchAll(/uses: ([^\s]+)/g)) expect(found[1]).toMatch(/@[0-9a-f]{40}$/);
-  expect(WSL_CODING_READINESS).toMatchObject({ ready: false, proofCommit: null, proofRun: null });
+  expect(WSL_CODING_READINESS).toEqual({
+    ready: true,
+    proofCommit: "20300c7104003cbb865871821454b7807d0178ab",
+    proofRun: 44110658272,
+    message: "Supported Node, npm and TypeScript commands are available in your selected WSL2 distribution. That distribution's consent and approval settings still apply.",
+  });
+  expect(Object.isFrozen(WSL_CODING_READINESS)).toBe(true);
 });
 it("requires actual PE, interop, socket and whole-writer controls before counting native evidence", () => {
   const source = fs.readFileSync("test/integration/wsl-coding-native.test.ts", "utf8");

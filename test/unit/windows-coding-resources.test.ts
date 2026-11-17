@@ -36,6 +36,7 @@ afterEach(async () => {
 
 async function setup(options: { existingCommon?: boolean; unknownChildren?: number; wsl?: boolean; draftImport?: boolean; lateImportConflict?: boolean; guestScope?: CodingExportInput["scope"] } = {}) {
   vi.resetModules();
+  vi.doMock("../../app/shared/wsl-coding-readiness", () => ({ WSL_CODING_READINESS: { ready: options.wsl === true } }));
   vi.doMock("../../app/main/platform/os", () => ({ HOST_PLATFORM: "win32", HOST_ARCH: "x64" }));
   const native = await import("../../app/main/agent/windows-coding-native");
   const { ScopedCodingFileError } = await import("../../app/main/agent/coding-platform");
@@ -273,7 +274,6 @@ async function setup(options: { existingCommon?: boolean; unknownChildren?: numb
   };
   const wslInputs: import("../../app/main/agent/wsl-coding-workspace").WslCodingWorkspaceInput[] = [];
   if (options.wsl) {
-    vi.doMock("../../app/shared/wsl-coding-readiness", () => ({ WSL_CODING_READINESS: { ready: true } }));
     class Guest {
       executionRoot = "/work"; nodeAvailable = true; output?: CodingWorkspaceReview; transferred = false;
       static async create(input: import("../../app/main/agent/wsl-coding-workspace").WslCodingWorkspaceInput) {
@@ -593,8 +593,8 @@ it("latches native seed-cleanup uncertainty during continuation admission and re
 });
 
 
-it("keeps the production WSL admission gate closed before any native capture or guest launch", async () => {
-  const f = await setup(), value = await f.open(); await f.bind(value);
+it("refuses a closed WSL fixture before any native capture or guest launch", async () => {
+  const f = await setup({ wsl: false }), value = await f.open(); await f.bind(value);
   const open = vi.fn();
   await expect(value.createWslWorkspace(f.spec(value), new AbortController().signal, () => true, { current: () => true, open })).rejects.toMatchObject({ code: "unavailable" });
   expect(open).not.toHaveBeenCalled(); expect(f.createBackend).not.toHaveBeenCalled();
