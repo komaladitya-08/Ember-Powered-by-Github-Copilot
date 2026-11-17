@@ -41,7 +41,18 @@ function removeOnce(source: string, fragment: string): string {
   expect(source.lastIndexOf(fragment)).toBe(source.indexOf(fragment));
   return source.replace(fragment, "");
 }
-let initialHashBaseline = removeOnce(ps1, "  Observe-Startup 26\n");
+const filesystemPaths = [
+  ["$source = [IO.Path]::Combine($PSScriptRoot, 'ember_uia.cs')", "$source = Join-Path $PSScriptRoot 'ember_uia.cs'"],
+  ["$dll = [IO.Path]::Combine($cache, ('ember_uia-' + $hash + '.dll'))", "$dll = Join-Path $cache ('ember_uia-' + $hash + '.dll')"],
+  ["$tmp = [IO.Path]::Combine($cache, ('ember_uia-' + $hash + '.' + $PID + '.tmp'))", "$tmp = Join-Path $cache ('ember_uia-' + $hash + '.' + $PID + '.tmp')"],
+] as const;
+let filesystemBaseline = ps1;
+for (const [literal, previous] of filesystemPaths) {
+  expect(filesystemBaseline.indexOf(literal)).toBeGreaterThanOrEqual(0);
+  expect(filesystemBaseline.lastIndexOf(literal)).toBe(filesystemBaseline.indexOf(literal));
+  filesystemBaseline = filesystemBaseline.replace(literal, previous);
+}
+let initialHashBaseline = removeOnce(filesystemBaseline, "  Observe-Startup 26\n");
 initialHashBaseline = removeOnce(initialHashBaseline, "  if ($ObserveSource) { Observe-Startup 27 }\n");
 initialHashBaseline = removeOnce(initialHashBaseline, "  if ($ObserveSource) { Observe-Startup 28 }\n");
 initialHashBaseline = removeOnce(initialHashBaseline, ", [switch]$ObserveSource");
@@ -111,9 +122,17 @@ describe("the UI Automation bridge's files", () => {
 });
 
 describe("optional UIA startup observations", () => {
-  it("splits only initial source boundaries without changing the existing path, read, SHA chain or formatting expressions", () => {
+  it("constructs only literal filesystem paths without asking a PowerShell provider to join them", () => {
+    expect(createHash("sha256").update(filesystemBaseline).digest("hex")).toBe("b58237c47d148591cf9e098c079ed95dc8b1a6e98f68aa4a2e1c008ac2a48ece");
+    expect(ps1).not.toMatch(/\bJoin-Path\b/);
+    for (const [literal] of filesystemPaths) expect(ps1).toContain(literal);
+    expect(ps1).toContain("[IO.Path]::GetFullPath($env:EMBER_UIA_CACHE)");
+    expect(ps1).toContain("if ($cache) {");
+  });
+
+  it("keeps the source read, SHA chain and formatting at the same observed boundaries", () => {
     expect(createHash("sha256").update(initialHashBaseline).digest("hex")).toBe("40e52fdc822d76e94882b95d2d13321735e012ab5e3236e2676cf3c7ceb2c607");
-    expect(ps1).toContain("$source = Join-Path $PSScriptRoot 'ember_uia.cs'\n  Observe-Startup 26\n  $hash = Get-Sha256 ([IO.File]::ReadAllBytes($source)) -ObserveSource");
+    expect(ps1).toContain("$source = [IO.Path]::Combine($PSScriptRoot, 'ember_uia.cs')\n  Observe-Startup 26\n  $hash = Get-Sha256 ([IO.File]::ReadAllBytes($source)) -ObserveSource");
     expect(ps1).toContain("function Get-Sha256([byte[]]$Bytes, [switch]$ObserveSource) {\n  if ($ObserveSource) { Observe-Startup 27 }\n  $digest = [Security.Cryptography.SHA256]::Create().ComputeHash($Bytes)\n  if ($ObserveSource) { Observe-Startup 28 }\n  ([BitConverter]::ToString($digest) -replace '-', '').ToLowerInvariant()");
     const calls = [...ps1.matchAll(/Get-Sha256 ([^\r\n]+)/g)].map(match => match[1]);
     expect(calls).toHaveLength(3);
@@ -121,7 +140,7 @@ describe("optional UIA startup observations", () => {
     expect(ps1).toContain("$Stage -ge 1 -and $Stage -le 28");
   });
 
-  it("leaves the original bootstrap byte-for-byte intact outside the exact optional observer", () => {
+  it("conserves the original bootstrap outside the exact observer and filesystem path replacements", () => {
     expect(createHash("sha256").update(bootstrap).digest("hex")).toBe("8b05f55c3c9d6f4e7aae239b0e73ce49c1175e54a09e04f459a512973a359c75");
     expect(startupObserver.split("\n").filter(line => line.trim()).length).toBeLessThanOrEqual(10);
     expect(startupObserver).toContain("$env:EMBER_UIA_STARTUP_OBSERVE -ceq '1'");

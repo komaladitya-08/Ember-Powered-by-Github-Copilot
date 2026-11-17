@@ -52,7 +52,7 @@ function Set-CacheFile([string]$From, [string]$To) {
 try {
   Observe-Startup 1
   # Compiled with -LiteralPath below: Add-Type's -Path takes [ and ] in the install folder for wildcards.
-  $source = Join-Path $PSScriptRoot 'ember_uia.cs'
+  $source = [IO.Path]::Combine($PSScriptRoot, 'ember_uia.cs')
   Observe-Startup 26
   $hash = Get-Sha256 ([IO.File]::ReadAllBytes($source)) -ObserveSource
   Observe-Startup 2
@@ -70,7 +70,7 @@ try {
   if ($env:EMBER_UIA_CACHE) { try { $cache = [IO.Path]::GetFullPath($env:EMBER_UIA_CACHE) } catch { <# unusable: from memory #> } }
   Observe-Startup 5
   if ($cache) {
-    $dll = Join-Path $cache ('ember_uia-' + $hash + '.dll')
+    $dll = [IO.Path]::Combine($cache, ('ember_uia-' + $hash + '.dll'))
     $sum = $dll + '.sha256'
     # Loaded from bytes checked against the hash written beside them: a half-written, replaced, locked or unloadable
     # file is compiled again, and the file is never locked or refused for a Mark-of-the-Web.
@@ -82,7 +82,7 @@ try {
       } catch { $assembly = $null }
     }
     if ($null -eq $assembly) {
-      $tmp = Join-Path $cache ('ember_uia-' + $hash + '.' + $PID + '.tmp')
+      $tmp = [IO.Path]::Combine($cache, ('ember_uia-' + $hash + '.' + $PID + '.tmp'))
       try {
         Observe-Startup 8
         [void][IO.Directory]::CreateDirectory($cache)
