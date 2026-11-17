@@ -584,12 +584,16 @@ it("first source/loader failure permanently closes the private observer before a
   expect(String(first)).not.toContain("PRIVATE"); expect(load).not.toHaveBeenCalled();
   expect(await observe(input, () => undefined, "relative", "relative", "cancel").catch(error => error)).toBe(first);
 });
-it("the default-Medium fixture creates an empty protected ancestor SACL and genuinely unlabeled borrowed parent without weakening its DACL", () => {
+it("the default-Medium fixture uses a non-inheriting Medium ancestor label and genuinely unlabeled borrowed parent without weakening its DACL", () => {
   const owner = "S-1-5-21-1-2-3-1000", packageSid = "S-1-15-2-123-456-789-10-11-12-13";
   const explicit = windowsNodeAssetCreationSecurity(owner, packageSid, "natural"), implicit = windowsNodeAssetCreationSecurity(owner, packageSid, "natural-default");
   expect(explicit.privateParent).toContain("S:(ML;OICI;NW;;;ME)"); expect(implicit.privateParent).not.toContain("S:");
-  expect(implicit.directory).toMatch(/S:P$/); expect(implicit.directory).not.toContain("ML;");
+  expect(implicit.directory).toMatch(/S:\(ML;;NW;;;ME\)$/); expect(implicit.directory).not.toContain("S:P");
+  expect(explicit.directory).toMatch(/S:\(ML;OICI;NW;;;ME\)$/);
   const dacl = (value: string) => value.slice(value.indexOf("D:"), value.includes("S:") ? value.indexOf("S:") : value.length);
+  const ownerGroupDacl = (value: string) => value.slice(0, value.includes("S:") ? value.indexOf("S:") : value.length);
+  for (const key of ["directory", "tools", "treeParent", "privateParent", "lowOwner", "lowFullDirectory", "lowFullFile", "lowReadDirectory", "lowReadFile", "program"] as const)
+    expect(ownerGroupDacl(implicit[key])).toBe(ownerGroupDacl(explicit[key]));
   expect(dacl(implicit.privateParent)).toBe(dacl(implicit.lowOwner)); expect(dacl(explicit.privateParent)).toBe(dacl(implicit.privateParent));
   expect(implicit.lowOwner).toContain("S:(ML;OICI;NW;;;LW)"); expect(implicit.privateParent).not.toContain(packageSid);
   expect(implicit.lowFullDirectory).toContain(`(A;OICI;FA;;;${packageSid})`); expect(implicit.lowFullFile).toContain(`(A;;FA;;;${packageSid})`);
@@ -598,5 +602,8 @@ it("the default-Medium fixture creates an empty protected ancestor SACL and genu
   for (const descriptor of [implicit.lowFullDirectory, implicit.lowReadDirectory]) expect(descriptor).toContain("(A;OICI;RC;;;OW)");
   for (const descriptor of [implicit.lowFullFile, implicit.lowReadFile]) expect(descriptor).toContain("(A;;RC;;;OW)");
   expect(implicit.lowReadDirectory).toContain("S:(ML;OICI;NW;;;LW)"); expect(implicit.lowReadFile).toContain("S:(ML;;NW;;;LW)");
+  const source = fs.readFileSync(new URL("../fixtures/windows-node-asset-enforcement-proof.ts", import.meta.url), "utf8");
+  expect(source).toContain('parentLabel: mode === "natural-default" ? "default" : "explicit"');
+  expect(source).not.toMatch(/AdjustTokenPrivileges|SetSecurityInfo|SetNamedSecurityInfo/);
   expect(() => windowsNodeAssetCreationSecurity("S-1-5-18", packageSid, "natural-default")).toThrow();
 });

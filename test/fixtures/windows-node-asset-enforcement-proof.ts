@@ -46,11 +46,11 @@ const inside = (base: string, value: string) => base.toLowerCase() === value.toL
 /** Creation-only security for this fixed fixture. No descriptor is applied to an existing borrowed object. */
 export function windowsNodeAssetCreationSecurity(owner: string, packageSid: string, mode: WindowsNodeAssetEnforcementMode) {
   ensure(/^S-1-5-(?:\d+-)*\d+$/.test(owner) && owner !== "S-1-5-18" && /^S-1-15-2-(?:\d+-)*\d+$/.test(packageSid) && packageSid !== "S-1-15-2-1" && MODES.includes(mode));
-  const descriptor = (directory: boolean, grant: "host" | "read" | "full", label: "LW" | "ME" | "empty" | "absent", control = false) => {
+  const descriptor = (directory: boolean, grant: "host" | "read" | "full", label: "LW" | "ME" | "empty" | "absent", control = false, inheritLabel = true) => {
     const flags = directory ? "OICI" : "";
-    return `O:${owner}G:${owner}D:P(A;${flags};FA;;;${owner})(A;${flags};FA;;;SY)${grant === "host" ? "" : `(A;${flags};${grant === "read" ? "0x1200a9" : "FA"};;;${packageSid})`}${control ? `(A;${flags};RC;;;OW)` : ""}${label === "absent" ? "" : label === "empty" ? "S:P" : `S:(ML;${flags};NW;;;${label})`}`;
+    return `O:${owner}G:${owner}D:P(A;${flags};FA;;;${owner})(A;${flags};FA;;;SY)${grant === "host" ? "" : `(A;${flags};${grant === "read" ? "0x1200a9" : "FA"};;;${packageSid})`}${control ? `(A;${flags};RC;;;OW)` : ""}${label === "absent" ? "" : label === "empty" ? "S:P" : `S:(ML;${inheritLabel ? flags : ""};NW;;;${label})`}`;
   };
-  return Object.freeze({ directory: descriptor(true, "read", mode === "natural-default" ? "empty" : "ME"), tools: descriptor(true, "read", "ME"), treeParent: descriptor(true, "read", "ME"),
+  return Object.freeze({ directory: descriptor(true, "read", "ME", false, mode !== "natural-default"), tools: descriptor(true, "read", "ME"), treeParent: descriptor(true, "read", "ME"),
     privateParent: descriptor(true, "host", mode === "natural-default" ? "absent" : "ME"), lowOwner: descriptor(true, "host", "LW"),
     lowFullDirectory: descriptor(true, "full", "LW", true), lowFullFile: descriptor(false, "full", "LW", true),
     lowReadDirectory: descriptor(true, "read", "LW", true), lowReadFile: descriptor(false, "read", "LW", true), program: descriptor(false, "read", "ME") });

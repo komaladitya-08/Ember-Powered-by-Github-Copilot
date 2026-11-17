@@ -75,7 +75,8 @@ only `EMBER_ASSET_ACCESS_V4:524287:8191:19:13:2:1` and the exact V4 stderr frame
 missing objects, NULL handles and malformed flags never count as denials. Each acquired probe handle must close
 positively. No ACL, owner or label is modified after creation, and the child never impersonates.
 
-`natural-default` creates a protected empty-SACL ancestor and a genuinely unlabeled borrowed parent. Native
+`natural-default` creates an explicit Medium/NW ancestor label with no inheritance flags and a borrowed parent
+whose creation descriptor omits the SACL. Native
 readback must prove absent/null or valid empty SACL with no mandatory label ACE. The other natural case requires
 exact explicit Medium/NW. Neither falls back to the other. These remain parent-admission cases, not a claimed MIC
 causal comparison. All actual assets and package controls have their exact explicit Low labels in both cases.
@@ -217,9 +218,25 @@ the original return value is preserved. There are no new native queries, awaits,
 retries, admission decisions or cleanup actions. Outer class6 remains fatal and retains the graph.
 
 Microsoft documents empty-present SACLs separately from absent SACLs and identifies a privilege precondition
-for assigning a new object's SACL. That is a source lead for the fixed empty protected ancestor SACL, not an
-established failure site or cause. The descriptor and positive absent/empty label readback requirements
-remain unchanged while the operation is unmeasured.
+for assigning a new object's SACL. That was a source lead for the protected empty ancestor SACL before the
+preparation observation was measured.
+
+On 2026-11-17, run44011388377 at `46a68f2c22e130d35af0e6bfea07e5bbbae30341` failed overall on both images.
+Contracts256+615 passed, and each Windows job passed615 portable tests. Each explicit-parent natural case again
+closed with C49, Node17 and all Stop/output/owner cleanup receipts. Each natural-default failure was phase2,
+outer class6, preparation5/1/0/1: the first outer directory creation, unclassified inner error, with the exact
+fixed CreateDirectoryW privilege-not-held message category. C/token/Node/capture/Stop observations remained
+zero for that failed case. Five later cases were blocked, so each image remained1passed/6failed and the
+failed graphs and suite build remained retained.
+
+The fixture-only correction changes that new outer ancestor's SACL from protected empty `S:P` to one explicit
+Medium/NW label `S:(ML;;NW;;;ME)`. The label has neither object nor container inheritance flags; all owner,
+group and DACL bytes in the requested descriptors remain identical. The private parent's descriptor still
+omits the SACL. Actual native absent/null-or-empty/no-label readback stays mandatory before the C prelude or
+Node Resume. No privilege is enabled and no existing object is relabeled. Other inheritable labels arriving
+from the ambient scratch hierarchy can still contaminate a new child; that must fail the unchanged readback,
+with no fallback to the explicit-label case. The correction is not credited as a passing native outcome
+until a separately reviewed run closes all seven cases. Both measured failed runs remain failures.
 
 V4 neither recertifies those failures nor silently changes a MIC claim into success. Its new same-Low-label,
 exact-package FA/RX comparison explicitly measures DACL enforcement on the final product graph.
@@ -238,6 +255,8 @@ Primary references:
   distinguishes empty-present ACLs and protected flags from omitted ACLs;
   [SACL for a new object](https://learn.microsoft.com/en-us/windows/win32/secauthz/sacl-for-a-new-object)
   documents explicit SACL assignment's privilege precondition.
+- [ACE inheritance rules](https://learn.microsoft.com/en-us/windows/win32/secauthz/ace-inheritance-rules)
+  applies the same inheritance flags to DACLs and SACLs; an ACE without inheritance flags has no child effect.
 - [File access rights](https://learn.microsoft.com/en-us/windows/win32/fileio/file-access-rights-constants) defines
   FILE_WRITE_DATA/FILE_ADD_FILE0x2; [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)
   documents sharing compatibility. [Token policy](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_mandatory_policy)
