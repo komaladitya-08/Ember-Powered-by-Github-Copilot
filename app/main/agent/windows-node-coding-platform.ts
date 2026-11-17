@@ -2,15 +2,13 @@
 import type { PathFact, RunnerFacts } from "../commands/types";
 import { ScopedCodingFileError, type CodingFileBroker, type CodingPlatformAdapter, type CodingCommandWorkspace, type CodingReviewWorkspace } from "./coding-platform";
 import { windowsCodingRelative } from "./windows-coding-policy";
-import { WindowsNodeWorkspace } from "./windows-node-workspace";
+import { WindowsNodeWorkspace, windowsNodeWorkspacePorts } from "./windows-node-workspace";
 
 export const WINDOWS_NODE_CODING_CONSTRAINTS = "Only bundled Node is supplied. Use run_node with literal argv and /work as cwd. /work names the folder in Ember's tools; use relative script and file paths in argv. No shell, npm or dependencies are supplied. Package installation, network access and child processes are unavailable. Supply --preserve-symlinks and --preserve-symlinks-main explicitly; with --test, also supply --experimental-test-isolation=none. No flags are added automatically.";
-const nodeAvailable = Object.getOwnPropertyDescriptor(WindowsNodeWorkspace.prototype, "nodeAvailable")!.get!;
-const filesBroker = WindowsNodeWorkspace.prototype.filesBroker;
 const unknown = (): PathFact => ({ exists: null, real: null });
 
 function requireWorkspace(value: unknown): WindowsNodeWorkspace {
-  try { if (value instanceof WindowsNodeWorkspace && nodeAvailable.call(value) === true) return value; } catch { /* Prototype/Proxy claims carry no private brand. */ }
+  try { if (value instanceof WindowsNodeWorkspace && windowsNodeWorkspacePorts().available.call(value) === true) return value; } catch { /* Prototype/Proxy claims carry no private brand. */ }
   throw new ScopedCodingFileError("boundary");
 }
 /** Logical paths only: drive, UNC, device and escaping forms never reach the file broker. */
@@ -57,6 +55,6 @@ export const windowsNodeCodingPlatform: CodingPlatformAdapter = Object.freeze({
   },
   async files(workspace: CodingReviewWorkspace, signal: AbortSignal): Promise<CodingFileBroker> {
     const owner = requireWorkspace(workspace);
-    return wrapFiles(await filesBroker.call(owner, signal));
+    return wrapFiles(await windowsNodeWorkspacePorts().filesBroker.call(owner, signal));
   },
 });

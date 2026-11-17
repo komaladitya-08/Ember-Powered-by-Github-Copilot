@@ -129,7 +129,7 @@ export async function setupWindowsNodeWorkspace() {
   };
   for (const folder of ["C:\\copies", "C:\\protected"]) io.source.add(folder, "directory");
   io.state.onNative = (name, args) => {
-    if (name === "CreateProcessW") { control.program = args[0] as string; control.command = (args[1] as Buffer).toString("utf16le").replace(/\0$/, ""); control.cwd = args[7] as string; }
+    if (name === "CreateProcessW") { control.program = args[0] as string; asset.state.imagePath = control.program; control.command = (args[1] as Buffer).toString("utf16le").replace(/\0$/, ""); control.cwd = args[7] as string; }
   };
   const { WindowsNodeWorkspace } = await import("../../app/main/agent/windows-node-workspace");
   const input: WindowsNodeWorkspaceInput = { source: "C:\\project", privateBase: "C:\\copies", protectedPaths: ["C:\\protected"],

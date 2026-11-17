@@ -58,7 +58,7 @@ vi.mock("../../app/main/agent/scoped-coding-worker", () => ({ ScopedCodingWorker
   async steer() { return false; }
 } }));
 
-import { AgentHost, codingAvailable, type HostOptions, type ScopedCodingHost } from "../../app/main/agent/host";
+import { AgentHost, codingAvailable, type HostOptions, type ScopedCodingHost, type ScopedCodingCapability } from "../../app/main/agent/host";
 import { SettingsStore } from "../../app/main/settings";
 import { modeCardVersion } from "../../app/shared/approvals";
 import { CONSENT_VERSION } from "../../app/shared/consent";
@@ -73,7 +73,11 @@ afterEach(async () => {
   for (const host of hosts.splice(0)) await host.stop();
   for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
-async function setup(extra: Partial<HostOptions> = {}, fileOnly = false) {
+function setLocalCommands(settings: SettingsStore, on: boolean): void {
+  const commands = settings.own().commands, local = commands.local ?? { on: false, askEvery: false, consent: { version: 0, at: null } };
+  settings.update({ commands: { ...commands, local: { ...local, on } } });
+}
+async function setup(extra: Partial<HostOptions> = {}, fileOnly = false, atomic?: "on" | "off") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-scoped-host-")); dirs.push(dir);
   const settings = new SettingsStore(path.join(dir, "settings.json")); settings.load();
   const source = { current: true, revision: 0 }, enabled = { value: true };
@@ -102,6 +106,12 @@ async function setup(extra: Partial<HostOptions> = {}, fileOnly = false) {
   });
   const scopedBase = { available: () => enabled.value, workspace, captureContinuation, continuationCurrent, createWorkspace, reviewBase: path.join(dir, "reviews"), publish };
   const scopedCoding: ScopedCodingHost = fileOnly ? { ...scopedBase, mode: "files-only", platform: { files: async () => { throw new Error("The inert Host fixture never opens a file broker"); } } } : scopedBase;
+  const createFiles = vi.fn(), filePlatform = { files: vi.fn() };
+  const nodePlatform: CodingPlatformAdapter = { facts: (_workspace, facts) => facts, files: vi.fn() };
+  const captureCapability = vi.fn((): ScopedCodingCapability => settings.get().commands.local?.on === true
+    ? { mode: "commands", toolchain: "windows-node", platform: nodePlatform, createWorkspace, current: () => settings.get().commands.local?.on === true }
+    : { mode: "files-only", platform: filePlatform, createWorkspace: createFiles });
+  if (atomic) { setLocalCommands(settings, atomic === "on"); scopedCoding.captureCapability = captureCapability; }
   const host = new AgentHost({ userData: dir, settings, runtimePath: "/offline/runtime", log: quiet, setState() {}, onStatus() {},
     targets, taskBase: { audit: { write: audit } as never, confirmer: confirmer as never },
     scopedCoding, ...extra });
@@ -111,13 +121,14 @@ async function setup(extra: Partial<HostOptions> = {}, fileOnly = false) {
   const create = (name: string) => host.projectSessionsAction({ action: "create", name }).selectedProjectId!;
   const callbacks = (host as any).conductor.deps;
   return { host, settings, session, tool, callbacks, create, source, enabled, workspace, createWorkspace, publish, service, audit, ask,
-    continuation, captureContinuation, continuationCurrent };
+    continuation, captureContinuation, continuationCurrent, captureCapability, createFiles };
 }
 
 function useFilesOnly(h: Awaited<ReturnType<typeof setup>>) {
   const options = (h.host as unknown as { o: HostOptions }).o;
   const files = vi.fn(async () => { throw new Error("The inert Host fixture never opens a file broker"); });
-  const scoped: ScopedCodingHost = { ...options.scopedCoding!, mode: "files-only", platform: { files } };
+  const { toolchain: _toolchain, ...common } = options.scopedCoding!;
+  const scoped: ScopedCodingHost = { ...common, mode: "files-only", platform: { files } };
   options.scopedCoding = scoped;
   return { scoped, files };
 }
@@ -301,16 +312,20 @@ it("keeps the native prototype disabled and requires a chosen project folder bef
   expect(h.host.projectSessionsState().projects.find(p => p.id === project)?.sessions).toEqual([]);
 });
 
-it("forwards only the host-selected structural platform adapter without enabling the native prototype", async () => {
+it("captures host-selected adapter methods before waits and preserves their receiver without enabling the native prototype", async () => {
   const h = await setup();
+  const receivers: unknown[] = [];
   const platform: CodingPlatformAdapter = {
-    facts: (_workspace, facts) => facts,
+    facts(_workspace, facts) { receivers.push(this); return facts; },
     files: async () => { throw new Error("The inert Host fixture never opens a platform file broker"); },
   };
   (h.host as unknown as { o: HostOptions }).o.scopedCoding!.platform = platform;
   h.create("App"); await h.host.ask("Inspect copied source");
+  platform.facts = () => { throw new Error("A later mutation must not replace captured authority"); };
   expect(await h.tool("start_coding", { goal: "Inspect source" })).toMatch(/started/);
-  expect(sim.workers[0].options.platform).toBe(platform);
+  const captured = sim.workers[0].options.platform as CodingPlatformAdapter, facts = {} as Parameters<CodingPlatformAdapter["facts"]>[1];
+  expect(captured).not.toBe(platform); expect(Object.isFrozen(captured)).toBe(true);
+  expect(captured.facts({} as never, facts)).toBe(facts); expect(receivers).toEqual([platform]);
   expect(codingAvailable()).toBe(false);
 });
 
@@ -320,6 +335,71 @@ it("relays a fixed platform availability reason without creating a coding task",
   h.enabled.value = false; h.create("App"); await h.host.ask("Inspect copied source");
   expect(await h.tool("start_coding", { goal: "Inspect source" })).toBe("Isolated coding commands require a verified local Node toolchain.");
   expect(sim.workers).toEqual([]);
+});
+
+it("captures fixed Windows Node constraints with the accepted request before a queued host capability changes", async () => {
+  const h = await setup(), scoped = (h.host as unknown as { o: HostOptions }).o.scopedCoding!;
+  if (scoped.mode === "files-only") throw new Error("Expected the command fixture");
+  scoped.toolchain = "windows-node";
+  scoped.platform = { facts: (_workspace, facts) => facts, files: async () => { throw new Error("Inert Host adapter"); } };
+  h.create("App"); sim.holdTurns = true; await h.host.ask("Fix and verify copied code");
+  expect(h.session.waiting[0]).toContain("Only bundled Node is supplied");
+  expect(h.session.waiting[0]).toContain("--experimental-test-isolation=none");
+  scoped.toolchain = undefined;
+  (scoped as { mode?: string }).mode = "files-only";
+  h.session.nextTurn(); expect(await h.tool("start_coding", { goal: "Fix copied code" })).toMatch(/started/);
+  expect(sim.workers[0].options).toMatchObject({ toolchain: "windows-node" });
+  expect(sim.workers[0].options.commandContext).toBeTypeOf("function");
+  expect(codingAvailable()).toBe(false);
+});
+
+it("atomically captures commands-OFF once before a queued request and never upgrades its file-only tools or factory", async () => {
+  const h = await setup({}, false, "off"); h.create("App"); sim.holdTurns = true;
+  expect(h.captureCapability).not.toHaveBeenCalled();
+  await h.host.ask("Review the parser copy without executing commands");
+  expect(h.captureCapability).toHaveBeenCalledTimes(1); expect(h.session.waiting[0]).toContain("Coding commands and test execution are unavailable");
+  setLocalCommands(h.settings, true); h.session.nextTurn();
+  expect(await h.tool("start_coding", { goal: "Inspect the parser" })).toMatch(/started/);
+  const worker = sim.workers[0]; expect(worker.options.mode).toBe("files-only"); expect(worker.options.toolchain).toBeUndefined();
+  expect(worker.options.commandService).toBeUndefined(); expect(worker.options.commandContext).toBeUndefined();
+  await worker.options.createWorkspace(new AbortController().signal, () => true);
+  expect(h.createFiles).toHaveBeenCalledTimes(1); expect(h.createWorkspace).not.toHaveBeenCalled(); expect(h.captureCapability).toHaveBeenCalledTimes(1);
+});
+
+it("permanently retires queued accepted Node authority across commands OFF then ON through real settings events", async () => {
+  const h = await setup({}, false, "on"); h.create("App"); sim.holdTurns = true;
+  expect(h.captureCapability).not.toHaveBeenCalled(); await h.host.ask("Fix the parser and verify its copied check");
+  expect(h.captureCapability).toHaveBeenCalledTimes(1); expect(h.session.waiting[0]).toContain("Only bundled Node is supplied");
+  setLocalCommands(h.settings, false); setLocalCommands(h.settings, true); h.session.nextTurn();
+  expect(await h.tool("start_coding", { goal: "Run the old check" })).toMatch(/choose its coding folder/);
+  expect(sim.workers).toEqual([]); expect(h.captureCapability).toHaveBeenCalledTimes(1);
+  expect(h.createWorkspace).not.toHaveBeenCalled(); expect(h.createFiles).not.toHaveBeenCalled();
+});
+
+it("synchronously invalidates a running accepted Node request on commands OFF and never revives it on ON", async () => {
+  const h = await setup({}, false, "on"); h.create("App"); await h.host.ask("Repair and verify the parser");
+  expect(await h.tool("start_coding", { goal: "Verify the copied parser" })).toMatch(/started/);
+  const worker = sim.workers[0]; expect(worker.options.toolchain).toBe("windows-node"); expect(worker.options.current()).toBe(true);
+  setLocalCommands(h.settings, false); expect(worker.invalidated).toBe(true); expect(worker.options.current()).toBe(false);
+  setLocalCommands(h.settings, true); expect(worker.options.current()).toBe(false); expect(h.captureCapability).toHaveBeenCalledTimes(1);
+  expect(h.createFiles).not.toHaveBeenCalled();
+});
+
+it.each(["missing", "throw", "malformed"])("never falls back to static fields when the atomic capability is %s", async kind => {
+  const h = await setup({}, false, "on"), scoped = (h.host as unknown as { o: HostOptions }).o.scopedCoding!;
+  scoped.captureCapability = kind === "throw" ? () => { throw new Error("Private host selection failure"); }
+    : () => kind === "missing" ? null : { mode: "files-only", createWorkspace: h.createFiles } as unknown as ScopedCodingCapability;
+  h.create("App"); await h.host.ask("Inspect the parser");
+  expect(await h.tool("start_coding", { goal: "Inspect parser" })).toMatch(/choose its coding folder/);
+  expect(sim.workers).toEqual([]); expect(h.createWorkspace).not.toHaveBeenCalled(); expect(h.createFiles).not.toHaveBeenCalled();
+});
+
+it("requires an intake-owned capability instead of recapturing one for a foreign coding TaskSpec", async () => {
+  const h = await setup({}, false, "on"), projectId = h.create("App");
+  const task = h.host.tasks!.start("Foreign coding request", { target: {} as never,
+    codingWorkspace: { path: "/foreign", projectId, current: () => true } });
+  await vi.waitFor(() => expect(h.host.tasks!.get(task.id)?.result?.summary).toContain("coding capability could not be verified"));
+  expect(h.captureCapability).not.toHaveBeenCalled(); expect(sim.workers).toEqual([]);
 });
 
 it.each(["throw", "control", "oversized"])("refuses a malformed host availability message (%s) without exposing its detail", async kind => {

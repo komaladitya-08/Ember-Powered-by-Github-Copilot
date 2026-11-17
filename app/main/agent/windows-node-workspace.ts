@@ -300,3 +300,11 @@ export class WindowsNodeWorkspace implements CodingCommandWorkspace {
     return reentrant ? Promise.reject(new ScopedCodingFileError("boundary")) : this.#closing;
   }
 }
+
+// Capture the genuine private-brand ports when this class finishes initialization. The adapter asks
+// for them only when used; a cyclic import must not read this class's prototype before it exists.
+const trustedWindowsNodeWorkspacePorts = Object.freeze({
+  available: Object.getOwnPropertyDescriptor(WindowsNodeWorkspace.prototype, "nodeAvailable")!.get!,
+  filesBroker: WindowsNodeWorkspace.prototype.filesBroker,
+});
+export function windowsNodeWorkspacePorts() { return trustedWindowsNodeWorkspacePorts; }

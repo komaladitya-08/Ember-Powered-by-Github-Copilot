@@ -16,7 +16,9 @@ function closeDescriptor(fd, bytes, target) {
   try { fs.closeSync(fd); }
   catch { uncertainClose = true; retained.add({ fd, bytes, target }); throw refused(); }
 }
-const same = (a, b) => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs && a.nlink === 1n && b.nlink === 1n && a.isFile() && b.isFile();
+const sameIdentity = (a, b) => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.nlink === 1n && b.nlink === 1n &&
+  a.isFile() && b.isFile() && !a.isSymbolicLink() && !b.isSymbolicLink();
+const sameClock = (a, b) => sameIdentity(a, b) && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
 const members = kind => {
   if (kind !== "producer" && kind !== "package") throw refused();
   return WINDOWS_NODE_TOOLCHAIN.files.filter(file => kind === "producer" || file.ship);
@@ -42,14 +44,16 @@ function captureKnown(directory, kind, expectedRoot) {
       const bytes = Buffer.alloc(file.bytes); buffers.set(file, bytes);
       try {
         fd = fs.openSync(target, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
-        if (!same(before, fs.fstatSync(fd, { bigint: true }))) throw refused();
+        const opened = fs.fstatSync(fd, { bigint: true });
+        if (!sameIdentity(before, opened)) throw refused();
         let offset = 0;
         while (offset < bytes.length) {
           const count = fs.readSync(fd, bytes, offset, Math.min(65536, bytes.length - offset), offset);
           if (count < 1) throw refused(); offset += count;
         }
-        if (fs.readSync(fd, Buffer.alloc(1), 0, 1, offset) !== 0 || !same(before, fs.fstatSync(fd, { bigint: true })) ||
-            !same(before, fs.lstatSync(target, { bigint: true })) || digest(bytes) !== file.sha256) throw refused();
+        if (fs.readSync(fd, Buffer.alloc(1), 0, 1, offset) !== 0) throw refused();
+        const after = fs.fstatSync(fd, { bigint: true }), named = fs.lstatSync(target, { bigint: true });
+        if (!sameClock(opened, after) || !sameClock(before, named) || !sameIdentity(after, named) || digest(bytes) !== file.sha256) throw refused();
       } finally {
         if (fd !== undefined) closeDescriptor(fd, bytes, target);
       }

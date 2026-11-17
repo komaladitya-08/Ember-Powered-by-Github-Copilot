@@ -10,13 +10,15 @@ import { ScopedCodingFileError } from "./coding-platform";
 import type { CodingExportEntry } from "./coding-result-export";
 import { WindowsCodingCleanupError, decodeWindowsCodingDirectoryBatch, type WindowsCodingInfo, type WindowsCodingKind } from "./windows-coding-native";
 import { windowsCodingRelative, windowsCodingFold, windowsCodingWithin } from "./windows-coding-policy";
+import { inspectWindowsCodingCommandParent, refreshWindowsCodingCommandParent, consumeWindowsCodingCommandParent, type WindowsCodingCommandParentRef } from "./windows-coding-copy";
+import type { WindowsCommandTransferIntakeRef } from "./windows-command-copy";
 import { requireWindowsCommandRootOnlyCompletion, requireWindowsCommandRootOnlyUnconsumedCreatorStopped, requireWindowsCommandRootOnlyPreparing, requireWindowsCommandRootOnlyTokenHandle, requireWindowsCommandRootOnlyAttestingCurrent, takeWindowsCommandRootOnlyAttesting } from "./windows-command-stop";
 import { windowsCommandCreatorTokenSid } from "./windows-command-creator-token";
 import { windowsCommandCreatorProfile, bindWindowsCommandCreatorTree, requireWindowsCommandCreatorTree, releaseWindowsCommandCreatorTree,
   type WindowsCommandCreatorProfileRef } from "./windows-command-creator-profile";
 
 export interface FreshWindowsCommandTreeInput { parent: string; protectedPaths: readonly string[]; entries: readonly CodingExportEntry[]; current(): boolean;
-  creatorProfile?: WindowsCommandCreatorProfileRef }
+  creatorProfile?: WindowsCommandCreatorProfileRef; commandParent?: WindowsCodingCommandParentRef; commandIntake?: WindowsCommandTransferIntakeRef }
 declare const creatorGrantBrand: unique symbol;
 export interface WindowsCommandCreatorGrantRef { readonly scope: "root-only-creator-grant"; readonly [creatorGrantBrand]: true }
 export interface FreshWindowsCommandTree {
@@ -119,6 +121,8 @@ function absolute(value: string): string {
 function capture(input: FreshWindowsCommandTreeInput) {
   if (!input || typeof input.current !== "function" || !Array.isArray(input.entries) || input.entries.length > MAX_ENTRIES || !Array.isArray(input.protectedPaths) ||
       input.protectedPaths.length < 1 || input.protectedPaths.length > 64) throw boundary();
+  const commandParent = input.commandParent, commandIntake = input.commandIntake;
+  if (!!commandParent !== !!commandIntake) throw boundary();
   const parent = absolute(input.parent), protectedPaths = input.protectedPaths.map(absolute), seen = new Set<string>(), kinds = new Map<string, WindowsCodingKind>();
   let total = 0;
   const entries = input.entries.map(raw => {
@@ -133,7 +137,7 @@ function capture(input: FreshWindowsCommandTreeInput) {
   });
   for (const entry of entries) { const parts = entry.path.split("/"); for (let i = 1; i < parts.length; i++) if (kinds.get(windowsCodingFold(parts.slice(0, i).join("/"))) !== "directory") throw boundary(); }
   entries.sort((a, b) => a.path.split("/").length - b.path.split("/").length || a.path.localeCompare(b.path, "en"));
-  return { parent, protectedPaths, entries, current: input.current.bind(input), creatorProfile: input.creatorProfile };
+  return { parent, protectedPaths, entries, current: input.current.bind(input), creatorProfile: input.creatorProfile, commandParent, commandIntake };
 }
 export const WINDOWS_COMMAND_COPY_FUNCTIONS = {
   ntdll: [
@@ -418,7 +422,17 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
     stage = 2;
     const parent = await pin(selected.parent, true); if (parent.identity.kind !== "directory") return poison(5);
     const protectedPins: Awaited<ReturnType<typeof pin>>[] = []; for (const name of selected.protectedPaths) protectedPins.push(await pin(name));
-    for (const protectedPin of protectedPins) if (windowsCodingWithin(parent.identity.finalPath, protectedPin.identity.finalPath) || windowsCodingWithin(protectedPin.identity.finalPath, parent.identity.finalPath)) return poison(5);
+    const owned = selected.commandParent ? inspectWindowsCodingCommandParent(selected.commandParent, selected.parent, selected.protectedPaths, selected.commandIntake!) : undefined;
+    let exceptions = 0;
+    if (owned && !same(owned.copies, parent.identity)) return poison(5);
+    for (const protectedPin of protectedPins) if (windowsCodingWithin(parent.identity.finalPath, protectedPin.identity.finalPath) || windowsCodingWithin(protectedPin.identity.finalPath, parent.identity.finalPath)) {
+      if (!owned || !same(owned.common, protectedPin.identity) || same(parent.identity, protectedPin.identity) ||
+          !windowsCodingWithin(parent.identity.finalPath, protectedPin.identity.finalPath)) return poison(5);
+      exceptions++;
+    }
+    if (selected.commandParent) {
+      if (exceptions !== 1) return poison(5);
+    }
     stage = 3;
     const rootName = `ember-command-${randomUUID()}`;
     const creatorParent = acquire(parent.relativeParent, parent.componentName, "directory", 0x1200a6, 3); if (!same(parent.identity, info(creatorParent))) return poison(5);
@@ -430,7 +444,15 @@ export function bindWindowsCommandCopyNative(native: Pick<typeof Koffi, "sizeof"
       const raw = acquire(parentRaw, name, kind, META | (kind === "directory" ? TRAVERSE : 0), 7); if (!same(identity, info(raw))) return poison(5);
       const node: Node = { raw, kind, relative, parent: parentNode, name, identity, acl: "private", executable }; nodes.add(node); security(node, "private"); streams(raw, kind, identity.size); if (parentNode) closeRaw(parentRaw); return { node, creator };
     };
-    active(); const createdRoot = make(undefined, rootName, "directory", ""); const root = createdRoot.node; closeRaw(createdRoot.creator); closeRaw(creatorParent);
+    active();
+    if (selected.commandParent) {
+      const fresh = refreshWindowsCodingCommandParent(selected.commandParent, selected.commandIntake!);
+      const common = protectedPins.find(pin => same(fresh.common, pin.identity));
+      if (!same(fresh.copies, info(parent.raw)) || !common || !same(fresh.common, info(common.raw)) ||
+          same(parent.identity, common.identity) || !windowsCodingWithin(parent.identity.finalPath, common.identity.finalPath)) return poison(5);
+      consumeWindowsCodingCommandParent(selected.commandParent);
+    }
+    const createdRoot = make(undefined, rootName, "directory", ""); const root = createdRoot.node; closeRaw(createdRoot.creator); closeRaw(creatorParent);
     const rootIdentity = { ...root.identity }, directory = path.join(selected.parent, rootName);
     const checkRoot = () => {
       usable(); let rootNow: WindowsCodingInfo | undefined, parentNow: WindowsCodingInfo | undefined;

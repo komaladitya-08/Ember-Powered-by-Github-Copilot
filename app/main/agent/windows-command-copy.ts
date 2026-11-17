@@ -85,7 +85,7 @@ export interface WindowsCommandTransferHostOptions {
   packageCurrent(): boolean;
 }
 const transferIntakes = new WeakMap<object, { active: boolean; requireOwner(): void }>();
-const inputProducers = new WeakMap<object, { requireClosed(): void; discardSnapshot(): void; requireUnstarted(): void; releaseUnstarted(): void }>();
+const inputProducers = new WeakMap<object, { requireClosed(): void; discardSnapshot(): void; requireUnstarted(): void; releaseUnstarted(): void; requirePreparing(intake: WindowsCommandTransferIntakeRef): void }>();
 /** Only the exact synchronously initializing owner can receive a complete canonical capture. */
 export function requireWindowsCommandTransferIntake(ref: unknown): void {
   if (!ref || typeof ref !== "object") throw new ScopedCodingFileError("boundary");
@@ -110,6 +110,11 @@ export function discardWindowsCommandInputSnapshot(input: WindowsCodingCommandIn
 export function requireWindowsCommandUnstartedInput(input: WindowsCodingCommandInputRef): void {
   if (!input || typeof input !== "object") throw new ScopedCodingFileError("boundary");
   const value = inputProducers.get(input); if (!value) throw new ScopedCodingFileError("boundary"); value.requireUnstarted();
+}
+/** Only the exact still-initializing receiver may consume its canonical command-parent exception. */
+export function requireWindowsCommandInputProducerPreparing(input: WindowsCodingCommandInputRef, intake: WindowsCommandTransferIntakeRef): void {
+  const value = input && typeof input === "object" ? inputProducers.get(input) : undefined;
+  if (!value) throw new ScopedCodingFileError("boundary"); value.requirePreparing(intake);
 }
 /** One-shot reservation release only. No bytes, stopped proof, imported tree or execution authority is issued. */
 export function releaseWindowsCommandUnstartedInput(input: WindowsCodingCommandInputRef, receiver: WindowsCodingCommandReceiverRef): void {
@@ -210,6 +215,10 @@ export class WindowsRootOnlyCommandCopy {
     this.#requireProducerClosed();
     if (this.#lastRun || this.#run || this.#snapshotIssued || this.#snapshot || this.#unstartedReleased) throw new ScopedCodingFileError("boundary");
   }
+  #requirePreparing(): void {
+    this.#usable();
+    if (this.#closed || this.#retired || !this.#canonicalInput || this.#tree || this.#run || this.#lastRun || this.#snapshotIssued) throw new ScopedCodingFileError("boundary");
+  }
   #discardSnapshot(): void {
     const value = this.#snapshot; if (!value || value.phase === "used") return;
     if (value.phase !== "ready") throw new ScopedCodingFileError("boundary");
@@ -246,7 +255,8 @@ export class WindowsRootOnlyCommandCopy {
       data = takeWindowsCodingCommandInput(input, intake);
       // No callback or await separates the parent's one-shot claim from the exact producer ledger.
       inputProducers.set(input, { requireClosed: () => owner.#requireProducerClosed(), discardSnapshot: () => owner.#discardSnapshot(),
-        requireUnstarted: () => owner.#requireUnstarted(), releaseUnstarted: () => { owner.#requireUnstarted(); owner.#unstartedReleased = true; } });
+        requireUnstarted: () => owner.#requireUnstarted(), releaseUnstarted: () => { owner.#requireUnstarted(); owner.#unstartedReleased = true; },
+        requirePreparing: expected => { if (expected !== intake) throw new ScopedCodingFileError("boundary"); owner.#requirePreparing(); } });
       const { entries: _entries, ...captured } = data;
       owner.#canonicalInput = { ref: input, data: captured }; state.active = false;
       owner.#initialize({ parent: data.parent, protectedPaths: data.protectedPaths, entries: data.entries,
@@ -263,7 +273,8 @@ export class WindowsRootOnlyCommandCopy {
       try {
         // The fixed native factory clones every admitted entry synchronously, before its first await.
         creating = createFreshWindowsCommandTree({ parent: owner.#input.parent, protectedPaths: owner.#input.protectedPaths,
-          entries: data.entries, creatorProfile: owner.#input.creatorProfile, current: owner.#nativeCurrent });
+          entries: data.entries, creatorProfile: owner.#input.creatorProfile, current: owner.#nativeCurrent,
+          ...(data.commandParent ? { commandParent: data.commandParent, commandIntake: intake } : {}) });
       } finally { erase(); }
       owner.#tree = await creating;
       if ([owner.#tree.prepareCreator, owner.#tree.captureCreator, owner.#tree.revokeCreator].some(method => typeof method !== "function")) throw new ScopedCodingFileError("boundary");

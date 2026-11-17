@@ -108,8 +108,8 @@ jobs:
         env:
           EMBER_ELECTRON_WINDOWS_CODING_TEST: "1"
   packaged-controller:
-    # Independent of the ordinary Windows job's unresolved LPAC command-runner gate.
-    name: Windows ZIP launch and packaged controller dependencies (${{ matrix.image }})
+    # Explicit files-only regression coverage. The required Node product ZIP has its own authenticated gate.
+    name: Windows files-only ZIP and packaged controller dependencies (${{ matrix.image }})
     strategy:
       fail-fast: false
       matrix:
@@ -131,8 +131,15 @@ jobs:
         with:
           path: .cache/remote-parts
           key: windows-packaged-remote-parts-${{ hashFiles('package-lock.json') }}
-      - name: Build and create the actual Windows ZIP with normal fuses
-        run: npm run package:win
+      - name: Build the explicit files-only regression ZIP with normal fuses
+        # package:win now requires reviewed Node assets; this unchanged file-only proof grants no Node capability.
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build
+          node scripts/package/remote-parts.mjs
+          node scripts/package/stage.mjs
+          node scripts/package/archive.mjs
       - name: Extracted ZIP launch, development guards and shipped native controller dependencies
         timeout-minutes: 5
         run: node scripts/run-integration.mjs test/integration/windows-packaged-coding-native.test.ts --maxWorkers=1

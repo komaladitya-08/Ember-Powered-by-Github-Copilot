@@ -23,7 +23,7 @@ export function nodeAssetFake(configuration: { fence?: WindowsNodeToolchainFence
   const fence: WindowsNodeToolchainFence = configuration.fence ?? { retained: [] };
   const state = { current: true, fault: "", faultMode: "throw", readCalls: 0, writes: 0, maximumRead: 0, maximumWrite: 0, copiedBytes: 0, yieldsSeen: 0,
     nativeReadsAfterCreate: 0, tokenFault: "", allowWriteDac: false, allowWriteOwner: false, ordinaryAppContainer: false, ownerRights: true, ownerMask: 0x20000, packageMask: RX, low: true,
-    imageMismatch: false, sourceTamper: false, writeTamper: false, closeCalls: 0, frees: 0, nextHandleAlias: undefined as bigint | undefined,
+    imageMismatch: false, imagePath: "", sourceTamper: false, writeTamper: false, closeCalls: 0, frees: 0, nextHandleAlias: undefined as bigint | undefined,
     replaceHandover: "" as "" | "image" | "root",
     textBefore: "" as "" | "profile" | "descriptor",
     onCall: undefined as ((name: string, args: unknown[]) => void) | undefined,
@@ -139,7 +139,7 @@ export function nodeAssetFake(configuration: { fence?: WindowsNodeToolchainFence
     FlushFileBuffers: () => 1,
     NtSetInformationFile: (raw, io) => { const f = row(raw); f.removed = true; (io as Buffer).writeUInt32LE(0); return 0; },
     GetProcessId: () => io.state.returnedPid,
-    QueryFullProcessImageNameW: (_process, _flags, out, count) => { const image = [...nodes.values()].find(f => f.name.startsWith("C:\\scratch\\tools\\ember-node-") && f.kind === "file")!;
+    QueryFullProcessImageNameW: (_process, _flags, out, count) => { const image = state.imagePath ? nodes.get(state.imagePath)! : [...nodes.values()].find(f => f.name.startsWith("C:\\scratch\\tools\\ember-node-") && f.kind === "file")!;
       const name = state.imageMismatch ? "C:\\foreign\\node.exe" : image.name; (out as Buffer).write(name, "utf16le"); (count as number[])[0] = name.length; return 1; },
     AccessCheck: (raw, token, desired, _mapping, _privileges, length, granted, allowed) => { const d = descriptors.get(raw as bigint)!, h = handles.get(token as bigint); if (h?.role !== "duplicate") throw Error("PRIVATE AccessCheck requires an impersonation duplicate");
       const mask = Number(desired), permitted = d.behaviouralPrincipal !== undefined ? mask === 1 && (d.behaviouralPrincipal === profile.sidText || d.behaviouralPrincipal === "S-1-15-2-1" && state.ordinaryAppContainer) :

@@ -499,6 +499,14 @@ jobs:
           path: dist/eval/
           retention-days: 30
 
+  windows-node-product:
+    name: Windows Node product
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'windows'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/windows-node-product.yml
+
   windows:
     name: Windows (unit tests, build, smoke, UI Automation, zip)
     if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'windows'
@@ -605,12 +613,8 @@ jobs:
           EMBER_WIN32_TEST: "1"
           EMBER_UIA_TEST: "1"
           EMBER_WINSYS_TEST: "1"
-      - name: Experimental LPAC fixture (native token, private job, ACL and descendant shutdown)
-        timeout-minutes: 5
-        run: node scripts/run-integration.mjs test/integration/experimental-windows-lpac-native.test.ts
-      - name: Isolated PowerShell toolchain compatibility (fresh LPAC-only assets)
-        timeout-minutes: 5
-        run: node scripts/run-integration.mjs test/integration/isolated-windows-command-powershell-native.test.ts
+      # Unsupported descendant-launch / PowerShell experiments retain their exact assertions and failing status in
+      # coding-boundary.yml. The required windows-node-product job proves the supported root-only Node contract.
       # The speech models go inside the app, so one download carries everything Ember runs on the computer (network-
       # restricted PCs never need github.com for voice).
       - name: Speech models to bundle (cached; verified by SHA-256)
@@ -641,6 +645,7 @@ jobs:
         run: node scripts/package/runtimes.mjs
       - name: Stage Ember (Ember.exe with its own version resource and icon) and zip it
         # Runs after a failed integration step too (the job stays failed): the package's checks don't depend on it.
+        # This desktop/speech regression ZIP is separate from the authenticated Node product ZIP used by release.
         if: ${{ !cancelled() }}
         run: |
           # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
@@ -1148,7 +1153,7 @@ jobs:
     name: Publish the release (v* tags, after every other job passed)
     # docs/DEVELOPING.md §15. Only a v* tag gets here, and only once every platform's checks and packages are green.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [checks, el8, voice-e2e, package, eval, windows, macos, macos-x64]
+    needs: [checks, el8, voice-e2e, package, eval, windows, windows-node-product, macos, macos-x64]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -1174,7 +1179,7 @@ jobs:
       - name: "Release files: ember-windows"
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ember-windows
+          name: ember-windows-node-product-windows-2022
           path: dist/release
       - name: "Release files: ember-macos"
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

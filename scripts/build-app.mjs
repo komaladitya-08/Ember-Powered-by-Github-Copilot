@@ -8,10 +8,16 @@ import { build, buildSync } from "esbuild";
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { stageWindowsNodeToolchainDevelopment } from "./package/windows-node-toolchain-dev.mjs";
 
 const root = new URL("../", import.meta.url);
 const out = new URL("dist/app/", root);
 const remoteOut = new URL("dist/remote/", root);
+// Development Electron uses its own resources directory. The supported Windows coding workflow stages strictly first.
+const windowsNodeDevelopment = stageWindowsNodeToolchainDevelopment({ required: false });
+if (windowsNodeDevelopment.status === "staged" || windowsNodeDevelopment.status === "verified") {
+  console.log(`Pinned Windows coding Node development resources ${windowsNodeDevelopment.status} (${windowsNodeDevelopment.files} files).`);
+}
 // A fixed trusted worker program embedded in the app, with no runtime path/source fallback or project-code loader.
 const privacyWorker = buildSync({ entryPoints: ["app/main/agent/coding-privacy-worker.ts"], absWorkingDir: fileURLToPath(root),
   bundle: true, platform: "node", format: "cjs", target: "node22", write: false, logLevel: "silent" }).outputFiles[0].text;

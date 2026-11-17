@@ -2396,7 +2396,7 @@ function start(): void {
     protectedPaths: [userData, app.getAppPath(), process.resourcesPath],
     currentOwner: () => agent?.projectWorkspaceScope() ?? null,
     projectExists: id => agent?.projectSessionsState().projects.some(project => project.id === id) === true,
-    env: process.env, execPath: process.execPath, isElectron: true, changed: projectCodingChanged,
+    env: process.env, execPath: process.execPath, resourcesPath: process.resourcesPath, isElectron: true, changed: projectCodingChanged,
   });
   const codingResourcesReady = codingBackend.ready.then(resources => { codingResources = resources; projectCodingChanged(); return resources; });
   // Keep initialization errors private; availability describes the failure without exposing storage paths.
@@ -2405,7 +2405,7 @@ function start(): void {
     ? { available: false, message: "Coding is unavailable after a vault fill until Ember restarts." }
     : codingCleanupPending || codingCleanupFailed
       ? { available: false, message: "Coding cleanup could not finish yet. Forget everything tries again before new coding work." }
-      : codingResources?.availability() ?? { available: false, message: "Checking the isolated coding tools on this computer." };
+      : codingResources?.availability(settings.get().commands.local?.on === true ? "commands" : "files-only") ?? { available: false, message: "Checking the isolated coding tools on this computer." };
   const resetProjectCoding = (): Promise<void> => {
     const attempt = ++codingCleanupAttempt;
     const host = agent;
@@ -4065,7 +4065,7 @@ function start(): void {
         continuationCurrent: (ref, projectId) => codingResources?.continuationCurrent(ref, projectId) === true,
         get reviewBase() { return codingResources?.reviewBase ?? ""; },
         publish: async (spec, output, status, checks) => (await codingResourcesReady).publish(spec, output, status, checks),
-      }),
+      }, () => settings.get().commands.local?.on === true),
       codingWorkspace: codingCurrent,
       codingClarify: (request, signal) => targets?.codingClarify(request, signal) ?? Promise.resolve(null),
       onCodingRunning: running => {

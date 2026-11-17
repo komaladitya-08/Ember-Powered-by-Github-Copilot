@@ -29,6 +29,8 @@ export interface ProjectCodingResourcesOptions {
   env: NodeJS.ProcessEnv;
   execPath: string;
   isElectron: boolean;
+  /** Trusted installed Electron resources; required by the Windows Node capability, never inferred from PATH. */
+  resourcesPath?: string;
   changed?(): void;
   /** Main may create this synchronously while these filesystem resources initialize asynchronously. */
   folders?: ProjectCodingWorkspaces;

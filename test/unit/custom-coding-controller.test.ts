@@ -72,7 +72,7 @@ const finish = (session: any) => call(session, "finish_coding", { success: true,
 
 function fileOnly() {
   const f = fixture();
-  const { commands: _commands, runCommand: _runCommand, runNode: _runNode, ...common } = f.options;
+  const { commands: _commands, runCommand: _runCommand, runNode: _runNode, toolchain: _toolchain, ...common } = f.options;
   const options: FileOnlyCodingControllerOptions = { ...common, mode: "files-only" };
   return { ...f, options };
 }
@@ -487,6 +487,23 @@ it("starts a Node-only controller with no shell tool or shell instructions", asy
   expect(JSON.stringify(sim.sessions[0].config.systemMessage)).not.toContain("run_command");
   sim.drive = async session => { await call(session, "run_node", { argv: ["--version"], why: "Verify the copy" }); await finish(session); };
   expect((await c.run("Verify the copied code")).success).toBe(true); expect(runNode).toHaveBeenCalledTimes(1); expect(f.runCommand).not.toHaveBeenCalled();
+});
+
+it("adds only the fixed host Windows constraints to a genuine Node-only tool inventory", async () => {
+  const f = fixture(), { commands: _commands, runCommand: _runCommand, ...base } = f.options;
+  const runNode = vi.fn<NonNullable<CustomCodingControllerOptions["runNode"]>>(async () => ({ result: "checked", success: true }));
+  await start({ ...base, commands: { target: "This computer", shells: [], node: true }, runNode, toolchain: "windows-node" });
+  const config = sim.sessions[0].config, text = JSON.stringify(config.systemMessage);
+  expect(text).toContain("Only bundled Node is supplied"); expect(text).toContain("--experimental-test-isolation=none");
+  expect(config.tools.map((tool: any) => tool.name)).toContain("run_node");
+  expect(config.tools.map((tool: any) => tool.name)).not.toContain("run_command");
+});
+
+it("rejects Windows Node constraints on shell and files-only capabilities before starting the controller runtime", async () => {
+  const f = fixture();
+  await expect(CustomCodingController.start({ ...f.options, toolchain: "windows-node" })).rejects.toThrow("toolchain capability is invalid");
+  await expect(CustomCodingController.start({ ...fileOnly().options, toolchain: "windows-node" } as unknown as CodingControllerOptions)).rejects.toThrow("toolchain capability is invalid");
+  expect(sim.inputs).toEqual([]);
 });
 
 it("rejects neither-lane and forged Node-only startup before creating the runtime", async () => {

@@ -1,0 +1,513 @@
+/**
+ * Actual shipped ZIP -> ordinary Windows UI -> Main/preloads/Host/SDK/native Node.
+ * No debugger, app injection, development provider, test IPC or issuing-API replacement.
+ * Required: EMBER_PACKAGED_WINDOWS_NODE_TEST=1 and EMBER_WINDOWS_NODE_PACKAGE=<absolute tested ZIP>.
+ * Windows execution remains blocked by the independently reviewed producer/native proof prerequisites.
+ */
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { spawn, type ChildProcess } from "node:child_process";
+import { expect, it } from "vitest";
+import { readFuses, emberFuses, fuseMismatches } from "../../scripts/package/fuses.mjs";
+import { verifyWindowsNodeToolchain, WINDOWS_NODE_TOOLCHAIN } from "../../scripts/package/windows-node-toolchain.mjs";
+import { openWin32Input } from "../../app/main/platform/win32/input";
+import { titleOf } from "../../app/main/agent/tasks";
+import { UiaBridge, bridgeEnv, type RawNode, type UiaWindow } from "./uia-client";
+import {
+  createWindowsNodeProductModel, windowsNodeSourceScenarios, WINDOWS_NODE_REPAIR, WINDOWS_NODE_CONTINUATION,
+  WINDOWS_NODE_TEST_ARGV, WINDOWS_NODE_WRITER_ARGV, WINDOWS_NODE_WRITER_READY, WINDOWS_NODE_PRODUCT_TOOLS,
+  WINDOWS_NODE_SOURCE_ORIGINAL, WINDOWS_NODE_SOURCE_WRITER,
+} from "../fixtures/windows-node-product-model";
+
+const required = process.env.EMBER_PACKAGED_WINDOWS_NODE_TEST === "1";
+const outside = "PACKAGED_NODE_OUTSIDE_MUST_STAY_LOCAL", privateCanary = "gho_" + "Q".repeat(36);
+const excludedGit = "PACKAGED_NODE_EXCLUDED_GIT", excludedDependency = "PACKAGED_NODE_EXCLUDED_DEPENDENCY";
+const environmentCanary = "PACKAGED_NODE_HOST_ENVIRONMENT_MUST_STAY_LOCAL", readme = "Unchanged packaged Node source fixture.\n";
+let quarantined = false;
+type Model = Awaited<ReturnType<typeof createWindowsNodeProductModel>>;
+type Selector = (node: RawNode) => boolean;
+const id = (value: string): Selector => node => node.automationId === value;
+const named = (value: string): Selector => node => node.name === value;
+// Bridge handles address one observation. UIA runtime IDs identify the same actual element across observations.
+function sameNode(left: RawNode, right: RawNode): boolean {
+  return !!left.runtimeId && Number.isSafeInteger(left.pid) && left.pid! > 0 && left.runtimeId === right.runtimeId && left.pid === right.pid
+    && left.automationId === right.automationId && left.controlType === right.controlType;
+}
+function subtree(nodes: readonly RawNode[], select: Selector): RawNode[] {
+  const root = nodes.findIndex(select); if (root < 0) return [];
+  const included = new Set([root]), selected: RawNode[] = [];
+  for (const [index, node] of nodes.entries()) if (index === root || included.has(node.parent ?? -1)) { included.add(index); selected.push(node); }
+  return selected;
+}
+const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+function refusal(phase: number): Error {
+  const error = new Error("Windows Node packaged journey refused (phase " + phase + ").");
+  error.stack = "Error: " + error.message; return error;
+}
+function hash(file: string): string { return createHash("sha256").update(fs.readFileSync(file)).digest("hex"); }
+function ordinary(file: string): boolean { const info = fs.lstatSync(file); return info.isFile() && !info.isSymbolicLink() && info.nlink === 1; }
+async function bounded<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try { return await Promise.race([work, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(refusal(12)), ms); })]); }
+  finally { clearTimeout(timer); }
+}
+
+/** Raw process output stays local; the outer boundary emits only the fixed phase. */
+async function run(file: string, args: readonly string[], env: NodeJS.ProcessEnv, ms: number, maximum = 1024 * 1024) {
+  const child = spawn(file, [...args], { env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  let stdout = "", stderr = 0, bad = false;
+  const timer = setTimeout(() => { bad = true; child.kill(); }, ms);
+  child.stdout.on("data", bytes => { if (stdout.length + bytes.length > maximum) { bad = true; child.kill(); } else stdout += bytes; });
+  child.stderr.on("data", bytes => { stderr += bytes.length; if (stderr > maximum) { bad = true; child.kill(); } });
+  try {
+    const result = await bounded(new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+      child.once("error", () => reject(refusal(1))); child.once("close", (code, signal) => resolve({ code, signal }));
+    }), ms + 5000);
+    if (bad || result.code !== 0 || result.signal) throw refusal(1);
+    return stdout;
+  } finally { clearTimeout(timer); }
+}
+
+/** Keep the real OS profile for AppContainer creation, while excluding account credentials and injected loaders. */
+function environment(temporary: string, userData: string, github: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) if (/^(?:PATH|SYSTEMROOT|WINDIR|COMSPEC|PATHEXT|LANG|LC_ALL|LC_CTYPE|HOME|USERPROFILE|APPDATA|LOCALAPPDATA|PROGRAMDATA|ALLUSERSPROFILE|PROGRAMFILES|PROGRAMFILES\(X86\)|COMMONPROGRAMFILES)$/i.test(key)) env[key] = value;
+  return { ...env, TMPDIR: temporary, TMP: temporary, TEMP: temporary, EMBER_USER_DATA: userData, GH_CONFIG_DIR: github,
+    NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost", EMBER_NODE_SOURCE_CANARY: environmentCanary };
+}
+
+class Journey {
+  phase = 1;
+  readonly source: string;
+  readonly profile: string;
+  readonly temporary: string;
+  readonly exported: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly key = "synthetic_packaged_" + randomUUID();
+  readonly replacementKey = "synthetic_rotated_" + randomUUID();
+  private input: ReturnType<typeof openWin32Input> = null;
+  readonly archive: string;
+  executable = "";
+  resources = "";
+  appRoot = "";
+  executableHash = "";
+  private assets: readonly { path: string; sha256: string }[] = [];
+  private app?: ChildProcess;
+  private appClosed?: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+  private bridge?: UiaBridge;
+  private home = 0;
+  private previousCard = "";
+  private previousTabs = new Set<string>();
+  private stopped = false;
+  private forced = false;
+  private deadline = Date.now() + 300_000;
+  private watchdog?: ReturnType<typeof setTimeout>;
+  assertionsComplete = false;
+  constructor(readonly root: string, readonly model: Model) {
+    const selected = process.env.EMBER_WINDOWS_NODE_PACKAGE;
+    if (!selected || !path.isAbsolute(selected) || path.extname(selected).toLowerCase() !== ".zip" || !ordinary(selected)) throw refusal(1);
+    this.archive = fs.realpathSync.native(selected);
+    this.source = path.join(root, "source"); this.profile = path.join(root, "profile"); this.temporary = path.join(root, "temporary"); this.exported = path.join(root, "exported");
+    for (const directory of [this.source, this.profile, this.temporary, this.exported, path.join(root, "github"), path.join(root, "bridge-cache"), path.join(root, "extracted"), path.join(this.source, ".git"), path.join(this.source, "node_modules")]) fs.mkdirSync(directory);
+    fs.writeFileSync(path.join(this.source, "test.cjs"), WINDOWS_NODE_SOURCE_ORIGINAL);
+    fs.writeFileSync(path.join(this.source, "writer.cjs"), WINDOWS_NODE_SOURCE_WRITER);
+    fs.writeFileSync(path.join(this.source, "README.txt"), readme);
+    fs.writeFileSync(path.join(this.source, ".git/HEAD"), excludedGit);
+    fs.writeFileSync(path.join(this.source, "node_modules/fixture.js"), excludedDependency);
+    fs.writeFileSync(path.join(root, "outside.txt"), outside); fs.writeFileSync(path.join(this.profile, "credential-canary.txt"), privateCanary);
+    // No settings, provider agreement, API-key store or commands agreement is pre-seeded.
+    this.env = environment(this.temporary, this.profile, path.join(root, "github"));
+  }
+  private current(): void { if (this.stopped || this.forced || Date.now() >= this.deadline) throw refusal(this.phase); }
+  private async until<T>(read: () => Promise<T>, accepts: (value: T) => boolean, ms = 30_000): Promise<T> {
+    const end = Math.min(this.deadline, Date.now() + ms);
+    while (Date.now() < end) { this.current(); const value = await read(); if (accepts(value)) return value; await pause(150); }
+    throw refusal(this.phase);
+  }
+  private async windows(): Promise<UiaWindow[]> {
+    this.current();
+    const answer = await this.bridge!.request("topWindows", { pid: this.app!.pid, deadlineMs: 3000 }, 5000);
+    if (answer.error?.code === "busy" || answer.error?.code === "gone") return [];
+    if (answer.error) throw refusal(this.phase);
+    return (answer.result as { windows: UiaWindow[] }).windows.filter(window => window.pid === this.app!.pid && !window.busy && !window.skipped);
+  }
+  private async nodes(hwnd: number): Promise<RawNode[]> {
+    this.current();
+    const answer = await this.bridge!.request("snapshot", { hwnd, values: false, maxNodes: 2000, maxChildren: 500, deadlineMs: 3000 }, 5000);
+    if (answer.error?.code === "busy" || answer.error?.code === "gone") return [];
+    if (answer.error) throw refusal(this.phase);
+    const result = answer.result as { nodes: RawNode[]; busy: boolean; truncated: boolean; cut: string[] };
+    if (result.busy) return [];
+    if (result.truncated || result.cut.length || !result.nodes.length) throw refusal(this.phase);
+    return result.nodes;
+  }
+  private async node(hwnd: number, select: Selector, enabled = true): Promise<RawNode> {
+    const found = await this.until(async () => (await this.nodes(hwnd)).find(node => select(node) && (!enabled || node.isEnabled === true)), value => !!value);
+    return found!;
+  }
+  private async text(hwnd: number, select: Selector): Promise<string> {
+    const node = await this.node(hwnd, select, false); if (node.isPassword) throw refusal(this.phase);
+    const result = await this.bridge!.call<{ text?: string; secret?: boolean; truncated?: boolean }>("textInfo", { handle: node.h, maxChars: 32_000, deadlineMs: 2500 }, 5000);
+    if (result.secret || result.truncated) throw refusal(this.phase);
+    if (result.text) return result.text;
+    // A paragraph/group may expose only descendant StaticText. Read this exact subtree, never the whole document.
+    const snapshot = await this.bridge!.call<{ nodes: RawNode[]; busy: boolean; truncated: boolean; cut: string[] }>("snapshot", { handle: node.h, values: false, maxNodes: 500, maxChildren: 500, deadlineMs: 2500 }, 5000);
+    if (snapshot.busy || snapshot.truncated || snapshot.cut.length) throw refusal(this.phase);
+    const blocked = new Set<number>(), texts: string[] = [];
+    for (const [index, child] of snapshot.nodes.entries()) {
+      if (child.isPassword || blocked.has(child.parent ?? -1)) { blocked.add(index); continue; }
+      if (child.controlType === "Text" && child.name) texts.push(child.name);
+    }
+    const text = texts.join("\n"); if (text.length > 32_000) throw refusal(this.phase);
+    return text || node.name || "";
+  }
+  private async focus(hwnd: number, node: RawNode): Promise<RawNode> {
+    if (!this.input || this.input.blockedReason?.(hwnd)) throw refusal(this.phase);
+    this.input.activate(hwnd);
+    await this.bridge!.call("perform", { handle: node.h, op: "focus", deadlineMs: 2500 }, 5000);
+    await this.until(() => this.bridge!.call<{ element: RawNode | null; hwnd: number | null }>("focused", { values: false, deadlineMs: 2500 }, 5000),
+      result => result.hwnd === hwnd && !!result.element && sameNode(result.element, node) && result.element.hasKeyboardFocus === true, 10_000);
+    const fresh = (await this.nodes(hwnd)).find(value => sameNode(value, node));
+    if (!fresh || fresh.isOffscreen || !fresh.bounds || fresh.bounds.width <= 0 || fresh.bounds.height <= 0 || this.input.activeWindow() !== hwnd) throw refusal(this.phase);
+    return fresh;
+  }
+  private pressKey(name: string): void {
+    const key = this.input!.keysymOf(name); if (!key) throw refusal(this.phase);
+    try { if (!this.input!.keysym(key, true)) throw refusal(this.phase); } finally { this.input!.keysym(key, false); }
+  }
+  private chord(modifier: string, key: string): void {
+    const symbol = this.input!.keysymOf(modifier); if (!symbol || !this.input!.keysym(symbol, true)) throw refusal(this.phase);
+    try { this.pressKey(key); } finally { this.input!.keysym(symbol, false); }
+  }
+  private type(value: string): void {
+    if (!this.input?.textKey) throw refusal(this.phase);
+    for (const character of value) { this.current(); if (!this.input.textKey(character, true) || !this.input.textKey(character, false)) throw refusal(this.phase); }
+  }
+  private async click(hwnd: number, select: Selector): Promise<void> {
+    const node = await this.focus(hwnd, await this.node(hwnd, select)), box = node.bounds!;
+    this.input!.move(box.x + Math.floor(box.width / 2), box.y + Math.floor(box.height / 2));
+    try { this.input!.button(1, true); } finally { this.input!.button(1, false); this.input!.releaseAll(); }
+  }
+  private async fill(hwnd: number, select: Selector, value: string, password = false): Promise<void> {
+    const node = await this.focus(hwnd, await this.node(hwnd, select));
+    if (!!node.isPassword !== password) throw refusal(this.phase);
+    try { this.chord("Control_L", "a"); this.type(value); this.pressKey("Tab"); } finally { this.input!.releaseAll(); }
+  }
+  private async homeText(select: Selector): Promise<string> { return this.text(this.home, select); }
+  private async accessibleText(accepts: (value: string) => boolean, ms = 30_000): Promise<string> {
+    const found = await this.until(async () => (await this.nodes(this.home)).filter(node => node.controlType === "Text" && !node.isPassword && typeof node.name === "string")
+      .map(node => node.name!).find(value => { if (value.length > 32_000) throw refusal(this.phase); return accepts(value); }), value => value !== undefined, ms);
+    return found!;
+  }
+  private async idle(): Promise<void> {
+    await this.pane("Home"); await this.accessibleText(text => text === "Ready", 45_000);
+    await this.until(async () => this.model.requests.every((request: { doneAt?: number }) => typeof request.doneAt === "number"), Boolean);
+    await this.pane("Projects");
+  }
+  private async pane(name: string): Promise<void> { await this.click(this.home, node => node.controlType === "Hyperlink" && node.name === name); }
+  private async armed(hwnd: number, select: Selector): Promise<void> {
+    const before = await this.node(hwnd, select); await pause(600); this.current();
+    if (!sameNode(await this.node(hwnd, select), before)) throw refusal(this.phase);
+    await this.click(hwnd, select);
+  }
+  async start(): Promise<void> {
+    this.phase = 1;
+    expect(process.platform).toBe("win32"); expect(process.arch).toBe("x64");
+    // The old three-patch asset cannot certify the supported POSIX product milestone.
+    expect(WINDOWS_NODE_TOOLCHAIN.producerRun).not.toBe(43858256344);
+    this.input = openWin32Input(); expect(this.input).not.toBeNull();
+    const systemRoot = Object.entries(this.env).find(([key]) => key.toLowerCase() === "systemroot")?.[1]; if (!systemRoot) throw refusal(1);
+    const tar = path.join(systemRoot, "System32/tar.exe"), extracted = path.join(this.root, "extracted");
+    const names = (await run(tar, ["-t", "-f", this.archive], this.env, 30_000, 16 * 1024 * 1024)).split(/\r?\n/).filter(Boolean);
+    expect(names).toContain("Ember/Ember.exe"); expect(new Set(names.map(name => name.toLowerCase())).size).toBe(names.length);
+    expect(names.every(name => name.startsWith("Ember/") && !name.includes("\\") && !name.includes(":") && !name.split("/").some(part => part === ".." || part === "."))).toBe(true);
+    await run(tar, ["-x", "-f", this.archive, "-C", extracted], this.env, 45_000);
+    this.executable = path.join(extracted, "Ember/Ember.exe"); this.resources = path.join(extracted, "Ember/resources"); this.appRoot = path.join(this.resources, "app");
+    expect(ordinary(this.executable)).toBe(true); expect(fuseMismatches(readFuses(fs.readFileSync(this.executable)), emberFuses("win32"))).toEqual([]);
+    this.executableHash = hash(this.executable);
+    expect(hash(path.join(this.appRoot, "dist/app/main.cjs"))).toBe(hash(path.join(process.cwd(), "dist/app/main.cjs")));
+    expect(verifyWindowsNodeToolchain(path.join(this.resources, "coding/windows-node-x64")).files).toBe(3);
+    this.assets = ["node.exe", "LICENSE", "build-receipt.json"].map(name => { const file = path.join(this.resources, "coding/windows-node-x64", name); return { path: file, sha256: hash(file) }; });
+    const script = path.join(this.resources, "sidecar/uia/ember_uia.ps1");
+    expect(ordinary(script)).toBe(true); expect(ordinary(path.join(this.resources, "sidecar/uia/ember_uia.cs"))).toBe(true);
+    this.phase = 2;
+    this.app = spawn(this.executable, ["--show-settings"], { cwd: path.dirname(this.executable), env: this.env, stdio: "ignore", windowsHide: false });
+    this.appClosed = new Promise((resolve, reject) => { this.app!.once("error", () => reject(refusal(2))); this.app!.once("close", (code, signal) => resolve({ code, signal })); });
+    void this.appClosed.catch(() => undefined);
+    if (!this.app.pid) throw refusal(2);
+    this.watchdog = setTimeout(() => { this.forced = true; this.stopped = true; this.app?.kill(); }, 305_000);
+    this.bridge = new UiaBridge(script, bridgeEnv(this.env, { EMBER_UIA_CACHE: path.join(this.root, "bridge-cache") }));
+    await bounded(this.bridge.ready, 30_000);
+    await this.until(async () => {
+      for (const window of await this.windows()) if (window.name === "Ember") {
+        const nodes = await this.nodes(window.hwnd);
+        if (nodes.some(node => node.automationId === "w-next" || (node.controlType === "Hyperlink" && node.name === "Projects"))) return window.hwnd;
+      }
+      return 0;
+    }, hwnd => { if (hwnd) this.home = hwnd; return !!hwnd; }, 45_000);
+    await this.welcome(); await this.configureProvider(); await this.configureCommands();
+  }
+  private async welcome(): Promise<void> {
+    this.phase = 3;
+    for (let transition = 0; transition < 12; transition++) {
+      const nodes = await this.nodes(this.home);
+      if (nodes.some(node => node.controlType === "Hyperlink" && node.name === "Projects")) return;
+      const next = nodes.find(id("w-next")); if (!next) throw refusal(3);
+      const step = nodes.find(node => node.controlType === "Text" && /^Step \d+ of \d+$/.test(node.name ?? ""))?.name;
+      if (!step) throw refusal(3);
+      if (next.name === "Agree and continue") {
+        for (const row of ["memory", "voice", "screenshots", "interactive"]) {
+          const field = await this.node(this.home, id("w-row-" + row), false);
+          if (field.patterns.toggle === "On" && field.isEnabled) await this.click(this.home, id("w-row-" + row));
+          expect((await this.node(this.home, id("w-row-" + row), false)).patterns.toggle).toBe("Off");
+        }
+        expect((await this.node(this.home, id("w-row-commands"))).patterns.toggle).toBe("On");
+      }
+      const skip = nodes.find(node => node.automationId === "w-alt" && node.name === "Skip for now" && node.isEnabled);
+      const selected = skip ?? next;
+      expect(["Get started", "Agree and continue", "Skip for now", "Continue", "Continue anyway", "Start"]).toContain(selected.name);
+      if (selected.name === "Agree and continue") await this.armed(this.home, id(selected.automationId!));
+      else await this.click(this.home, id(selected.automationId!));
+      await this.until(() => this.nodes(this.home), fresh => fresh.some(node => node.controlType === "Hyperlink" && node.name === "Projects")
+        || fresh.some(node => node.controlType === "Text" && /^Step \d+ of \d+$/.test(node.name ?? "") && node.name !== step));
+    }
+    throw refusal(3);
+  }
+  private async configureProvider(): Promise<void> {
+    this.phase = 4; await this.pane("Models & connections");
+    await this.click(this.home, id("byok-on"));
+    await this.fill(this.home, id("byok-url"), this.model.baseUrl);
+    await this.fill(this.home, id("byok-conductor"), "mock-model"); await this.fill(this.home, id("byok-worker"), "mock-model");
+    await this.fill(this.home, id("byok-key"), this.key, true); await this.click(this.home, node => node.controlType === "Button" && node.name === "Save");
+    await this.node(this.home, named("Key saved"), false); await this.armed(this.home, id("byok-yes"));
+    await this.click(this.home, id("byok-test"));
+    await this.idle();
+    expect(fs.readFileSync(path.join(this.profile, "settings.json"), "utf8")).not.toContain(this.key);
+  }
+  private async configureCommands(): Promise<void> {
+    await this.pane("Commands");
+    expect((await this.node(this.home, named("Run commands on this computer"), false)).patterns.toggle).toBe("On");
+    const ask = named("Ask me before every command on this computer"), node = await this.node(this.home, ask, false);
+    if (node.patterns.toggle === "Off" && node.isEnabled) await this.click(this.home, ask);
+    expect((await this.node(this.home, ask, false)).patterns.toggle).toBe("On");
+  }
+  private async folder(title: string, destination: string): Promise<void> {
+    const dialog = (await this.until(() => this.windows(), windows => windows.some(window => window.name === title), 20_000)).find(window => window.name === title)!;
+    if (!this.input || this.input.blockedReason?.(dialog.hwnd)) throw refusal(this.phase);
+    this.input.activate(dialog.hwnd);
+    await this.until(async () => this.input!.activeWindow(), hwnd => hwnd === dialog.hwnd, 5000);
+    try { this.chord("Alt_L", "d"); this.type(destination); this.pressKey("Return"); } finally { this.input.releaseAll(); }
+    // Inspect the actual dialog after navigation; no hard-coded control ID or simulated dialog result.
+    await this.until(() => this.nodes(dialog.hwnd), nodes => nodes.some(node => (node.name ?? "").toLowerCase().includes(path.basename(destination).toLowerCase())));
+    await this.click(dialog.hwnd, node => node.controlType === "Button" && /^Select Folder$/i.test(node.name ?? ""));
+    await this.until(() => this.windows(), windows => !windows.some(window => window.hwnd === dialog.hwnd));
+  }
+  async project(name: string): Promise<void> {
+    this.phase = 5; await this.pane("Projects");
+    await this.fill(this.home, id("project-sessions-name"), "Packaged Node " + name); await this.click(this.home, id("project-sessions-add"));
+    await this.click(this.home, id("project-coding-choose")); await this.folder("Choose a coding folder", this.source);
+    await this.accessibleText(text => text.includes(this.source));
+    await this.accessibleText(text => text.includes("Shells, npm, dependency installation, network access and child processes are unavailable"));
+  }
+  async send(request: string): Promise<void> { await this.fill(this.home, id("project-sessions-request"), request); await this.click(this.home, id("project-sessions-send")); }
+  private async command(): Promise<number> { return (await this.until(() => this.windows(), windows => windows.some(window => window.name === "Ember commands"), 45_000)).find(window => window.name === "Ember commands")!.hwnd; }
+  async decide(argv: readonly string[], answer: "Allow" | "Not now" = "Allow"): Promise<void> {
+    this.phase = 6; const hwnd = await this.command();
+    const display = (await this.until(() => this.nodes(hwnd), nodes => nodes.some(node => node.automationId === "ask-cmd" && !!node.runtimeId && node.runtimeId !== this.previousCard), 45_000)).find(id("ask-cmd"))!;
+    await this.focus(hwnd, display);
+    expect(await this.text(hwnd, id("ask-cmd"))).toBe("Node arguments: " + JSON.stringify(argv));
+    expect((await this.nodes(hwnd)).map(node => node.name ?? "").join("\n")).toContain("\\work");
+    this.previousCard = display.runtimeId!;
+    this.previousTabs = new Set((await this.nodes(hwnd)).filter(node => node.controlType === "TabItem" && node.runtimeId).map(node => node.runtimeId!));
+    await this.click(hwnd, named(answer));
+  }
+  private async review(goal: string, counts: string): Promise<string> {
+    this.phase = 7; await this.pane("Projects");
+    await this.click(this.home, named("Review result: " + titleOf(goal)));
+    const region: Selector = node => node.automationId === "project-coding-review" || (["Group", "Pane"].includes(node.controlType ?? "") && node.name === titleOf(goal));
+    return this.until(() => this.homeText(region), text => text.includes(counts), 45_000);
+  }
+  private assertExport(cumulative: boolean): void {
+    const directories = fs.readdirSync(this.exported); expect(directories).toHaveLength(cumulative ? 2 : 1);
+    const newest = directories.map(name => path.join(this.exported, name)).find(directory => {
+      const parsed = JSON.parse(fs.readFileSync(path.join(directory, "review.json"), "utf8"));
+      return parsed.proposed.some((entry: { path: string; base64?: string }) => entry.path === "test.cjs" && Buffer.from(entry.base64 ?? "", "base64").toString().includes(cumulative ? "continued sum" : "test('sum'"));
+    });
+    expect(newest).toBeTruthy(); const json = fs.readFileSync(path.join(newest!, "review.json"), "utf8"), review = JSON.parse(json);
+    expect(review.purpose).toBe("review-only");
+    for (const tree of [review.baseline, review.current]) expect(tree).toContainEqual(expect.objectContaining({ path: "test.cjs", base64: Buffer.from(WINDOWS_NODE_SOURCE_ORIGINAL).toString("base64") }));
+    const proposed = WINDOWS_NODE_SOURCE_ORIGINAL.replace("1 + 1, 3", "1 + 1, 2").replace("test('sum'", cumulative ? "test('continued sum'" : "test('sum'");
+    expect(review.proposed).toContainEqual(expect.objectContaining({ path: "test.cjs", base64: Buffer.from(proposed).toString("base64") }));
+    expect(review.proposed).toContainEqual(expect.objectContaining({ path: "README.txt", base64: Buffer.from(readme).toString("base64") }));
+    expect(fs.readFileSync(path.join(newest!, "changes.patch"), "utf8")).toContain(proposed.trim());
+    for (const marker of [outside, privateCanary, environmentCanary, excludedGit, excludedDependency, this.key, this.replacementKey]) {
+      expect(json).not.toContain(marker); expect(json).not.toContain(Buffer.from(marker).toString("base64"));
+    }
+  }
+  private async exportReview(cumulative: boolean): Promise<void> {
+    await this.idle();
+    const before = this.model.requests.length;
+    await this.click(this.home, id("project-coding-export")); await this.folder("Export coding review", this.exported);
+    await this.accessibleText(text => text.includes("Exported the coding review"));
+    expect(this.model.requests.length).toBe(before); this.assertExport(cumulative);
+  }
+  async repair(): Promise<void> {
+    await this.project("repair"); await this.send(WINDOWS_NODE_REPAIR.request); await this.decide(WINDOWS_NODE_TEST_ARGV); await this.decide(WINDOWS_NODE_TEST_ARGV);
+    expect(await this.review(WINDOWS_NODE_REPAIR.goal, "Checks: 2 run, 1 passed, 1 failed")).toContain("Done ·");
+    expect(await this.homeText(id("project-coding-patch"))).toContain("1 + 1, 2"); await this.exportReview(false); this.assertUnchanged();
+    await this.click(this.home, id("project-coding-continue")); await this.fill(this.home, id("project-coding-continue-request"), WINDOWS_NODE_CONTINUATION.request);
+    await this.click(this.home, id("project-coding-continue-send")); await this.decide(WINDOWS_NODE_TEST_ARGV); await this.decide(WINDOWS_NODE_TEST_ARGV);
+    expect(await this.review(WINDOWS_NODE_CONTINUATION.goal, "Checks: 2 run, 2 passed, 0 failed")).toContain("Done ·");
+    expect(await this.homeText(id("project-coding-patch"))).toContain("continued sum"); await this.exportReview(true);
+    expect(this.model.steps.get("repair")).toBe(4); expect(this.model.steps.get("continuation")).toBe(5);
+    expect(JSON.stringify(this.model.results.get("repair"))).toContain("ERR_ASSERTION");
+    await this.forget();
+  }
+  async deny(): Promise<void> {
+    const scenario = windowsNodeSourceScenarios("denied")[0]; await this.project("denied"); await this.send(scenario.request); await this.decide(WINDOWS_NODE_TEST_ARGV, "Not now");
+    expect(await this.review(scenario.goal, "Checks: 0 run, 0 passed, 0 failed")).toMatch(/Didn't finish ·[^\n]*Checks: 0 run, 0 passed, 0 failed/);
+    expect(this.model.steps.get("denied")).toBe(1); await this.forget();
+  }
+  private async clipboard(mode: "clear" | "ready"): Promise<boolean> {
+    const systemRoot = Object.entries(this.env).find(([key]) => key.toLowerCase() === "systemroot")?.[1]; if (!systemRoot) throw refusal(this.phase);
+    const script = mode === "clear" ? "Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.Clipboard]::SetText('PACKAGED_NODE_CLIPBOARD_FRESH');[Console]::Write('1')"
+      : "Add-Type -AssemblyName System.Windows.Forms;$s=[System.Windows.Forms.Clipboard]::GetText();if($s.Contains('" + WINDOWS_NODE_WRITER_READY + "')){[Console]::Write('1')}else{[Console]::Write('0')}";
+    return await run(path.join(systemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe"), ["-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-Command", script], bridgeEnv(this.env), 10_000, 4096) === "1";
+  }
+  private async writerReady(): Promise<void> {
+    const hwnd = await this.command(); expect(await this.clipboard("clear")).toBe(true);
+    const freshTab = (node: RawNode) => node.controlType === "TabItem" && !!node.runtimeId && !this.previousTabs.has(node.runtimeId) && node.patterns.selectionItem?.selected === true;
+    const panelFor = (nodes: readonly RawNode[], tab: RawNode) => {
+      if (!/^tab-\d+$/.test(tab.automationId ?? "")) throw refusal(this.phase);
+      return subtree(nodes, id(tab.automationId!.replace(/^tab-/, "panel-")));
+    };
+    const live = (node: RawNode) => node.controlType === "Button" && (node.name ?? "").startsWith("Stop: ") && node.isEnabled === true;
+    const selected = (await this.until(() => this.nodes(hwnd), nodes => {
+      const tab = nodes.find(freshTab); return !!tab && panelFor(nodes, tab).some(live);
+    })).find(freshTab)!;
+    await this.until(async () => {
+      const nodes = await this.nodes(hwnd);
+      const panel = panelFor(nodes, selected);
+      if (!nodes.some(node => sameNode(node, selected) && node.patterns.selectionItem?.selected === true) || !panel.some(live)) throw refusal(this.phase);
+      const command = panel.find(named("The command")); if (!command) throw refusal(this.phase);
+      expect(await this.text(hwnd, node => sameNode(node, command))).toBe("Node arguments: " + JSON.stringify(WINDOWS_NODE_WRITER_ARGV));
+      const copy = panel.find(node => node.name === "Copy output" && node.isEnabled);
+      if (!copy) return false;
+      await this.click(hwnd, node => sameNode(node, copy)); return this.clipboard("ready");
+    }, Boolean, 30_000);
+  }
+  async writer(kind: "stop" | "mode" | "account"): Promise<void> {
+    const scenario = windowsNodeSourceScenarios(kind)[0]; await this.project(kind); await this.send(scenario.request); await this.decide(WINDOWS_NODE_WRITER_ARGV); await this.writerReady();
+    this.phase = 8; await this.pane("Projects");
+    expect((await this.node(this.home, id("project-coding-forget"), false)).isEnabled).toBe(false);
+    expect((await this.node(this.home, id("project-sessions-forget"), false)).isEnabled).toBe(false);
+    if (kind === "stop") await this.click(this.home, node => (node.name ?? "").startsWith("Stop session:"));
+    else if (kind === "mode") {
+      await this.pane("Apps & privacy"); await this.click(this.home, id("mode-assisted")); await this.armed(this.home, id("approvals-yes")); await this.pane("Projects");
+    } else {
+      await this.pane("Models & connections"); await this.click(this.home, id("byok-key-replace"));
+      await this.fill(this.home, id("byok-key"), this.replacementKey, true); await this.click(this.home, node => node.controlType === "Button" && node.name === "Save");
+      await this.node(this.home, named("Key saved"), false); await this.pane("Projects");
+    }
+    if (kind === "account") {
+      await this.idle();
+      await this.until(() => this.nodes(this.home), nodes => nodes.some(node => node.automationId === "project-sessions-request" && node.isEnabled === false)
+        && nodes.some(node => node.automationId === "project-sessions-forget" && node.isEnabled === false)
+        && !nodes.some(node => /^(?:Review result:|Stop session:)/.test(node.name ?? "")));
+    }
+    else {
+      expect(await this.review(scenario.goal, "Checks: 0 run, 0 passed, 0 failed")).toMatch(/Stopped ·[^\n]*Checks: 0 run, 0 passed, 0 failed/);
+      await this.forget();
+    }
+    expect(this.model.steps.get(kind)).toBe(1); this.assertUnchanged(); await this.rolesEmpty();
+    // Assisted can remove an elevated host's forced ask state; establish the real editable preference before the next card.
+    if (kind === "mode") await this.configureCommands();
+  }
+  private async forget(): Promise<void> {
+    this.phase = 9; await this.pane("Projects");
+    // Only actual stopped results and inactive folder/project controls are used.
+    while ((await this.nodes(this.home)).some(node => (node.name ?? "").startsWith("Forget private result:"))) {
+      const before = (await this.nodes(this.home)).filter(node => (node.name ?? "").startsWith("Forget private result:")).length;
+      await this.click(this.home, node => (node.name ?? "").startsWith("Forget private result:"));
+      await this.until(() => this.nodes(this.home), nodes => nodes.filter(node => (node.name ?? "").startsWith("Forget private result:")).length < before);
+    }
+    await this.click(this.home, id("project-coding-forget")); await this.accessibleText(text => text.includes("No coding folder selected"));
+    await this.click(this.home, id("project-sessions-forget"));
+    await this.until(() => this.nodes(this.home), nodes => nodes.some(node => node.automationId === "project-sessions-request" && node.isEnabled === false));
+    this.assertUnchanged(); await this.rolesEmpty();
+  }
+  private async rolesEmpty(): Promise<void> {
+    await this.until(async () => {
+      const controllers = path.join(this.profile, "coding-controllers"); if (fs.existsSync(controllers) && fs.readdirSync(controllers).length) return false;
+      const common = path.join(this.temporary, "ember-coding-unsupported");
+      if (fs.existsSync(common)) for (const entry of fs.readdirSync(common)) {
+        if (!/^process-[0-9a-f-]{36}$/.test(entry)) throw refusal(this.phase);
+        for (const role of fs.readdirSync(path.join(common, entry))) {
+          if (!["copies", "reviews", "assets"].includes(role)) throw refusal(this.phase);
+          if (fs.readdirSync(path.join(common, entry, role)).length) return false;
+        }
+      }
+      return true;
+    }, Boolean, 20_000);
+  }
+  private assertUnchanged(): void {
+    expect(fs.readFileSync(path.join(this.source, "test.cjs"), "utf8")).toBe(WINDOWS_NODE_SOURCE_ORIGINAL);
+    expect(fs.readFileSync(path.join(this.source, "writer.cjs"), "utf8")).toBe(WINDOWS_NODE_SOURCE_WRITER);
+    expect(fs.readFileSync(path.join(this.source, "README.txt"), "utf8")).toBe(readme);
+    expect(fs.existsSync(path.join(this.source, "heartbeat.txt"))).toBe(false);
+    expect(fs.readFileSync(path.join(this.root, "outside.txt"), "utf8")).toBe(outside);
+    expect(fs.readFileSync(path.join(this.profile, "credential-canary.txt"), "utf8")).toBe(privateCanary);
+    const messages = JSON.stringify(this.model.requests.map((request: { messages: unknown }) => request.messages));
+    for (const marker of [outside, privateCanary, environmentCanary, excludedGit, excludedDependency, this.key, this.replacementKey]) expect(messages).not.toContain(marker);
+    expect(this.model.failures).toEqual([]);
+    for (const inventory of this.model.inventories) expect([...inventory].sort()).toEqual([...WINDOWS_NODE_PRODUCT_TOOLS].sort());
+  }
+  async finish(): Promise<void> {
+    this.phase = 10; this.assertUnchanged(); expect(this.model.requests.length).toBeGreaterThan(0);
+    expect(this.model.requests.every((request: { authorization: string | null }) => request.authorization === "Bearer " + this.key || request.authorization === "Bearer " + this.replacementKey)).toBe(true);
+    expect(JSON.stringify(this.model.requests.map((request: { messages: unknown }) => request.messages))).toContain("Only bundled Node is supplied");
+    await this.pane("Your Ember"); await this.click(this.home, id("p-quit"));
+    const exited = await bounded(this.appClosed!, 20_000); expect(exited).toEqual({ code: 0, signal: null });
+    expect(this.forced).toBe(false); expect(fs.existsSync(path.join(this.temporary, "ember-coding-unsupported"))).toBe(false);
+    const controllers = path.join(this.profile, "coding-controllers"); if (fs.existsSync(controllers)) expect(fs.readdirSync(controllers)).toEqual([]);
+    expect(hash(this.executable)).toBe(this.executableHash);
+    for (const member of this.assets) expect(hash(member.path)).toBe(member.sha256);
+    expect(fuseMismatches(readFuses(fs.readFileSync(this.executable)), emberFuses("win32"))).toEqual([]);
+    this.assertionsComplete = true;
+  }
+  /** Failure never converts a forced process stop into a successful private-owner cleanup receipt. */
+  async close(): Promise<boolean> {
+    clearTimeout(this.watchdog); let clean = this.assertionsComplete && !this.forced;
+    if (this.app && this.app.exitCode === null && this.app.signalCode === null) { this.stopped = true; this.forced = true; this.app.kill(); clean = false; }
+    try { if (this.appClosed) { const result = await bounded(this.appClosed, 10_000); clean &&= result.code === 0 && result.signal === null; } } catch { clean = false; }
+    this.input?.releaseAll(); this.input?.close();
+    try { if (this.bridge) { const result = await bounded(this.bridge.close(), 10_000); clean &&= result.code === 0; } } catch { this.bridge?.kill(); clean = false; }
+    return clean;
+  }
+}
+
+it.skipIf(!required)("uses the shipped Windows Home for normal provider setup, exact Node repair/continuation, denial, Stop and revocation with verified cleanup", async () => {
+  if (quarantined) throw refusal(1);
+  quarantined = true;
+  let root: string | undefined, model: Model | undefined, fixture: Journey | undefined, failed = false, phase = 1;
+  try {
+    expect(process.platform).toBe("win32"); expect(process.arch).toBe("x64");
+    if (process.env.GITHUB_ACTIONS === "true") { expect(["windows-2022", "windows-2025"]).toContain(process.env.EMBER_WINDOWS_NODE_PRODUCT_IMAGE); expect(process.env.GITHUB_SHA).toMatch(/^[0-9a-f]{40}$/); }
+    const temporary = fs.realpathSync.native(os.tmpdir()), parent = path.basename(temporary).startsWith("ember-run-") ? path.dirname(temporary) : temporary;
+    root = fs.realpathSync.native(fs.mkdtempSync(path.join(parent, "ember-packaged-node-product-")));
+    const scenarios = [...windowsNodeSourceScenarios("repair"), ...windowsNodeSourceScenarios("denied"), ...windowsNodeSourceScenarios("stop"), ...windowsNodeSourceScenarios("mode"), ...windowsNodeSourceScenarios("account")];
+    model = await createWindowsNodeProductModel(scenarios); fixture = new Journey(root, model);
+    await fixture.start(); await fixture.repair(); await fixture.deny(); await fixture.writer("stop"); await fixture.writer("mode"); await fixture.writer("account"); await fixture.finish();
+  } catch { failed = true; phase = fixture?.phase ?? phase; }
+  finally {
+    let clean = false; try { clean = !!fixture && await fixture.close(); } catch { failed = true; phase = 12; }
+    try { await model?.close(); } catch { failed = true; phase = 12; }
+    if (!failed && clean && root) { try { fs.rmSync(root, { recursive: true, force: false }); } catch { failed = true; phase = 12; } }
+    else if (root) failed = true;
+  }
+  if (failed) throw refusal(phase);
+  quarantined = false;
+  console.info("Windows Node packaged journey passed", JSON.stringify({ schema: 1, phase: 12 }));
+}, 360_000);

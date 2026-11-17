@@ -20,6 +20,8 @@ import { clearWindowsCodingTree, ownWindowsCodingReview, type WindowsCodingRevie
 import type { CodingWorkspaceContinuation } from "./coding-seed-snapshot";
 import { prepareWindowsCodingContinuation, materializeWindowsCodingContinuation } from "./windows-coding-continuation-seed";
 import type { WindowsCommandTransferIntakeRef, WindowsCommandStoppedSnapshotRef, WindowsCommandStoppedSnapshotFacts } from "./windows-command-copy";
+import { requireWindowsOwnedCommandParent, refreshWindowsOwnedCommandParent, requireWindowsOwnedCommandParentCurrent,
+  type WindowsOwnedCommandParentRef, type WindowsOwnedCommandParentFacts } from "./windows-coding-resources";
 
 export interface WindowsCodingCopyReviewInput {
   binding: CodingExportBinding;
@@ -40,6 +42,8 @@ export interface WindowsCodingCopyInput {
   review?: WindowsCodingCopyReviewInput;
   /** Only a host-verified complete prior review may seed a fresh copy. Never a preview, path or SDK conversation. */
   continuation?: CodingWorkspaceContinuation;
+  /** Resource-issued owned storage only; source/canonical protection remains the full original set. */
+  commandParent?: WindowsOwnedCommandParentRef;
 }
 export interface WindowsCodingTreeEntry { path: string; handle: WindowsCodingHandle; info: WindowsCodingInfo }
 export interface WindowsCodingTree {
@@ -57,6 +61,42 @@ export interface WindowsCodingCommandInputData {
   readonly parent: string; readonly protectedPaths: readonly string[]; readonly entries: readonly CodingExportEntry[];
   readonly limits: Readonly<ScopedCodingFileLimits>; readonly privacyScope: CodingPrivacyScope; readonly signal: AbortSignal;
   current(): boolean; reviewCurrent(): boolean;
+  readonly commandParent?: WindowsCodingCommandParentRef;
+}
+declare const nativeParentBrand: unique symbol;
+export interface WindowsCodingCommandParentRef { readonly scope: "canonical-command-parent"; readonly [nativeParentBrand]: true }
+interface CommandParent {
+  input: WindowsCodingCommandInputRef; phase: "ready" | "checking" | "checked" | "refreshed" | "used" | "failed";
+  intake?: WindowsCommandTransferIntakeRef;
+  inspect(): Readonly<WindowsOwnedCommandParentFacts>; refresh(): Readonly<WindowsOwnedCommandParentFacts>; commit(): void;
+}
+const nativeParents = new WeakMap<object, CommandParent>();
+/** The actual native owner inspects before its protected-root loop. Caller records cannot register an exception. */
+export function inspectWindowsCodingCommandParent(ref: WindowsCodingCommandParentRef, parent: string, protectedPaths: readonly string[], intake: WindowsCommandTransferIntakeRef): Readonly<WindowsOwnedCommandParentFacts> {
+  const value = ref && typeof ref === "object" ? nativeParents.get(ref) : undefined;
+  if (!value || value.phase !== "ready") throw new ScopedCodingFileError("boundary");
+  value.phase = "checking";
+  try {
+    const input = commandInputs.get(value.input);
+    if (!input || input.state !== "taken" || input.intake !== intake || input.data.commandParent !== ref || input.data.parent !== parent ||
+        input.data.protectedPaths.length !== protectedPaths.length || input.data.protectedPaths.some((path, index) => path !== protectedPaths[index])) throw new ScopedCodingFileError("boundary");
+    input.module.requireWindowsCommandInputProducerPreparing(value.input, intake); value.intake = intake;
+    input.checkWork(); const facts = value.inspect(); input.checkWork(); value.phase = "checked"; return facts;
+  } catch (error) { value.phase = "failed"; throw error; }
+}
+/** Callback-free one-use commit, immediately before the native factory's first fresh admission. */
+export function consumeWindowsCodingCommandParent(ref: WindowsCodingCommandParentRef): void {
+  const value = ref && typeof ref === "object" ? nativeParents.get(ref) : undefined;
+  if (!value || value.phase !== "refreshed") throw new ScopedCodingFileError("boundary");
+  try { value.commit(); value.phase = "used"; }
+  catch (error) { value.phase = "failed"; throw error; }
+}
+/** After the last host admission callback, recheck owned storage without another host callback. */
+export function refreshWindowsCodingCommandParent(ref: WindowsCodingCommandParentRef, intake: WindowsCommandTransferIntakeRef): Readonly<WindowsOwnedCommandParentFacts> {
+  const value = ref && typeof ref === "object" ? nativeParents.get(ref) : undefined;
+  if (!value || value.phase !== "checked" || value.intake !== intake) throw new ScopedCodingFileError("boundary"); value.phase = "checking";
+  try { value.commit(); const facts = value.refresh(); value.commit(); value.phase = "refreshed"; return facts; }
+  catch (error) { value.phase = "failed"; throw error; }
 }
 interface CommandInput {
   module: typeof import("./windows-command-copy"); state: "ready" | "validating" | "taken";
@@ -361,6 +401,7 @@ export class WindowsCodingCopy implements ScopedCodingWorkspace {
           entries = await this.#detachedEntries(this.#checkRoot.bind(this), true, this.signal); this.#checkRoot();
           if (lease.epoch !== this.#epoch) throw new ScopedCodingFileError("cancelled");
           const revision = this.#contentRevision, ref = Object.freeze({ scope: "canonical-command-input" as const }) as WindowsCodingCommandInputRef;
+          const parent = this.#input.commandParent ? this.#captureCommandParent(ref, revision, this.#input.commandParent) : undefined;
           const checkRecipient = () => {
             assertCodingPrivacyScope(this.#privacyScope);
             if (this.#failure !== undefined) throw windowsCodingSafeError(this.#failure);
@@ -369,8 +410,9 @@ export class WindowsCodingCopy implements ScopedCodingWorkspace {
           };
           const data: CommandInput = { module, state: "ready", owner: this, revision, entries, checkRecipient, checkWork: () => { checkRecipient(); this.#checkRoot(); },
             data: { parent: this.#input.privateBase, protectedPaths: Object.freeze([...this.#input.protectedPaths]), limits: this.limits, privacyScope: this.#privacyScope, signal: this.signal,
-              current: () => { try { checkRecipient(); this.#checkRoot(); return true; } catch { return false; } },
-              reviewCurrent: () => { try { checkRecipient(); this.#transferPublicationCheck(); return true; } catch { return false; } } } };
+              ...(parent ? { commandParent: parent } : {}),
+              current: () => { try { checkRecipient(); this.#checkRoot(); return true; } catch (error) { if (cleanupFailure(error)) throw error; return false; } },
+              reviewCurrent: () => { try { checkRecipient(); this.#transferPublicationCheck(); return true; } catch (error) { if (cleanupFailure(error)) throw error; return false; } } } };
           commandInputs.set(ref, data); this.#commandInput = ref; entries = undefined; this.#epoch++;
           return ref;
         } finally { clearWindowsCodingTree(entries ? { entries } : undefined); lease.active = false; }
@@ -378,6 +420,30 @@ export class WindowsCodingCopy implements ScopedCodingWorkspace {
     });
     this.#tail = pending.then(() => undefined, () => undefined);
     return pending.catch(error => { if (cleanupFailure(error)) { this.#failure = error; this.#retire(); } throw windowsCodingSafeError(error); });
+  }
+  #captureCommandParent(inputRef: WindowsCodingCommandInputRef, revision: bigint, resource: WindowsOwnedCommandParentRef): WindowsCodingCommandParentRef {
+    const checkBase = (facts: Readonly<WindowsOwnedCommandParentFacts>) => {
+      if (facts.parent !== this.#input.privateBase || facts.protectedPaths.length !== this.#input.protectedPaths.length ||
+          facts.protectedPaths.some((path, index) => path !== this.#input.protectedPaths[index]) ||
+          !windowsCodingSame(facts.copies, this.#api.info(this.#base.handle), false)) {
+        this.#failure = retireWindowsCodingNative(); this.#retire(); throw this.#failure;
+      }
+      return facts;
+    };
+    const inspect = () => { this.#checkRoot(); const facts = checkBase(requireWindowsOwnedCommandParent(resource)); this.#checkRoot(); return facts; };
+    inspect();
+    const ref = Object.freeze({ scope: "canonical-command-parent" as const }) as WindowsCodingCommandParentRef;
+    nativeParents.set(ref, { input: inputRef, phase: "ready", inspect, refresh: () => checkBase(refreshWindowsOwnedCommandParent(resource)), commit: () => {
+      const input = commandInputs.get(inputRef);
+      if (this.#failure !== undefined) throw this.#failure;
+      if (this.#closed || this.#retired || this.signal.aborted || this.#contentRevision !== revision || this.#commandInput !== inputRef ||
+          !input || input.state !== "taken" || input.owner !== this || input.data.commandParent !== ref) throw new ScopedCodingFileError("boundary");
+      const parent = nativeParents.get(ref);
+      if (!parent?.intake || parent.intake !== input.intake) throw new ScopedCodingFileError("boundary");
+      input.module.requireWindowsCommandInputProducerPreparing(inputRef, parent.intake);
+      assertCodingPrivacyScope(this.#privacyScope); requireWindowsOwnedCommandParentCurrent(resource);
+    } });
+    return ref;
   }
   /** Private stopped capture may continue under publication authority; it never grants execution or export. */
   #transferPublicationCheck = (): void => {

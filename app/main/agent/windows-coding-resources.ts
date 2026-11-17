@@ -1,4 +1,4 @@
-/** Host-owned Windows copied-file resources. No command, toolchain discovery, source grant or product gate. */
+/** Host-owned Windows copies, fixed Node assets and reviews. No executable discovery or source grant. */
 import path from "node:path/win32";
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -8,9 +8,11 @@ import type { ProjectCodingResourcesOptions, CodingResultsAccess } from "./codin
 import type { CodingWorkspace } from "./coding-workspace";
 import type { TaskSpec } from "./worker";
 import type { ScopedCodingChecks } from "./scoped-coding-worker";
-import type { CodingReviewWorkspace, CodingWorkspaceReview } from "./coding-platform";
+import type { CodingCommandWorkspace, CodingPlatformAdapter, CodingReviewWorkspace, CodingWorkspaceReview } from "./coding-platform";
 import { ScopedCodingFileError } from "./coding-platform";
-import { WindowsFileOnlyWorkspace } from "./windows-file-only-workspace";
+import { WindowsFileOnlyWorkspace, type WindowsFileOnlyWorkspaceInput } from "./windows-file-only-workspace";
+import { WindowsNodeWorkspace } from "./windows-node-workspace";
+import { windowsNodeCodingPlatform } from "./windows-node-coding-platform";
 import { WindowsCodingArtifactStore } from "./windows-coding-artifact-store";
 import { CodingResultRegistry, CodingResultRegistryError } from "./coding-result-registry";
 import { CodingArtifactCleanupError, type CodingArtifactInput, type CodingArtifactSourceRef } from "./coding-artifact-store";
@@ -30,16 +32,41 @@ interface Role { name: string; owned: OwnedHandle; info?: WindowsCodingInfo }
 interface Authority {
   taskId: string; owner: string; projectId: string; source: string; title: string;
   ownerCurrent(): boolean; publicationEpoch: number; projectRevision: number; privacy: CodingPrivacyScope; cancel: AbortController;
-  retired?: boolean; publishing?: boolean; workspace?: WindowsFileOnlyWorkspace; output?: CodingWorkspaceReview;
+  retired?: boolean; publishing?: boolean; workspace?: WindowsOwnedWorkspace; output?: CodingWorkspaceReview;
   sourceBoundary: CodingArtifactSourceRef | null;
 }
 interface PendingArtifact { projectId: string; input: CodingArtifactInput }
-type ResourceOptions = Pick<ProjectCodingResourcesOptions, "userData" | "protectedPaths" | "currentOwner" | "projectExists" | "changed">;
+declare const commandParentBrand: unique symbol;
+export interface WindowsOwnedCommandParentRef { readonly scope: "windows-owned-command-parent"; readonly [commandParentBrand]: true }
+export interface WindowsOwnedCommandParentFacts {
+  readonly parent: string; readonly protectedPaths: readonly string[]; readonly common: WindowsCodingInfo; readonly copies: WindowsCodingInfo;
+}
+const commandParents = new WeakMap<object, { verify(): Readonly<WindowsOwnedCommandParentFacts>; refresh(): Readonly<WindowsOwnedCommandParentFacts>; current(): void }>();
+/** Observation of an existing private resource issuer only. No path, callback or serialized receipt can register one. */
+export function requireWindowsOwnedCommandParent(ref: WindowsOwnedCommandParentRef): Readonly<WindowsOwnedCommandParentFacts> {
+  const value = ref && typeof ref === "object" ? commandParents.get(ref) : undefined;
+  if (!value) throw new ScopedCodingFileError("boundary"); return value.verify();
+}
+export function refreshWindowsOwnedCommandParent(ref: WindowsOwnedCommandParentRef): Readonly<WindowsOwnedCommandParentFacts> {
+  const value = ref && typeof ref === "object" ? commandParents.get(ref) : undefined;
+  if (!value) throw new ScopedCodingFileError("boundary"); return value.refresh();
+}
+/** Pure lifetime observation for the final no-callback native admission segment. */
+export function requireWindowsOwnedCommandParentCurrent(ref: WindowsOwnedCommandParentRef): void {
+  const value = ref && typeof ref === "object" ? commandParents.get(ref) : undefined;
+  if (!value) throw new ScopedCodingFileError("boundary"); value.current();
+}
+type WindowsOwnedWorkspace = WindowsFileOnlyWorkspace | WindowsNodeWorkspace;
+type ResourceOptions = Pick<ProjectCodingResourcesOptions, "userData" | "protectedPaths" | "currentOwner" | "projectExists" | "changed" | "resourcesPath">;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DISCLOSURE = "Windows coding can edit files in a private copy and prepare a review. Commands, tests and dependency installation are unavailable. Captures exclude .git and node_modules; review exports include all captured files, including unchanged files. Continue from a review starts a fresh private copy of its proposed files. Your original project stays unchanged.";
+const NODE_DISCLOSURE = "Windows coding can edit a private copy and run checks with bundled Node. Shells, npm, dependency installation, network access and child processes are unavailable. Captures exclude .git and node_modules; review exports include all captured files, including unchanged files. Continue from a review starts a fresh private copy of its proposed files. Your original project stays unchanged.";
 const stale = () => new Error("The coding account, project or folder grant changed. Start a new request.");
 const cleanupFailed = () => new Error("Private Windows coding resources could not be closed safely. They were retained for diagnosis.");
 const copyFailed = () => new Error("The private Windows coding copy could not be created under its current project grant.");
+class WindowsProjectCodingResourcesCleanupError extends WindowsCodingCleanupError {
+  constructor() { super(); this.name = "WindowsProjectCodingResourcesCleanupError"; this.message = cleanupFailed().message; }
+}
 const safe = (check: () => boolean): boolean => { try { return check() === true; } catch { return false; } };
 const nativeUncertain = (error: unknown): boolean => error instanceof WindowsCodingCleanupError || error instanceof CodingArtifactCleanupError || error instanceof CodingPrivacyCleanupError;
 const sameIdentity = (a: WindowsCodingInfo, b: WindowsCodingInfo) => a.id === b.id && a.volume === b.volume && a.kind === b.kind;
@@ -52,8 +79,11 @@ function ordinary(value: unknown): value is string {
 const retainedOwners = new Set<WindowsProjectCodingResources>();
 
 export class WindowsProjectCodingResources {
-  readonly mode = "files-only" as const;
+  #node: boolean;
+  get mode(): "files-only" | "commands" { return this.#node ? "commands" : "files-only"; }
   readonly folders: ProjectCodingWorkspaces;
+  readonly nodePlatform: CodingPlatformAdapter;
+  readonly filePlatform: Pick<CodingPlatformAdapter, "files">;
   #options: ResourceOptions;
   #api: WindowsCodingNative | null = null;
   #common: string;
@@ -65,21 +95,40 @@ export class WindowsProjectCodingResources {
   #commonRoot: Role | null = null;
   #process: Role | null = null;
   #roles: Role[] = [];
-  #copies = ""; #reviews = "";
+  #copies = ""; #reviews = ""; #assets = "";
+  #nodePresent = false;
   #ready = false; #failed = false; #cleanupFailed = false; #orphaned = false; #artifactCleanupFailed = false; #closed = false;
+  #terminal?: WindowsCodingCleanupError;
   #message = "Checking private Windows coding storage…";
   #epoch = 0; #publicationEpoch = 0; #projectRevisions = new Map<string, number>(); #invalidationPending = 0;
   #authorities = new WeakMap<TaskSpec, Authority>(); #tasks = new Map<string, Authority>();
-  #active = new Map<WindowsFileOnlyWorkspace, Authority>(); #backendClosing = new WeakMap<WindowsFileOnlyWorkspace, Promise<void>>();
+  #active = new Map<WindowsOwnedWorkspace, Authority>(); #backendClosing = new WeakMap<WindowsOwnedWorkspace, Promise<void>>();
+  #nodeWrappers = new WeakMap<CodingReviewWorkspace, WindowsNodeWorkspace>();
+  #fileWrappers = new WeakMap<CodingReviewWorkspace, WindowsFileOnlyWorkspace>();
   #creating = new Set<Promise<CodingReviewWorkspace>>(); #exporting = new Set<Promise<unknown>>(); #publishing = new Set<Promise<unknown>>();
   #unadopted = new Map<CodingWorkspaceReview, PendingArtifact>();
   #store: WindowsCodingArtifactStore | null = null; #storeOpening: Promise<WindowsCodingArtifactStore> | null = null;
   #registry: CodingResultRegistry | null = null; #registryOpening: Promise<CodingResultRegistry> | null = null;
   #closing: Promise<void> | null = null; #results: CodingResultsAccess;
 
-  private constructor(options: ProjectCodingResourcesOptions) {
+  private constructor(options: ProjectCodingResourcesOptions, node = false) {
+    this.#node = node;
     this.#options = { userData: options.userData, protectedPaths: [...options.protectedPaths], currentOwner: options.currentOwner.bind(options),
-      projectExists: options.projectExists.bind(options), changed: options.changed?.bind(options) };
+      projectExists: options.projectExists.bind(options), changed: options.changed?.bind(options), resourcesPath: options.resourcesPath };
+    const resolve = (workspace: CodingReviewWorkspace) => {
+      const owner = this.#nodeWrappers.get(workspace);
+      if (!owner || !this.#node) throw new ScopedCodingFileError("boundary");
+      return owner;
+    };
+    const nodePlatform: CodingPlatformAdapter = {
+      facts: (workspace, facts) => windowsNodeCodingPlatform.facts(resolve(workspace), facts),
+      files: async (workspace, signal) => windowsNodeCodingPlatform.files(resolve(workspace), signal),
+    };
+    this.nodePlatform = Object.freeze(nodePlatform);
+    this.filePlatform = Object.freeze({ files: async (workspace: CodingReviewWorkspace, signal: AbortSignal) => {
+      const owner = this.#fileWrappers.get(workspace); if (!owner) throw new ScopedCodingFileError("boundary");
+      return WindowsFileOnlyWorkspace.prototype.filesBroker.call(owner, signal);
+    } });
     this.folders = options.folders ?? new ProjectCodingWorkspaces(this.#options);
     const selection = options.storage ?? selectCodingStorageBase(); this.#common = selection.common ?? "";
     this.#results = Object.freeze({
@@ -97,14 +146,23 @@ export class WindowsProjectCodingResources {
   }
 
   static async create(options: ProjectCodingResourcesOptions): Promise<WindowsProjectCodingResources> {
-    const owner = new WindowsProjectCodingResources(options);
+    return this.#create(options, false);
+  }
+  /** Fixed host selection. A failed Node capability never becomes a files-only fallback. */
+  static async createNode(options: ProjectCodingResourcesOptions): Promise<WindowsProjectCodingResources> {
+    return this.#create(options, true);
+  }
+  static async #create(options: ProjectCodingResourcesOptions, node: boolean): Promise<WindowsProjectCodingResources> {
+    const owner = new WindowsProjectCodingResources(options, node);
     try {
       if (HOST_PLATFORM !== "win32" || HOST_ARCH !== "x64") {
         owner.#message = "Windows copied-file coding requires Windows x64 and verified local NTFS storage."; return owner;
       }
       if (retainedOwners.size || codingPrivacyCleanupFailure()) throw cleanupFailed();
-      const selected = [...new Set([owner.#options.userData, ...owner.#options.protectedPaths])];
+      if (node && !ordinary(owner.#options.resourcesPath)) throw stale();
+      const selected = [...new Set([owner.#options.userData, ...owner.#options.protectedPaths, ...(node ? [owner.#options.resourcesPath!] : [])])];
       if (!ordinary(owner.#common) || !selected.length || selected.length > 63 || selected.some(value => !ordinary(value))) throw stale();
+      if (node) owner.#nodePresent = owner.#nodePresence();
       owner.#api = loadWindowsCodingNative();
       for (const location of selected) owner.#protected.push(owner.#protect(location));
       // API inputs retain ordinary drive paths; GUID final paths are native identity receipts only.
@@ -112,7 +170,7 @@ export class WindowsProjectCodingResources {
       if (selected.some(root => overlap(root, owner.#common))) throw stale();
       owner.#prepareStorage();
       owner.#roots = [...new Set([...owner.#roots, owner.#common])];
-      owner.#storageCurrent(); owner.#ready = true; owner.#message = DISCLOSURE;
+      owner.#storageCurrent(); owner.#ready = true; owner.#message = node ? NODE_DISCLOSURE : DISCLOSURE;
     } catch (error) {
       owner.#failed = true;
       if (nativeUncertain(error)) owner.#failure();
@@ -124,19 +182,39 @@ export class WindowsProjectCodingResources {
 
   get reviewBase(): string { return this.#reviews; }
   results(): Promise<CodingResultsAccess> { return Promise.resolve(this.#results); }
-  availability(): { available: boolean; message: string; mode: "files-only"; canContinue: true } {
+  availability(disclosure?: "files-only" | "commands"): { available: boolean; message: string; mode: "files-only" | "commands"; canContinue: true } {
     const privacy = codingPrivacyCleanupFailure();
-    const available = this.#ready && !this.#closed && !this.#failed && !this.#invalidationPending && !this.#artifactCleanupFailed && !privacy;
-    return { available, mode: "files-only", canContinue: true, message: this.#closed ? "Coding resources are closed." : this.#invalidationPending
+    const mode = disclosure === "files-only" ? "files-only" : this.mode;
+    const missing = mode === "commands" && !this.#nodePresent;
+    const available = this.#ready && !this.#closed && !this.#failed && !this.#invalidationPending && !this.#artifactCleanupFailed && !privacy && !missing;
+    return { available, mode, canContinue: true, message: this.#closed ? "Coding resources are closed." : this.#invalidationPending
       ? "Private coding work is being closed and removed." : privacy ? "Earlier coding privacy work could not be verified as stopped. Further coding is unavailable."
-        : this.#artifactCleanupFailed && !this.#failed ? "Private coding reviews could not be removed. Retry Forget everything; coding resumes after verified cleanup." : this.#message };
+        : this.#artifactCleanupFailed && !this.#failed ? "Private coding reviews could not be removed. Retry Forget everything; coding resumes after verified cleanup."
+          : missing && this.#ready && !this.#failed ? "Bundled Node is unavailable. Commands cannot run in this coding session."
+          : mode === "files-only" && this.#message === NODE_DISCLOSURE ? DISCLOSURE : this.#message };
+  }
+  #nodePresence(): boolean {
+    if (!this.#node || !ordinary(this.#options.resourcesPath)) return false;
+    return ["node.exe", "LICENSE", "build-receipt.json"].every(name => {
+      try {
+        const info = fs.lstatSync(path.join(this.#options.resourcesPath!, "coding", "windows-node-x64", name));
+        return info.isFile() && !info.isSymbolicLink() && info.nlink === 1;
+      } catch { return false; }
+    });
   }
   #changed(): void { try { this.#options.changed?.(); } catch { /* Observation never grants authority. */ } }
   #owner(): string | null { try { const value = this.#options.currentOwner(); return typeof value === "string" && /^[a-f0-9]{64}$/.test(value) ? value : null; } catch { return null; } }
   #project(value: string): boolean { return uuid.test(value) && safe(() => this.#options.projectExists(value)); }
   #failure(): void {
     this.#failed = true; this.#cleanupFailed = true; this.#message = "Earlier Windows coding cleanup could not be verified. Private data was retained and further coding is unavailable.";
-    retireWindowsCodingNative(); retainedOwners.add(this); this.#changed();
+    retireWindowsCodingNative(); this.#terminal ??= new WindowsProjectCodingResourcesCleanupError(); retainedOwners.add(this); this.#changed();
+  }
+  #known(): void { if (this.#terminal) throw this.#terminal; }
+  #admit(check: () => boolean): boolean {
+    this.#known(); let result = false;
+    try { result = check() === true; }
+    catch (error) { if (nativeUncertain(error)) { this.#failure(); throw this.#terminal; } }
+    this.#known(); return result;
   }
   #retainNamespace(): Error {
     this.#failed = true; this.#orphaned = true;
@@ -198,10 +276,13 @@ export class WindowsProjectCodingResources {
     if (this.#protected.some(value => overlap(value.info.finalPath, common.info.finalPath))) throw stale();
     const processRoot = this.#newDirectory(common.value.handle, `process-${randomUUID()}`, true);
     this.#newDirectory(processRoot.owned.handle, "copies"); this.#newDirectory(processRoot.owned.handle, "reviews");
+    if (this.#node) this.#newDirectory(processRoot.owned.handle, "assets");
     this.#copies = path.join(this.#common, processRoot.name, "copies");
     this.#reviews = path.join(this.#common, processRoot.name, "reviews");
+    this.#assets = path.join(this.#common, processRoot.name, "assets");
   }
   #storageCurrent(): void {
+    this.#known();
     if (!this.#api || !this.#commonPin) throw cleanupFailed();
     try {
       for (const pin of this.#pins) {
@@ -219,6 +300,38 @@ export class WindowsProjectCodingResources {
       if (nativeUncertain(error)) { this.#failure(); throw error; }
       throw this.#retainNamespace();
     }
+  }
+  #commandStorage(): Readonly<WindowsOwnedCommandParentFacts> {
+    this.#known();
+    try {
+      this.#storageCurrent();
+      if (!this.#node || !this.#commonRoot?.info || !this.#process?.info || this.#roles.length !== 3) throw cleanupFailed();
+      const children = this.#api!.list(this.#process.owned.handle, 3);
+      if (children.length !== 3 || children.some(child => !this.#roles.some(role => role.name === child.name && role.info?.id === child.id)) ||
+          this.#roles.some(role => children.filter(child => child.name === role.name && child.id === role.info?.id).length !== 1) ||
+          ["copies", "reviews", "assets"].some(name => this.#roles.filter(role => role.name === name).length !== 1)) throw cleanupFailed();
+      const copies = this.#roles.find(role => role.name === "copies")!;
+      if (!copies.info || windowsCodingSame(this.#commonRoot.info, copies.info, false) || !windowsCodingWithin(copies.info.finalPath, this.#commonRoot.info.finalPath)) throw cleanupFailed();
+      return Object.freeze({ parent: this.#copies, protectedPaths: Object.freeze([...this.#roots]),
+        common: Object.freeze({ ...this.#commonRoot.info }), copies: Object.freeze({ ...copies.info }) });
+    } catch { this.#failure(); throw this.#terminal; }
+  }
+  #issueCommandParent(authority: Authority, current: () => boolean, signal: AbortSignal, epoch: number): WindowsOwnedCommandParentRef {
+    this.#known(); if (!current()) throw stale(); this.#commandStorage(); if (!current()) throw stale();
+    const ref = Object.freeze({ scope: "windows-owned-command-parent" as const }) as WindowsOwnedCommandParentRef;
+    const pure = () => {
+      this.#known(); assertCodingPrivacyScope(authority.privacy);
+      if (this.#closed || this.#failed || this.#epoch !== epoch || this.#invalidationPending || authority.retired || signal.aborted || authority.cancel.signal.aborted ||
+          this.#tasks.get(authority.taskId) !== authority || !authority.workspace || this.#active.get(authority.workspace) !== authority ||
+          this.#publicationEpoch !== authority.publicationEpoch || (this.#projectRevisions.get(authority.projectId) ?? 0) !== authority.projectRevision) throw new ScopedCodingFileError("cancelled");
+    };
+    const refresh = () => { pure(); const facts = this.#commandStorage(); pure(); return facts; };
+    commandParents.set(ref, { current: pure, refresh, verify: () => {
+      this.#known();
+      if (!current() || !authority.workspace || this.#active.get(authority.workspace) !== authority) throw new ScopedCodingFileError("cancelled");
+      return refresh();
+    } });
+    return ref;
   }
 
   async validateSource(folder: CodingWorkspace): Promise<CodingWorkspace> {
@@ -244,20 +357,26 @@ export class WindowsProjectCodingResources {
     finally { if (pin) this.#closePin(pin); }
   }
   workspace(projectId: string | null): { path: string; projectId: string; current(): boolean } | null {
-    if (!projectId || !this.availability().available || !this.#project(projectId)) return null;
+    if (!projectId || !this.availability("files-only").available || !this.#project(projectId)) return null;
     const folder = this.folders.capture(projectId);
     return folder ? Object.freeze({ path: folder.path, projectId, current: folder.current }) : null;
   }
   captureContinuation(id: string, projectId: string): CodingContinuationRef | null {
-    return this.availability().available ? this.#registry?.captureContinuation(id, projectId) ?? null : null;
+    return this.availability("files-only").available ? this.#registry?.captureContinuation(id, projectId) ?? null : null;
   }
   continuationCurrent(ref: CodingContinuationRef, projectId: string): boolean {
-    return this.availability().available && this.#registry?.continuationCurrent(ref, projectId) === true;
+    return this.availability("files-only").available && this.#registry?.continuationCurrent(ref, projectId) === true;
   }
 
   createWorkspace(spec: TaskSpec, signal: AbortSignal, admit: () => boolean): Promise<CodingReviewWorkspace> {
+    return this.#node ? this.createNodeWorkspace(spec, signal, admit) : this.#createWorkspace(spec, signal, admit, false);
+  }
+  createFileWorkspace(spec: TaskSpec, signal: AbortSignal, admit: () => boolean): Promise<CodingReviewWorkspace> {
+    return this.#createWorkspace(spec, signal, admit, false);
+  }
+  #createWorkspace(spec: TaskSpec, signal: AbortSignal, admit: () => boolean, node: boolean): Promise<CodingReviewWorkspace> {
     const grant = spec.codingWorkspace, projectId = grant?.projectId, owner = this.#owner();
-    if (!this.availability().available || !grant || !projectId || !owner || !this.#project(projectId) || this.#tasks.has(spec.id)) return Promise.reject(stale());
+    if (!this.availability(node ? "commands" : "files-only").available || !grant || !projectId || !owner || !this.#project(projectId) || this.#tasks.has(spec.id)) return Promise.reject(stale());
     let privacy: CodingPrivacyScope;
     try { privacy = captureCodingPrivacyScope(); } catch (error) { if (nativeUncertain(error)) this.#failure(); return Promise.reject(error); }
     const source = grant.path, sourceCurrent = grant.current.bind(grant), selected = this.folders.capture(projectId), epoch = this.#epoch;
@@ -268,9 +387,10 @@ export class WindowsProjectCodingResources {
       ownerCurrent: this.folders.ownerCurrent(), publicationEpoch: this.#publicationEpoch, projectRevision: this.#projectRevisions.get(projectId) ?? 0,
       privacy, cancel: new AbortController(), sourceBoundary: null };
     const current = () => {
-      try { assertCodingPrivacyScope(privacy); } catch { return false; }
-      return !this.#closed && !this.#failed && this.#epoch === epoch && !signal.aborted && !authority.cancel.signal.aborted && this.availability().available &&
-        this.#owner() === owner && safe(authority.ownerCurrent) && this.#project(projectId) && selected?.path === source && safe(selected.current) && safe(sourceCurrent) && safe(admit) &&
+      this.#known();
+      try { assertCodingPrivacyScope(privacy); } catch (error) { if (nativeUncertain(error)) { this.#failure(); throw this.#terminal; } return false; }
+      return !this.#closed && !this.#failed && this.#epoch === epoch && !signal.aborted && !authority.cancel.signal.aborted && this.availability(node ? "commands" : "files-only").available &&
+        this.#owner() === owner && this.#admit(authority.ownerCurrent) && this.#project(projectId) && selected?.path === source && this.#admit(selected.current) && this.#admit(sourceCurrent) && this.#admit(admit) &&
         (!hasContinuation || continuationReady || this.#registry?.continuationCurrent(continuationRef!, projectId) === true);
     };
     if (!current()) return Promise.reject(stale());
@@ -287,11 +407,15 @@ export class WindowsProjectCodingResources {
           continuation = await this.#registry.loadContinuation(continuationRef!, projectId, authority.sourceBoundary, current);
           if (!current()) throw stale();
         }
-        const backend = await WindowsFileOnlyWorkspace.create({ source, privateBase: this.#copies, protectedPaths: this.#roots,
+        const input: WindowsFileOnlyWorkspaceInput = { source, privateBase: this.#copies, protectedPaths: this.#roots,
           signal: AbortSignal.any([signal, authority.cancel.signal]), current, scope: { excludeRoots: [".git", "node_modules"] }, reviewBase: this.#reviews,
           ...(continuation ? { continuation: { baseline: continuation.baseline, proposed: continuation.proposed, scope: continuation.scope, current } } : {}),
           review: { binding: { owner, session: randomUUID(), snapshot: randomUUID() }, store,
-            sourceBoundary: authority.sourceBoundary ?? undefined, current: () => this.#reviewCurrent(authority) } });
+            sourceBoundary: authority.sourceBoundary ?? undefined, current: () => this.#reviewCurrent(authority) } };
+        if (node) input.commandParent = this.#issueCommandParent(authority, current, signal, epoch);
+        const backend = node
+          ? await WindowsNodeWorkspace.create({ ...input, resourcesPath: this.#options.resourcesPath!, assetsParent: this.#assets })
+          : await WindowsFileOnlyWorkspace.create(input);
         authority.workspace = backend; this.#active.set(backend, authority);
         if (!current()) { await backend.stop(); await this.#closeBackend(backend); throw stale(); }
         // The admitted copy owns its fresh bytes; predecessor Forget cannot revoke this independent session.
@@ -307,7 +431,17 @@ export class WindowsProjectCodingResources {
     })();
     this.#creating.add(pending); void pending.then(() => this.#creating.delete(pending), () => this.#creating.delete(pending)); return pending;
   }
-  #closeBackend(backend: WindowsFileOnlyWorkspace): Promise<void> {
+  async createNodeWorkspace(spec: TaskSpec, signal: AbortSignal, admit: () => boolean): Promise<CodingCommandWorkspace> {
+    if (!this.#node) throw new ScopedCodingFileError("boundary");
+    this.#known(); if (this.#closed || this.#failed) throw new ScopedCodingFileError("cancelled");
+    this.#nodePresent = this.#nodePresence();
+    if (!this.#nodePresent) { this.#changed(); throw new ScopedCodingFileError("unavailable"); }
+    const workspace = await this.#createWorkspace(spec, signal, admit, true);
+    if (!this.#nodeWrappers.has(workspace)) throw new ScopedCodingFileError("boundary");
+    return workspace as CodingCommandWorkspace;
+  }
+  #closeBackend(backend: WindowsOwnedWorkspace): Promise<void> {
+    try { this.#known(); } catch (error) { return Promise.reject(error); }
     const prior = this.#backendClosing.get(backend); if (prior) return prior;
     const authority = this.#active.get(backend);
     const closing = Promise.resolve().then(() => backend.close()).then(() => {
@@ -316,9 +450,10 @@ export class WindowsProjectCodingResources {
     }, error => { this.#failure(); throw error; });
     this.#backendClosing.set(backend, closing); return closing;
   }
-  #wrapped(backend: WindowsFileOnlyWorkspace, authority: Authority): CodingReviewWorkspace {
-    return new Proxy(backend, { get: (target, key) => {
+  #wrapped(backend: WindowsOwnedWorkspace, authority: Authority): CodingReviewWorkspace {
+    const wrapped = new Proxy(backend, { get: (target, key) => {
       if (key === "close") return () => this.#closeBackend(backend);
+      if (key === "runNode" && target instanceof WindowsNodeWorkspace) return (...args: Parameters<WindowsNodeWorkspace["runNode"]>) => this.#observe(target.runNode(...args));
       if (key === "exportReview") return (base: string) => {
         if (base !== this.#reviews) return Promise.reject(stale());
         const pending = target.exportReview(base).then(output => {
@@ -332,19 +467,25 @@ export class WindowsProjectCodingResources {
       };
       const value = Reflect.get(target, key, target); return typeof value === "function" ? value.bind(target) : value;
     } });
+    if (backend instanceof WindowsNodeWorkspace) this.#nodeWrappers.set(wrapped, backend);
+    else this.#fileWrappers.set(wrapped, backend);
+    return wrapped;
   }
   #reviewCurrent(authority: Authority): boolean {
-    try { assertCodingPrivacyScope(authority.privacy); } catch { return false; }
-    return !this.#closed && !this.#failed && !authority.retired && this.#owner() === authority.owner && safe(authority.ownerCurrent) && this.#project(authority.projectId) &&
+    this.#known();
+    try { assertCodingPrivacyScope(authority.privacy); } catch (error) { if (nativeUncertain(error)) { this.#failure(); throw this.#terminal; } return false; }
+    return !this.#closed && !this.#failed && !authority.retired && this.#owner() === authority.owner && this.#admit(authority.ownerCurrent) && this.#project(authority.projectId) &&
       this.#publicationEpoch === authority.publicationEpoch && (this.#projectRevisions.get(authority.projectId) ?? 0) === authority.projectRevision;
   }
   #storeValue(): Promise<WindowsCodingArtifactStore> {
+    this.#known();
     if (this.#store) return Promise.resolve(this.#store);
     if (!this.#storeOpening) this.#storeOpening = WindowsCodingArtifactStore.create({ privateBase: this.#reviews, protectedPaths: this.#roots })
       .then(store => { this.#store = store; return store; }, error => { this.#storeOpening = null; if (nativeUncertain(error)) this.#failure(); throw error; });
     return this.#storeOpening;
   }
   #registryValue(): Promise<CodingResultRegistry> {
+    this.#known();
     if (this.#registry) return Promise.resolve(this.#registry);
     if (!this.#registryOpening) this.#registryOpening = this.#storeValue().then(store => CodingResultRegistry.create({ privateBase: this.#reviews,
       currentOwner: this.#options.currentOwner, projectExists: this.#options.projectExists, store })).then(registry => { this.#registry = registry; return registry; }, error => {
@@ -414,6 +555,7 @@ export class WindowsProjectCodingResources {
   invalidate(): Promise<void> {
     this.#epoch++; this.#publicationEpoch++; this.folders.ownerReset(); this.#invalidationPending++;
     for (const authority of this.#tasks.values()) { authority.retired = true; authority.cancel.abort(); }
+    if (this.#terminal) { this.#invalidationPending--; this.#changed(); return Promise.reject(this.#terminal); }
     const creating = [...this.#creating].map(pending => pending.then(() => undefined, () => undefined));
     const privacy = retireCodingPrivacyScanners();
     const backends = [...this.#active.keys()];
@@ -425,6 +567,7 @@ export class WindowsProjectCodingResources {
         if (settled.some(value => value.status === "rejected")) this.#failure();
         const remaining = await Promise.allSettled([...this.#active.keys()].map(backend => this.#closeBackend(backend)));
         if (remaining.some(value => value.status === "rejected")) this.#failure();
+        this.#known();
         await this.#drainResults();
         for (const authority of this.#tasks.values()) { authority.workspace = undefined; authority.output = undefined; }
         this.#tasks.clear(); this.#authorities = new WeakMap();
@@ -442,6 +585,7 @@ export class WindowsProjectCodingResources {
       this.#closing = (async () => {
         let failed = false;
         try { await invalidated; } catch { failed = true; }
+        this.#known();
         await this.#drainResults();
         try {
           if (this.#registryOpening) await (await this.#registryOpening).close();

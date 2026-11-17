@@ -11,9 +11,10 @@ const model = vi.hoisted(() => {
     get nodeAvailable(): boolean { return this.#available; }
     async filesBroker(signal: AbortSignal): Promise<unknown> { this.signals.push(signal); return this.#broker; }
   }
-  return { Workspace };
+  const ports = Object.freeze({ available: Object.getOwnPropertyDescriptor(Workspace.prototype, "nodeAvailable")!.get!, filesBroker: Workspace.prototype.filesBroker });
+  return { Workspace, ports };
 });
-vi.mock("../../app/main/agent/windows-node-workspace", () => ({ WindowsNodeWorkspace: model.Workspace }));
+vi.mock("../../app/main/agent/windows-node-workspace", () => ({ WindowsNodeWorkspace: model.Workspace, windowsNodeWorkspacePorts: () => model.ports }));
 import { windowsNodeCodingPlatform, WINDOWS_NODE_CODING_CONSTRAINTS } from "../../app/main/agent/windows-node-coding-platform";
 
 afterEach(() => { vi.restoreAllMocks(); });

@@ -37,6 +37,8 @@ export interface ScopedCodingWorkerOptions extends ScopedCodingWorkerBaseOptions
   createWorkspace(signal: AbortSignal, admit: () => boolean): Promise<CodingCommandWorkspace>;
   /** Host-selected platform implementation; omission keeps the existing Linux backend/file facts. */
   platform?: CodingPlatformAdapter;
+  /** Immutable host-selected constraints, not task or model text. */
+  toolchain?: "windows-node";
   commandService: CommandService;
   /** Called once. Its original words, refusals, taint, policy and mutable flow state survive every command. */
   commandContext(service: CommandService, signal: AbortSignal): CommandFlowContext;
@@ -140,7 +142,7 @@ export class ScopedCodingWorker {
       if (this.o.mode === "files-only" && (this.o.commandService !== undefined || this.o.commandContext !== undefined || typeof this.o.platform?.files !== "function")) throw new Error("The coding capability is invalid.");
       // Capture execution authority before startup can wait. A later caller mutation cannot upgrade this task.
       const commands = this.o.mode === "files-only" ? null : { service: this.o.commandService, context: this.o.commandContext,
-        facts: this.o.platform?.facts.bind(this.o.platform), createWorkspace: this.o.createWorkspace.bind(this.o) };
+        toolchain: this.o.toolchain, facts: this.o.platform?.facts.bind(this.o.platform), createWorkspace: this.o.createWorkspace.bind(this.o) };
       const files = this.o.platform?.files.bind(this.o.platform);
       const createWorkspace = this.o.createWorkspace.bind(this.o);
       this.watch = setInterval(() => { if (!this.current() && !this.lifetime.signal.aborted) this.invalidate(); }, 100);
@@ -172,8 +174,10 @@ export class ScopedCodingWorker {
         this.runner = new IsolatedCodingCommandRunner({ workspace: commandWorkspace, facts, signal: this.lifetime.signal,
           current: this.current, inspect: (paths, cwd) => this.files ? this.files.inspect(paths, cwd) : Promise.resolve(paths.map(() => ({ exists: null, real: null }))) });
         if (!facts.shells.length && !this.runner.nodeAvailable) throw new Error("The coding platform has no supported execution capability.");
+        if (commands.toolchain !== undefined && (commands.toolchain !== "windows-node" || facts.os !== "win32" || facts.shells.length || !this.runner.nodeAvailable)) throw new Error("The coding toolchain capability is invalid.");
         const service = isolatedService(original, this.runner, facts.shells), context = commands.context(service, this.lifetime.signal);
-        context.state.cwd = this.workspace.executionRoot;
+        context.state.cwd = facts.os === "win32" ? "\\work" : this.workspace.executionRoot;
+        const toolchain = commands.toolchain ? { toolchain: commands.toolchain } : {};
         const execute = async (tool: CodingControllerToolContext, invoke: (context: CommandFlowContext) => ReturnType<typeof runCommandTool>) => {
           this.requireCurrent();
           const combined = AbortSignal.any([context.signal, tool.signal, this.lifetime.signal]);
@@ -195,11 +199,11 @@ export class ScopedCodingWorker {
         };
         const runNode = (args: RunNodeArgs, tool: CodingControllerToolContext): Promise<CodingControllerCommandResult> => execute(tool, current => runNodeTool(args, current));
         this.controller = facts.shells.length
-          ? await CustomCodingController.start({ ...controller,
+          ? await CustomCodingController.start({ ...controller, ...toolchain,
             commands: { target: service.binding.label, shells: facts.shells, ...(this.runner.nodeAvailable ? { node: true as const } : {}) },
             runCommand: (args, tool) => execute(tool, current => runCommandTool(args, current)), ...(this.runner.nodeAvailable ? { runNode } : {}),
           })
-          : await CustomCodingController.start({ ...controller, commands: { target: service.binding.label, shells: [], node: true }, runNode });
+          : await CustomCodingController.start({ ...controller, ...toolchain, commands: { target: service.binding.label, shells: [], node: true }, runNode });
       }
       this.requireCurrent();
       result = await this.controller.run(this.spec.goal + handoffContext(this.spec.handoffSummary), this.lifetime.signal);
