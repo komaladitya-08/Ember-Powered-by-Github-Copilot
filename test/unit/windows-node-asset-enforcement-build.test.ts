@@ -110,13 +110,13 @@ describe("fixed Windows proof build boundaries", () => {
     expect(f.get(result.program).bytes).toEqual(f.get(win.join(ROOT, "test/fixtures/windows-node-asset-enforcement-program.cjs")).bytes);
     expect(result.receipt.programSha256).toBe(createHash("sha256").update(f.get(result.program).bytes!).digest("hex"));
     expect(result.receipt.programBytes).toBe(f.get(result.program).bytes!.length);
-    expect(result.receipt).toMatchObject({ schema: 2, issuer: "ember-windows-node-asset-enforcement-build-v2", scope: 2, image: 2022, commit: COMMIT, tools: 6 }); expect(JSON.stringify(result.receipt)).not.toMatch(/D:\\|C:\\|PRIVATE|stdout|stderr/);
+    expect(result.receipt).toMatchObject({ schema: 3, issuer: "ember-windows-node-asset-enforcement-build-v3", scope: 3, image: 2022, commit: COMMIT, tools: 6 }); expect(JSON.stringify(result.receipt)).not.toMatch(/D:\\|C:\\|PRIVATE|stdout|stderr/);
     expect(Object.isFrozen(result)).toBe(true); expect(Object.isFrozen(result.receipt)).toBe(true); expect(f.descriptors.size).toBe(0);
     expect(f.api.verifyWindowsNodeAssetEnforcement(result, f.input)).toBe(result.receipt);
   });
-  it("a V1-shaped artifact/receipt cannot be rebound into the genuine V2 builder", async () => {
+  it.each([1, 2])("a V%s artifact/receipt cannot be rebound into the genuine V3 builder", async version => {
     const f = fixture(), result = await f.api.prepareWindowsNodeAssetEnforcement(f.input);
-    const prior = Object.freeze({ ...result, receipt: Object.freeze({ ...result.receipt, schema: 1, scope: 1, issuer: "ember-windows-node-asset-enforcement-build-v1" }) });
+    const prior = Object.freeze({ ...result, receipt: Object.freeze({ ...result.receipt, schema: version, scope: version, issuer: `ember-windows-node-asset-enforcement-build-v${version}` }) });
     expect(() => f.api.verifyWindowsNodeAssetEnforcement(prior, f.input)).toThrow(WindowsNodeAssetEnforcementBuildError);
   });
   it("accepts stable but different path and descriptor millisecond clocks through build and verify", async () => {

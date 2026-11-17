@@ -273,7 +273,7 @@ export function bindWindowsNodeAssetEnforcementNative(native: Pick<typeof Koffi,
             checked[2].toLowerCase() !== path.join(checked[1], "node.exe").toLowerCase() || checked.some(file => file.slice(0, 2).toLowerCase() !== checked[0].slice(0, 2).toLowerCase())) return fail();
         let closed = false;
         for (let i = 0; i < checked.length; i++) {
-          const directory = i !== 2 && i !== 5 && i !== 7, handle = acquire(checked[i], directory, RC | 0x80, directory ? 3 : 1);
+          const directory = i !== 2 && i !== 5 && i !== 7, handle = acquire(checked[i], directory, RC | 0x80, directory || i === 5 || i === 7 ? 3 : 1);
           const pin = { file: checked[i], directory, handle, metadata: metadata(handle, checked[i], directory), security: undefined as unknown as Security };
           pins.push(pin); pin.security = security(pin, ownerSid as string, packageSid as string, expectedKinds[i], i === 0 || i >= 6, i === 0 && parentLabel === "default");
           if (pins.slice(0, -1).some(other => other.metadata.readUInt32LE(28) !== pin.metadata.readUInt32LE(28) ||

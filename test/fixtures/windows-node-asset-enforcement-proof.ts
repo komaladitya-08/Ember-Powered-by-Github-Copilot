@@ -30,7 +30,7 @@ export const WINDOWS_NODE_ASSET_ENFORCEMENT_EXPORTS = Object.freeze([
 ].sort());
 export const NODE_ASSET_SEED = "EMBER_NODE_ASSET_SEED\n", NODE_ASSET_CREATED = "EMBER_NODE_ASSET_CREATED\n";
 export const NODE_ASSET_READY = "EMBER_NODE_ASSET_READY\n", NODE_ASSET_ERROR_READY = "EMBER_NODE_ASSET_STDERR_READY\n";
-const C_OUTPUT = "EMBER_ASSET_ACCESS_V2:131071:2047:17:11:2:1\n", C_ERROR = "EMBER_ASSET_ACCESS_STDERR_V2\n", CONTROL_CREATED = "EMBER_ASSET_CONTROL_CREATED_V2\n";
+const C_OUTPUT = "EMBER_ASSET_ACCESS_V3:32767:131071:15:17:2:1\n", C_ERROR = "EMBER_ASSET_ACCESS_STDERR_V3\n", CONTROL_CREATED = "EMBER_ASSET_CONTROL_CREATED_V3\n";
 const retained: unknown[] = [];
 const ensure = (value: unknown): void => { if (value !== true) throw new Error("The fixed native asset observation was refused."); };
 const quote = (value: string) => `"${value.replace(/(\\*)"/g, "$1$1\\\"").replace(/(\\+)$/, "$1$1")}"`;
@@ -61,13 +61,13 @@ export class WindowsNodeAssetEnforcementObservationError extends Error {
   readonly tokenObserved: number; readonly tokenIntegrity: number; readonly tokenAttributes: number; readonly tokenPolicy: number;
   constructor(readonly mode: WindowsNodeAssetEnforcementMode, readonly phase: number, preludeStage = 0, cExit = 0, errorClass = 0, probeObject = 0, probeRight = 0, probeOutcome = 0, probeMatrix: readonly number[] = [], tokenObserved = 0, tokenIntegrity = 0, tokenAttributes = 0, tokenPolicy = 0) {
     const stage = Number.isInteger(preludeStage) && preludeStage >= 0 && preludeStage <= 14 ? preludeStage : 0;
-    const code = Number.isInteger(cExit) && (cExit === 29 || cExit >= 301 && cExit <= 309) ? cExit : 0;
+    const code = Number.isInteger(cExit) && (cExit === 39 || cExit >= 401 && cExit <= 409) ? cExit : 0;
     const kind = Number.isInteger(errorClass) && errorClass >= 0 && errorClass <= 8 ? errorClass : 0;
     const object = Number.isInteger(probeObject) && probeObject >= 1 && probeObject <= 8 ? probeObject : 0;
-    const right = Number.isInteger(probeRight) && probeRight >= 1 && probeRight <= 3 ? probeRight : 0;
+    const right = Number.isInteger(probeRight) && probeRight >= 1 && (probeRight <= 3 || probeRight === 4 && object >= 5) ? probeRight : 0;
     const outcome = Number.isInteger(probeOutcome) && probeOutcome >= 1 && probeOutcome <= 5 ? probeOutcome : 0;
-    const matrix = Array.isArray(probeMatrix) && probeMatrix.length === 24 && probeMatrix.every(value => Number.isInteger(value) && value >= 1 && value <= 5)
-      ? Object.freeze([...probeMatrix]) : Object.freeze(Array<number>(24).fill(0));
+    const matrix = Array.isArray(probeMatrix) && probeMatrix.length === 28 && probeMatrix.every(value => Number.isInteger(value) && value >= 1 && value <= 5)
+      ? Object.freeze([...probeMatrix]) : Object.freeze(Array<number>(28).fill(0));
     const observed = tokenObserved === 1 ? 1 : 0;
     const integrity = observed && Number.isInteger(tokenIntegrity) && tokenIntegrity >= 0 && tokenIntegrity <= 7 ? tokenIntegrity : 0;
     const attributes = observed && Number.isInteger(tokenAttributes) && tokenAttributes >= 0 && tokenAttributes <= 2 ? tokenAttributes : 0;
@@ -79,6 +79,14 @@ export class WindowsNodeAssetEnforcementObservationError extends Error {
     this.tokenObserved = observed; this.tokenIntegrity = integrity; this.tokenAttributes = attributes; this.tokenPolicy = policy;
     this.name = "WindowsNodeAssetEnforcementObservationError"; this.stack = `${this.name}: ${this.message}`;
   }
+}
+
+/** V3 admits the same observed held C token before the trusted attester can return to Resume. */
+export function requireWindowsNodeAssetHeldToken(loaded: Pick<Bundle, "requireWindowsCommandOutputLaunch">,
+  pins: Pick<TargetPins, "requireTokenObservation">, observation: TokenObservation, launch: WindowsCommandOutputLaunchRef): void {
+  loaded.requireWindowsCommandOutputLaunch(launch);
+  const facts = pins.requireTokenObservation(observation, launch);
+  ensure(facts.integrity === 2 && facts.attributes === 2 && facts.policy === 1);
 }
 
 /** Read-only token diagnostics require the same genuine completed/closed run before touching the private observation. */
@@ -93,22 +101,22 @@ export function requireWindowsNodeAssetTokenFacts(loaded: Pick<Bundle, "requireW
 /** Diagnostic only. An authentic exact-run completion does not certify output closure or permit disposal. */
 export function windowsNodeAssetPreludeExit(loaded: Pick<Bundle, "requireWindowsCommandRootOnlyCompleted">, completed: unknown, run: WindowsCommandRootOnlyRunRef): number {
   const value = loaded.requireWindowsCommandRootOnlyCompleted(completed, run), code = value.exitCode;
-  return value.outcome === "natural-exit" && typeof code === "number" && Number.isInteger(code) && (code === 29 || code >= 301 && code <= 309) ? code : 0;
+  return value.outcome === "natural-exit" && typeof code === "number" && Number.isInteger(code) && (code === 39 || code >= 401 && code <= 409) ? code : 0;
 }
 /** Fixed failure tuple only, authenticated after genuine completion and output closure. Never a success or disposal receipt. */
 export function windowsNodeAssetPreludeProbe(loaded: Pick<Bundle, "requireWindowsCommandRootOnlyCompleted" | "requireWindowsCommandOutputClosed">,
   input: { completed: unknown; closed: unknown; run: WindowsCommandRootOnlyRunRef; launch: WindowsCommandOutputLaunchRef; stderr: Buffer }) {
   const completed = loaded.requireWindowsCommandRootOnlyCompleted(input.completed, input.run), closed = loaded.requireWindowsCommandOutputClosed(input.closed, input.launch, input.run);
-  const unknown = () => Object.freeze({ object: 0, right: 0, outcome: 0, matrix: Object.freeze(Array<number>(24).fill(0)) });
-  if (completed.outcome !== "natural-exit" || completed.exitCode !== 305 || !closed.complete || closed.reason !== "none" || closed.stdoutBytes !== 0) return unknown();
-  const frame = input.stderr, prefix = Buffer.from("EMBER_ASSET_PROBE_V2:"), offset = prefix.length, matrixPrefix = Buffer.from("EMBER_ASSET_MATRIX_V2:"),
+  const unknown = () => Object.freeze({ object: 0, right: 0, outcome: 0, matrix: Object.freeze(Array<number>(28).fill(0)) });
+  if (completed.outcome !== "natural-exit" || completed.exitCode !== 405 || !closed.complete || closed.reason !== "none" || closed.stdoutBytes !== 0) return unknown();
+  const frame = input.stderr, prefix = Buffer.from("EMBER_ASSET_PROBE_V3:"), offset = prefix.length, matrixPrefix = Buffer.from("EMBER_ASSET_MATRIX_V3:"),
     matrixStart = offset + 6, matrixOffset = matrixStart + matrixPrefix.length;
-  if (closed.stderrBytes !== frame.length || frame.length !== matrixOffset + 25 || !frame.subarray(0, offset).equals(prefix) ||
+  if (closed.stderrBytes !== frame.length || frame.length !== matrixOffset + 29 || !frame.subarray(0, offset).equals(prefix) ||
       frame[offset + 1] !== 58 || frame[offset + 3] !== 58 || frame[offset + 5] !== 10) return unknown();
   const object = frame[offset] - 48, right = frame[offset + 2] - 48, outcome = frame[offset + 4] - 48;
-  if (object < 1 || object > 8 || right < 1 || right > 3 || outcome < 1 || outcome > 5) return unknown();
-  if (!frame.subarray(matrixStart, matrixOffset).equals(matrixPrefix) || frame[matrixOffset + 24] !== 10) return unknown();
-  const matrix = [...frame.subarray(matrixOffset, matrixOffset + 24)].map(value => value - 48);
+  if (object < 1 || object > 8 || right < 1 || right > 4 || right === 4 && object < 5 || outcome < 1 || outcome > 5) return unknown();
+  if (!frame.subarray(matrixStart, matrixOffset).equals(matrixPrefix) || frame[matrixOffset + 28] !== 10) return unknown();
+  const matrix = [...frame.subarray(matrixOffset, matrixOffset + 28)].map(value => value - 48);
   if (matrix.some(value => value < 1 || value > 5)) return unknown();
   return Object.freeze({ object, right, outcome, matrix: Object.freeze(matrix) });
 }
@@ -144,7 +152,7 @@ export function requireWindowsNodeAssetOutputFacts(loaded: Pick<Bundle, "require
   const completed = loaded.requireWindowsCommandRootOnlyCompleted(input.completed, input.run), output = loaded.requireWindowsCommandOutputClosed(input.closed, input.launch, input.run);
   ensure(input.stdout.length + input.stderr.length <= 256 * 1024 && output.stdoutBytes === input.stdout.length && output.stderrBytes === input.stderr.length);
   if (input.mode === "prelude") {
-    ensure(completed.outcome === "natural-exit" && completed.exitCode === 29 && output.complete && output.reason === "none" &&
+    ensure(completed.outcome === "natural-exit" && completed.exitCode === 39 && output.complete && output.reason === "none" &&
       input.stdout.equals(Buffer.from(C_OUTPUT)) && input.stderr.equals(Buffer.from(C_ERROR)));
   } else if (input.mode === "preresume" || input.mode === "sharedcreate") {
     ensure(completed.outcome === "cancelled" && completed.exitCode === null && !output.complete && output.reason === "cancelled" && input.stdout.length === 0 && input.stderr.length === 0);
@@ -179,7 +187,7 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
     if (terminal) throw terminal;
     if (busy || !MODES.includes(mode)) { terminal = new WindowsNodeAssetEnforcementObservationError(MODES.includes(mode) ? mode : "natural", 1); throw terminal; }
     busy = true;
-    let phase = 1, preludeStage = 0, cExit = 0, probe: Readonly<{ object: number; right: number; outcome: number; matrix: readonly number[] }> = { object: 0, right: 0, outcome: 0, matrix: Object.freeze(Array<number>(24).fill(0)) },
+    let phase = 1, preludeStage = 0, cExit = 0, probe: Readonly<{ object: number; right: number; outcome: number; matrix: readonly number[] }> = { object: 0, right: 0, outcome: 0, matrix: Object.freeze(Array<number>(28).fill(0)) },
       tokenObserved = 0, tokenFacts: Readonly<{ integrity: number; attributes: number; policy: number }> = { integrity: 0, attributes: 0, policy: 0 },
       heldToken: Readonly<{ ref: TokenObservation; launch: WindowsCommandOutputLaunchRef }> | undefined,
       loaded: Bundle | undefined, proof: ReturnType<Bundle["loadWindowsCommandCopyProofNative"]> | undefined,
@@ -192,7 +200,8 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
     const pins: WindowsCommandCopyProofPin[] = [], directories: WindowsHandle[] = [], owners: WindowsCommandRootOnlyStopOwner[] = [], launches: WindowsCommandOutputLaunchRef[] = [];
     const output: Record<"stdout" | "stderr", Buffer[]> = { stdout: [], stderr: [] }, totals = { stdout: 0, stderr: 0 }, abort = new AbortController(), assetAbort = new AbortController(), sharedAbort = new AbortController();
     let stopped: { ref: WindowsCommandRootOnlyStoppedRef; binding: object } | undefined;
-    const graph = { asset, verifyBuild, resources, mode, pins, directories, owners, launches, output, abort, assetAbort, sharedAbort,
+    const controlReaders: WindowsCommandCopyProofPin[] = [];
+    const graph = { asset, verifyBuild, resources, mode, pins, controlReaders, directories, owners, launches, output, abort, assetAbort, sharedAbort,
       get loaded() { return loaded; }, get proof() { return proof; }, get security() { return security; }, get targetPins() { return targetPins; }, get api() { return api; },
       get profile() { return profile; }, get node() { return node; }, get copy() { return copy; }, get io() { return io; }, get script() { return script; }, get directory() { return directory; },
       get heldToken() { return heldToken; } };
@@ -247,6 +256,16 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
       const root = ordinary(path.join(privateParent, String(roots[0]))), image = ordinary(path.join(root, "node.exe")); ensure(guarded(() => files.readdirSync(root)).join("|") === "node.exe");
       targetPins = native(() => security!.pinTargets({ parent: privateParent, root, image, lowOwner, lowFullDirectory, lowFullFile, mediumFullDirectory, mediumFullFile, ownerSid: owner, packageSid: selected.sidText,
         parentLabel: mode === "natural-default" ? "default" : "explicit" }));
+      const checkControlBytes = () => {
+        native(() => targetPins!.recheck());
+        for (const file of [lowFullFile, mediumFullFile]) {
+          const pin = native(() => proof!.pin(file, 20)); controlReaders.push(pin);
+          const bytes = native(() => pin.read());
+          try { ensure(bytes.equals(Buffer.from("EMBER_ASSET_CONTROL\n"))); } finally { bytes.fill(0); }
+          native(() => pin.close()); controlReaders.pop();
+        }
+        native(() => targetPins!.recheck());
+      };
       copy = await loaded.WindowsRootOnlyCommandCopy.create({ parent: treeParent, protectedPaths: [tools, privateParent, lowOwner, lowFullDirectory, mediumFullDirectory, resources, path.dirname(asset.module)],
         entries: [{ path: "seed.txt", kind: "file", bytes: Buffer.from(NODE_ASSET_SEED), executable: false }, { path: "proof.cjs", kind: "file", bytes: script, executable: false }],
         creatorProfile: profile, packageSid: selected.sidText, current: workCurrent, packageCurrent: workCurrent, reviewCurrent: current }, { api,
@@ -256,6 +275,7 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
         ensure(loaded!.requireWindowsCommandRootOnlyCompletion(stopped!.ref, stopped!.binding).rootPresent === present); };
       let prelude = 0;
       if (mode === "natural" || mode === "natural-default") {
+        checkControlBytes();
         phase = 4; preludeStage = 1; io = native(() => loaded!.createWindowsCommandOutput(profile!, { signal: abort.signal, timeoutMs: 8_000, output: collect }));
         const line = command([program, privateParent, root, image, lowOwner, lowFullDirectory, lowFullFile, mediumFullDirectory, mediumFullFile]);
         let run: WindowsCommandRootOnlyRunRef;
@@ -266,6 +286,7 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
           ensure(exact.root.process === held.process && exact.root.thread === held.thread && exact.root.pid === held.pid &&
             exact.heldPiHandles.length === 2 && exact.heldPiHandles[0] === held.process && exact.heldPiHandles[1] === held.thread);
           heldToken = Object.freeze({ ref: native(() => targetPins!.observeHeldToken(held.process, held.thread, held.pid, launch!)), launch: launch! });
+          native(() => requireWindowsNodeAssetHeldToken(loaded!, targetPins!, heldToken!.ref, launch!));
           preludeStage = 5; native(() => proof!.image(held.process, held.pid, program)); preludeStage = 6; checkPins(); }); }
         finally { line.fill(0); }
         ensure(heldToken !== undefined && heldToken.launch === launch);
@@ -280,7 +301,7 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
         try { probe = windowsNodeAssetPreludeProbe(loaded, { completed: done, closed, run, launch: launch!, stderr: failureBytes }); }
         finally { failureBytes.fill(0); }
         preludeStage = 11; facts("prelude", done, closed, run);
-        preludeStage = 12; native(() => targetPins!.recheck()); preludeStage = 13; const created = guarded(() => files.readFileSync(path.join(lowFullDirectory, "access-create.txt")));
+        preludeStage = 12; checkControlBytes(); preludeStage = 13; const created = guarded(() => files.readFileSync(path.join(lowFullDirectory, "access-create.txt")));
         try { ensure(created.equals(Buffer.from(CONTROL_CREATED))); } finally { created.fill(0); }
         preludeStage = 14; prelude = 1; stopped = undefined; launch = undefined; io = undefined;
       }
@@ -322,7 +343,7 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
       ensure(files.readdirSync(mediumFullDirectory).join("|") === "full-file.txt"); files.unlinkSync(mediumFullFile);
       for (const folder of [tools, treeParent, privateParent, lowOwner, lowFullDirectory, mediumFullDirectory]) { ensure(files.readdirSync(folder).length === 0); files.rmdirSync(folder); }
       ensure(files.readdirSync(directory).length === 0); files.rmdirSync(directory); ensure(!files.existsSync(directory)); script.fill(0); script = undefined; live = false;
-      return Object.freeze({ schema: 2 as const, scope: 2 as const, mode, ...result, prelude, parentDefault: mode === "natural-default" ? 1 : 0, deniedAccess: prelude ? 131071 : 0, positiveAccess: prelude ? 2047 : 0, deniedChecks: prelude ? 17 : 0, positiveChecks: prelude ? 11 : 0, integrityPairs: prelude ? 2 : 0,
+      return Object.freeze({ schema: 3 as const, scope: 3 as const, mode, ...result, prelude, parentDefault: mode === "natural-default" ? 1 : 0, deniedAccess: prelude ? 32767 : 0, positiveAccess: prelude ? 131071 : 0, deniedChecks: prelude ? 15 : 0, positiveChecks: prelude ? 17 : 0, integrityPairs: prelude ? 2 : 0,
         rootPresent: mode === "precreate" ? 0 : 1, outputClosed: mode === "precreate" ? 0 : 1,
         actualNode: mode === "precreate" || mode === "preresume" || mode === "sharedcreate" ? 0 : 1,
         stdinEof: mode === "precreate" || mode === "preresume" || mode === "sharedcreate" ? 0 : 1, rootOnlyStop: 1, snapshot: 1, seedUnchanged: 1,

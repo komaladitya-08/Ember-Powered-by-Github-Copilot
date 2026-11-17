@@ -35,7 +35,7 @@ function descriptor(index: number, parentLabel: "explicit" | "absent" | "empty" 
   owner.copy(bytes, 20); dacl.copy(bytes, 20 + owner.length); sacl.copy(bytes, 20 + owner.length + dacl.length); return bytes;
 }
 function setup(fault = "") {
-  const calls: Call[] = [], handles = new Map<bigint, { row: Row; access: number }>(), allocations = new Map<bigint, Buffer>(), closed: bigint[] = [], freed: bigint[] = [];
+  const calls: Call[] = [], handles = new Map<bigint, { row: Row; access: number; share: number }>(), allocations = new Map<bigint, Buffer>(), closed: bigint[] = [], freed: bigint[] = [];
   const tokens = new Set<bigint>(), local = new Set<bigint>();
   const rows = paths.map((file, index): Row => ({ file, index, directory: index !== 2 && index !== 5 && index !== 7, identity: BigInt(index + 100), volume: 7,
     write: 3000n, creation: 1000n, size: 512, security: descriptor(index) }));
@@ -43,7 +43,7 @@ function setup(fault = "") {
     threwOutput: undefined as unknown[] | undefined, freedReentry: false, decoded: 0, pid: 31415, integrityRid: 8192, integrityAttributes: 0x60, policy: 1,
     integrityLength: 28, policyLength: 4, tokenKind: 0, tokenRaw: undefined as bigint | undefined, localRaw: undefined as bigint | undefined,
     securityRaw: undefined as bigint | undefined, nextFileRaw: undefined as bigint | undefined,
-    failedCloseRaw: undefined as bigint | undefined,
+    failedCloseRaw: undefined as bigint | undefined, lastOpenError: 0,
     mutateIntegrity: undefined as ((bytes: Buffer, raw: bigint) => void) | undefined };
   const fence = { retained: [] as unknown[], failure: undefined as WindowsNodeAssetEnforcementNativeCleanupError | undefined };
   let nextHandle = 20n, nextAllocation = 0x100000n;
@@ -84,10 +84,15 @@ function setup(fault = "") {
         if (control.fault === "open throw") throw new Error("private native path and credential");
         if (control.fault === "invalid handle") return 0xffffffffffffffffn;
         const row = rows.find(row => row.file === args[0])!;
+        // This branch models sharing only; mandatory labels and DACL outcomes are separate Native evidence.
+        if (args[1] === 2 && [...handles.values()].some(held => held.row === row && !(held.share & 2))) {
+          control.lastOpenError = 32; return 0xffffffffffffffffn;
+        }
+        control.lastOpenError = 0;
         if (control.fault === "aliased handle" && handles.size) return [...handles.keys()][0];
         if (control.fault === "target handle alias" && row.index === control.faultIndex && handles.size) return [...handles.keys()][0];
         const raw = control.nextFileRaw ?? (control.fault === "reuse resources" && closed.length ? closed[closed.length - 1] : nextHandle++); control.nextFileRaw = undefined;
-        handles.set(raw, { row, access: args[1] as number }); return raw;
+        handles.set(raw, { row, access: args[1] as number, share: args[2] as number }); return raw;
       }
       if (name === "GetFileType") return control.fault === "wrong file type" ? 2 : 1;
       if (name === "GetHandleInformation") {
@@ -601,4 +606,24 @@ it("keeps the borrowed thread reserved against sibling handles before eight posi
 it("releases the thread reservation after all eight pin closes without closing the borrowed thread", () => {
   const s = setup(), { pins } = observe(s); pins.close(); expect(s.closed).not.toContain(heldThread);
   s.control.nextFileRaw = heldThread; const next = s.api.pinTargets(input); next.close(); expect(s.api.unsafe).toBe(false);
+});
+
+it("permits data-access probes through both test-control pin shares while retaining the image pin's sharing obstruction", () => {
+  const s = setup(), pins = s.api.pinTargets(input), initial = s.calls.filter(call => call.name === "CreateFileW").slice(0, 8);
+  expect(initial.map(call => call.args[2])).toEqual([3, 3, 1, 3, 3, 3, 3, 3]);
+  const create = s.load().func(WINDOWS_NODE_ASSET_ENFORCEMENT_FUNCTIONS.kernel32[0]) as (...args: unknown[]) => unknown;
+  const close = s.load().func("int __stdcall CloseHandle(void *handle)") as (...args: unknown[]) => unknown;
+  const dataProbe = (index: number) => create(paths[index], 2, 7, null, 3, 0x00200000 | (s.rows[index].directory ? 0x02000000 : 0), null);
+  for (const index of [5, 7]) {
+    const record = [...s.handles.values()].find(held => held.row.index === index)!;
+    expect(record.share).toBe(3);
+    // The previous share1 contract would obstruct this exact access before MIC could be measured.
+    record.share = 1; expect(dataProbe(index)).toBe(0xffffffffffffffffn); expect(s.control.lastOpenError).toBe(32);
+    record.share = 3; const opened = dataProbe(index);
+    expect(typeof opened).toBe("bigint"); expect(opened).not.toBe(0xffffffffffffffffn); expect(s.control.lastOpenError).toBe(0); expect(close(opened)).toBe(1);
+  }
+  expect(dataProbe(2)).toBe(0xffffffffffffffffn); expect(s.control.lastOpenError).toBe(32);
+  for (const index of [4, 6]) { const opened = dataProbe(index); expect(opened).not.toBe(0xffffffffffffffffn); expect(close(opened)).toBe(1); }
+  expect(s.calls.some(call => /WriteFile|SetSecurity|SetToken|CreateProcess/.test(call.name))).toBe(false);
+  pins.recheck(); pins.close(); expect(s.api.unsafe).toBe(false); expect(s.handles.size).toBe(0);
 });

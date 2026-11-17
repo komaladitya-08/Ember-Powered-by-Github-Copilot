@@ -241,7 +241,7 @@ export function bindWindowsNodeAssetEnforcementBuild({ files = fs, execute = exe
         stage = 6; const pe = validateWindowsNodeAssetEnforcementPe(exe.bytes); if (!moduleBytes.equals(emitted.bytes) || !script.bytes.equals(programSource.bytes)) throw refusal(stage);
         stage = 7;
         const allSources = capture.records().sort((a, b) => a.path.localeCompare(b.path));
-        const receipt = Object.freeze({ schema: 2, issuer: "ember-windows-node-asset-enforcement-build-v2", scope: 2, image: selected.ordinal, commit,
+        const receipt = Object.freeze({ schema: 3, issuer: "ember-windows-node-asset-enforcement-build-v3", scope: 3, image: selected.ordinal, commit,
           sourceSha256: digest(JSON.stringify(allSources.map(record => [path.relative(root, record.path).replaceAll("\\", "/"), record.sha256, record.size]))),
           recipeSha256: digest(WRAPPER + recipe.replaceAll(destination, "<fresh>").replaceAll(installation, "<installed-vs>")),
           toolsSha256: digest(JSON.stringify(tools.map(record => [record.sha256, record.size]))), sources: allSources.length, tools: tools.length,

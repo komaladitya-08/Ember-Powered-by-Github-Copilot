@@ -1,8 +1,9 @@
-# Fixed native Windows Node asset enforcement witness V2
+# Fixed native Windows Node asset enforcement witness V3
 
-This is a new test-only V2 scope for the disabled native asset owner. Its run/build issuers end in `-v2`, its
-schema and scope are 2, and only its exact new C exit 29 and V2 frames can certify the access prelude. V1 exit 205
-and V1 frames never satisfy V2. The immutable V1 heads and all four failed Windows runs below remain failures.
+This is a separate test-only V3 scope for the disabled native asset owner. Its run/build issuers end in `-v3`,
+its schema and scope are3, and only its exact new C exit39 and V3 frames can certify the access prelude. V1/V2
+exits19/29/205/305 and their frames never satisfy V3. All immutable V1/V2 heads and failed runs below remain failures.
+V3 adds same-DACL Low/Medium data-right comparisons and requires an actual held Low/no-write-up C token before Resume.
 No production module, executable-selection API, runtime pin, backend selector, model tool or historical head changes.
 The project coordinator, Host/SDK, Home and packaged-product journeys have separate acceptance requirements.
 
@@ -36,8 +37,8 @@ The eight targets and exact security-right expectations are:
 | Host-only control directory | Low | Denied | Denied | Denied |
 | Full-package control directory | Low | Positive | Positive | Positive |
 | Full-package control file | Low | Positive | Positive | Positive |
-| Full-package control directory | Medium/NW | Positive | Denied | Denied |
-| Full-package control file | Medium/NW | Positive | Denied | Denied |
+| Full-package control directory | Medium/NW | Positive | Positive | Positive |
+| Full-package control file | Medium/NW | Positive | Positive | Positive |
 
 Only ERROR_ACCESS_DENIED (5) counts as a denial. Sharing violations, missing paths and malformed controls fail.
 The host positively opens WRITE_DAC and WRITE_OWNER, with READ_ATTRIBUTES for same-object metadata, on the actual
@@ -48,15 +49,26 @@ Both Low/Medium full-package pairs are freshly created test controls. Within eac
 and DACL bytes must match exactly, including explicit host/SYSTEM/package full-access ACEs; their strict NW labels
 differ only by Low versus Medium. The host-only Low control retains the same owner/DACL as the actual private parent.
 All eight canonical identities, volume/file IDs, attributes and exact security contracts are pinned and rechecked
-before and after genuine C Stop. No borrowed parent is relabelled or granted a package ACE. These paired controls
-are the causal MIC test; the host-only and actual-parent denials alone make no MIC differential claim.
+before and after genuine C Stop. No borrowed parent is relabelled or granted a package ACE. The four Medium-control WRITE_DAC/WRITE_OWNER positives are explicit V3 observations from the failed V2 runs;
+they make no claim about why MIC did not deny those security rights. The host-only and actual-parent denials
+alone also make no MIC differential claim.
+
+V3 additionally requests FILE_ADD_FILE (0x2) on both full-package directories and FILE_WRITE_DATA (0x2) on both
+full-package files. Each Low control must allow its open and each otherwise identical Medium/NW control must deny
+with ERROR_ACCESS_DENIED. These two paired data-right differences are the causal MIC comparison. The fixed C
+body only opens and positively closes these controls; it never writes their data. Only fresh TEST control-file
+pins5/7 permit write sharing (share3), identically for Low and Medium. The actual Node-image pin2 stays share1.
+Bounded20-byte proof pins read both exact control canaries and close positively before C Resume and again after
+genuine C Stop/EOF; private read buffers are wiped. All eight retained identities/security/file clocks are rechecked.
+Any unknown read/close permanently fences and retains the graph.
 
 The child also must fail CREATE_NEW in the actual parent, actual asset root and Medium full-package directory,
 while positively creating, writing, flushing and closing one known file in the Low full-package directory. The
-complete prelude has 17 denied checks and 11 positive checks, masks 131071 and 2047, two paired control objects and
-stdin EOF. Only then does it emit `EMBER_ASSET_ACCESS_V2:131071:2047:17:11:2:1` plus the exact V2 stderr frame and exit29.
-The original first-loop V1 assumptions are not silently relaxed: V2 has a new issuer, scope, table, counters and
-added paired controls. It makes no native success claim until its entire reviewed pair passes.
+complete prelude has32 checks:24 security opens (14positive/10denied), four data-right opens (2positive/2denied) and
+four creates (1positive/3denied). Totals are15 denied and17 positive, masks32767 and131071, two paired control objects
+and stdin EOF. Only then does it emit `EMBER_ASSET_ACCESS_V3:32767:131071:15:17:2:1` plus the exact V3 stderr frame
+and exit39. V3 has a new issuer, scope, table and counters; neither V1 nor V2 failures are recertified. It makes
+no native success claim until its entire reviewed pair passes.
 
 `natural-default` creates its fresh enclosing directory with a protected empty SACL, stopping inherited labels,
 and creates the borrowed parent without a SACL. Native readback must positively establish no mandatory-label ACE,
@@ -88,18 +100,20 @@ access masks/counts, paired-object count, root presence and cleanup flags. Paths
 native messages, TAP, reports and dumps are not uploaded. A first failure permanently retains its private graph
 and blocks later cases; there is no reset, cleanup retry or later success that certifies an unknown owner.
 
-V2 failure diagnostics remain separate from success: only natural C305 with genuine exact completed/run and closed
-launch/run, complete output, reason none, zero stdout and exact V2 tuple plus 24-enum matrix frames can project a
-bounded observation. Objects are1..8 in the table order, rights1 RC/2 WDAC/3 WO, outcomes1 positive open/2 access denied/
+V3 failure diagnostics remain separate from success: only natural C405 with genuine exact completed/run and closed
+launch/run, complete output, reason none, zero stdout and exact V3 tuple plus28-enum matrix frames can project a
+bounded observation. Objects are1..8 in the table order, rights1 RC/2 WDAC/3 WO/4 data or add-file (right4 only objects5..8), outcomes1 positive open/2 access denied/
 3 sharing violation/4 other or NULL/5 handle-information failure or nonzero flags. All other frames/outcomes map to an
-unknown tuple and24 zeros. The first tuple is captured before the eight-by-three diagnostic measurements. Both
-frames wait for every acquired handle to close positively; unknown close sleeps and emits neither. Failure305,
-or any old V1 code/frame, never grants success or disposal. Prelude stages and exact emitted error-class enums
+unknown tuple and28 zeros. The first24 matrix entries retain eight-by-three security order; the last four are
+data-right probes for objects5,6,7,8. No production target receives a data-right diagnostic open. The first tuple
+is captured before these failure-only measurements. Both
+frames wait for every acquired handle to close positively; unknown close sleeps and emits neither. Failure405,
+or any old V1/V2 code/frame, never grants success or disposal. Prelude stages and exact emitted error-class enums
 remain bounded; no raw DWORD or text is projected.
 
 Portable suites exercise real opaque issuers over DLL models, the emitted production graph, exact source/build
 ownership, literal Node workload, dual-frame authentication and the actual C body compiled against fixed in-memory
-Win32 stubs. The C model verifies all24 accesses, paired expected outcomes, three create denials and the Low create,
+Win32 stubs. The C model verifies all24 security accesses and four data-right accesses, paired expected outcomes, three create denials and the Low create,
 partial writes, short-circuiting and positive-close-before-diagnostics. It proves no Windows ABI or enforcement.
 Native helpers separately model all8 ownership/security pins, pair mismatches, aliases, reentry and permanent fences.
 Validation/Type/native receipts belong in the PR evidence for the exact source manifest. PR registration runs
@@ -128,7 +142,7 @@ the production Node image is Low. Microsoft documents that process integrity is 
 integrity and that each token has a separately queried mandatory policy. These source facts identify an evidence
 gap; they do not establish the failed C token's actual level or the cause of either kernel result.
 
-An evidence-only append now reads the held C primary token before Resume. The genuine output launch must still
+The evidence-only append at `c49a6d4a8c46d7a18e75c95c0a1c1f298d92485b` reads the held C primary token before Resume. The genuine output launch must still
 hold exactly its process/thread handles and match the attested PID; GetProcessId independently matches that PID.
 TOKEN_QUERY is the only new token right. A real zeroed LocalAlloc buffer owns the returned integrity-label SID;
 the header, returned span, SID authority/count and whole SID bounds are checked before bounded decode copies.
@@ -143,8 +157,28 @@ three finite enums. Integrity is0 other,1 untrusted,2 Low,3 Medium,4 MediumPlus,
 attributes are0 other,1 exactly0x20,2 exactly0x60; policy is0 OFF,1 no-write-up,2 new-process-minimum,3 both,4 other.
 tokenObserved0 forces all fields to zero and distinguishes an absent observation from a measured OFF policy.
 No raw SID/RID, attribute/policy value, native status, handle, path or text is projected. Metadata and reservation
-release confer no Stop or disposal authority. The C executable label, C expectations, V2 success/failure frames,
-production factory, runtime pins and original five-second portable bounds are unchanged.
+release confer no Stop or disposal authority. That evidence-only append left the C executable label, C expectations,
+V2 success/failure frames, production factory, runtime pins and original five-second portable bounds unchanged.
+
+The held-token diagnostic run `43989223396` failed on both images at that exact head. Each Windows job passed492
+portable tests, then retained natural C305/prelude11/tuple7/2/1 and the same24-cell security matrix. Both genuinely
+completed/closed/stopped C runs reported tokenObserved1, integrity2 (Low), attributes2 (exact0x60), policy1
+(NO_WRITE_UP). This rules out the earlier unmeasured Medium-token or policy-OFF hypotheses. It does not establish
+why WRITE_DAC/WRITE_OWNER opened successfully on the Medium controls. The Linux contracts job separately failed
+its C-model beforeAll setup:492 tests passed and199 were skipped after the hook failure. Its compiler/setup cause
+was not observed; unchanged C/flags and earlier691-pass registration do not establish a cause or turn this run green.
+
+V3 requires that same genuine launch-bound observation to be Low2/attributes2/policy1 inside the trusted held
+attester before it returns to Resume. Other or unknown facts fence the launch. Outward token diagnostics still
+require genuine exact-run completion, closed output and authenticated Stop; admission metadata never certifies Stop.
+
+The portable C-model setup now emits only fixed numeric failure fields: setupStage0 unknown/1temporary root/
+2literal read/3fixed fixture writes/4compiler entered/5compiler returned; compilerReturned0or1; compilerStatus0
+null or unobserved/1zero/2nonzero/3malformed; compilerSignal0none/1SIGTERM/2SIGKILL/3other; compilerError0none/
+1ETIMEDOUT/2ENOENT/3EACCES/4ENOBUFS/5other. No compiler text, code string, raw exit value, filename or child stream
+leaves the test. A thrown/partial result remains unobserved. The original literal cc arguments,2500ms compile bound,
+750ms model-child bound,128KiB compiler output cap and five-second test bound remain unchanged, with no retry.
+The hook still fails. These fields distinguish finite outcomes without guessing a load or CPU cause.
 
 Primary references:
 
@@ -155,3 +189,8 @@ Primary references:
 - [SYSTEM_MANDATORY_LABEL_ACE](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-system_mandatory_label_ace)
   defines label policy and Low/Medium integrity RIDs. These pages alone do not establish outcomes for the observed
   WRITE_DAC/WRITE_OWNER calls without the actual subject-token facts.
+
+- [File Access Rights Constants](https://learn.microsoft.com/en-us/windows/win32/fileio/file-access-rights-constants)
+  defines FILE_WRITE_DATA and FILE_ADD_FILE as0x2 for file-data writes and directory file creation.
+- [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)
+  documents write-sharing compatibility; an omitted write share can independently prevent a data-write open.
