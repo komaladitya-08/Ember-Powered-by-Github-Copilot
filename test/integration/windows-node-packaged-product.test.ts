@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import { types } from "node:util";
 import { spawn, type ChildProcess } from "node:child_process";
 import { expect, it } from "vitest";
 import { readFuses, emberFuses, fuseMismatches } from "../../scripts/package/fuses.mjs";
@@ -70,6 +71,62 @@ async function run(file: string, args: readonly string[], env: NodeJS.ProcessEnv
   } finally { clearTimeout(timer); }
 }
 
+interface PackagedObservation {
+  operation: number; iteration: number; welcomeStep: number; nextLabel: number; target: number;
+  bridgeError: number; snapshotFlags: number; focusFlags: number; inputResult: number;
+}
+/**
+ * Pure cached observations, never action/cleanup authority. Operation is the last marked existing operation, not proof it failed.
+ * 1spawn/2bridge-ready/3windows/4snapshot/5Home-marker/6welcome/7next-step/8row/9toggle/10focus/11focused/
+ * 12fresh-guard/13move/14down/15up/16arming/17transition/18label-or-limit; 0 is unmarked/cleanup.
+ * Snapshot bits: busy1/truncated2/cut4/empty8. Focus bits: HWND1/element2/identity4/focused8 during a focus reply;
+ * present1/onscreen2/bounds4/width8/height16 during the existing fresh guard. Input result is true1/false2/unknown0
+ * from an existing input call or its existing state predicate. No raw identity, coordinate, text or error is retained.
+ */
+function packagedObservation() {
+  const limits: PackagedObservation = { operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2 };
+  const current: PackagedObservation = { operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0 };
+  let captured = false, first: Readonly<PackagedObservation> | undefined;
+  const own = (value: unknown, key: string): unknown => {
+    if (!value || typeof value !== "object" || types.isProxy(value)) return undefined;
+    const property = Object.getOwnPropertyDescriptor(value, key); return property && Object.hasOwn(property, "value") ? property.value : undefined;
+  };
+  const update = (values: Partial<PackagedObservation>) => {
+    try { for (const key of Object.keys(limits) as (keyof PackagedObservation)[]) {
+      const value = own(values, key); if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= limits[key]) current[key] = value;
+    } } catch { /* An observation cannot alter the operation being observed. */ }
+  };
+  return {
+    update,
+    answer(value: unknown) { try {
+      const error = own(own(value, "error"), "code"), result = own(value, "result"), cut = own(own(result, "cut"), "length"), count = own(own(result, "nodes"), "length");
+      update({ bridgeError: ["busy", "gone", "denied", "bad_request", "failed"].indexOf(error as string) + 1,
+        snapshotFlags: (own(result, "busy") === true ? 1 : 0) | (own(result, "truncated") === true ? 2 : 0) | (typeof cut === "number" && cut > 0 ? 4 : 0) | (count === 0 ? 8 : 0) });
+    } catch { /* Cached malformed data remains unclassified. */ } },
+    windows(value: unknown) { try { update({ snapshotFlags: own(value, "length") === 0 ? 8 : 0 }); } catch { /* Never change the returned window list. */ } },
+    node(value: unknown) { try {
+      const selected = own(value, "automationId");
+      const target = ["w-next", "w-alt", "w-row-memory", "w-row-voice", "w-row-screenshots", "w-row-interactive", "w-row-commands"].indexOf(selected as string) + 1;
+      update({ target });
+      if (target === 1 || target === 2) { const name = own(value, "name"); update({ nextLabel: typeof name === "string" ? ["Get started", "Agree and continue", "Skip for now", "Continue", "Continue anyway", "Start"].indexOf(name) + 1 || 7 : 0 }); }
+    } catch { /* Never inspect unknown node accessors. */ } },
+    step(value: unknown) { try { const match = typeof value === "string" ? /^Step ([1-6]) of 6$/.exec(value) : null; update({ welcomeStep: match ? Number(match[1]) : 0 }); } catch { /* No raw text is retained. */ } },
+    focused(value: unknown, target: unknown, hwnd: number) { try {
+      const element = own(value, "element"), pid = own(element, "pid"), runtime = own(element, "runtimeId");
+      const same = typeof runtime === "string" && !!runtime && typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0 && runtime === own(target, "runtimeId") && pid === own(target, "pid")
+        && own(element, "automationId") === own(target, "automationId") && own(element, "controlType") === own(target, "controlType");
+      update({ focusFlags: (own(value, "hwnd") === hwnd ? 1 : 0) | (element ? 2 : 0) | (same ? 4 : 0) | (own(element, "hasKeyboardFocus") === true ? 8 : 0) });
+    } catch { /* The original focus predicate remains authoritative. */ } },
+    fresh(value: unknown) { try {
+      const bounds = own(value, "bounds"), width = own(bounds, "width"), height = own(bounds, "height");
+      update({ focusFlags: (value ? 1 : 0) | (own(value, "isOffscreen") === false ? 2 : 0) | (bounds ? 4 : 0) | (typeof width === "number" && !(width <= 0) ? 8 : 0) | (typeof height === "number" && !(height <= 0) ? 16 : 0) });
+    } catch { /* No new bounds or foreground queries. */ } },
+    input<T>(value: T, rejection = false): T { try { update({ inputResult: typeof value === "boolean" ? (rejection ? !value : value) ? 1 : 2 : 0 }); } catch { /* Preserve the exact returned value. */ } return value; },
+    capture() { if (captured) return; captured = true; try { first = Object.freeze({ ...current }); } catch { /* Do not retry with later cleanup state. */ } },
+    value() { return first; },
+  };
+}
+
 /** Keep the real OS profile for AppContainer creation, while excluding account credentials and injected loaders. */
 function environment(temporary: string, userData: string, github: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
@@ -104,7 +161,13 @@ class Journey {
   private forced = false;
   private deadline = Date.now() + 300_000;
   private watchdog?: ReturnType<typeof setTimeout>;
+  private readonly observation = packagedObservation();
+  private failureCaptured = false;
   assertionsComplete = false;
+  private observe(values: Partial<PackagedObservation>): void { try { this.observation.update(values); } catch { /* Observation cannot change control flow. */ } }
+  private observeInput<T>(value: T, rejection = false): T { try { this.observation.input(value, rejection); } catch { /* Preserve the exact result. */ } return value; }
+  captureFailure(): void { if (this.failureCaptured) return; this.failureCaptured = true; try { this.observation.capture(); } catch { /* Never retry with later cleanup state. */ } }
+  failureObservation(): Readonly<PackagedObservation> | undefined { try { return this.observation.value(); } catch { return undefined; } }
   constructor(readonly root: string, readonly model: Model) {
     const selected = process.env.EMBER_WINDOWS_NODE_PACKAGE;
     if (!selected || !path.isAbsolute(selected) || path.extname(selected).toLowerCase() !== ".zip" || !ordinary(selected)) throw refusal(1);
@@ -128,14 +191,19 @@ class Journey {
   }
   private async windows(): Promise<UiaWindow[]> {
     this.current();
+    this.observe({ operation: 3, bridgeError: 0, snapshotFlags: 0 });
     const answer = await this.bridge!.request("topWindows", { pid: this.app!.pid, deadlineMs: 3000 }, 5000);
+    try { this.observation.answer(answer); } catch { /* Do not change the bridge response. */ }
     if (answer.error?.code === "busy" || answer.error?.code === "gone") return [];
     if (answer.error) throw refusal(this.phase);
-    return (answer.result as { windows: UiaWindow[] }).windows.filter(window => window.pid === this.app!.pid && !window.busy && !window.skipped);
+    const windows = (answer.result as { windows: UiaWindow[] }).windows.filter(window => window.pid === this.app!.pid && !window.busy && !window.skipped);
+    try { this.observation.windows(windows); } catch { /* Preserve the exact returned array. */ } return windows;
   }
   private async nodes(hwnd: number): Promise<RawNode[]> {
     this.current();
+    this.observe({ operation: 4, bridgeError: 0, snapshotFlags: 0 });
     const answer = await this.bridge!.request("snapshot", { hwnd, values: false, maxNodes: 2000, maxChildren: 500, deadlineMs: 3000 }, 5000);
+    try { this.observation.answer(answer); } catch { /* Do not change snapshot admission. */ }
     if (answer.error?.code === "busy" || answer.error?.code === "gone") return [];
     if (answer.error) throw refusal(this.phase);
     const result = answer.result as { nodes: RawNode[]; busy: boolean; truncated: boolean; cut: string[] };
@@ -164,13 +232,17 @@ class Journey {
     return text || node.name || "";
   }
   private async focus(hwnd: number, node: RawNode): Promise<RawNode> {
+    this.observe({ operation: 10, focusFlags: 0, inputResult: 0 }); try { this.observation.node(node); } catch { /* Cached target only. */ }
     if (!this.input || this.input.blockedReason?.(hwnd)) throw refusal(this.phase);
-    this.input.activate(hwnd);
+    this.observeInput(this.input.activate(hwnd));
     await this.bridge!.call("perform", { handle: node.h, op: "focus", deadlineMs: 2500 }, 5000);
+    this.observe({ operation: 11, focusFlags: 0 });
     await this.until(() => this.bridge!.call<{ element: RawNode | null; hwnd: number | null }>("focused", { values: false, deadlineMs: 2500 }, 5000),
-      result => result.hwnd === hwnd && !!result.element && sameNode(result.element, node) && result.element.hasKeyboardFocus === true, 10_000);
+      result => { try { this.observation.focused(result, node, hwnd); } catch { /* Preserve the original predicate. */ }
+        return result.hwnd === hwnd && !!result.element && sameNode(result.element, node) && result.element.hasKeyboardFocus === true; }, 10_000);
     const fresh = (await this.nodes(hwnd)).find(value => sameNode(value, node));
-    if (!fresh || fresh.isOffscreen || !fresh.bounds || fresh.bounds.width <= 0 || fresh.bounds.height <= 0 || this.input.activeWindow() !== hwnd) throw refusal(this.phase);
+    this.observe({ operation: 12 }); try { this.observation.fresh(fresh); } catch { /* Cached guard fields only. */ }
+    if (!fresh || fresh.isOffscreen || !fresh.bounds || fresh.bounds.width <= 0 || fresh.bounds.height <= 0 || this.observeInput(this.input.activeWindow() !== hwnd, true)) throw refusal(this.phase);
     return fresh;
   }
   private pressKey(name: string): void {
@@ -187,8 +259,10 @@ class Journey {
   }
   private async click(hwnd: number, select: Selector): Promise<void> {
     const node = await this.focus(hwnd, await this.node(hwnd, select)), box = node.bounds!;
-    this.input!.move(box.x + Math.floor(box.width / 2), box.y + Math.floor(box.height / 2));
-    try { this.input!.button(1, true); } finally { this.input!.button(1, false); this.input!.releaseAll(); }
+    this.observe({ operation: 13, inputResult: 0 }); this.observeInput(this.input!.move(box.x + Math.floor(box.width / 2), box.y + Math.floor(box.height / 2)));
+    try { this.observe({ operation: 14, inputResult: 0 }); this.observeInput(this.input!.button(1, true)); }
+    catch (error) { this.captureFailure(); throw error; }
+    finally { this.observe({ operation: 15, inputResult: 0 }); this.observeInput(this.input!.button(1, false)); this.input!.releaseAll(); }
   }
   private async fill(hwnd: number, select: Selector, value: string, password = false): Promise<void> {
     const node = await this.focus(hwnd, await this.node(hwnd, select));
@@ -208,7 +282,7 @@ class Journey {
   }
   private async pane(name: string): Promise<void> { await this.click(this.home, node => node.controlType === "Hyperlink" && node.name === name); }
   private async armed(hwnd: number, select: Selector): Promise<void> {
-    const before = await this.node(hwnd, select); await pause(600); this.current();
+    const before = await this.node(hwnd, select); this.observe({ operation: 16 }); await pause(600); this.current();
     if (!sameNode(await this.node(hwnd, select), before)) throw refusal(this.phase);
     await this.click(hwnd, select);
   }
@@ -233,16 +307,18 @@ class Journey {
     const script = path.join(this.resources, "sidecar/uia/ember_uia.ps1");
     expect(ordinary(script)).toBe(true); expect(ordinary(path.join(this.resources, "sidecar/uia/ember_uia.cs"))).toBe(true);
     this.phase = 2;
+    this.observe({ operation: 1 });
     this.app = spawn(this.executable, ["--show-settings"], { cwd: path.dirname(this.executable), env: this.env, stdio: "ignore", windowsHide: false });
     this.appClosed = new Promise((resolve, reject) => { this.app!.once("error", () => reject(refusal(2))); this.app!.once("close", (code, signal) => resolve({ code, signal })); });
     void this.appClosed.catch(() => undefined);
     if (!this.app.pid) throw refusal(2);
     this.watchdog = setTimeout(() => { this.forced = true; this.stopped = true; this.app?.kill(); }, 305_000);
     this.bridge = new UiaBridge(script, bridgeEnv(this.env, { EMBER_UIA_CACHE: path.join(this.root, "bridge-cache") }));
-    await bounded(this.bridge.ready, 30_000);
+    this.observe({ operation: 2 }); await bounded(this.bridge.ready, 30_000);
     await this.until(async () => {
       for (const window of await this.windows()) if (window.name === "Ember") {
         const nodes = await this.nodes(window.hwnd);
+        this.observe({ operation: 5 });
         if (nodes.some(node => node.automationId === "w-next" || (node.controlType === "Hyperlink" && node.name === "Projects"))) return window.hwnd;
       }
       return 0;
@@ -252,28 +328,37 @@ class Journey {
   private async welcome(): Promise<void> {
     this.phase = 3;
     for (let transition = 0; transition < 12; transition++) {
+      this.observe({ iteration: transition + 1, welcomeStep: 0, nextLabel: 0, target: 0 });
       const nodes = await this.nodes(this.home);
+      this.observe({ operation: 6 });
       if (nodes.some(node => node.controlType === "Hyperlink" && node.name === "Projects")) return;
-      const next = nodes.find(id("w-next")); if (!next) throw refusal(3);
+      this.observe({ operation: 7, target: 1 });
+      const next = nodes.find(id("w-next")); try { this.observation.node(next); } catch { /* Cached welcome controls only. */ } if (!next) throw refusal(3);
       const step = nodes.find(node => node.controlType === "Text" && /^Step \d+ of \d+$/.test(node.name ?? ""))?.name;
       if (!step) throw refusal(3);
+      try { this.observation.step(step); } catch { /* No text is retained. */ }
       if (next.name === "Agree and continue") {
         for (const row of ["memory", "voice", "screenshots", "interactive"]) {
+          this.observe({ operation: 8, target: ["memory", "voice", "screenshots", "interactive"].indexOf(row) + 3 });
           const field = await this.node(this.home, id("w-row-" + row), false);
+          this.observe({ operation: 8 });
           if (field.patterns.toggle === "On" && field.isEnabled) await this.click(this.home, id("w-row-" + row));
-          expect((await this.node(this.home, id("w-row-" + row), false)).patterns.toggle).toBe("Off");
+          const checked = await this.node(this.home, id("w-row-" + row), false); this.observe({ operation: 9 });
+          const toggle = checked.patterns.toggle; this.observeInput(toggle === "Off"); expect(toggle).toBe("Off");
         }
-        expect((await this.node(this.home, id("w-row-commands"))).patterns.toggle).toBe("On");
+        this.observe({ target: 7 }); const checked = await this.node(this.home, id("w-row-commands")); this.observe({ operation: 9 });
+        const toggle = checked.patterns.toggle; this.observeInput(toggle === "On"); expect(toggle).toBe("On");
       }
       const skip = nodes.find(node => node.automationId === "w-alt" && node.name === "Skip for now" && node.isEnabled);
       const selected = skip ?? next;
+      this.observe({ operation: 18 }); try { this.observation.node(selected); } catch { /* Cached selected control only. */ }
       expect(["Get started", "Agree and continue", "Skip for now", "Continue", "Continue anyway", "Start"]).toContain(selected.name);
       if (selected.name === "Agree and continue") await this.armed(this.home, id(selected.automationId!));
       else await this.click(this.home, id(selected.automationId!));
-      await this.until(() => this.nodes(this.home), fresh => fresh.some(node => node.controlType === "Hyperlink" && node.name === "Projects")
-        || fresh.some(node => node.controlType === "Text" && /^Step \d+ of \d+$/.test(node.name ?? "") && node.name !== step));
+      this.observe({ operation: 17 }); await this.until(() => this.nodes(this.home), fresh => { this.observe({ operation: 17 }); return fresh.some(node => node.controlType === "Hyperlink" && node.name === "Projects")
+        || fresh.some(node => node.controlType === "Text" && /^Step \d+ of \d+$/.test(node.name ?? "") && node.name !== step); });
     }
-    throw refusal(3);
+    this.observe({ operation: 18 }); throw refusal(3);
   }
   private async configureProvider(): Promise<void> {
     this.phase = 4; await this.pane("Models & connections");
@@ -479,6 +564,7 @@ class Journey {
   }
   /** Failure never converts a forced process stop into a successful private-owner cleanup receipt. */
   async close(): Promise<boolean> {
+    this.observe({ operation: 0 });
     clearTimeout(this.watchdog); let clean = this.assertionsComplete && !this.forced;
     if (this.app && this.app.exitCode === null && this.app.signalCode === null) { this.stopped = true; this.forced = true; this.app.kill(); clean = false; }
     try { if (this.appClosed) { const result = await bounded(this.appClosed, 10_000); clean &&= result.code === 0 && result.signal === null; } } catch { clean = false; }
@@ -500,14 +586,18 @@ it.skipIf(!required)("uses the shipped Windows Home for normal provider setup, e
     const scenarios = [...windowsNodeSourceScenarios("repair"), ...windowsNodeSourceScenarios("denied"), ...windowsNodeSourceScenarios("stop"), ...windowsNodeSourceScenarios("mode"), ...windowsNodeSourceScenarios("account")];
     model = await createWindowsNodeProductModel(scenarios); fixture = new Journey(root, model);
     await fixture.start(); await fixture.repair(); await fixture.deny(); await fixture.writer("stop"); await fixture.writer("mode"); await fixture.writer("account"); await fixture.finish();
-  } catch { failed = true; phase = fixture?.phase ?? phase; }
+  } catch { try { fixture?.captureFailure(); } catch { /* Failure observation cannot replace the original path. */ } failed = true; phase = fixture?.phase ?? phase; }
   finally {
     let clean = false; try { clean = !!fixture && await fixture.close(); } catch { failed = true; phase = 12; }
     try { await model?.close(); } catch { failed = true; phase = 12; }
     if (!failed && clean && root) { try { fs.rmSync(root, { recursive: true, force: false }); } catch { failed = true; phase = 12; } }
     else if (root) failed = true;
   }
-  if (failed) throw refusal(phase);
+  if (failed) {
+    try { fixture?.captureFailure(); const observation = fixture?.failureObservation(); if (observation) console.info("Windows Node packaged cached observation", JSON.stringify(observation)); }
+    catch { /* No diagnostic fault changes the original refusal or retained state. */ }
+    throw refusal(phase);
+  }
   quarantined = false;
   console.info("Windows Node packaged journey passed", JSON.stringify({ schema: 1, phase: 12 }));
 }, 360_000);

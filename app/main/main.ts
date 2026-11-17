@@ -1344,6 +1344,8 @@ function start(): void {
     // Electron can think the box is focused while X still has the user's app: only stop holding keys once X agrees
     // (an X11 check, needed only where Ember holds the keyboard while the box opens).
     hasFocus: platform.keyboardHold ? (): boolean => !wsRef || (askXid !== 0 && wsRef.focusWindow()?.id === askXid) : undefined,
+    // Closed lifecycle codes distinguish a pending page, an intentionally stale opening and a hidden box.
+    onObservation: observation => log.info("ask.window", { ...observation }),
     onReveal: source => {
       log.info("ask.reveal", { source });
       // A request is likely: Ember's voice loads meanwhile (voice-speaking-1).

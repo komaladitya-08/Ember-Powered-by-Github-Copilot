@@ -220,25 +220,27 @@ it("unchanged successful source reporting accepts only its complete seven-case i
 });
 
 const packagedFrame = (phase: number) => `Error: Windows Node packaged journey refused (phase ${phase}).`;
+const emptyObservation = () => ({ operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0 });
+type Observation = ReturnType<typeof emptyObservation>;
 const packagedDiagnostic = (fixture: ReturnType<typeof proofFixture>) => {
   const rows = fixture.printed.mock.calls.filter(call => call[0] === "Windows Node packaged proof failure facts"); expect(rows).toHaveLength(1);
-  return JSON.parse(rows[0][1] as string) as { child: number; timeout: number; phase: number };
+  return JSON.parse(rows[0][1] as string) as { child: number; timeout: number; phase: number; observation: Observation };
 };
 it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])("observes only the bounded packaged phase %i in the unchanged fatal child path", phase => {
   const f = proofFixture("packaged", passing("packaged"), { attempt: sourceAttempt("PRIVATE prefix\n\x1b[31m" + packagedFrame(phase) + "\x1b[0m\r\n", packagedFrame(phase)) });
   expect(f.run).toThrow("The required Windows Node product proof could not be verified.");
-  expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase });
+  expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase, observation: emptyObservation() });
   expect(f.queries).toEqual(["exists", "read", "lstat", "exists"]); expect(f.invoked).toHaveBeenCalledTimes(1); expect(f.outputs).toEqual([]);
   expect(JSON.stringify(f.printed.mock.calls)).not.toContain("PRIVATE");
 });
 it("a conflicting packaged phase remains unknown after repeated earlier frames", () => {
   const f = proofFixture("packaged", passing("packaged"), { attempt: sourceAttempt([packagedFrame(4), packagedFrame(5), packagedFrame(4)].join("\n")) });
-  expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase: 0 });
+  expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase: 0, observation: emptyObservation() });
 });
 it.each([packagedFrame(0), packagedFrame(13), "PRIVATE " + packagedFrame(4), packagedFrame(4) + " PRIVATE", sourceFrame(1, 4),
   "Windows Node packaged journey refused (phase 4)."])("ignores foreign or malformed packaged frames %#", text => {
   const f = proofFixture("packaged", passing("packaged"), { attempt: sourceAttempt(text) });
-  expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase: 0 });
+  expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase: 0, observation: emptyObservation() });
 });
 it.each(["getter", "proxy", "invalid-utf8", "oversized"] as const)("packaged observation reuses safe byte refusal for %s without extra reads", selected => {
   let calls = 0; const attempt: Record<string, unknown> = sourceAttempt(packagedFrame(4)), secret = () => { calls++; throw new Error("PRIVATE output"); };
@@ -247,12 +249,12 @@ it.each(["getter", "proxy", "invalid-utf8", "oversized"] as const)("packaged obs
   if (selected === "invalid-utf8") attempt.stdout = Buffer.concat([Buffer.from([255, 10]), Buffer.from(packagedFrame(4))]);
   if (selected === "oversized") attempt.stdout = Buffer.alloc(2 * 1024 * 1024 + 1);
   const f = proofFixture("packaged", passing("packaged"), { attempt }); expect(f.run).toThrow("could not be verified");
-  expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase: 0 }); expect(calls).toBe(0); expect(f.queries).toEqual(["exists", "read", "lstat", "exists"]);
+  expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase: 0, observation: emptyObservation() }); expect(calls).toBe(0); expect(f.queries).toEqual(["exists", "read", "lstat", "exists"]);
 });
 it("packaged timeout facts and diagnostic output faults leave the original fatal guard and ZIP handoff intact", () => {
   const error = Object.assign(new Error("PRIVATE"), { code: "ETIMEDOUT" });
   const f = proofFixture("packaged", passing("packaged"), { attempt: { ...sourceAttempt(packagedFrame(6)), status: null, error } });
-  expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f)).toEqual({ child: 3, timeout: 1, phase: 6 }); expect(f.outputs).toEqual([]);
+  expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f)).toEqual({ child: 3, timeout: 1, phase: 6, observation: emptyObservation() }); expect(f.outputs).toEqual([]);
   const failedProjection = proofFixture("packaged", passing("packaged"), { status: 1 });
   failedProjection.printed.mockImplementation(() => { throw new Error("PRIVATE projection"); });
   expect(failedProjection.run).toThrow("The required Windows Node product proof could not be verified."); expect(failedProjection.outputs).toEqual([]);
@@ -260,6 +262,138 @@ it("packaged timeout facts and diagnostic output faults leave the original fatal
 it("unchanged successful packaged inventory emits only its passing marker and one exact ZIP handoff", () => {
   const f = proofFixture("packaged", passing("packaged"), { attempt: { ...sourceAttempt(packagedFrame(4)), status: 0 } });
   expect(f.run).not.toThrow(); expect(f.printed).toHaveBeenCalledTimes(1); expect(f.printed.mock.calls[0][0]).toBe("Required Windows Node product proof passed"); expect(f.outputs).toHaveLength(1);
+});
+
+interface ObservationHelper {
+  update(value: unknown): void; answer(value: unknown): void; windows(value: unknown): void; node(value: unknown): void; step(value: unknown): void;
+  focused(value: unknown, target: unknown, hwnd: number): void; fresh(value: unknown): void; input<T>(value: T, rejection?: boolean): T;
+  capture(): void; value(): Readonly<Observation> | undefined;
+}
+function observationHelper(globals: Record<string, unknown> = {}): ObservationHelper {
+  const source = read(cases.packaged), start = source.indexOf("function packagedObservation()"), end = source.indexOf("/** Keep the real OS profile", start);
+  expect(start >= 0 && end > start).toBe(true);
+  const code = transformSync(source.slice(start, end) + "\nmodule.exports = packagedObservation;", { loader: "ts", format: "cjs", target: "node22" }).code;
+  const module = { exports: undefined as unknown as () => ObservationHelper };
+  runInNewContext(code, { module, types, ...globals }); return module.exports();
+}
+const observationFrame = (value: unknown) => "Windows Node packaged cached observation " + JSON.stringify(value);
+it("the actual pure fixture helper freezes only bounded cached fields before cleanup, without retaining private node data", () => {
+  const o = observationHelper(), node = { pid: 42, runtimeId: "PRIVATE runtime", automationId: "w-next", controlType: "Button", hasKeyboardFocus: true };
+  o.update({ operation: 14, iteration: 2 }); o.answer({ error: { code: "busy", message: "PRIVATE error" }, result: { busy: true, truncated: true, cut: ["PRIVATE cut"], nodes: [] } });
+  o.node({ ...node, name: "Agree and continue", value: "PRIVATE field" }); o.step("Step 2 of 6");
+  o.focused({ hwnd: 99, element: node }, node, 99); o.fresh({ isOffscreen: false, bounds: { x: 100, y: 100, width: 36, height: 21 } });
+  expect(o.input(false)).toBe(false); o.capture(); const first = o.value();
+  expect(first).toEqual({ operation: 14, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 1, snapshotFlags: 15, focusFlags: 31, inputResult: 2 });
+  expect(Object.isFrozen(first)).toBe(true); expect(JSON.stringify(first)).not.toContain("PRIVATE");
+  o.update({ operation: 0, iteration: 12 }); o.capture(); expect(o.value()).toBe(first);
+});
+it("observation helpers never invoke proxy traps, getters, value coercion or expose raw returned identities", () => {
+  const o = observationHelper(); let traps = 0; const secret = () => { traps++; throw new Error("PRIVATE getter"); };
+  const proxy = new Proxy({}, { get: secret, getOwnPropertyDescriptor: secret, getPrototypeOf: secret });
+  o.update(proxy); o.answer(proxy); o.node(proxy); o.step(proxy); o.focused(proxy, proxy, 99); o.fresh(proxy); o.windows(proxy);
+  const getter = { get automationId() { return secret(); }, get name() { return secret(); } }; o.node(getter);
+  expect(o.input(proxy)).toBe(proxy); o.capture(); expect(traps).toBe(0); expect(JSON.stringify(o.value())).not.toContain("PRIVATE");
+});
+it("a snapshot storage fault cannot replace the first failure with later cleanup state", () => {
+  let freezes = 0;
+  const object = new Proxy(Object, { get(target, key, receiver) { if (key === "freeze") return () => { freezes++; throw new Error("PRIVATE snapshot fault"); }; return Reflect.get(target, key, receiver); } });
+  const o = observationHelper({ Object: object }); o.update({ operation: 14 }); expect(() => o.capture()).not.toThrow();
+  o.update({ operation: 15 }); o.capture(); expect(freezes).toBe(1); expect(o.value()).toBeUndefined();
+});
+function observedClick(o: ObservationHelper, input: Record<string, unknown>, trace: string[]) {
+  const source = read(cases.packaged), methodsStart = source.indexOf("  private observe(values:"), methodsEnd = source.indexOf("  constructor(", methodsStart);
+  const clickStart = source.indexOf("  private async click("), clickEnd = source.indexOf("  private async fill(", clickStart);
+  expect(methodsStart >= 0 && methodsEnd > methodsStart && clickEnd > clickStart).toBe(true);
+  const code = transformSync(`module.exports = class {
+    constructor(observation, input, trace) { this.observation = observation; this.input = input; this.trace = trace; }
+    async node() { this.trace.push("node"); return { bounds: { x: 10, y: 20, width: 36, height: 21 } }; }
+    async focus(_hwnd, node) { this.trace.push("focus"); return node; }
+    ${source.slice(methodsStart, methodsEnd)}
+    ${source.slice(clickStart, clickEnd)}
+  };`, { loader: "ts", format: "cjs", target: "node22" }).code;
+  const module = { exports: undefined as unknown as new (o: ObservationHelper, input: Record<string, unknown>, trace: string[]) => { click(hwnd: number, selector: unknown): Promise<void>; captureFailure(): void } };
+  runInNewContext(code, { module }); return new module.exports(o, input, trace);
+}
+it.each(["down", "up", "both", "observer"] as const)("actual fixture click preserves %s error identity, original action trace and first snapshot before finally", async kind => {
+  const trace: string[] = [], first = new Error("PRIVATE first"), last = new Error("PRIVATE last"), actual = observationHelper();
+  const observer = kind === "observer" ? new Proxy(actual, { get() { throw new Error("PRIVATE observer storage"); } }) : actual;
+  const input = { move() { trace.push("move"); return true; }, button(_button: number, down: boolean) {
+    trace.push(down ? "down" : "up"); if (down && kind !== "up") throw first; if (!down && (kind === "up" || kind === "both")) throw last; return true;
+  }, releaseAll() { trace.push("release"); } };
+  const clicked = observedClick(observer, input, trace).click(99, () => true).catch(error => { try { observer.capture(); } catch { /* The real outer boundary also contains observation faults. */ } throw error; });
+  await expect(clicked).rejects.toBe(kind === "up" || kind === "both" ? last : first);
+  expect(trace).toEqual(kind === "up" || kind === "both" ? ["node", "focus", "move", "down", "up"] : ["node", "focus", "move", "down", "up", "release"]);
+  if (kind !== "observer") expect(actual.value()?.operation).toBe(kind === "up" ? 15 : 14);
+});
+it("actual fixture click keeps its successful call order and does not turn metadata into a grant", async () => {
+  const trace: string[] = [], o = observationHelper(), input = { move() { trace.push("move"); return false; }, button(_which: number, down: boolean) { trace.push(down ? "down" : "up"); return true; }, releaseAll() { trace.push("release"); } };
+  await expect(observedClick(o, input, trace).click(99, () => true)).resolves.toBeUndefined();
+  expect(trace).toEqual(["node", "focus", "move", "down", "up", "release"]); expect(o.value()).toBeUndefined();
+});
+it("a transient capture-accessor fault cannot cause outer cleanup to acquire a later first snapshot", async () => {
+  const plain = observationHelper(), trace: string[] = [], failure = new Error("PRIVATE original"); let attempts = 0;
+  const o = new Proxy(plain, { get(target, key, receiver) { if (key === "capture" && ++attempts === 1) throw new Error("PRIVATE observer fault"); return Reflect.get(target, key, receiver); } });
+  const input = { move() { return true; }, button(_which: number, down: boolean) { if (down) throw failure; return true; }, releaseAll() { trace.push("release"); } };
+  const probe = observedClick(o, input, trace);
+  await expect(probe.click(99, () => true).catch(error => { probe.captureFailure(); throw error; })).rejects.toBe(failure);
+  expect(attempts).toBe(1); expect(plain.value()).toBeUndefined(); expect(trace).toEqual(["node", "focus", "release"]);
+});
+it.each([false, true])("actual focus keeps its queries and fresh-guard short circuit with observer faults=%s", async faults => {
+  const source = read(cases.packaged), begin = source.indexOf("  private async focus("), end = source.indexOf("  private pressKey(", begin);
+  const methods = source.slice(source.indexOf("  private observe(values:"), source.indexOf("  constructor("));
+  const identity = source.slice(source.indexOf("function sameNode("), source.indexOf("function subtree("));
+  const code = transformSync(identity + `\nmodule.exports = class {
+    constructor(observation, input, bridge, node, trace) { this.observation = observation; this.input = input; this.bridge = bridge; this.target = node; this.trace = trace; this.phase = 3; }
+    async until(read, accepts) { const result = await read(); if (!accepts(result)) throw refusal(3); return result; }
+    async nodes() { this.trace.push("snapshot"); return [this.target]; }
+    ${methods} ${source.slice(begin, end)}
+  };`, { loader: "ts", format: "cjs", target: "node22" }).code;
+  type FocusProbe = new (observation: ObservationHelper, input: object, bridge: object, node: object, trace: string[]) => { focus(hwnd: number, node: object): Promise<object> };
+  const module = { exports: undefined as unknown as FocusProbe }, failure = new Error("PRIVATE original guard"); runInNewContext(code, { module, refusal: () => failure });
+  for (const width of [36, 0]) {
+    const trace: string[] = [], node = { pid: 42, runtimeId: "PRIVATE runtime", automationId: "w-next", controlType: "Button", hasKeyboardFocus: true, isOffscreen: false, bounds: { width, height: 21 } };
+    const plain = observationHelper(), o = faults ? new Proxy(plain, { get() { throw new Error("PRIVATE observer"); } }) : plain;
+    const input = { blockedReason() { trace.push("blocked"); }, activate() { trace.push("activate"); return false; }, activeWindow() { trace.push("foreground"); return 99; } };
+    const bridge = { async call(operation: string) { trace.push(operation); return { hwnd: 99, element: node }; } };
+    const result = new module.exports(o, input, bridge, node, trace).focus(99, node);
+    if (width) await expect(result).resolves.toBe(node); else await expect(result).rejects.toBe(failure);
+    expect(trace).toEqual(width ? ["blocked", "activate", "perform", "focused", "snapshot", "foreground"] : ["blocked", "activate", "perform", "focused", "snapshot"]);
+  }
+});
+it("the actual outer failure catch captures before close and does not replace the snapshot with cleanup state", async () => {
+  const source = read(cases.packaged), start = source.lastIndexOf("  } catch { try { fixture?.captureFailure();"), end = source.indexOf("  if (failed)", start);
+  expect(start > 0 && end > start).toBe(true);
+  const o = observationHelper(), trace: string[] = []; o.update({ operation: 7, welcomeStep: 2 });
+  const fixture = { phase: 3, captureFailure() { trace.push("capture"); o.capture(); }, async close() { trace.push("close"); o.update({ operation: 0 }); return false; } };
+  const code = transformSync(`module.exports = async function(fixture, model) { let failed = false, phase = 1, root;
+    try { throw new Error("PRIVATE original"); ${source.slice(start, end)} return { failed, phase }; };`, { loader: "ts", format: "cjs", target: "node22" }).code;
+  const module = { exports: undefined as unknown as (fixture: object, model: object) => Promise<{ failed: boolean; phase: number }> }; runInNewContext(code, { module });
+  expect(await module.exports(fixture, { async close() { trace.push("model"); } })).toEqual({ failed: true, phase: 3 });
+  expect(trace).toEqual(["capture", "close", "model"]); expect(o.value()?.operation).toBe(7);
+});
+it.each(Object.entries({ operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2 }))("the pure helper refuses out-of-domain %s metadata", (field, maximum) => {
+  for (const invalid of [-1, maximum + 1, 0.5, Infinity, "PRIVATE"]) {
+    const o = observationHelper(); o.update({ [field]: invalid }); o.capture(); expect(o.value()).toEqual(emptyObservation());
+  }
+});
+it("the strict workflow projects one agreeing cached tuple while preserving phase and the original fatal guard", () => {
+  const tuple = { operation: 7, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 0, snapshotFlags: 0, focusFlags: 15, inputResult: 1 };
+  const f = proofFixture("packaged", passing("packaged"), { attempt: sourceAttempt(packagedFrame(3) + "\n" + observationFrame(tuple), observationFrame(tuple)) });
+  expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase: 3, observation: tuple });
+  expect(f.queries).toEqual(["exists", "read", "lstat", "exists"]); expect(f.outputs).toEqual([]);
+});
+it.each(["conflict", "missing", "extra", "array", "range", "fraction", "string", "json", "oversized"] as const)("cached %s output remains unknown without raw projection or success authority", selected => {
+  const tuple = { ...emptyObservation(), operation: 7 }; let value: unknown = tuple;
+  if (selected === "missing") { const { target: _target, ...rest } = tuple; value = rest; }
+  if (selected === "extra") value = { ...tuple, private: "PRIVATE" };
+  if (selected === "array") value = Object.values(tuple);
+  if (selected === "range") value = { ...tuple, focusFlags: 32 };
+  if (selected === "fraction") value = { ...tuple, operation: 0.5 };
+  if (selected === "string") value = { ...tuple, target: "PRIVATE" };
+  const line = selected === "json" ? "Windows Node packaged cached observation {PRIVATE}" : selected === "oversized" ? observationFrame({ private: "X".repeat(513) }) : observationFrame(value);
+  const text = packagedFrame(3) + "\n" + line + (selected === "conflict" ? "\n" + observationFrame({ ...tuple, operation: 8 }) : "");
+  const f = proofFixture("packaged", passing("packaged"), { attempt: sourceAttempt(text) });
+  expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f).observation).toEqual(emptyObservation()); expect(JSON.stringify(f.printed.mock.calls)).not.toContain("PRIVATE");
 });
 
 // Exact public source bytes, copied into an ordinary private test tree. This checks source binding only, never a
@@ -290,14 +424,14 @@ function sourceFixture(selectedScript = Script) {
     } }), close: () => fs.rmSync(repository, { recursive: true, force: false }) };
 }
 
-it("keeps the reviewed producer fixed and product admission closed pending current-source asset qualification", () => {
+it("binds the reviewed producer and qualified current-source asset proof before product admission", () => {
   const reviewed = runInNewContext("(" + producer.match(/const reviewed = Object\.freeze\(([\s\S]*?)\);/)![1] + ")");
-  expect(reviewed).toEqual({ ready: false, run: 43991252195, commit: "b75c944dec58973d157542e2d4d2db3720667982", artifact: 14289217635, archiveBytes: 38425334,
+  expect(reviewed).toEqual({ ready: true, run: 43991252195, commit: "b75c944dec58973d157542e2d4d2db3720667982", artifact: 14289217635, archiveBytes: 38425334,
     archiveSha256: "cbbbf6c641c41bda8ece457c28a54b9bc4121a068dc376725bcf0e3ac24a2f62",
     manifestSha256: "d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f",
-    assetProofCommit: null,
-    assetProofManifestSha256: null,
-    verifierFileSha256: null });
+    assetProofCommit: "c1fa3b2785ee2247ef0b4dea0cc73e175cb00d6f",
+    assetProofManifestSha256: "41053ba131cd2d98b4c20291d6bea91e04c6dd10a5d41b5ea146faf8a8b33c54",
+    verifierFileSha256: "0ed85644ab3fa52de8ca9e1aa09020e0f2c71064c7f18152f0a94ff666799a6d" });
   expect(product).toContain("id: reviewed_input");
   expect(product).toContain("REVIEWED_ASSET_PROOF_COMMIT: ${{ steps.reviewed_input.outputs.proofCommit }}");
   expect(product).toContain("REVIEWED_ASSET_PROOF_MANIFEST: ${{ steps.reviewed_input.outputs.proofManifest }}");

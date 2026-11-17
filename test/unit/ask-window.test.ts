@@ -4,6 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AskWindowObservation } from "../../app/main/ask";
 
 const made = vi.hoisted(() => [] as FakeWindow[]);
 /** The edit menus popped up: their items, and the popup's options (its callback runs when the menu closes). */
@@ -103,6 +104,83 @@ describe("the ask box", () => {
     // Asked for again, it opens now.
     ask.show({ x: 400, y: 300 });
     expect(win.shown).toBe(1);
+  });
+
+  it("observes a suppressed opening without text or extra clock reads, and a fresh request still opens", () => {
+    vi.useFakeTimers();
+    const observations: AskWindowObservation[] = [];
+    const ask = new AskWindow({ onObservation: observation => { observations.push(observation); } });
+    ask.show(null, undefined, "PRIVATE_SOURCE_NEVER_LOGGED");
+    const [win] = made;
+    vi.advanceTimersByTime(1501);
+    const clock = vi.spyOn(Date, "now");
+    try {
+      win.emit("ready-to-show");
+      expect(clock).toHaveBeenCalledTimes(1);
+      expect(win.shown).toBe(0);
+      expect(observations.at(-1)).toEqual({ stage: 3, decision: 3, sourceCode: 0, wanted: false, loaded: true });
+      ask.show(null, undefined, "launcher");
+      expect(win.shown).toBe(1);
+      expect(observations).toContainEqual({ stage: 4, decision: 0, sourceCode: 1, wanted: true, loaded: true });
+      ask.hide();
+      expect(observations.at(-1)).toEqual({ stage: 5, decision: 0, sourceCode: 1, wanted: false, loaded: true });
+      expect(observations.every(Object.isFrozen)).toBe(true);
+      expect(JSON.stringify(observations)).not.toContain("PRIVATE_SOURCE_NEVER_LOGGED");
+      expect(observations.every(o => Object.keys(o).sort().join() === "decision,loaded,sourceCode,stage,wanted")).toBe(true);
+    } finally { clock.mockRestore(); }
+  });
+
+  it("observes unrequested and stale readiness without reading the clock or showing either window", () => {
+    const observations: AskWindowObservation[] = [];
+    const ask = new AskWindow({ onObservation: observation => { observations.push(observation); } });
+    ask.prepare();
+    const [old] = made;
+    const clock = vi.spyOn(Date, "now");
+    try {
+      old.emit("ready-to-show");
+      expect(clock).not.toHaveBeenCalled();
+      expect(observations.at(-1)).toMatchObject({ stage: 3, decision: 1, wanted: false, loaded: true });
+      ask.setOpaque(true);
+      ask.show(null);
+      clock.mockClear();
+      old.emit("ready-to-show");
+      expect(clock).not.toHaveBeenCalled();
+      expect(observations.at(-1)).toMatchObject({ stage: 3, decision: 4, wanted: true, loaded: false });
+      expect(made.map(w => w.shown)).toEqual([0, 0]);
+    } finally { clock.mockRestore(); }
+  });
+
+  it("observer failure leaves reveal, load and hide actions and callbacks unchanged", () => {
+    const run = (observe: boolean) => {
+      const callbacks: string[] = [];
+      const ask = new AskWindow({
+        onReveal: () => { callbacks.push("reveal"); }, onHide: () => { callbacks.push("hide"); },
+        ...(observe ? { onObservation: () => { throw new Error("PRIVATE_OBSERVER_FAILURE"); } } : {}),
+      });
+      ask.prepare();
+      const win = made.at(-1)!;
+      win.emit("ready-to-show");
+      ask.show(null);
+      win.contents.get("did-stop-loading")!({});
+      ask.hide();
+      return { callbacks, shown: win.shown, focused: win.focused, visible: win.visible, ignoreMouse: win.ignoreMouse };
+    };
+    expect(run(true)).toEqual(run(false));
+  });
+
+  it.each(["reveal", "hide"] as const)("observer failure never replaces the existing %s callback's error", which => {
+    const original = new Error("original callback failure");
+    const ask = new AskWindow({
+      onObservation: () => { throw new Error("PRIVATE_OBSERVER_FAILURE"); },
+      ...(which === "reveal" ? { onReveal: () => { throw original; } } : { onHide: () => { throw original; } }),
+    });
+    ask.prepare();
+    const win = made.at(-1)!;
+    win.emit("ready-to-show");
+    if (which === "reveal") expect(() => ask.show(null)).toThrow(original);
+    else { ask.show(null); expect(() => ask.hide()).toThrow(original); }
+    expect(win.shown).toBe(1);
+    expect(win.visible).toBe(true);
   });
 
   it("hands letters typed while it opened to the box", () => {
