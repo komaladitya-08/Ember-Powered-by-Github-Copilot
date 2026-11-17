@@ -7,7 +7,8 @@ import { types } from "node:util";
 import { expect, it, vi } from "vitest";
 
 const source = fs.readFileSync(".github/workflows/windows-uia-focus-order.yml", "utf8");
-const script = source.slice(source.indexOf("          // Keep child streams private;")).split("\n").map(line => line.startsWith("          ") ? line.slice(10) : line).join("\n");
+const focusSource = source.slice(0, source.indexOf("\n  commands:\n"));
+const script = focusSource.slice(focusSource.indexOf("          // Keep child streams private;")).split("\n").map(line => line.startsWith("          ") ? line.slice(10) : line).join("\n");
 const relative = "test/integration/uia-electron-focus-native.test.ts", suite = path.resolve(relative);
 const reportPath = path.join(path.resolve("test-output"), "windows-uia-focus-report.json");
 const condition = (mode: number, target: number) => ({ schema: 1, mode, target, matched: 1, focus: 15, identity: 255, foreground: 1, performed: 1 });
@@ -203,7 +204,7 @@ it("accepts agreeing startup duplicates only for the original failure and withho
   }
 });
 it("recovers the entire original strict workflow by reversing only the optional startup frame parser/projection", () => {
-  let old = source.replace('          let startup, startupConflict = false, startupInvalid = false;\n', "")
+  let old = focusSource.replace('          let startup, startupConflict = false, startupInvalid = false;\n', "")
     .replace('          const startupLimits = { schema: [1, 1], phase: [0, 8], appReady: [0, 6], appExit: [0, 3], appError: [0, 1], appStage: [0, 9], bridgeReady: [0, 2], bridgeStage: [0, 30], loadCode: [0, 7], quit: [0, 4], fixtureFlags: [0, 7] };\n', "");
   const begin = old.indexOf('                const boot ='), end = old.indexOf('                const condition =', begin); expect(begin > 0 && end > begin).toBe(true);
   old = old.slice(0, begin) + old.slice(end);
@@ -304,4 +305,160 @@ it("recovers the entire previous CI file after reversing only the explicit diagn
     .replace("group: ${{ github.event_name == 'workflow_dispatch' && inputs.only == 'focus' && 'ci-focus-' || 'ci-' }}${{ github.ref }}", "group: ci-${{ github.ref }}")
     .replace(focusCaller, "");
   expect(createHash("sha256").update(restored).digest("hex")).toBe("eb833e8964fec6fbefdcb244acf372a00a6a720b718a3acc1fa544a1ee30afc9");
+});
+
+// The additional genuine Commands renderer leaf has a distinct report and two-card protocol, never six invented focus conditions.
+const commandsSource = source.slice(source.indexOf("\n  commands:\n"));
+const commandsScript = commandsSource.slice(commandsSource.indexOf("          // Keep Commands child streams private;")).split("\n").map(line => line.startsWith("          ") ? line.slice(10) : line).join("\n");
+const commandsRelative = "test/integration/commands-renderer-native.test.ts", commandsSuite = path.resolve(commandsRelative);
+const commandsReportPath = path.join(path.resolve("test-output"), "windows-commands-renderer-report.json");
+const commandsTitle = "compares the authentic Commands renderer's measured second card with native UIA after the fixed failed run lifecycle";
+const cardObservation = (card: number) => ({ schema: 1, card, sequence: card * 2, dom: 15, geometry: 255, reported: 7, arm: 2,
+  assets: 7, lifecycle: card === 1 ? 129 : 255, uia: 27, focus: 15, identity: 255, stable: 1, matched: 1 });
+const commandsSummary = () => ({ schema: 1, completed: 2, matchedMask: 3, negative: 1, cleanup: 1, phase: 8 });
+const commandsStartup = () => ({ schema: 1, phase: 3, appReady: 2, appExit: 1, appError: 0, appStage: 6, bridgeReady: 1, bridgeStage: 24, loadCode: 1, quit: 1 });
+const cardLine = (value: unknown) => "Windows Commands renderer observation " + JSON.stringify(value);
+const commandsFinalLine = (value: unknown) => "Windows Commands renderer summary " + JSON.stringify(value);
+const commandsBootLine = (value: unknown) => "Windows Commands renderer startup " + JSON.stringify(value);
+const commandsOutput = () => [cardLine(cardObservation(1)), cardLine(cardObservation(2)), commandsFinalLine(commandsSummary())].join("\n");
+const commandsAttempt = (over: Record<string, unknown> = {}) => ({ status: 0, signal: null, stdout: Buffer.from(commandsOutput()), stderr: Buffer.from("PRIVATE raw child output"), ...over });
+const commandsReport = () => ({ ...report(), testResults: [{ name: commandsSuite, status: "passed", assertionResults: [{
+  title: commandsTitle, fullName: commandsTitle, ancestorTitles: [] as string[], status: "passed", failureMessages: [] as string[],
+}] }] });
+function commandsFixture(o: FixtureOptions = {}) {
+  const printed = vi.fn(), queries: string[] = [], spawn = vi.fn(() => o.child ?? commandsAttempt());
+  const fakeFs = {
+    lstatSync(file: string) {
+      queries.push("stat:" + file);
+      if (file === commandsSuite && o.missing || file === commandsReportPath && o.reportFault) throw new Error("PRIVATE filesystem error");
+      return { isFile: () => true, isSymbolicLink: () => file === commandsSuite ? o.sourceLink === true : o.reportLink === true,
+        nlink: file === commandsSuite ? 1 : o.reportLinks ?? 1, size: file === commandsSuite ? 100 : o.reportBytes ?? 1000 };
+    },
+    realpathSync: { native(file: string) { queries.push("real:" + file); return file; } },
+    existsSync(file: string) { queries.push("exists:" + file); return o.stale === true; },
+    readFileSync(file: string) { queries.push("read:" + file); return o.rawReport ?? JSON.stringify(o.report ?? commandsReport()); },
+  };
+  const context = { process: { execPath: "fixed-node", env: { RUNNER_TEMP: path.dirname(commandsReportPath), EMBER_COMMANDS_RENDERER_NATIVE_TEST: "0" } }, Buffer, console: { info: printed },
+    require(name: string) {
+      if (name === "node:fs") return fakeFs;
+      if (name === "node:path") return path;
+      if (name === "node:util") return { types };
+      if (name === "node:child_process") return { spawnSync: spawn };
+      throw new Error("PRIVATE unexpected module");
+    },
+  };
+  return { run: () => runInNewContext(commandsScript, context, { timeout: 1000 }), printed, queries, spawn };
+}
+const commandsProjected = (f: ReturnType<typeof commandsFixture>) => f.printed.mock.calls.map(call => [call[0], JSON.parse(call[1] as string)] as const);
+function commandsRefused(f: ReturnType<typeof commandsFixture>) {
+  expect(f.run).toThrow("The required Windows Commands renderer could not be verified.");
+  expect(f.printed.mock.calls.map(call => call[0])).not.toContain("Required Windows Commands renderer passed");
+  expect(JSON.stringify(f.printed.mock.calls)).not.toContain("PRIVATE");
+}
+
+it("preserves the complete published load-diagnostic workflow prefix and adds only the fixed manual two-image Commands job", () => {
+  expect(createHash("sha256").update(focusSource).digest("hex")).toBe("d53f85ce186d7847867a637acab539f6103099cedf0248f74cc0aae77ee52cff");
+  expect(createHash("sha256").update(commandsSource).digest("hex")).toBe("37089133291c244f0c9e9b15f633ac99dbb487809fad859baba7dfc9c1541561");
+  expect(commandsSource).toContain("    if: github.event_name == 'workflow_dispatch'");
+  expect(commandsSource).toContain("image: [windows-2022, windows-2025]");
+  expect(commandsSource).toContain("fail-fast: false"); expect(commandsSource).toContain("timeout-minutes: 15");
+  expect(commandsSource).toContain('node-version: "22.23.5"'); expect(commandsSource).toContain("node node_modules/electron/install.js");
+  expect(commandsSource.match(/^ {6}- run: npm ci$/gm)).toHaveLength(1);
+  expect(commandsSource).not.toMatch(/needs:|conditionLimits|completed: \[0, 6\]|Windows UIA focus|workflow_dispatch:|workflow_call:|npm run build|upload-artifact/);
+  expect(commandsSource).toContain("test/integration/commands-renderer-native.test.ts");
+  expect(fs.readFileSync(commandsRelative, "utf8")).toContain(JSON.stringify(commandsTitle));
+  expect(commandsSource).not.toContain("fixtureFlags");
+});
+it("admits one canonical titled passed Commands leaf only after both genuine cards and clean observed teardown", () => {
+  const f = commandsFixture(); f.run();
+  expect(f.spawn).toHaveBeenCalledExactlyOnceWith("fixed-node", ["scripts/run-integration.mjs", commandsRelative, "--maxWorkers=1", "--reporter=default", "--reporter=json", "--outputFile=" + commandsReportPath],
+    { env: { RUNNER_TEMP: path.dirname(commandsReportPath), EMBER_COMMANDS_RENDERER_NATIVE_TEST: "1" }, stdio: ["ignore", "pipe", "pipe"], encoding: "buffer", maxBuffer: 1024 * 1024, timeout: 5 * 60_000, windowsHide: true });
+  expect(commandsProjected(f)).toEqual([["Windows Commands renderer observation", cardObservation(1)], ["Windows Commands renderer observation", cardObservation(2)],
+    ["Windows Commands renderer summary", commandsSummary()], ["Required Windows Commands renderer passed", { schema: 1, passed: 1, skipped: 0 }]]);
+});
+it.each([{ status: 1 }, { status: null }, { status: "0" }, { signal: "SIGTERM" }, { error: new Error("PRIVATE compiler or child error") }])("never converts a failed Commands child into native success %#", fields => {
+  const f = commandsFixture({ child: commandsAttempt(fields) }); commandsRefused(f); expect(f.spawn).toHaveBeenCalledOnce(); expect(f.queries).not.toContain("read:" + commandsReportPath);
+  expect(commandsProjected(f)).toHaveLength(3);
+});
+it.each([
+  ["numTotalTests", 0], ["numTotalTests", 2], ["numPassedTests", 0], ["numFailedTests", 1], ["numPendingTests", 1], ["numTodoTests", 1],
+  ["numTotalTestSuites", 2], ["numPassedTestSuites", 0], ["numFailedTestSuites", 1], ["numPendingTestSuites", 1], ["success", false],
+] as const)("refuses incomplete Commands report %s=%s", (key, value) => {
+  commandsRefused(commandsFixture({ report: { ...commandsReport(), [key]: value } }));
+});
+it.each(["foreign", "relative", "extra-leaf", "empty-leaf", "failed-leaf", "extra-assertion", "empty-assertion", "skipped", "wrong-title", "wrong-fullname", "ancestor", "failure"])("binds the Commands canonical file, exact title and whole one-case status inventory (%s)", kind => {
+  const value = commandsReport(), leaf = value.testResults[0], assertion = leaf.assertionResults[0];
+  if (kind === "foreign") leaf.name = path.resolve("test/integration/PRIVATE-other.test.ts");
+  if (kind === "relative") leaf.name = commandsRelative;
+  if (kind === "extra-leaf") value.testResults.push({ ...leaf });
+  if (kind === "empty-leaf") value.testResults = [];
+  if (kind === "failed-leaf") leaf.status = "failed";
+  if (kind === "extra-assertion") leaf.assertionResults.push({ ...assertion });
+  if (kind === "empty-assertion") leaf.assertionResults = [];
+  if (kind === "skipped") assertion.status = "pending";
+  if (kind === "wrong-title") assertion.title = "PRIVATE different case";
+  if (kind === "wrong-fullname") assertion.fullName = "PRIVATE different suite";
+  if (kind === "ancestor") assertion.ancestorTitles = ["PRIVATE different suite"];
+  if (kind === "failure") assertion.failureMessages = ["PRIVATE assertion detail"];
+  commandsRefused(commandsFixture({ report: value }));
+});
+it.each([{ stale: true }, { missing: true }, { sourceLink: true }, { reportLink: true }, { reportLinks: 2 }, { reportBytes: 0 }, { reportBytes: 2 * 1024 * 1024 + 1 }, { reportFault: true }, { rawReport: "{PRIVATE" }])("refuses unsupported Commands source/report custody %#", options => {
+  const f = commandsFixture(options); commandsRefused(f); if (options.stale || options.missing || options.sourceLink) expect(f.spawn).not.toHaveBeenCalled();
+});
+it.each(["dom", "geometry", "reported", "assets", "uia", "focus", "identity", "stable", "lifecycle"] as const)("refuses a claimed second-card match with false %s evidence", key => {
+  commandsRefused(commandsFixture({ child: commandsAttempt({ stdout: Buffer.from([cardLine(cardObservation(1)), cardLine({ ...cardObservation(2), [key]: 0 }), commandsFinalLine(commandsSummary())].join("\n")) }) }));
+});
+it.each(["missing", "third", "fraction", "string", "extra", "json", "conflict", "sequence", "summary-missing", "summary-conflict", "mask", "negative", "cleanup", "completed", "phase", "oversized", "six-conditions"])("refuses incomplete or forged Commands evidence (%s)", kind => {
+  const lines = [cardLine(cardObservation(1)), cardLine(cardObservation(2))]; let final: unknown = commandsSummary();
+  if (kind === "missing") lines.pop();
+  if (kind === "third") lines.push(cardLine({ ...cardObservation(2), card: 3 }));
+  if (kind === "fraction") lines[0] = cardLine({ ...cardObservation(1), sequence: 1.5 });
+  if (kind === "string") lines[0] = cardLine({ ...cardObservation(1), arm: "PRIVATE" });
+  if (kind === "extra") lines[0] = cardLine({ ...cardObservation(1), private: "PRIVATE" });
+  if (kind === "json") lines[0] = "Windows Commands renderer observation {PRIVATE}";
+  if (kind === "conflict") lines.push(cardLine({ ...cardObservation(1), matched: 0 }));
+  if (kind === "sequence") lines[1] = cardLine({ ...cardObservation(2), sequence: 1 });
+  if (kind === "mask") final = { ...commandsSummary(), matchedMask: 1 };
+  if (kind === "negative") final = { ...commandsSummary(), negative: 0 };
+  if (kind === "cleanup") final = { ...commandsSummary(), cleanup: 0 };
+  if (kind === "completed") final = { ...commandsSummary(), completed: 1 };
+  if (kind === "phase") final = { ...commandsSummary(), phase: 7 };
+  if (kind === "oversized") lines[0] = cardLine({ private: "PRIVATE" + "X".repeat(257) });
+  if (kind !== "summary-missing") lines.push(commandsFinalLine(final));
+  if (kind === "summary-conflict") lines.push(commandsFinalLine({ ...commandsSummary(), cleanup: 0 }));
+  if (kind === "six-conditions") lines.splice(0, lines.length, output());
+  commandsRefused(commandsFixture({ child: commandsAttempt({ stdout: Buffer.from(lines.join("\n")) }) }));
+});
+it("accepts agreeing two-card duplicates and ANSI/CRLF while printing no raw output", () => {
+  const f = commandsFixture({ child: commandsAttempt({ stdout: Buffer.from("\u001b[32m" + commandsOutput().replace(/\n/g, "\r\n") + "\u001b[0m\r\nPRIVATE"), stderr: Buffer.from(commandsOutput()) }) });
+  f.run(); expect(commandsProjected(f)).toHaveLength(4); expect(JSON.stringify(f.printed.mock.calls)).not.toContain("PRIVATE");
+});
+it.each(["invalid-utf8", "oversized", "accessor", "proxy", "shadowed-buffer"])("refuses unsupported Commands captured streams (%s) without reading getters", kind => {
+  let reads = 0; const trap = () => { reads++; throw new Error("PRIVATE getter"); }, child = commandsAttempt();
+  if (kind === "invalid-utf8") child.stdout = Buffer.from([255]);
+  if (kind === "oversized") child.stdout = Buffer.alloc(1024 * 1024 + 1);
+  if (kind === "accessor") Object.defineProperty(child, "stdout", { get: trap });
+  if (kind === "proxy") child.stdout = new Proxy(Buffer.from("PRIVATE"), { get: trap, getOwnPropertyDescriptor: trap });
+  if (kind === "shadowed-buffer") Object.defineProperty(child.stdout, "toString", { get: trap });
+  commandsRefused(commandsFixture({ child })); expect(reads).toBe(0);
+});
+it("refuses unknown child-result metadata without invoking native-result proxy or error getters", () => {
+  let reads = 0; const trap = () => { reads++; throw new Error("PRIVATE child metadata"); };
+  const child = commandsAttempt(); Object.defineProperty(child, "error", { get: trap });
+  commandsRefused(commandsFixture({ child }));
+  commandsRefused(commandsFixture({ child: new Proxy(commandsAttempt(), { get: trap, getOwnPropertyDescriptor: trap }) }));
+  expect(reads).toBe(0);
+});
+it("projects only fixed startup facts for failure and never allows them to manufacture either card", () => {
+  const partial = { ...commandsSummary(), completed: 0, matchedMask: 0, negative: 0, cleanup: 0, phase: 3 };
+  const f = commandsFixture({ child: commandsAttempt({ status: 1, stdout: Buffer.from(commandsBootLine(commandsStartup()) + "\n" + commandsFinalLine(partial)) }) });
+  commandsRefused(f); expect(commandsProjected(f)).toEqual([["Windows Commands renderer summary", partial], ["Windows Commands renderer startup", commandsStartup()]]);
+  expect(f.queries).not.toContain("read:" + commandsReportPath);
+});
+it.each(["domain", "extra", "malformed", "conflict"])("optional Commands startup %s faults cannot veto a complete genuine result or print raw details", kind => {
+  let boot = commandsBootLine(kind === "domain" ? { ...commandsStartup(), loadCode: 8 } : kind === "extra" ? { ...commandsStartup(), private: "PRIVATE" } : commandsStartup());
+  if (kind === "malformed") boot = "Windows Commands renderer startup {PRIVATE}";
+  if (kind === "conflict") boot += "\n" + commandsBootLine({ ...commandsStartup(), quit: 2 });
+  const f = commandsFixture({ child: commandsAttempt({ stdout: Buffer.from(commandsOutput() + "\n" + boot) }) }); f.run();
+  expect(commandsProjected(f)).toHaveLength(4); expect(JSON.stringify(f.printed.mock.calls)).not.toContain("PRIVATE");
 });
