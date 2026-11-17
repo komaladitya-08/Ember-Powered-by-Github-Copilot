@@ -9,11 +9,13 @@ import { WindowsCommandCopyCleanupError } from "../../app/main/agent/windows-com
 import { WindowsNodeToolchainCleanupError } from "../../app/main/agent/windows-node-toolchain-native";
 import { WindowsCommandCopyProofCleanupError } from "../fixtures/windows-command-copy-proof-native";
 import { WindowsNodeAssetEnforcementNativeCleanupError } from "../fixtures/windows-node-asset-enforcement-native";
-import { bindWindowsNodeAssetEnforcement, observeWindowsNodeAssetStop, requireWindowsNodeAssetOutputFacts,
+import { bindWindowsNodeAssetEnforcement, observeWindowsNodeAssetStop, observeWindowsNodeAssetNodeCall, requireWindowsNodeAssetOutputFacts,
   windowsNodeAssetCreationSecurity, windowsNodeAssetPreludeExit, windowsNodeAssetPreludeProbe, windowsNodeAssetErrorClass, requireWindowsNodeAssetHeldToken, requireWindowsNodeAssetTokenFacts, NODE_ASSET_READY, NODE_ASSET_ERROR_READY, WindowsNodeAssetEnforcementObservationError } from "../fixtures/windows-node-asset-enforcement-proof";
 import type { WindowsLpacApi } from "../../app/main/agent/experimental-windows-lpac-api";
 
 const loaded = { requireWindowsCommandRootOnlyCompleted, requireWindowsCommandOutputClosed };
+const diagnosticClasses = { WindowsRootOnlyCommandCopyCleanupError, WindowsCommandCopyCleanupError, WindowsCommandRootOnlyCleanupError, WindowsCommandOutputCleanupError,
+  WindowsCommandCreatorProfileCleanupError, WindowsCommandCopyProofCleanupError, WindowsNodeAssetEnforcementNativeCleanupError, WindowsNodeToolchainCleanupError };
 const until = async (check: () => boolean) => { const deadline = performance.now() + 4000; while (!check()) { if (performance.now() > deadline) throw Error("Fixed portable asset deadline."); await new Promise<void>(resolve => setTimeout(resolve, 5)); } };
 const chunks = (s: ReturnType<typeof outputFake>, stream: number, bytes: Buffer) => { for (let at = 0; at < bytes.length; at += 16384) s.enqueue(stream, bytes.subarray(at, at + 16384)); };
 async function natural(prelude = false, exitCode = prelude ? 49 : 17, frames?: { stdout?: Buffer; stderr?: Buffer }) {
@@ -245,6 +247,71 @@ it("diagnostic error classes require the exact constructors and never coerce cla
   expect(windowsNodeAssetErrorClass(classes, new (class WindowsCommandOutputCleanupError extends Error {})())).toBe(0);
   expect(windowsNodeAssetErrorClass(undefined, new WindowsCommandOutputCleanupError())).toBe(0);
   expect(windowsNodeAssetErrorClass(classes, new Proxy({}, { getPrototypeOf: read }))).toBe(0);
+});
+it.each(Object.values(diagnosticClasses).map((type, index) => ({ type, kind: index + 1 })))("Node observation preserves the identical class$kind failure and calls its operation once", ({ type, kind }) => {
+  const state = { checkpoint: 1, innerClass: 0 }, original = new type(), operation = vi.fn(() => { throw original; }); let caught: unknown;
+  try { observeWindowsNodeAssetNodeCall(diagnosticClasses, state, 2, 3, operation); } catch (error) { caught = error; }
+  expect(caught).toBe(original); expect(operation).toHaveBeenCalledOnce(); expect(state).toEqual({ checkpoint: 2, innerClass: kind });
+});
+it("Node observation reads no claimed error properties and preserves an unclassified thrown value", () => {
+  const read = vi.fn(() => { throw Error("PRIVATE claimed Node error"); });
+  const original = Object.defineProperties({}, Object.fromEntries(["name", "message", "code", "cause", "stack"].map(key => [key, { get: read }])));
+  const state = { checkpoint: 1, innerClass: 0 }; let caught: unknown;
+  try { observeWindowsNodeAssetNodeCall(diagnosticClasses, state, 4, 5, () => { throw original; }); } catch (error) { caught = error; }
+  expect(caught).toBe(original); expect(read).not.toHaveBeenCalled(); expect(state).toEqual({ checkpoint: 4, innerClass: 0 });
+});
+it("a failed diagnostic classification cannot replace the original Node error", () => {
+  const original = new Error("Fixed original failure."), state = { checkpoint: 1, innerClass: 0 };
+  const classes = Object.defineProperty({ ...diagnosticClasses }, "WindowsRootOnlyCommandCopyCleanupError", { get: () => { throw Error("PRIVATE classifier failure"); } });
+  let caught: unknown; try { observeWindowsNodeAssetNodeCall(classes, state, 5, 6, () => { throw original; }); } catch (error) { caught = error; }
+  expect(caught).toBe(original); expect(state).toEqual({ checkpoint: 5, innerClass: 0 });
+});
+it("diagnostic storage cannot change the original return or throw", () => {
+  const state = Object.freeze({ checkpoint: 0, innerClass: 0 }), result = Object.freeze({}), original = new WindowsNodeToolchainCleanupError();
+  expect(observeWindowsNodeAssetNodeCall(diagnosticClasses, state, 2, 3, () => result)).toBe(result);
+  let caught: unknown; try { observeWindowsNodeAssetNodeCall(diagnosticClasses, state, 2, 3, () => { throw original; }); } catch (error) { caught = error; }
+  expect(caught).toBe(original); expect(state).toEqual({ checkpoint: 0, innerClass: 0 });
+});
+it("Node checkpoints follow an actual Copy context, output launch and held attester before its genuine run resolves", async () => {
+  const s = outputFake(), copy = await s.prepare(), io = s.owner(), state = { checkpoint: 1, innerClass: 0 };
+  let launch: Parameters<typeof requireWindowsNodeAssetHeldToken>[3] | undefined;
+  const run = await copy.launchRootOnlyWithOutput(context => observeWindowsNodeAssetNodeCall(diagnosticClasses, state, 2, 3, () => {
+    expect(state.checkpoint).toBe(2); launch = io.createSuspended(context, "C:\\trusted\\node.exe", s.command);
+    expect(requireWindowsCommandOutputLaunch(launch).context).toBe(context); return launch;
+  }), held => {
+    expect(state.checkpoint).toBe(3);
+    observeWindowsNodeAssetNodeCall(diagnosticClasses, state, 4, 5, () => {
+      expect(state.checkpoint).toBe(4); expect(requireWindowsCommandOutputLaunch(launch!).root).toEqual(held);
+    });
+    observeWindowsNodeAssetNodeCall(diagnosticClasses, state, 5, 6, () => { expect(state.checkpoint).toBe(5); });
+  });
+  expect(state).toEqual({ checkpoint: 6, innerClass: 0 }); expect(s.events).toContain("resume");
+  s.state.ended = true; const completed = await copy.completeRootOnly(run, io.signal); await io.closeOutputAfterStopped(completed, run);
+  await copy.close(); closeWindowsCommandCreatorProfile(s.profile);
+});
+it("a genuine creator failure remains fatal class1 with its unknown positive launch retained and no Resume", async () => {
+  const s = outputFake(), copy = await s.prepare(), io = s.owner(), state = { checkpoint: 1, innerClass: 0 }, original = new WindowsNodeToolchainCleanupError();
+  const error = await copy.launchRootOnlyWithOutput(context => observeWindowsNodeAssetNodeCall(diagnosticClasses, state, 2, 3, () => {
+    io.createSuspended(context, "C:\\trusted\\node.exe", s.command); throw original;
+  }), () => undefined).catch(error => error);
+  expect(error).toBeInstanceOf(WindowsRootOnlyCommandCopyCleanupError); expect(windowsNodeAssetErrorClass(diagnosticClasses, error)).toBe(1);
+  expect(state).toEqual({ checkpoint: 2, innerClass: 8 }); expect(s.events).not.toContain("resume");
+  expect([...s.handles.values()].some(handle => !handle.closed)).toBe(true); await expect(copy.close()).rejects.toBe(error);
+});
+it("Node checkpoint and inner class are bounded observations with no success or cleanup authority", () => {
+  const known = new WindowsNodeAssetEnforcementObservationError("natural", 5, 14, 49, 1, 0, 0, 0, [], 1, 2, 2, 1, 7, 8);
+  expect(known).toMatchObject({ phase: 5, cExit: 49, errorClass: 1, nodeCheckpoint: 7, nodeInnerClass: 8 });
+  for (const value of [-1, 8, Infinity, NaN]) expect(new WindowsNodeAssetEnforcementObservationError("natural", 5, 14, 49, 1, 0, 0, 0, [], 0, 0, 0, 0, value).nodeCheckpoint).toBe(0);
+  for (const value of [-1, 9, Infinity, NaN]) expect(new WindowsNodeAssetEnforcementObservationError("natural", 5, 14, 49, 1, 0, 0, 0, [], 0, 0, 0, 0, 1, value).nodeInnerClass).toBe(0);
+});
+it("checkpoint7 is assigned only after the existing Copy launch await and never controls admission or cleanup", () => {
+  const source = fs.readFileSync(new URL("../fixtures/windows-node-asset-enforcement-proof.ts", import.meta.url), "utf8");
+  const node = source.slice(source.indexOf("phase = 5; verified()"), source.indexOf("native(() => targetPins!.recheck()); verified(); phase = 7;"));
+  expect(node.indexOf("nodeObservation.checkpoint = 1;")).toBeLessThan(node.indexOf("copy.launchRootOnlyWithOutput"));
+  expect(node.indexOf("nodeObservation.checkpoint = 7;")).toBeGreaterThan(node.indexOf('if (mode === "preresume") assetCurrent = false; });'));
+  expect(node.indexOf("nodeObservation.checkpoint = 7;")).toBeLessThan(node.indexOf('if (mode === "preresume" || mode === "sharedcreate") authenticateStop(1)'));
+  expect(node.match(/nodeObservation\.checkpoint = 7/g)).toHaveLength(1); expect(source.match(/const nodeObservation = \{ checkpoint: 0, innerClass: 0 \}/g)).toHaveLength(1);
+  expect(node).not.toMatch(/if\s*\([^\n]*(?:nodeObservation|nodeCheckpoint|nodeInnerClass)/);
 });
 it("the prelude stage schedule authenticates completed/run before projecting C exit and preserves close/Stop/facts ordering", () => {
   const source = fs.readFileSync(new URL("../fixtures/windows-node-asset-enforcement-proof.ts", import.meta.url), "utf8");

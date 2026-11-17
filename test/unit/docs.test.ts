@@ -274,8 +274,12 @@ describe("docs/DEVELOPING.md", () => {
   it("gives the kill switch's real-time deadline step in the gate, right after the unit tests, as CI's three jobs run it (install-docs-r7-1)", () => {
     const ci = read(".github/workflows/ci.yml");
     const step = "npm run test:integration -- test/integration/killswitch-deadline.test.ts";
-    // Linux, Windows and macOS each run it on its own, straight after `npm test`.
-    expect(ci.split(`      - run: npm test\n      - name: Kill switch real-time deadline (isolated from parallel unit tests)\n        run: ${step}\n`)).toHaveLength(4);
+    // Linux, Windows and macOS each run it alone, immediately after both required unit-test steps.
+    const units = "      - name: Fixed C witness model and bounded compiler outcome\n" +
+      "        run: npm test -- test/unit/windows-node-asset-enforcement-c.test.ts --maxWorkers=1\n" +
+      "      - name: Remaining unit tests\n" +
+      "        run: npm test -- --exclude test/unit/windows-node-asset-enforcement-c.test.ts\n";
+    expect(ci.split(`${units}      - name: Kill switch real-time deadline (isolated from parallel unit tests)\n        run: ${step}\n`)).toHaveLength(4);
     expect(fs.existsSync("test/integration/killswitch-deadline.test.ts")).toBe(true);
     const gate = /The full gate[^]*?```sh\n([^]*?)```/.exec(read("CLAUDE.md"))?.[1] ?? "";
     const order = gate.split("\n").map(l => l.trim().split(/\s+#/)[0]);

@@ -147,6 +147,27 @@ portable registration and exact checkout/producer authentication.
   `2221221222221111111111111111` showed all four data opens positive. Tokens were Low2/exact0x60/NW1; C Stop/EOF/close
   authenticated, but no full case/known-cleanup receipt existed. Later cases remained blocked and graphs retained.
 
+- V4 head `5f1cf38917f8286d225d8bbb428d4c301051799e`, run43998770804: contracts256+557 passed. Both images passed557
+  portable tests, then reported natural phase5/prelude14/C49/errorclass1, probe000/matrix28zeros and token1/2/2/1.
+  The genuine C prelude passed all32 DACL/data/create checks, output/Stop authentication and post-Stop control reads.
+  Advancement to Node failed; no full case, seven-case or asset/private/profile cleanup receipt existed. All later
+  cases stayed blocked and the private graphs were retained. These remain failed runs, not completed asset proofs.
+
+An evidence-only append adds per-case Node checkpoints without changing C, production APIs, calls, awaits,
+arguments, timeouts, success predicates, Stop or cleanup. Checkpoint0 means not entered or prelaunch verification;
+1 is immediately before the Copy launch;2 enters the existing creator callback before the real Node factory;
+3 is its returned output launch;4 enters the ordinary attester;5 follows its positive image check;6 follows its
+pin checks;7 is assigned only after the genuine Copy launch promise resolves its run reference. A checkpoint
+is an observed host control-flow position, not proof of Resume, child execution, Stop, output closure or disposal.
+
+The append also records inner class0unknown/1Copy/2nativeCopy/3Stop/4output/5profile/6proof/7enforcementNative/
+8NodeToolchain only when the existing creator or ordinary attester throws. Classification uses exact constructors
+from the loaded graph, falls back to zero on its own failure and rethrows the identical original value. It reads
+no name/message/code/cause/stack or raw native field. Diagnostic storage failure cannot replace the operation's
+return or error. Checkpoints and inner classes never decide admission or turn fatal outer Copy class1 into
+success. No native query, filesystem action, logging, recovery or retry is added. The failed Node sector remains
+unclassified until a separately reviewed diagnostic run supplies evidence.
+
 V4 neither recertifies those failures nor silently changes a MIC claim into success. Its new same-Low-label,
 exact-package FA/RX comparison explicitly measures DACL enforcement on the final product graph.
 
