@@ -76,6 +76,23 @@ it("preserves the entire native WSL test after reversing only the new observatio
 });
 it("preserves the entire packaged test after reversing only the new project/folder stage field and markers", () => {
   let source = fs.readFileSync("test/integration/windows-node-packaged-product.test.ts", "utf8");
+  const fillStart = source.indexOf("  private async fill("), fillEnd = source.indexOf("\n  private async homeText", fillStart);
+  expect(fillStart >= 0 && fillEnd > fillStart).toBe(true);
+  expect(digest(source.slice(fillStart, fillEnd))).toBe("abd3b6dc6c3466b966b0b9b0086b7d361ebddf59b496b0a49b3ec3462cec3754");
+  const previousFill = `  private async fill(hwnd: number, select: Selector, value: string, password = false): Promise<void> {
+    const node = await this.focus(hwnd, await this.node(hwnd, select));
+    if (!!node.isPassword !== password) throw refusal(this.phase);
+    try { this.chord("Control_L", "a"); this.type(value); this.pressKey("Tab"); } finally { this.input!.releaseAll(); }
+  }`;
+  expect(digest(previousFill)).toBe("f479af685bf882f8c0d6ad684814c3f9346ab35cd0f9d67c68a29fff0639a193");
+  source = source.slice(0, fillStart) + previousFill + source.slice(fillEnd);
+  source = source.replace(' * Target codes1..7 keep the existing welcome controls;8project-sessions-request/9project-sessions-send.\n', "");
+  source = source.replace('welcomeStep: 6, nextLabel: 7, target: 9, bridgeError:', 'welcomeStep: 6, nextLabel: 7, target: 7, bridgeError:');
+  source = source.replace('"w-row-commands", "project-sessions-request", "project-sessions-send"].indexOf(selected as string) + 1', '"w-row-commands"].indexOf(selected as string) + 1');
+  source = source.replace(' allowFlags: number; denyFlags: number; hintFlags: number;', "");
+  source = source.replace(' * Existing stage13 snapshot only: Allow/Not now presence1/enabled2/disabled4/onscreen8/offscreen16; hint bits exact whole-command-read1/answer-retry2.\n', "");
+  source = source.replace(', allowFlags: 31, denyFlags: 31, hintFlags: 3', "").replace(', allowFlags: 0, denyFlags: 0, hintFlags: 0', "").replace(', allowFlags: 0, denyFlags: 0, hintFlags: 0', "");
+  source = source.replace('    try { this.observation.controls(result.nodes); } catch { /* Cached stage13 controls only. */ }\n', "");
   source = source.replace('  providerStage: number; commandStage: number; commandDecision: number; repairStep: number; repairResults: number; focusIdentity: number; cardFlags: number;\n', "");
   source = source.replace(/ \* Provider stage1pane[^\n]*\n \* Command stage1pane[^\n]*\n \* 11remember-display[^\n]*\n \* Repair step\/results0[^\n]*\n \* Focus identity bits:[^\n]*\n \* Card bits from an existing display poll:[^\n]*\n/, "");
   source = source.replace(', providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15', "");
@@ -109,6 +126,8 @@ it("preserves the entire packaged test after reversing only the new project/fold
 });
 it("preserves the whole workflow after reversing only the closed project/folder field and reviewed source-proof demotion", () => {
   let source = fs.readFileSync(".github/workflows/windows-node-product.yml", "utf8").replace(", projectStage: 16", "").replace(", projectStage: 0", "");
+  source = source.replace('welcomeStep: 6, nextLabel: 7, target: 9, bridgeError:', 'welcomeStep: 6, nextLabel: 7, target: 7, bridgeError:');
+  source = source.replace(', allowFlags: 31, denyFlags: 31, hintFlags: 3', "").replace(', allowFlags: 0, denyFlags: 0, hintFlags: 0', "");
   source = source.replace(', providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15', "");
   source = source.replace(', providerStage: 0, commandStage: 0, commandDecision: 0, repairStep: 0, repairResults: 0, focusIdentity: 0, cardFlags: 0', "");
   const closed = `          const reviewed = Object.freeze({

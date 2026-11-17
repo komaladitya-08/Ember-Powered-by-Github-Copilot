@@ -1,7 +1,8 @@
 /** Actual project board DOM in Chromium; replaces only the preload boundary, never runs a desktop action. */
 import fs from "node:fs";
 import path from "node:path";
-import { build } from "esbuild";
+import { build, transformSync } from "esbuild";
+import { runInNewContext } from "node:vm";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ProjectSequence, ProjectSession, ProjectSessionsAction, ProjectSessionsState } from "../../app/shared/project-sessions";
@@ -294,6 +295,53 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Projects and delegated ses
     expect(await page.locator("#project-sessions-name").inputValue()).toBe("My next project draft");
     expect(await page.locator("#project-sessions-goal").inputValue()).toBe("My next goal");
     await page.close();
+  });
+
+  it("observes runtime focus departure before the next guarded Send under delayed Tab processing", async () => {
+    const page = await open(populated());
+    const source = fs.readFileSync("test/integration/windows-node-packaged-product.test.ts", "utf8");
+    const extract = (start: string, next: string, parameters: string) => {
+      const at = source.indexOf(start), end = source.indexOf(next, at); expect(at).toBeGreaterThanOrEqual(0); expect(end).toBeGreaterThan(at);
+      const method = source.slice(at, end), body = method.slice(method.indexOf("{") + 1).trim().replace(/\}$/, "");
+      const module = { exports: undefined as unknown };
+      runInNewContext(transformSync("module.exports = async function(" + parameters + ") {" + body + "};", { loader: "ts", format: "cjs", target: "node22" }).code,
+        { module, refusal: () => new Error("The controlled field focus guard refused."), pause: (ms: number) => new Promise(resolve => setTimeout(resolve, ms)) });
+      return module.exports;
+    };
+    const fill = extract("  private async fill(", "\n  private async homeText", "hwnd, select, value, password = false") as (this: unknown, hwnd: number, select: (node: { automationId?: string }) => boolean, value: string) => Promise<void>;
+    const until = extract("  private async until<", "\n  private async windows", "read, accepts, ms = 30000");
+    const describeFocus = () => page.evaluate(() => {
+      const node = document.activeElement as HTMLElement;
+      return { runtimeId: node.id, automationId: node.id, pid: 7, hasKeyboardFocus: true, controlType: node.tagName === "BUTTON" ? "Button" : "Edit" };
+    });
+    const request = { runtimeId: "project-sessions-request", automationId: "project-sessions-request", pid: 7, isPassword: false, controlType: "Edit" };
+    let inputQueue = Promise.resolve(), pendingTab: (() => Promise<void>) | undefined;
+    const events: string[] = [];
+    const port = {
+      deadline: Date.now() + 30_000, input: { releaseAll() {}, blockedReason: () => null, activeWindow: () => 73 }, bridge: {
+        async call(method: string) {
+          expect(method).toBe("focused");
+          // Native SendInput returns after insertion, before the target thread must consume it. Only this processing delay is modeled.
+          await inputQueue; if (pendingTab) { const deliver = pendingTab; pendingTab = undefined; await deliver(); }
+          return { hwnd: 73, element: await describeFocus() };
+        },
+      }, until, current() {},
+      async node(_hwnd: number, select: (node: { automationId?: string }) => boolean) { expect(select(request)).toBe(true); return request; },
+      async focus(_hwnd: number, node: typeof request) { expect(node).toBe(request); await page.locator("#project-sessions-request").focus(); return request; },
+      chord(modifier: string, key: string) { expect([modifier, key]).toEqual(["Control_L", "a"]); inputQueue = inputQueue.then(() => page.keyboard.press("Control+a")); },
+      type(value: string) { inputQueue = inputQueue.then(() => page.keyboard.insertText(value)); },
+      pressKey(key: string) { expect(key).toBe("Tab"); pendingTab = async () => { events.push("tab-consumed"); await page.keyboard.press("Tab"); }; },
+    };
+    try {
+      await fill.call(port, 73, node => node.automationId === request.automationId, "Use only the newly chosen copy.");
+      await inputQueue; events.push("fill-returned");
+      // The existing next action focuses Send once. A late field-exit Tab must not move it to Show conversation.
+      await page.locator("#project-sessions-send").focus(); if (pendingTab) { const deliver = pendingTab; pendingTab = undefined; await deliver(); }
+      expect(await page.evaluate(() => document.activeElement?.id)).toBe("project-sessions-send");
+      expect(events).toEqual(["tab-consumed", "fill-returned"]);
+      expect(await page.locator("#project-sessions-request").inputValue()).toBe("Use only the newly chosen copy.");
+      expect(await page.evaluate(() => window.__projectBoard.sent)).toEqual([]);
+    } finally { await page.close(); }
   });
 
   it("saves, opens and forgets checkpoints only on explicit clicks, without starting work", async () => {
