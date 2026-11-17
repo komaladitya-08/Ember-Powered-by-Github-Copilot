@@ -37,6 +37,7 @@ export function mountProjectSessions(codingReviews?: ProjectSessionReviews): voi
   let accountEpoch = 0;
   let drawn = "";
   let plansDrawn = "";
+  const sessionRowKeys = new WeakMap<HTMLLIElement, string>();
   let reviewed: { projectId: string; sequenceId: string; signature: string } | undefined;
   let announcedProjectId: string | null = null;
 
@@ -168,73 +169,89 @@ export function mountProjectSessions(codingReviews?: ProjectSessionReviews): voi
       if (focusedPlan) [...plans.querySelectorAll<HTMLElement>("[data-plan-control]")]
         .find(control => control.dataset.planControl === focusedPlan)?.focus({ preventScroll: true });
     }
-    list.replaceChildren();
     if (!project?.sessions.length) {
       const item = document.createElement("li");
       item.className = "hint";
       item.textContent = project ? "No delegated sessions yet. Ask Ember what to do next, or give it a task to delegate." : "Create or select a project to see its sessions.";
-      list.append(item);
+      list.replaceChildren(item);
       return;
     }
+    const previous = new Map([...list.querySelectorAll<HTMLLIElement>(":scope > li")].map(item => [sessionRowKeys.get(item), item]));
+    const retained = new Set<HTMLLIElement>();
     for (const [index, session] of project.sessions.entries()) {
-      const item = document.createElement("li");
-      const heading = document.createElement("h4");
-      heading.textContent = session.title;
-      const detail = document.createElement("p");
-      detail.className = "hint";
-      detail.textContent = `${session.kind === "coding" ? "Coding" : "Desktop"} · ${STATUS_WORDS[session.status]}${session.detail ? ` · ${session.detail}` : ""}`;
-      item.append(heading, detail);
-      if (session.summary) {
-        const summary = document.createElement("p");
-        summary.textContent = session.summary;
-        item.append(summary);
-      }
-      const controls = document.createElement("div");
-      controls.className = "agent-actions";
-      controls.append(button("Task activity", () => document.getElementById("p-tasks")?.click()));
       const codingReview = sessionReviews[index];
-      if (codingReview) {
-        const words = sessionReviewWords(session.title);
-        const openReview = button(words.button, () => {
-          if (openReview.disabled) return;
-          const currentProject = active(), currentSession = currentProject?.sessions.find(current => current.id === session.id && current.taskId === session.taskId);
-          const currentReview = currentProject && currentSession ? codingReviews?.forSession(currentProject.id, currentSession) : null;
-          if (currentReview?.key !== codingReview.key || currentReview.disabled) return;
-          const resolveOrigin = () => {
-            const selected = active(), live = selected?.sessions.find(current => current.id === session.id && current.taskId === session.taskId);
-            const action = selected?.id === project.id && live ? codingReviews?.forSession(selected.id, live) : null;
-            return action?.key === codingReview.key
-              ? [...list.querySelectorAll<HTMLButtonElement>("[data-session-review]")].find(button => button.dataset.sessionReview === session.id) ?? null : null;
-          };
-          currentReview.open(openReview, resolveOrigin);
-        });
-        openReview.disabled = !connected || pending || codingReview.disabled;
-        openReview.setAttribute("aria-label", words.label);
-        openReview.dataset.sessionControl = `review:${session.id}`;
-        openReview.dataset.sessionReview = session.id;
-        controls.append(openReview);
-      }
-      if (ongoing(session)) {
-        const stop = button("Stop session", () => {
-          const owner = accountEpoch;
-          stop.disabled = true;
-          void window.ember.taskControl(session.taskId, "stop").then(async accepted => {
-            if (owner !== accountEpoch) return;
-            status.textContent = accepted ? "Stopping this session…" : "This session has already ended or is no longer available.";
-            await refresh();
-          }).catch(() => {
-            if (owner !== accountEpoch) return;
-            status.textContent = "Couldn't stop the session. Try Stop everything on Home.";
-            stop.disabled = false;
+      // Retain a pressed or focused control while only its display metadata changes. The private key never enters markup.
+      const key = JSON.stringify([project.id, session.id, session.taskId, session.kind, ongoing(session), codingReview?.key]);
+      let item = previous.get(key);
+      if (!item) {
+        item = document.createElement("li");
+        sessionRowKeys.set(item, key);
+        const heading = document.createElement("h4");
+        const detail = document.createElement("p");
+        detail.className = "hint";
+        item.append(heading, detail);
+        const controls = document.createElement("div");
+        controls.className = "agent-actions";
+        controls.append(button("Task activity", () => document.getElementById("p-tasks")?.click()));
+        if (codingReview) {
+          const openReview = button("", () => {
+            if (openReview.disabled) return;
+            const currentProject = active(), currentSession = currentProject?.sessions.find(current => current.id === session.id && current.taskId === session.taskId);
+            const currentReview = currentProject && currentSession ? codingReviews?.forSession(currentProject.id, currentSession) : null;
+            if (currentReview?.key !== codingReview.key || currentReview.disabled) return;
+            const resolveOrigin = () => {
+              const selected = active(), live = selected?.sessions.find(current => current.id === session.id && current.taskId === session.taskId);
+              const action = selected?.id === project.id && live ? codingReviews?.forSession(selected.id, live) : null;
+              return action?.key === codingReview.key
+                ? [...list.querySelectorAll<HTMLButtonElement>("[data-session-review]")].find(button => button.dataset.sessionReview === session.id) ?? null : null;
+            };
+            currentReview.open(openReview, resolveOrigin);
           });
-        });
-        stop.setAttribute("aria-label", `Stop session: ${session.title}`);
-        stop.dataset.sessionControl = session.taskId;
-        controls.append(stop);
+          openReview.dataset.sessionControl = `review:${session.id}`;
+          openReview.dataset.sessionReview = session.id;
+          controls.append(openReview);
+        }
+        if (ongoing(session)) {
+          const stop = button("Stop session", () => {
+            const owner = accountEpoch;
+            stop.disabled = true;
+            void window.ember.taskControl(session.taskId, "stop").then(async accepted => {
+              if (owner !== accountEpoch) return;
+              status.textContent = accepted ? "Stopping this session…" : "This session has already ended or is no longer available.";
+              await refresh();
+            }).catch(() => {
+              if (owner !== accountEpoch) return;
+              status.textContent = "Couldn't stop the session. Try Stop everything on Home.";
+              stop.disabled = false;
+            }).finally(() => {
+              if (owner === accountEpoch && stop.isConnected) stop.disabled = false;
+            });
+          });
+          stop.dataset.sessionControl = session.taskId;
+          stop.dataset.sessionStop = "";
+          controls.append(stop);
+        }
+        item.append(controls);
       }
-      item.append(controls);
-      list.append(item);
+      item.querySelector("h4")!.textContent = session.title;
+      item.querySelector("p.hint")!.textContent = `${session.kind === "coding" ? "Coding" : "Desktop"} · ${STATUS_WORDS[session.status]}${session.detail ? ` · ${session.detail}` : ""}`;
+      let summary = item.querySelector<HTMLParagraphElement>("[data-session-summary]");
+      if (session.summary) {
+        if (!summary) { summary = document.createElement("p"); summary.dataset.sessionSummary = ""; item.insertBefore(summary, item.querySelector(".agent-actions")); }
+        summary.textContent = session.summary;
+      } else summary?.remove();
+      const openReview = item.querySelector<HTMLButtonElement>("[data-session-review]");
+      if (openReview && codingReview) {
+        const words = sessionReviewWords(session.title);
+        openReview.textContent = words.button;
+        openReview.setAttribute("aria-label", words.label);
+        openReview.disabled = !connected || pending || codingReview.disabled;
+      }
+      item.querySelector("[data-session-stop]")?.setAttribute("aria-label", `Stop session: ${session.title}`);
+      retained.add(item);
+      if (list.children[index] !== item) list.insertBefore(item, list.children[index] ?? null);
     }
+    for (const item of [...list.children]) if (!retained.has(item as HTMLLIElement)) item.remove();
     if (focused) [...list.querySelectorAll<HTMLButtonElement>("[data-session-control]")]
       .find(control => control.dataset.sessionControl === focused)?.focus({ preventScroll: true });
   };

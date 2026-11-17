@@ -188,6 +188,105 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Named session to coding re
     await page.close();
   });
 
+  it.each(["onTasks", "onConversation"])("preserves one pointer gesture across an unchanged-identity %s refresh", async notification => {
+    const page = await open();
+    try {
+      await expect.poll(() => reviewButton(page).isEnabled()).toBe(true);
+      await reviewButton(page).scrollIntoViewIfNeeded();
+      const bounds = (await reviewButton(page).boundingBox())!;
+      await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+      await page.mouse.down();
+      await page.evaluate(notification => { const h = window.__sessionReviews; h.deferResults = true; h.emit(notification); }, notification);
+      await page.waitForFunction(() => !!window.__sessionReviews.resolveResults);
+      await page.mouse.up();
+      await page.waitForFunction(() => window.__sessionReviews.calls.some(call => call.method === "codingResultReview"));
+      expect(await page.locator("#project-coding-review").isHidden()).toBe(true);
+      expect(await page.locator("#project-coding-patch").textContent()).toBe("");
+      await page.evaluate(() => { const h = window.__sessionReviews; h.deferResults = false; h.resolveResults!(h.results.one); });
+      await expect.poll(() => reviewButton(page).isEnabled()).toBe(true);
+      await expect.poll(() => page.evaluate(() => window.__sessionReviews.calls.filter(call => call.method === "codingResultReview")), { timeout: 1000 })
+        .toEqual([{ method: "codingResultReview", args: ["review-one"] }]);
+      await expect.poll(() => page.locator("#project-coding-review").isVisible()).toBe(true);
+      expect(await page.locator("#project-coding-patch").textContent()).toContain("+new");
+    } finally { await page.mouse.up(); await page.close(); }
+  });
+
+  it("preserves one pointer gesture across a metadata-only session-detail refresh", async () => {
+    const page = await open();
+    try {
+      await expect.poll(() => reviewButton(page).isEnabled()).toBe(true);
+      await reviewButton(page).scrollIntoViewIfNeeded();
+      const bounds = (await reviewButton(page).boundingBox())!;
+      await page.evaluate(() => { window.__sessionReviews.oldButton = document.querySelector<HTMLButtonElement>("[data-session-review]")!; });
+      await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+      await page.mouse.down();
+      await page.evaluate(() => { const h = window.__sessionReviews; h.state.projects[0].sessions[0].detail = "Updated completion detail"; h.emit("onTasks"); });
+      await expect.poll(() => page.locator("#project-sessions-list").textContent()).toContain("Updated completion detail");
+      await expect.poll(() => reviewButton(page).isEnabled()).toBe(true);
+      expect(await reviewButton(page).evaluate(button => button === window.__sessionReviews.oldButton)).toBe(true);
+      await page.mouse.up();
+      await expect.poll(() => page.evaluate(() => window.__sessionReviews.calls.filter(call => call.method === "codingResultReview")), { timeout: 1000 })
+        .toEqual([{ method: "codingResultReview", args: ["review-one"] }]);
+      await expect.poll(() => page.locator("#project-coding-review").isVisible()).toBe(true);
+      expect(await page.locator("#project-coding-patch").textContent()).toContain("+new");
+    } finally { await page.mouse.up(); await page.close(); }
+  });
+
+  it.each(["removed", "replaced", "source", "ambiguous", "running", "account", "project"])("does not retarget a pressed review control after %s retirement", async change => {
+    const page = await open();
+    try {
+      await expect.poll(() => reviewButton(page).isEnabled()).toBe(true);
+      await reviewButton(page).scrollIntoViewIfNeeded();
+      const bounds = (await reviewButton(page).boundingBox())!;
+      await page.evaluate(() => { window.__sessionReviews.oldButton = document.querySelector<HTMLButtonElement>("[data-session-review]")!; });
+      await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+      await page.mouse.down();
+      await page.evaluate(change => {
+        const h = window.__sessionReviews;
+        if (change === "account") { h.state = { projects: [], selectedProjectId: null }; h.results = {}; h.emit("onConversationForgotten"); return; }
+        if (change === "project") h.state.selectedProjectId = "two";
+        else if (change === "running") h.state.projects[0].sessions[0].status = "running";
+        else if (change === "removed") h.results.one = [];
+        else if (change === "ambiguous") h.results.one.push({ ...h.results.one[0], id: "another-review" });
+        else h.results.one = [{ ...h.results.one[0], ...(change === "replaced" ? { id: "another-review" } : { sourcePath: "/replacement/source" }) }];
+        h.emit("onTasks");
+      }, change);
+      await page.waitForFunction(() => !window.__sessionReviews.oldButton!.isConnected);
+      await page.mouse.up();
+      expect(await page.evaluate(() => window.__sessionReviews.calls.filter(call => call.method === "codingResultReview"))).toEqual([]);
+      expect(await page.locator("#project-coding-review").isHidden()).toBe(true);
+      expect(await page.locator("#project-coding-patch").textContent()).toBe("");
+    } finally { await page.mouse.up(); await page.close(); }
+  });
+
+  it.each(["removed", "replaced", "source", "failure"])("requires fresh matching metadata when a pressed review meets %s", async change => {
+    const page = await open();
+    try {
+      await expect.poll(() => reviewButton(page).isEnabled()).toBe(true);
+      await reviewButton(page).scrollIntoViewIfNeeded();
+      const bounds = (await reviewButton(page).boundingBox())!;
+      const reads = await page.evaluate(() => window.__sessionReviews.calls.filter(call => call.method === "codingResultsState").length);
+      await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+      await page.mouse.down();
+      await page.evaluate(() => { const h = window.__sessionReviews; h.deferResults = true; h.emit("onTasks"); });
+      await page.waitForFunction(() => !!window.__sessionReviews.resolveResults);
+      await page.mouse.up();
+      await page.waitForFunction(reads => window.__sessionReviews.calls.filter(call => call.method === "codingResultsState").length >= reads + 2, reads);
+      expect(await page.locator("#project-coding-review").isHidden()).toBe(true);
+      expect(await page.locator("#project-coding-patch").textContent()).toBe("");
+      await page.evaluate(change => {
+        const h = window.__sessionReviews; h.deferResults = false;
+        if (change === "failure") { h.rejectResults!(); return; }
+        h.results.one = change === "removed" ? [] : [{ ...h.results.one[0], ...(change === "replaced" ? { id: "another-review" } : { sourcePath: "/replacement/source" }) }];
+        h.resolveResults!(h.results.one);
+      }, change);
+      await expect.poll(() => page.locator("#project-coding-status").textContent()).toContain("changed");
+      expect(await page.evaluate(() => window.__sessionReviews.calls.filter(call => call.method === "codingResultReview"))).toEqual([{ method: "codingResultReview", args: ["review-one"] }]);
+      expect(await page.locator("#project-coding-review").isHidden()).toBe(true);
+      expect(await page.locator("#project-coding-patch").textContent()).toBe("");
+    } finally { await page.mouse.up(); await page.close(); }
+  });
+
   it("accepts unchanged review identity through real notification churn and logical-control replacement", async () => {
     const page = await open({ deferred: true });
     await expect.poll(() => reviewButton(page).isEnabled()).toBe(true); await reviewButton(page).click();

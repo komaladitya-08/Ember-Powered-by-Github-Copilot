@@ -162,10 +162,33 @@ it.skipIf(process.env.EMBER_ELECTRON_CODING_TEST !== "1" || process.platform !==
       const requestsBeforeReview = model.requests.length;
       const firstSession = (await home.evaluate(() => window.ember.projectSessionsState())).projects.find(project => project.id === projectId)!.sessions.find(session => session.taskId === results[0].taskId)!;
       expect(firstSession.kind).toBe("coding");
+      const expectRepairedReview = async (stage: "initial" | "reopen") => {
+        try {
+          await expect.poll(() => home!.locator("#project-coding-patch").textContent()).toContain("1 + 1, 2");
+        } catch (error) {
+          // Closed UI facts distinguish an ignored click, an unfinished read and a rejected review without exposing
+          // any review, source path, result identifier or IPC error. Keep the original assertion and deadline.
+          const facts = await home!.evaluate(() => {
+            const status = document.getElementById("project-coding-status")?.textContent ?? "";
+            const review = document.getElementById("project-coding-review"), patch = document.getElementById("project-coding-patch");
+            const button = document.querySelector<HTMLButtonElement>("[data-session-review]");
+            return {
+              status: !status ? "empty" : status === "Loading this coding review…" ? "loading"
+                : status === "Review ready. Export it to keep a copy." ? "ready"
+                  : status === "This coding review changed. Open it again from the current session." ? "changed" : "other",
+              reviewPresent: !!review, reviewHidden: review?.hidden ?? true, patchPresent: !!patch, patchEmpty: !patch?.textContent,
+              titlePresent: !!document.getElementById("project-coding-review-title")?.textContent,
+              sessionButtonPresent: !!button, sessionButtonEnabled: !!button && !button.disabled,
+            };
+          }).catch(() => ({ unavailable: true }));
+          console.error("Coding session review failure facts", JSON.stringify({ stage, ...facts }));
+          throw error;
+        }
+      };
       const sessionReview = home.locator(`[data-session-review="${firstSession.id}"]`);
       await expect.poll(() => sessionReview.isEnabled()).toBe(true);
       await sessionReview.click();
-      await expect.poll(() => home!.locator("#project-coding-patch").textContent()).toContain("1 + 1, 2");
+      await expectRepairedReview("initial");
       expect(await home.evaluate(() => {
         const title = document.getElementById("project-coding-review-title")!, bounds = title.getBoundingClientRect();
         return {
@@ -179,7 +202,7 @@ it.skipIf(process.env.EMBER_ELECTRON_CODING_TEST !== "1" || process.platform !==
       await home.locator("#project-coding-close").click();
       await expect.poll(() => sessionReview.evaluate(button => document.activeElement === button)).toBe(true);
       await sessionReview.click();
-      await expect.poll(() => home!.locator("#project-coding-patch").textContent()).toContain("1 + 1, 2");
+      await expectRepairedReview("reopen");
       await home.locator("#project-coding-export").click();
       await expect.poll(() => home!.locator("#project-coding-status").textContent(), { timeout: 15_000 }).toContain("Exported the coding review");
       expect(model.requests.length).toBe(requestsBeforeReview);

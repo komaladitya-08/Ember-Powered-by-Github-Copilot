@@ -11,6 +11,9 @@ interface BoardHarness {
   actions: ProjectSessionsAction[];
   sent: string[];
   controls: { id: string; action: string }[];
+  deferControl: boolean;
+  resolveControl?: (accepted: boolean) => void;
+  oldStop?: HTMLButtonElement;
   opened: string[];
   checkpoints: string[];
   saved: ProjectSessionsState | null;
@@ -62,7 +65,7 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Projects and delegated ses
     await page.evaluate(({ state, ready }) => {
       const listeners: Record<string, ((value: unknown) => void)[]> = {};
       const harness: BoardHarness = window.__projectBoard = {
-        state, actions: [], sent: [], controls: [], opened: [], checkpoints: [], saved: null, deferCheckpoint: false, deferState: false, deferAction: false, deferSend: false,
+        state, actions: [], sent: [], controls: [], opened: [], checkpoints: [], saved: null, deferCheckpoint: false, deferState: false, deferAction: false, deferSend: false, deferControl: false,
         emit: (name, value) => { for (const fn of listeners[name] ?? []) fn(value); },
       };
       for (const id of ["p-write", "p-tasks"]) document.getElementById(id)!.addEventListener("click", () => harness.opened.push(id));
@@ -95,6 +98,7 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Projects and delegated ses
         };
         if (key === "taskControl") return async (id: string, action: string) => {
           harness.controls.push({ id, action });
+          if (harness.deferControl) return new Promise<boolean>(resolve => { harness.resolveControl = resolve; });
           for (const project of harness.state.projects) for (const task of project.sessions) if (task.taskId === id) task.status = "stopped";
           return true;
         };
@@ -162,6 +166,49 @@ describe.skipIf(process.env.EMBER_UIUX_TEST !== "1")("Projects and delegated ses
     expect(await page.locator("#project-sessions-list img").count()).toBe(0);
     expect(await page.getByRole("button", { name: /^Stop session:/ }).count()).toBe(0);
     await page.close();
+  });
+
+  it("keeps Stop disabled through a pending RPC and metadata refresh, then permits another request after a false reply", async () => {
+    const page = await open(populated([session("running")]));
+    try {
+      const stop = page.getByRole("button", { name: "Stop session: Check the app", exact: true });
+      await page.evaluate(() => { const h = window.__projectBoard; h.deferControl = true; h.oldStop = document.querySelector<HTMLButtonElement>("[data-session-stop]")!; });
+      await stop.click();
+      await page.waitForFunction(() => !!window.__projectBoard.resolveControl);
+      await page.evaluate(() => { const h = window.__projectBoard; h.state.projects[0].sessions[0].detail = "Waiting for Stop response"; h.emit("onTasks"); });
+      await expect.poll(() => page.locator("#project-sessions-list").textContent()).toContain("Waiting for Stop response");
+      expect(await stop.evaluate(button => button === window.__projectBoard.oldStop)).toBe(true);
+      expect(await stop.isDisabled()).toBe(true);
+      await page.evaluate(() => { window.__projectBoard.resolveControl!(false); });
+      await expect.poll(() => stop.isEnabled(), { timeout: 1000 }).toBe(true);
+      await page.evaluate(() => { window.__projectBoard.deferControl = false; });
+      await stop.click();
+      await expect.poll(() => page.getByRole("button", { name: /^Stop session:/ }).count()).toBe(0);
+      expect(await page.evaluate(() => ({ controls: window.__projectBoard.controls, actions: window.__projectBoard.actions, sent: window.__projectBoard.sent })))
+        .toEqual({ controls: [{ id: "task-1", action: "stop" }, { id: "task-1", action: "stop" }], actions: [], sent: [] });
+    } finally { await page.close(); }
+  });
+
+  it.each(["ended", "account", "project"])("does not revive a Stop control after %s retirement during its RPC", async retirement => {
+    const page = await open(populated([session("running")]));
+    try {
+      const stop = page.getByRole("button", { name: "Stop session: Check the app", exact: true });
+      await page.evaluate(() => { const h = window.__projectBoard; h.deferControl = true; h.oldStop = document.querySelector<HTMLButtonElement>("[data-session-stop]")!; });
+      await stop.click();
+      await page.waitForFunction(() => !!window.__projectBoard.resolveControl);
+      await page.evaluate(retirement => {
+        const h = window.__projectBoard;
+        if (retirement === "account") { h.state = { projects: [], selectedProjectId: null }; h.emit("onConversationForgotten"); return; }
+        if (retirement === "project") h.state.selectedProjectId = null;
+        else h.state.projects[0].sessions[0].status = "done";
+        h.emit("onTasks");
+      }, retirement);
+      await page.waitForFunction(() => !window.__projectBoard.oldStop!.isConnected);
+      await page.evaluate(() => { window.__projectBoard.resolveControl!(false); });
+      await expect.poll(() => page.getByRole("button", { name: /^Stop session:/ }).count()).toBe(0);
+      expect(await page.evaluate(() => window.__projectBoard.oldStop!.disabled)).toBe(true);
+      expect(await page.evaluate(() => window.__projectBoard.controls)).toEqual([{ id: "task-1", action: "stop" }]);
+    } finally { await page.close(); }
   });
 
   it("never sends from a disconnected board, and disables a ready board immediately on disconnect", async () => {

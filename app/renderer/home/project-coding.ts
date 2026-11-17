@@ -148,7 +148,7 @@ export function mountProjectCoding(): ProjectSessionReviews {
   };
   const openResult = async (id: string, session?: { identity: CodingSessionReviewIdentity; origin: HTMLButtonElement; resolveOrigin: () => HTMLButtonElement | null }) => {
     if (!projectId || pending || !ready) return;
-    if (session && (!resultsCurrent || !session.resolveOrigin() || !sessionIdentityCurrent(session.identity))) return;
+    if (session && (!session.resolveOrigin() || !sessionIdentityCurrent(session.identity))) return;
     if (session) clearReview();
     const project = projectId, owner = generation, focused = document.activeElement, ticket = ++reviewEpoch, action = ++actionEpoch;
     const sessionRead = session ? { owner, project, action } : undefined;
@@ -296,9 +296,10 @@ export function mountProjectCoding(): ProjectSessionReviews {
       if (!identity || forgotten.has(identity.id)) return null;
       const owner = generation;
       return {
-        key: JSON.stringify(identity), disabled: pending || !resultsCurrent,
+        // Background metadata refresh does not revoke a navigation intent. openResult still requires its own fresh tuple before display.
+        key: JSON.stringify(identity), disabled: pending,
         open: (origin, resolveOrigin) => {
-          if (!origin.isConnected || !resultsCurrent || !current(owner, project) || !sessionIdentityCurrent(identity)) return;
+          if (!origin.isConnected || !current(owner, project) || !sessionIdentityCurrent(identity)) return;
           void openResult(identity.id, { identity, origin, resolveOrigin });
         },
       };
