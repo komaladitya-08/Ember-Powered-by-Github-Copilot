@@ -186,6 +186,7 @@ class Journey {
       const item = (await this.sessions())[index];
       return status ? item?.status === status : !!item && ["done", "failed", "stopped"].includes(item.status);
     }, { timeout: 45_000 }).toBe(true);
+    if (this.kind === "denied") this.phase = 17;
     await expect.poll(() => this.home!.evaluate(() => window.ember.conversationTurn()), { timeout: 20_000 }).toBe("idle");
   }
   async results(): Promise<CodingResultSummary[]> { return this.home!.evaluate(id => window.ember.codingResultsState(id), this.projectId); }
@@ -315,10 +316,18 @@ describe.skipIf(!required)("actual Windows Node source Home product", () => {
   it("honors a real Not now without executing or retrying the refused Node command", async () => journey("denied", async f => {
     await f.send(windowsNodeSourceScenarios("denied")[0].request);
     const command = await f.decide(WINDOWS_NODE_TEST_ARGV, "Not now"); await f.terminal(0);
+    f.phase = 11;
     expect((await f.sessions())[0].status).not.toBe("done");
-    const results = await f.results(); expect(results).toHaveLength(1); expect(results[0]).toMatchObject({ status: "failed", checks: { ran: 0, passed: 0, failed: 0 } });
+    f.phase = 12;
+    const results = await f.results(); expect(results).toHaveLength(1);
+    f.phase = 13;
+    expect(results[0]).toMatchObject({ status: "failed", checks: { ran: 0, passed: 0, failed: 0 } });
+    f.phase = 14;
     expect(await command.evaluate(() => (window as Window & { emberCommands: CommandsApi }).emberCommands.pull().then(snapshot => snapshot!.state.tabs.length))).toBe(0);
-    expect(f.model.steps.get("denied")).toBe(1); expect(f.approved).toEqual([]); await f.erase();
+    f.phase = 15;
+    expect(f.model.steps.get("denied")).toBe(1);
+    f.phase = 16;
+    expect(f.approved).toEqual([]); await f.erase();
   }), 120_000);
 
   it.each(["stop", "source", "mode", "forget", "account"] as const)("keeps a real running writer contained across %s controls without late success, retry or source writes", async kind => journey(kind, async f => {

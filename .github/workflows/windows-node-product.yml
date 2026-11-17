@@ -205,9 +205,9 @@ jobs:
         id: proof
         shell: node {0}
         run: |
-          let sourceSelected = false, sourceAttempt;
-          const sourceFailureFacts = attempt => {
-            const facts = { child: 0, timeout: 0, phases: [0, 0, 0, 0, 0, 0, 0] };
+          let failureJourney = 0, failureAttempt;
+          const failureFacts = (attempt, packaged = false) => {
+            const facts = packaged ? { child: 0, timeout: 0, phase: 0 } : { child: 0, timeout: 0, phases: [0, 0, 0, 0, 0, 0, 0] };
             try {
               const { types } = require("node:util"), missing = Symbol();
               const own = (object, key) => {
@@ -227,8 +227,14 @@ jobs:
                 if (!Buffer.prototype.equals.call(Buffer.from(decoded, "utf8"), bytes)) return facts;
                 texts.push(decoded.replace(/\x1b\[[0-9;]*m/g, "").replace(/\r\n/g, "\n"));
               }
+              if (packaged) {
+                const phases = new Set();
+                for (const text of texts) for (const match of text.matchAll(/^[ \t]*Error: Windows Node packaged journey refused \(phase ([1-9]|1[0-2])\)\.$/gm)) phases.add(Number(match[1]));
+                facts.phase = phases.size === 1 ? [...phases][0] : 0;
+                return facts;
+              }
               const conflicts = new Set();
-              for (const text of texts) for (const match of text.matchAll(/^[ \t]*Error: Windows Node source journey refused \(case ([1-7]), phase ([1-9]|10)\)\.$/gm)) {
+              for (const text of texts) for (const match of text.matchAll(/^[ \t]*Error: Windows Node source journey refused \(case ([1-7]), phase ([1-9]|1[0-7])\)\.$/gm)) {
                 const index = Number(match[1]) - 1, phase = Number(match[2]);
                 if (conflicts.has(index)) continue;
                 if (facts.phases[index] && facts.phases[index] !== phase) { facts.phases[index] = 0; conflicts.add(index); }
@@ -248,7 +254,7 @@ jobs:
             };
             const expectedCases = { native: 2, source: 7, packaged: 1 };
             const journey = process.env.EMBER_WINDOWS_NODE_PRODUCT_JOURNEY, image = process.env.EMBER_WINDOWS_NODE_PRODUCT_IMAGE;
-            sourceSelected = journey === "source";
+            failureJourney = journey === "source" ? 1 : journey === "packaged" ? 2 : 0;
             const files = suites[journey];
             if (!files || !["windows-2022", "windows-2025"].includes(image) || files.some(file => !fs.existsSync(file))) {
               throw new Error("A required Windows Node product proof is unavailable.");
@@ -267,7 +273,7 @@ jobs:
             const executed = spawnSync(process.execPath, ["scripts/run-integration.mjs", ...files, "--maxWorkers=1",
               "--reporter=default", "--reporter=json", "--outputFile=" + reportPath],
               { env, stdio: ["ignore", "pipe", "pipe"], encoding: "buffer", maxBuffer: 2 * 1024 * 1024, windowsHide: true, timeout: 20 * 60_000 });
-            sourceAttempt = executed;
+            failureAttempt = executed;
             if (executed.error || executed.status !== 0 || executed.signal) throw new Error("The required Windows Node product proof failed.");
             const reportInfo = fs.lstatSync(reportPath);
             if (!reportInfo.isFile() || reportInfo.isSymbolicLink() || reportInfo.nlink !== 1 || reportInfo.size > 16 * 1024 * 1024) {
@@ -288,7 +294,8 @@ jobs:
               files, passed: report.numPassedTests, skipped: 0 }));
             if (journey === "packaged") fs.appendFileSync(process.env.GITHUB_OUTPUT, "zip=" + env.EMBER_WINDOWS_NODE_PACKAGE + "\n");
           } catch {
-            try { if (sourceSelected) console.info("Windows Node source proof failure facts", JSON.stringify(sourceFailureFacts(sourceAttempt))); }
+            try { if (failureJourney) console.info(failureJourney === 1 ? "Windows Node source proof failure facts" : "Windows Node packaged proof failure facts",
+              JSON.stringify(failureFacts(failureAttempt, failureJourney === 2))); }
             catch { /* Diagnostic storage or projection faults do not replace the original refusal. */ }
             throw new Error("The required Windows Node product proof could not be verified.");
           }

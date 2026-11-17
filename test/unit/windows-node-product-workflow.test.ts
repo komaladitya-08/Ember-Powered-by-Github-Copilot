@@ -169,7 +169,12 @@ it("conflicting phases remain unknown even when a later duplicate agrees with an
   const f = proofFixture("source", passing("source"), { attempt: sourceAttempt([sourceFrame(1, 4), sourceFrame(1, 5), sourceFrame(1, 4), sourceFrame(2, 1)].join("\n")) });
   expect(f.run).toThrow("could not be verified"); expect(sourceDiagnostic(f).phases).toEqual([0, 1, 0, 0, 0, 0, 0]);
 });
-it.each([sourceFrame(8, 1), sourceFrame(1, 0), sourceFrame(1, 11), "PRIVATE " + sourceFrame(1, 4), sourceFrame(1, 4) + " PRIVATE",
+it.each([11, 12, 13, 14, 15, 16, 17])("observes the approved existing-check source subphase %i without changing failure authority", phase => {
+  const f = proofFixture("source", passing("source"), { attempt: sourceAttempt(sourceFrame(2, phase)) });
+  expect(f.run).toThrow("could not be verified"); expect(sourceDiagnostic(f)).toEqual({ child: 2, timeout: 0, phases: [0, phase, 0, 0, 0, 0, 0] });
+  expect(f.queries).toEqual(["exists", "exists"]);
+});
+it.each([sourceFrame(8, 1), sourceFrame(1, 0), sourceFrame(1, 18), "PRIVATE " + sourceFrame(1, 4), sourceFrame(1, 4) + " PRIVATE",
   "Windows Node source journey refused (case 1, phase 4).", "Error: another journey refused (case 1, phase 4)."])("ignores a foreign or malformed source frame %#", text => {
   const f = proofFixture("source", passing("source"), { attempt: sourceAttempt(text) });
   expect(f.run).toThrow("could not be verified"); expect(sourceDiagnostic(f).phases).toEqual([0, 0, 0, 0, 0, 0, 0]);
@@ -212,6 +217,49 @@ it.each(["import", "print", "stringify"] as const)("a diagnostic %s fault leaves
 it("unchanged successful source reporting accepts only its complete seven-case inventory and emits no failure observation", () => {
   const f = proofFixture("source", passing("source"), { attempt: { ...sourceAttempt(sourceFrame(1, 4)), status: 0, error: false } });
   expect(f.run).not.toThrow(); expect(f.printed).toHaveBeenCalledTimes(1); expect(f.printed.mock.calls[0][0]).toBe("Required Windows Node product proof passed");
+});
+
+const packagedFrame = (phase: number) => `Error: Windows Node packaged journey refused (phase ${phase}).`;
+const packagedDiagnostic = (fixture: ReturnType<typeof proofFixture>) => {
+  const rows = fixture.printed.mock.calls.filter(call => call[0] === "Windows Node packaged proof failure facts"); expect(rows).toHaveLength(1);
+  return JSON.parse(rows[0][1] as string) as { child: number; timeout: number; phase: number };
+};
+it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])("observes only the bounded packaged phase %i in the unchanged fatal child path", phase => {
+  const f = proofFixture("packaged", passing("packaged"), { attempt: sourceAttempt("PRIVATE prefix\n\x1b[31m" + packagedFrame(phase) + "\x1b[0m\r\n", packagedFrame(phase)) });
+  expect(f.run).toThrow("The required Windows Node product proof could not be verified.");
+  expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase });
+  expect(f.queries).toEqual(["exists", "read", "lstat", "exists"]); expect(f.invoked).toHaveBeenCalledTimes(1); expect(f.outputs).toEqual([]);
+  expect(JSON.stringify(f.printed.mock.calls)).not.toContain("PRIVATE");
+});
+it("a conflicting packaged phase remains unknown after repeated earlier frames", () => {
+  const f = proofFixture("packaged", passing("packaged"), { attempt: sourceAttempt([packagedFrame(4), packagedFrame(5), packagedFrame(4)].join("\n")) });
+  expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase: 0 });
+});
+it.each([packagedFrame(0), packagedFrame(13), "PRIVATE " + packagedFrame(4), packagedFrame(4) + " PRIVATE", sourceFrame(1, 4),
+  "Windows Node packaged journey refused (phase 4)."])("ignores foreign or malformed packaged frames %#", text => {
+  const f = proofFixture("packaged", passing("packaged"), { attempt: sourceAttempt(text) });
+  expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase: 0 });
+});
+it.each(["getter", "proxy", "invalid-utf8", "oversized"] as const)("packaged observation reuses safe byte refusal for %s without extra reads", selected => {
+  let calls = 0; const attempt: Record<string, unknown> = sourceAttempt(packagedFrame(4)), secret = () => { calls++; throw new Error("PRIVATE output"); };
+  if (selected === "getter") Object.defineProperty(attempt, "stdout", { get: secret });
+  if (selected === "proxy") attempt.stdout = new Proxy(Buffer.from(packagedFrame(4)), { get: secret, getOwnPropertyDescriptor: secret });
+  if (selected === "invalid-utf8") attempt.stdout = Buffer.concat([Buffer.from([255, 10]), Buffer.from(packagedFrame(4))]);
+  if (selected === "oversized") attempt.stdout = Buffer.alloc(2 * 1024 * 1024 + 1);
+  const f = proofFixture("packaged", passing("packaged"), { attempt }); expect(f.run).toThrow("could not be verified");
+  expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase: 0 }); expect(calls).toBe(0); expect(f.queries).toEqual(["exists", "read", "lstat", "exists"]);
+});
+it("packaged timeout facts and diagnostic output faults leave the original fatal guard and ZIP handoff intact", () => {
+  const error = Object.assign(new Error("PRIVATE"), { code: "ETIMEDOUT" });
+  const f = proofFixture("packaged", passing("packaged"), { attempt: { ...sourceAttempt(packagedFrame(6)), status: null, error } });
+  expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f)).toEqual({ child: 3, timeout: 1, phase: 6 }); expect(f.outputs).toEqual([]);
+  const failedProjection = proofFixture("packaged", passing("packaged"), { status: 1 });
+  failedProjection.printed.mockImplementation(() => { throw new Error("PRIVATE projection"); });
+  expect(failedProjection.run).toThrow("The required Windows Node product proof could not be verified."); expect(failedProjection.outputs).toEqual([]);
+});
+it("unchanged successful packaged inventory emits only its passing marker and one exact ZIP handoff", () => {
+  const f = proofFixture("packaged", passing("packaged"), { attempt: { ...sourceAttempt(packagedFrame(4)), status: 0 } });
+  expect(f.run).not.toThrow(); expect(f.printed).toHaveBeenCalledTimes(1); expect(f.printed.mock.calls[0][0]).toBe("Required Windows Node product proof passed"); expect(f.outputs).toHaveLength(1);
 });
 
 // Exact public source bytes, copied into an ordinary private test tree. This checks source binding only, never a
