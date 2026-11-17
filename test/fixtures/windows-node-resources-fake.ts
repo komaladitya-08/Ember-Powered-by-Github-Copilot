@@ -7,6 +7,8 @@ import { vi } from "vitest";
 import type { TaskSpec } from "../../app/main/agent/worker";
 import { setupWindowsNodeWorkspace } from "./windows-node-workspace-fake";
 
+// node:path is the win32 object on Windows; capture before a bind spy can replace that shared property.
+const windowsIsAbsolute = win.isAbsolute;
 export const NODE_PROJECT = "11111111-1111-4111-8111-111111111111";
 export async function setupWindowsNodeResources() {
   const f = await setupWindowsNodeWorkspace(); await f.canonical.store.close();
@@ -72,7 +74,7 @@ export async function setupWindowsNodeResources() {
   const bind = async (owner: Awaited<ReturnType<typeof WindowsProjectCodingResources.createNode>>) => {
     const selected = await owner.validateSource({ path: "C:\\project", current: () => state.source });
     // Pure path grammar is the Windows boundary here; the actual folder issuer performs every bind/current check.
-    const absolute = vi.spyOn(path, "isAbsolute").mockImplementation(win.isAbsolute);
+    const absolute = vi.spyOn(path, "isAbsolute").mockImplementation(windowsIsAbsolute);
     try { folders.bind(NODE_PROJECT, selected, folders.ownerCurrent(NODE_PROJECT)); } finally { absolute.mockRestore(); }
   };
   const spec = (owner: Awaited<ReturnType<typeof WindowsProjectCodingResources.createNode>>): TaskSpec => ({ id: randomUUID(),

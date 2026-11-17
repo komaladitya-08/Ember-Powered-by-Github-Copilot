@@ -1,6 +1,7 @@
 /** Resource and genuine owner composition. DLLs/hash streams model Windows; no native enforcement claim. */
 import { afterEach, expect, it, vi } from "vitest";
 import fs from "node:fs";
+import win from "node:path/win32";
 import { setupWindowsNodeResources, NODE_PROJECT } from "../fixtures/windows-node-resources-fake";
 
 afterEach(() => {
@@ -11,6 +12,18 @@ afterEach(() => {
 const argv = ["--preserve-symlinks", "--preserve-symlinks-main", "app.ts"];
 const facts = { os: "win32" as const, shells: [], shellPaths: {}, script: null, home: "C:\\host", user: "host", privileged: false, pty: false,
   ember: { paths: [], pids: [], names: /ember/i }, extraPath: [] };
+
+it("binds with the genuine Windows path grammar captured before a shared win32 property spy", async () => {
+  const f = await setupWindowsNodeResources(), owner = await f.open();
+  // On Windows this property also backs node:path.isAbsolute. Never install the spy as its own implementation.
+  const changed = vi.spyOn(win, "isAbsolute").mockImplementation(() => { throw new Error("The changed path property must not supply bind authority."); });
+  try {
+    await f.bind(owner);
+    expect(owner.workspace(NODE_PROJECT)).toMatchObject({ path: "C:\\project" });
+    expect(f.profileState.created).toHaveLength(0); expect(f.io.state.creates).toBe(0);
+  } finally { changed.mockRestore(); await owner.close(); }
+  expect(f.canonical.handles.size).toBe(0);
+});
 
 it("requires an explicit trusted resources path before admitting any Node resource storage", async () => {
   const f = await setupWindowsNodeResources(), pin = vi.spyOn(f.canonical.api, "pin");
