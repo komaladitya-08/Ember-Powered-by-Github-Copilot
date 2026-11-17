@@ -2,7 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { runInNewContext } from "node:vm";
+import { createRequire } from "node:module";
+import { transformSync } from "esbuild";
 import { afterEach, expect, it, vi } from "vitest";
 import { bindWindowsNodeToolchainDevelopment } from "../../scripts/package/windows-node-toolchain-dev.mjs";
 import { verifyWindowsNodeToolchain, stageWindowsNodeToolchain } from "../../scripts/package/windows-node-toolchain.mjs";
@@ -152,7 +155,121 @@ it("retains an outer descriptor without closing it after a nested stager poisons
 it("strict CLI rejects arguments with only fixed output", () => {
   const script = fileURLToPath(new URL("../../scripts/package/windows-node-toolchain-dev.mjs", import.meta.url));
   const result = spawnSync(process.execPath, [script, "--override-path"], { encoding: "utf8", timeout: 5000 });
-  expect(result.status).toBe(1); expect(result.stdout.length).toBe(0); expect(result.stderr === "The fixed Windows development coding toolchain could not be staged.\n").toBe(true);
+  expect(result.status).toBe(1); expect(result.stdout.length).toBe(0); expect(result.stderr === "The fixed Windows development coding toolchain could not be staged. (development stage 0, object 0, operation 0).\n").toBe(true);
+});
+
+// Evaluate the actual CLI with fixed model imports; no Windows executable or Electron index is executed.
+function emitted(f: ReturnType<typeof fixture>, options: {
+  files?: typeof fs; verify?: typeof f.verify; stage?: typeof f.stage; resolve?: () => string;
+  globals?: Record<string, unknown>;
+} = {}) {
+  const file = path.join(f.root, "scripts", "package", "windows-node-toolchain-dev.mjs");
+  const source = fs.readFileSync(new URL("../../scripts/package/windows-node-toolchain-dev.mjs", import.meta.url), "utf8");
+  const code = transformSync(source, { format: "cjs", target: "node22", define: { "import.meta.url": JSON.stringify(pathToFileURL(file).href) } }).code;
+  const module = { exports: {} as typeof import("../../scripts/package/windows-node-toolchain-dev.mjs") };
+  const stdout: string[] = [], stderr: string[] = [], processModel = { platform: "win32", arch: "x64", argv: ["node", file], exitCode: 0 };
+  runInNewContext(code, { module, exports: module.exports, Buffer, process: processModel,
+    console: { log: (value: string) => stdout.push(value), error: (value: string) => stderr.push(value) },
+    require: (name: string) => {
+      if (name === "node:fs") return options.files ?? fs;
+      if (name === "node:path") return path;
+      if (name === "node:url") return { fileURLToPath };
+      if (name === "node:module") return { createRequire: options.resolve ? () => ({ resolve: options.resolve }) : createRequire };
+      if (name === "./windows-node-toolchain.mjs") return { verifyWindowsNodeToolchain: options.verify ?? f.verify,
+        stageWindowsNodeToolchain: options.stage ?? f.stage, WINDOWS_NODE_TOOLCHAIN_DIRECTORY: "coding/windows-node-x64" };
+      throw new Error("The fixed CLI model requested an unsupported import.");
+    }, ...options.globals });
+  return { stdout, stderr, process: processModel, api: module.exports };
+}
+const fixedFailure = "The fixed Windows development coding toolchain could not be staged.";
+const projected = (stage: number, object: number, operation: number) => `${fixedFailure} (development stage ${stage}, object ${object}, operation ${operation}).`;
+
+it("the emitted CLI stages once despite expected missing parent and destination probes", () => {
+  const f = fixture(), result = emitted(f);
+  expect(result.process.exitCode).toBe(0); expect(result.stderr).toEqual([]);
+  expect(result.stdout).toEqual(["Pinned Windows coding Node development resources staged (3 files)."]);
+  expect(f.stages).toEqual([{ source: f.cache, destination: f.destination }]);
+});
+it.each([
+  ["producer", 3, 1, 8], ["project", 4, 2, 0], ["resolver", 5, 3, 7], ["package", 6, 3, 0],
+  ["marker", 7, 4, 0], ["PE", 8, 5, 0], ["resources", 9, 6, 1], ["parent", 10, 7, 9],
+  ["destination", 11, 8, 1], ["copy", 12, 8, 10], ["package-verify", 13, 8, 8], ["resources-recheck", 14, 6, 2],
+] as const)("the emitted CLI projects only fixed provenance for %s", (selected, stage, object, operation) => {
+  const f = fixture(), secret = new Error("PRIVATE model failure"), files = { ...fs }; let rechecking = false;
+  const options: Parameters<typeof emitted>[1] = { files };
+  if (selected === "producer") options.verify = () => { throw secret; };
+  if (selected === "project") fs.writeFileSync(path.join(f.root, "package.json"), "{");
+  if (selected === "resolver") options.resolve = () => { throw secret; };
+  if (selected === "package") fs.writeFileSync(path.join(f.electron, "package.json"), JSON.stringify({ name: "electron", version: "0.0.0" }));
+  if (selected === "marker") fs.writeFileSync(path.join(f.electron, "path.txt"), "other.exe");
+  if (selected === "PE") fs.writeFileSync(path.join(f.electron, "dist", "electron.exe"), Buffer.alloc(1024));
+  if (selected === "resources") fs.rmSync(f.resources, { recursive: true });
+  if (selected === "parent") files.mkdirSync = (() => { throw secret; }) as typeof fs.mkdirSync;
+  if (selected === "destination" || selected === "resources-recheck") files.lstatSync = ((file: fs.PathLike, options: { bigint: true }) => {
+    if (selected === "destination" && file === f.destination) throw secret;
+    const value = fs.lstatSync(file, options);
+    return selected === "resources-recheck" && file === f.resources && rechecking ? Object.assign(Object.create(value) as fs.BigIntStats, { ino: value.ino + 1n }) : value;
+  }) as typeof fs.lstatSync;
+  if (selected === "copy") options.stage = () => { throw secret; };
+  if (selected === "package-verify") options.verify = (directory, kind) => { if (kind === "package") throw secret; return f.verify(directory, kind); };
+  if (selected === "resources-recheck") options.verify = (directory, kind) => { const value = f.verify(directory, kind); if (kind === "package") rechecking = true; return value; };
+  const result = emitted(f, options);
+  expect(result.process.exitCode).toBe(1); expect(result.stdout).toEqual([]); expect(result.stderr).toEqual([projected(stage, object, operation)]);
+  expect(result.stderr.join()).not.toContain(secret.message); expect(result.stderr.join()).not.toContain(f.root);
+});
+it("first read failure survives a later uncertain close without new queries, retries or changed fence error", () => {
+  const f = fixture(), calls: string[] = []; let opened: number | undefined;
+  const realpath = Object.assign(((...args: Parameters<typeof fs.realpathSync>) => fs.realpathSync(...args)) as typeof fs.realpathSync,
+    { native: ((...args: Parameters<typeof fs.realpathSync.native>) => { calls.push("realpath"); return fs.realpathSync.native(...args); }) as typeof fs.realpathSync.native });
+  const files = { ...fs,
+    lstatSync: ((...args: Parameters<typeof fs.lstatSync>) => { calls.push("lstat"); return fs.lstatSync(...args); }) as typeof fs.lstatSync,
+    realpathSync: realpath,
+    openSync: ((...args: Parameters<typeof fs.openSync>) => { calls.push("open"); opened = fs.openSync(...args); return opened; }) as typeof fs.openSync,
+    fstatSync: (() => { calls.push("fstat"); throw new Error("PRIVATE read metadata"); }) as typeof fs.fstatSync,
+    closeSync: (() => { calls.push("close"); throw new Error("PRIVATE uncertain close"); }) as typeof fs.closeSync,
+  };
+  try {
+    const result = emitted(f, { files }); expect(result.stderr).toEqual([projected(4, 2, 4)]);
+    const ancestors = (selected: string) => { let count = 1; for (let parent = path.dirname(selected); parent !== selected; parent = path.dirname(selected)) { count++; selected = parent; } return count; };
+    const expected = [...Array.from({ length: ancestors(f.cache) + ancestors(f.root) }, () => ["lstat", "realpath"]).flat(), "lstat", "realpath", "open", "fstat", "close"];
+    expect(calls).toEqual(expected); expect(f.stages).toHaveLength(0);
+    let first: unknown, second: unknown;
+    try { result.api.stageWindowsNodeToolchainDevelopment(); } catch (error) { first = error; }
+    try { result.api.stageWindowsNodeToolchainDevelopment(); } catch (error) { second = error; }
+    expect(first).toBe(second); expect((first as Error).message).toBe(fixedFailure); expect(calls).toEqual(expected);
+  } finally { if (opened !== undefined) fs.closeSync(opened); } // Only the model owns this never-completed close.
+});
+it("an uncertain close itself is recorded only after all earlier read checks passed", () => {
+  const f = fixture(); let opened: number | undefined, closes = 0;
+  try {
+    const files = { ...fs, openSync: ((...args: Parameters<typeof fs.openSync>) => { opened = fs.openSync(...args); return opened; }) as typeof fs.openSync,
+      closeSync: (() => { closes++; throw new Error("PRIVATE uncertain close"); }) as typeof fs.closeSync };
+    const result = emitted(f, { files }); expect(result.stderr).toEqual([projected(4, 2, 6)]); expect(closes).toBe(1); expect(f.stages).toHaveLength(0);
+  } finally { if (opened !== undefined) fs.closeSync(opened); }
+});
+it.each(["store", "projection", "snapshot", "shape", "bounds"] as const)("a diagnostic %s fault cannot replace the original error or release an unknown descriptor", selected => {
+  const f = fixture(); let instances = 0, opened: number | undefined, closes = 0; const issued: unknown[] = [];
+  class DiagnosticFault extends WeakMap<object, unknown> {
+    index = ++instances;
+    override set(key: object, value: unknown) { if (this.index === 1) issued.push(value); if (this.index === 3 && selected === "store") throw new Error("PRIVATE observer"); return super.set(key, value); }
+    override get(key: object) {
+      if (this.index === 3 && selected === "projection") throw new Error("PRIVATE projection");
+      if (this.index === 3 && selected === "shape") return { stage: "PRIVATE", object: 2, operation: 6 };
+      if (this.index === 3 && selected === "bounds") return { stage: 4, object: 2, operation: 11 };
+      return super.get(key);
+    }
+  }
+  const globals: Record<string, unknown> = { WeakMap: DiagnosticFault };
+  if (selected === "snapshot") globals.Object = new Proxy(Object, { get(target, key, receiver) { if (key === "freeze") return () => { throw new Error("PRIVATE snapshot"); }; return Reflect.get(target, key, receiver); } });
+  try {
+    const result = emitted(f, { globals, files: { ...fs,
+      openSync: ((...args: Parameters<typeof fs.openSync>) => { opened = fs.openSync(...args); return opened; }) as typeof fs.openSync,
+      closeSync: (() => { closes++; throw new Error("PRIVATE uncertain close"); }) as typeof fs.closeSync,
+    } });
+    expect(result.stderr).toEqual([projected(0, 0, 0)]); expect(closes).toBe(1); expect(issued).toHaveLength(1);
+    let error: unknown; try { result.api.stageWindowsNodeToolchainDevelopment(); } catch (value) { error = value; }
+    expect(error).toBe(issued[0]); expect((error as Error).message).toBe(fixedFailure); expect(closes).toBe(1); expect(f.stages).toHaveLength(0);
+  } finally { if (opened !== undefined) fs.closeSync(opened); }
 });
 it("normal build stages optionally and the Windows packaging recipe requires the fixed toolchain", () => {
   const root = fileURLToPath(new URL("../../", import.meta.url)), build = fs.readFileSync(path.join(root, "scripts/build-app.mjs"), "utf8"), pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
