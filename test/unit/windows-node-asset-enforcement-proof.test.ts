@@ -2,6 +2,7 @@ import { expect, it, vi } from "vitest";
 import fs from "node:fs";
 import { runInNewContext } from "node:vm";
 import { outputFake } from "../fixtures/windows-command-output-fake";
+import { nodeAssetFake } from "../fixtures/windows-node-toolchain-native-fake";
 import { requireWindowsCommandRootOnlyCompleted, WindowsRootOnlyCommandCopy, WindowsRootOnlyCommandCopyCleanupError } from "../../app/main/agent/windows-command-copy";
 import { requireWindowsCommandOutputClosed, requireWindowsCommandOutputLaunch, WindowsCommandOutputCleanupError } from "../../app/main/agent/windows-command-output";
 import { closeWindowsCommandCreatorProfile, windowsCommandCreatorProfile, WindowsCommandCreatorProfileCleanupError } from "../../app/main/agent/windows-command-creator-profile";
@@ -10,7 +11,7 @@ import { WindowsCommandCopyCleanupError } from "../../app/main/agent/windows-com
 import { WindowsNodeToolchainCleanupError } from "../../app/main/agent/windows-node-toolchain-native";
 import { bindWindowsCommandCopyProofNative, WindowsCommandCopyProofCleanupError } from "../fixtures/windows-command-copy-proof-native";
 import { WindowsNodeAssetEnforcementNativeCleanupError } from "../fixtures/windows-node-asset-enforcement-native";
-import { bindWindowsNodeAssetEnforcement, observeWindowsNodeAssetStop, observeWindowsNodeAssetNodeCall, observeWindowsNodeAssetPreparation, windowsNodeAssetPreparationNativeFailure, windowsNodeAssetLaunchObservation, requireWindowsNodeAssetOutputFacts,
+import { bindWindowsNodeAssetEnforcement, observeWindowsNodeAssetStop, observeWindowsNodeAssetNodeCall, observeWindowsNodeAssetPreparation, windowsNodeAssetPreparationNativeFailure, windowsNodeAssetDisposalFailure, windowsNodeAssetLaunchObservation, requireWindowsNodeAssetOutputFacts,
   windowsNodeAssetCreationSecurity, windowsNodeAssetPreludeExit, windowsNodeAssetPreludeProbe, windowsNodeAssetErrorClass, requireWindowsNodeAssetHeldToken, requireWindowsNodeAssetTokenFacts, NODE_ASSET_READY, NODE_ASSET_ERROR_READY, WindowsNodeAssetEnforcementObservationError } from "../fixtures/windows-node-asset-enforcement-proof";
 import type { WindowsLpacApi } from "../../app/main/agent/experimental-windows-lpac-api";
 
@@ -362,6 +363,54 @@ it("preparation observations stay inside original guards and reset before the as
   expect(phase.indexOf("preparation(5, index + 1")).toBeLessThan(phase.indexOf("preparation(6, index + 1"));
   expect(phase.indexOf("preparation(13, 0")).toBeLessThan(phase.indexOf("preparationObservation = { operation: 0, object: 0, innerClass: 0, nativeFailure: 0 };"));
   expect(phase).not.toMatch(/GetLastError|AdjustTokenPrivileges|SetSecurity|await|\.catch\(/);
+});
+it("the exact asset class brands a genuine first rollback disposal failure without granting cleanup", async () => {
+  const s = nodeAssetFake();
+  s.state.onCall = name => { if (name === "GetVolumeInformationW") { s.state.current = false; s.state.fault = "CloseHandle"; } };
+  const original = await s.prepare().catch(error => error), branded = WindowsNodeToolchainCleanupError.failure(original);
+  expect(original).toBeInstanceOf(WindowsNodeToolchainCleanupError); expect(branded).toBeDefined(); expect(Object.isFrozen(branded)).toBe(true);
+  expect(s.state.readCalls).toBe(0); expect(s.state.writes).toBe(0);
+  expect(windowsNodeAssetDisposalFailure(diagnosticClasses, original)).toEqual(branded);
+  const before = s.calls.length; s.state.fault = ""; s.fence.failure = undefined;
+  expect(await s.prepare().catch(error => error)).toBe(original); expect(s.calls).toHaveLength(before);
+  expect(() => closeWindowsCommandCreatorProfile(s.io.profile)).toThrow();
+  expect(windowsNodeAssetDisposalFailure(diagnosticClasses, new WindowsNodeToolchainCleanupError())).toEqual({ stage: 0, object: 0, operation: 0, predicate: 0, result: 0 });
+});
+it("asset disposal metadata authenticates exact issued errors before any claimed field getter", () => {
+  const read = vi.fn(() => { throw Error("PRIVATE disposal error property"); }), unknown = { stage: 0, object: 0, operation: 0, predicate: 0, result: 0 };
+  const claimed = Object.defineProperties(new WindowsNodeToolchainCleanupError(), Object.fromEntries(["stage", "object", "operation", "predicate", "result", "message", "code", "cause", "domain", "status"].map(key => [key, { get: read }])));
+  for (const original of [claimed, new Proxy({}, { get: read, getPrototypeOf: read, getOwnPropertyDescriptor: read })])
+    expect(windowsNodeAssetDisposalFailure(diagnosticClasses, original)).toEqual(unknown);
+  expect(read).not.toHaveBeenCalled();
+});
+it("asset disposal metadata projection reads only bounded own data from the brand reader", () => {
+  const data = { stage: 14, object: 5, operation: 18, predicate: 9, result: 7 };
+  const Class = class extends WindowsNodeToolchainCleanupError { static failure = vi.fn(() => data); };
+  const source = { WindowsNodeToolchainCleanupError: Class }, original = new Error("PRIVATE disposal source");
+  expect(windowsNodeAssetDisposalFailure(source, original)).toEqual(data); expect(Class.failure).toHaveBeenCalledExactlyOnceWith(original);
+  const read = vi.fn(() => { throw Error("PRIVATE disposal metadata getter"); });
+  const claimed = Object.defineProperties({ ...data }, { operation: { get: read }, domain: { get: read }, status: { get: read }, code: { get: read } });
+  Class.failure.mockReturnValueOnce(claimed);
+  expect(windowsNodeAssetDisposalFailure(source, original)).toEqual({ ...data, operation: 0 }); expect(read).not.toHaveBeenCalled();
+  Class.failure.mockReturnValueOnce({ stage: 15, object: 6, operation: 19, predicate: 10, result: 8 });
+  expect(windowsNodeAssetDisposalFailure(source, original)).toEqual({ stage: 0, object: 0, operation: 0, predicate: 0, result: 0 });
+  const trap = vi.fn(() => { throw Error("PRIVATE metadata descriptor trap"); });
+  Class.failure.mockReturnValueOnce(new Proxy(data, { getOwnPropertyDescriptor: trap }));
+  expect(windowsNodeAssetDisposalFailure(source, original)).toEqual({ stage: 0, object: 0, operation: 0, predicate: 0, result: 0 }); expect(trap).toHaveBeenCalledOnce();
+});
+it("asset disposal reader faults stay unknown and cannot replace the fatal outer observation", () => {
+  const Class = class extends WindowsNodeToolchainCleanupError { static failure(): never { throw Error("PRIVATE disposal projection failure"); } };
+  const original = new WindowsNodeToolchainCleanupError(), unknown = windowsNodeAssetDisposalFailure({ WindowsNodeToolchainCleanupError: Class }, original);
+  const observed = new WindowsNodeAssetEnforcementObservationError("cancel", 7, 0, 0, 8, 0, 0, 0, [], 0, 0, 0, 0, 7, 0, undefined, undefined, unknown);
+  expect(observed).toMatchObject({ phase: 7, errorClass: 8, nodeCheckpoint: 7, assetDisposalStage: 0, assetDisposalObject: 0, assetDisposalOperation: 0, assetDisposalPredicate: 0, assetDisposalResult: 0 });
+  expect(observed.message).not.toContain("PRIVATE");
+});
+it("asset disposal constructor fields are independent bounded own data without status disclosure", () => {
+  const known = { stage: 14, object: 5, operation: 18, predicate: 9, result: 7 }, project = (value: typeof known) => new WindowsNodeAssetEnforcementObservationError("cancel", 7, 0, 0, 8, 0, 0, 0, [], 0, 0, 0, 0, 7, 0, undefined, undefined, value);
+  expect(project(known)).toMatchObject({ assetDisposalStage: 14, assetDisposalObject: 5, assetDisposalOperation: 18, assetDisposalPredicate: 9, assetDisposalResult: 7 });
+  const read = vi.fn(() => { throw Error("PRIVATE unissued metadata"); });
+  expect(project(Object.defineProperty({ ...known }, "result", { get: read }))).toMatchObject({ assetDisposalResult: 0 }); expect(read).not.toHaveBeenCalled();
+  expect(project({ stage: -1, object: Infinity, operation: NaN, predicate: 10, result: 0xc0000043 })).toMatchObject({ assetDisposalStage: 0, assetDisposalObject: 0, assetDisposalOperation: 0, assetDisposalPredicate: 0, assetDisposalResult: 0 });
 });
 it("Node checkpoints follow an actual Copy context, output launch and held attester before its genuine run resolves", async () => {
   const s = outputFake(), copy = await s.prepare(), io = s.owner(), state = { checkpoint: 1, innerClass: 0 };

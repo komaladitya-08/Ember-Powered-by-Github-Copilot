@@ -238,6 +238,46 @@ from the ambient scratch hierarchy can still contaminate a new child; that must 
 with no fallback to the explicit-label case. The correction is not credited as a passing native outcome
 until a separately reviewed run closes all seven cases. Both measured failed runs remain failures.
 
+Run44012590816 at `71046f40bdac6709c44fb7ae45877f8d82c38b00` remained a failure overall. Its contracts passed
+256+615 tests. Windows2022 passed615 portable tests and all seven native cases, with genuine closed Stop,
+output, snapshot/source and asset/private/profile cleanup facts for each. Windows2025 passed615 portable tests
+and closed natural, natural-default and overflow with the same exact source/producer identity. Thus both
+images genuinely closed both natural DACL preludes, including the strict unlabeled-parent readback, the32
+access/create checks and Node17. Windows2025 then refused cancel at phase7/asset class8, Node checkpoint7/0,
+capture2/0, Stop0s and preparation0s; three later modes were blocked and the failed graph/build remained
+retained. The source places this refusal at the asset owner's close operation after the earlier authenticated
+completion/output and Copy closure. It does not identify a failed native call or predicate. No complete
+asset/private/profile cleanup is credited for that cancel case, and the two-image seven-case proof is not green.
+
+A passive disposal diagnostic records only the first genuine asset-owner poison after close or its existing
+rollback disposal begins. The
+existing `WindowsNodeToolchainCleanupError` constructor is unchanged; its static `failure(error)` reader uses
+a private WeakMap keyed by the actual first error. A constructed, copied, foreign-graph or other error yields
+no record without inspecting error properties. The frozen record contains only stage0..14, object0..5,
+operation0..18, predicate0..9 and result0..7. It grants no disposal, execution or Stop authority.
+
+Stage0 is unknown;1 is close admission;2/3 are runtime-lock recheck/close;4 metadata;5 security;6 delete open;
+7 same-identity comparison;8 disposition call;9 I/O status;10 candidate close;11 original close;12 remaining
+handle closes;13 outstanding allocations;14 profile-asset release. Object0 is none;1/2 image/root runtime
+locks;3/4 image/root metadata owners;5 a residual owned handle. Predicates0..9 are unknown, admission,
+metadata, security/structure, rejected return, native throw, ownership ledger, I/O status, outstanding
+allocation and profile-asset release. Operations1..18 are GetFileType, GetFileInformationByHandle,
+GetFileInformationByHandleEx, GetFinalPathNameByHandleW, NtQueryInformationFile, GetSecurityInfo,
+GetSecurityDescriptorLength, ConvertSidToStringSidW, GetSecurityDescriptorControl, GetAclInformation,
+GetAce, GetSecurityDescriptorSacl, LocalFree, NtCreateFile, GetHandleInformation, NtQueryObject,
+NtSetInformationFile and CloseHandle;0 means unknown or no current native call.
+
+Result0 is unknown;1 is a rejected numeric zero;2..5 identify only the fixed NT access-denied,
+sharing-violation, cannot-delete and delete-pending categories;6 is another rejected native32 integer;
+7 is another result shape, including a nonnull LocalFree pointer. These categories use only a return already
+observed by the unchanged native invocation.
+No raw status, code, domain, path, identity, pointer or error field is published. There is no new query,
+GetLastError call, await, callback, privilege, retry or deletion fallback. First-error and unknown-owner
+retention stay unchanged; later calls cannot replace the first frozen record. Metadata and projection
+faults cannot alter native call order, result/error identity, accepted-return checks or cleanup decisions.
+The probe reads that exact loaded class's brand reader only in its existing failure catch and copies bounded
+own data into the outer failure text. An observation failure becomes zeros while the original refusal stays fatal.
+
 V4 neither recertifies those failures nor silently changes a MIC claim into success. Its new same-Low-label,
 exact-package FA/RX comparison explicitly measures DACL enforcement on the final product graph.
 

@@ -691,3 +691,84 @@ it("unknown final CloseHandle never retries, disposes another owner or permits p
   const first = await refused(() => owner.close()), before = s.calls.length; s.state.fault = ""; s.fence.failure = undefined;
   expect(await refused(() => owner.close())).toBe(first); expect(s.calls).toHaveLength(before); expect(() => closeWindowsCommandCreatorProfile(s.io.profile)).toThrow();
 });
+
+it("exposes no disposal observation for constructed, serialized, prototype-spoofed or getter-shaped errors", () => {
+  const read = vi.fn(() => { throw Error("PRIVATE error field"); });
+  const foreign = Object.defineProperties({}, Object.fromEntries(["name", "message", "stack", "cause", "stage", "object", "operation", "predicate", "result"].map(key => [key, { get: read }])));
+  const proxy = new Proxy({}, { get: read, getOwnPropertyDescriptor: read, getPrototypeOf: read });
+  for (const value of [null, undefined, 1, "PRIVATE", foreign, proxy, {}, new WindowsNodeToolchainCleanupError(), Object.create(WindowsNodeToolchainCleanupError.prototype)])
+    expect(WindowsNodeToolchainCleanupError.failure(value)).toBeUndefined();
+  expect(read).not.toHaveBeenCalled();
+});
+
+it("keeps successful close's deletion order, settled value and fully released native ownership", async () => {
+  const s = nodeAssetFake(), owner = await s.prepare(), calls = s.calls.length, held = s.handles.size;
+  expect(await owner.close()).toBeUndefined();
+  const after = s.calls.slice(calls), deletions = after.filter(call => call.name === "NtSetInformationFile");
+  expect(deletions).toHaveLength(2); expect(deletions.map(call => call.args[4])).toEqual([13, 13]);
+  expect(after.filter(call => call.name === "CloseHandle")).toHaveLength(held + 2);
+  expect(s.assets().every(row => row.removed)).toBe(true); expect(s.handles.size).toBe(0); expect(s.fence.failure).toBeUndefined();
+  expect(await owner.close()).toBeUndefined(); closeWindowsCommandCreatorProfile(s.io.profile);
+});
+
+it.each([
+  [0xc0000022, 2], [-1073741790, 2], [0xc0000043, 3], [0xc0000121, 4], [0xc0000056, 5], [1, 6], ["PRIVATE malformed ABI", 7],
+] as const)("records only the bounded category for rejected disposition result %# and preserves first failure", async (status, category) => {
+  const s = nodeAssetFake(), owner = await s.prepare(); let attempts = 0;
+  s.state.afterCall = (name, _args, result) => { if (name === "NtSetInformationFile") { attempts++; return status; } return result; };
+  const error = await refused(() => owner.close()), observation = WindowsNodeToolchainCleanupError.failure(error);
+  expect(error).toBeInstanceOf(WindowsNodeToolchainCleanupError);
+  expect(observation).toEqual({ stage: 8, object: 3, operation: 17, predicate: 4, result: category }); expect(Object.isFrozen(observation)).toBe(true);
+  const before = s.calls.length; s.state.afterCall = undefined; s.fence.failure = undefined;
+  expect(await refused(() => owner.close())).toBe(error); expect(WindowsNodeToolchainCleanupError.failure(error)).toBe(observation);
+  expect(s.calls).toHaveLength(before); expect(attempts).toBe(1); expect(s.fence.retained.length).toBeGreaterThan(0);
+  expect(() => closeWindowsCommandCreatorProfile(s.io.profile)).toThrow();
+});
+
+it.each(["zero", "throw"] as const)("preserves a %s CloseHandle refusal and reports no raw native error", async mode => {
+  const s = nodeAssetFake(), owner = await s.prepare(); s.state.fault = "CloseHandle"; s.state.faultMode = mode;
+  const error = await refused(() => owner.close());
+  expect(WindowsNodeToolchainCleanupError.failure(error)).toEqual({ stage: 3, object: 1, operation: 18, predicate: mode === "throw" ? 5 : 4, result: mode === "throw" ? 0 : 1 });
+  expect(s.assets().every(row => !row.removed)).toBe(true); expect(s.fence.failure).toBe(error);
+});
+
+it("reports a lock identity refusal without opening a delete candidate", async () => {
+  const s = nodeAssetFake(), owner = await s.prepare(); let changed = false;
+  s.state.onCall = (name, args) => { if (name === "GetFileInformationByHandle" && !changed) { s.handles.get(args[0] as bigint)!.row!.id++; changed = true; } };
+  const before = s.calls.length, error = await refused(() => owner.close());
+  expect(changed).toBe(true); expect(WindowsNodeToolchainCleanupError.failure(error)).toEqual({ stage: 2, object: 1, operation: 0, predicate: 2, result: 0 });
+  expect(s.calls.slice(before).some(call => ["NtCreateFile", "NtSetInformationFile"].includes(call.name))).toBe(false);
+  expect(s.assets().every(row => !row.removed)).toBe(true);
+});
+
+it("a reentrant close freezes the admission observation before later native and cleanup failures", async () => {
+  const s = nodeAssetFake(), owner = await s.prepare(); let first: unknown;
+  s.state.onCall = name => { if (name === "GetFileType" && first === undefined) { try { void owner.close(); } catch (error) { first = error; } } };
+  const outer = await refused(() => owner.close()); expect(first).toBe(outer);
+  const observation = WindowsNodeToolchainCleanupError.failure(outer);
+  expect(observation).toEqual({ stage: 1, object: 0, operation: 0, predicate: 1, result: 0 });
+  expect(s.fence.failure).toBe(outer); expect(s.fence.retained.length).toBeGreaterThan(0);
+  const calls = s.calls.length; expect(await refused(() => owner.close())).toBe(outer);
+  expect(s.calls).toHaveLength(calls); expect(WindowsNodeToolchainCleanupError.failure(outer)).toBe(observation);
+});
+
+it("an error first raised outside close never gains a later disposal observation", async () => {
+  const s = nodeAssetFake(), owner = await s.prepare(); s.state.imageMismatch = true;
+  const error = await refused(() => s.launch(owner)); expect(WindowsNodeToolchainCleanupError.failure(s.fence.failure)).toBeUndefined();
+  expect(await refused(() => owner.close())).toBe(s.fence.failure); expect(WindowsNodeToolchainCleanupError.failure(error)).toBeUndefined();
+  expect(WindowsNodeToolchainCleanupError.failure(s.fence.failure)).toBeUndefined();
+});
+
+it("diagnostic storage failure cannot replace a rejected native close or permit cleanup", async () => {
+  const s = nodeAssetFake(), owner = await s.prepare(); s.state.fault = "CloseHandle"; s.state.faultMode = "zero";
+  const descriptor = Object.getOwnPropertyDescriptor(WeakMap.prototype, "set")!, original = WeakMap.prototype.set;
+  Object.defineProperty(WeakMap.prototype, "set", { ...descriptor, value: function (this: WeakMap<object, unknown>, key: object, value: unknown) {
+    if (value && typeof value === "object" && Object.keys(value).join("|") === "stage|object|operation|predicate|result") throw Error("PRIVATE diagnostic storage");
+    return original.call(this, key, value);
+  } });
+  let error: unknown;
+  try { error = await refused(() => owner.close()); } finally { Object.defineProperty(WeakMap.prototype, "set", descriptor); }
+  expect(error).toBeInstanceOf(WindowsNodeToolchainCleanupError); expect(s.fence.failure).toBe(error);
+  expect(WindowsNodeToolchainCleanupError.failure(error)).toBeUndefined(); expect(s.assets().every(row => !row.removed)).toBe(true);
+  expect(s.fence.retained.length).toBeGreaterThan(0);
+});

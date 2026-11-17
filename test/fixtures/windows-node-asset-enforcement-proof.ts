@@ -64,7 +64,8 @@ export class WindowsNodeAssetEnforcementObservationError extends Error {
   readonly captureCheckpoint: number; readonly captureInnerClass: number;
   readonly stopStage: number; readonly stopOperation: number; readonly stopPredicate: number; readonly stopConstraint: number;
   readonly preparationOperation: number; readonly preparationObject: number; readonly preparationInnerClass: number; readonly preparationNativeFailure: number;
-  constructor(readonly mode: WindowsNodeAssetEnforcementMode, readonly phase: number, preludeStage = 0, cExit = 0, errorClass = 0, probeObject = 0, probeRight = 0, probeOutcome = 0, probeMatrix: readonly number[] = [], tokenObserved = 0, tokenIntegrity = 0, tokenAttributes = 0, tokenPolicy = 0, nodeCheckpoint = 0, nodeInnerClass = 0, launchObservation?: WindowsNodeAssetLaunchObservation, preparationObservation?: WindowsNodeAssetPreparationObservation) {
+  readonly assetDisposalStage: number; readonly assetDisposalObject: number; readonly assetDisposalOperation: number; readonly assetDisposalPredicate: number; readonly assetDisposalResult: number;
+  constructor(readonly mode: WindowsNodeAssetEnforcementMode, readonly phase: number, preludeStage = 0, cExit = 0, errorClass = 0, probeObject = 0, probeRight = 0, probeOutcome = 0, probeMatrix: readonly number[] = [], tokenObserved = 0, tokenIntegrity = 0, tokenAttributes = 0, tokenPolicy = 0, nodeCheckpoint = 0, nodeInnerClass = 0, launchObservation?: WindowsNodeAssetLaunchObservation, preparationObservation?: WindowsNodeAssetPreparationObservation, assetDisposalObservation?: WindowsNodeAssetDisposalObservation) {
     const stage = Number.isInteger(preludeStage) && preludeStage >= 0 && preludeStage <= 14 ? preludeStage : 0;
     const code = Number.isInteger(cExit) && (cExit === 49 || cExit >= 501 && cExit <= 509) ? cExit : 0;
     const kind = Number.isInteger(errorClass) && errorClass >= 0 && errorClass <= 8 ? errorClass : 0;
@@ -81,7 +82,8 @@ export class WindowsNodeAssetEnforcementObservationError extends Error {
     const inner = Number.isInteger(nodeInnerClass) && nodeInnerClass >= 0 && nodeInnerClass <= 8 ? nodeInnerClass : 0;
     const launch = boundedWindowsNodeAssetLaunchObservation(launchObservation);
     const preparation = boundedWindowsNodeAssetPreparationObservation(preparationObservation);
-    super(`The fixed native Node asset witness was refused in ${mode} at phase ${phase} (prelude ${stage}, C exit ${code}, error class ${kind}, probe ${object}/${right}/${outcome}, matrix ${matrix.join("")}, C token ${observed}/${integrity}/${attributes}/${policy}, Node checkpoint ${node}/${inner}, capture ${launch.captureCheckpoint}/${launch.captureInnerClass}, Stop ${launch.stopStage}/${launch.stopOperation}/${launch.stopPredicate}/${launch.stopConstraint}, preparation ${preparation.operation}/${preparation.object}/${preparation.innerClass}/${preparation.nativeFailure}).`);
+    const disposal = boundedWindowsNodeAssetDisposalObservation(assetDisposalObservation);
+    super(`The fixed native Node asset witness was refused in ${mode} at phase ${phase} (prelude ${stage}, C exit ${code}, error class ${kind}, probe ${object}/${right}/${outcome}, matrix ${matrix.join("")}, C token ${observed}/${integrity}/${attributes}/${policy}, Node checkpoint ${node}/${inner}, capture ${launch.captureCheckpoint}/${launch.captureInnerClass}, Stop ${launch.stopStage}/${launch.stopOperation}/${launch.stopPredicate}/${launch.stopConstraint}, preparation ${preparation.operation}/${preparation.object}/${preparation.innerClass}/${preparation.nativeFailure}, asset disposal ${disposal.stage}/${disposal.object}/${disposal.operation}/${disposal.predicate}/${disposal.result}).`);
     this.preludeStage = stage; this.cExit = code; this.errorClass = kind;
     this.probeObject = object; this.probeRight = right; this.probeOutcome = outcome;
     this.probeMatrix = matrix;
@@ -90,8 +92,27 @@ export class WindowsNodeAssetEnforcementObservationError extends Error {
     this.captureCheckpoint = launch.captureCheckpoint; this.captureInnerClass = launch.captureInnerClass;
     this.stopStage = launch.stopStage; this.stopOperation = launch.stopOperation; this.stopPredicate = launch.stopPredicate; this.stopConstraint = launch.stopConstraint;
     this.preparationOperation = preparation.operation; this.preparationObject = preparation.object; this.preparationInnerClass = preparation.innerClass; this.preparationNativeFailure = preparation.nativeFailure;
+    this.assetDisposalStage = disposal.stage; this.assetDisposalObject = disposal.object; this.assetDisposalOperation = disposal.operation; this.assetDisposalPredicate = disposal.predicate; this.assetDisposalResult = disposal.result;
     this.name = "WindowsNodeAssetEnforcementObservationError"; this.stack = `${this.name}: ${this.message}`;
   }
+}
+
+export interface WindowsNodeAssetDisposalObservation { stage: number; object: number; operation: number; predicate: number; result: number }
+function boundedWindowsNodeAssetDisposalObservation(source: unknown): WindowsNodeAssetDisposalObservation {
+  const unknown = () => ({ stage: 0, object: 0, operation: 0, predicate: 0, result: 0 }), result = unknown();
+  try {
+    if (source === null || typeof source !== "object" && typeof source !== "function") return result;
+    for (const [key, maximum] of [["stage", 14], ["object", 5], ["operation", 18], ["predicate", 9], ["result", 7]] as const) {
+      const property = Object.getOwnPropertyDescriptor(source, key), value = property && "value" in property ? property.value : 0;
+      result[key] = Number.isInteger(value) && value >= 0 && value <= maximum ? value : 0;
+    }
+    return result;
+  } catch { return unknown(); }
+}
+/** The exact loaded class's private brand reader grants only bounded failure metadata, never disposal authority. */
+export function windowsNodeAssetDisposalFailure(loaded: Pick<Bundle, "WindowsNodeToolchainCleanupError"> | undefined, error: unknown): WindowsNodeAssetDisposalObservation {
+  try { return boundedWindowsNodeAssetDisposalObservation(loaded?.WindowsNodeToolchainCleanupError.failure(error)); }
+  catch { return boundedWindowsNodeAssetDisposalObservation(undefined); }
 }
 
 export interface WindowsNodeAssetPreparationObservation { operation: number; object: number; innerClass: number; nativeFailure: number }
@@ -476,7 +497,7 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
         assetCleanup: 1, privateCleanup: 1, profileCleanup: 1, emittedCjs: 1 });
     } catch (error) {
       live = false; terminal ??= new WindowsNodeAssetEnforcementObservationError(mode, phase, preludeStage, cExit, windowsNodeAssetErrorClass(loaded, error), probe.object, probe.right, probe.outcome, probe.matrix,
-        tokenObserved, tokenFacts.integrity, tokenFacts.attributes, tokenFacts.policy, nodeObservation.checkpoint, nodeObservation.innerClass, launchObservation, preparationObservation); retained.push(graph);
+        tokenObserved, tokenFacts.integrity, tokenFacts.attributes, tokenFacts.policy, nodeObservation.checkpoint, nodeObservation.innerClass, launchObservation, preparationObservation, windowsNodeAssetDisposalFailure(loaded, error)); retained.push(graph);
       for (const value of launches) try { loaded!.retainWindowsCommandOutput(value); } catch { /* Same-graph quarantine supplies no disposal receipt. */ }
       for (const owner of owners) try { owner.retainStop(); } catch { /* Request exact Stop only; never retry cleanup or certify disposal. */ }
       throw terminal;

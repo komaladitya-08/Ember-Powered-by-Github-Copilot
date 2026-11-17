@@ -80,14 +80,6 @@ export const TOKEN_SHAPES: readonly RegExp[] = TOKEN_PATTERNS.filter(re => re !=
  */
 const VAULT_VALUE = /(vault\.azure\.net\/secrets\/[^"]{0,200}"(?:[^{}]|\{[^{}]{0,4000}\}){0,4000}?"value"\s{0,8}:\s{0,8}")(?:[^"\\]|\\.)*(?=")/g;
 const VAULT_VALUE_FIRST = /("value"\s{0,8}:\s{0,8}")(?:[^"\\]|\\.)*(?="(?:\s{0,8},\s{0,8}"\w{1,40}"\s{0,8}:\s{0,8}(?:"(?:[^"\\]|\\.){0,200}"|[\w.+-]{1,40})){0,3}\s{0,8},\s{0,8}"id"\s{0,8}:\s{0,8}"[^"]{0,200}vault\.azure\.net\/secrets\/)/g;
-/**
- * Text a value pattern can't match without, whole: a pass whose text lacks any of it is the text as it was, the same
- * bytes, without the pattern's search (UNGUARDED_PASSES is the proof's other side).
- */
-const VALUE_NEEDS: ReadonlyMap<RegExp, readonly string[]> = new Map([
-  [VAULT_VALUE, ["vault.azure.net/secrets/", '"value"']],
-  [VAULT_VALUE_FIRST, ["vault.azure.net/secrets/", '"value"']],
-]);
 
 /** Patterns whose first group is kept and whose value is hidden. */
 /** The words before `_KEY` that say the key is a secret one (`SECRET_KEY`, `API_KEY`, `SIGNING_KEY`: r10-commands-y10-6). */
@@ -99,6 +91,18 @@ const SECRET_KEY_WORDS =
  * digit among them, to the value's end (`created_at`, `id`, `on` and `D` are not: r10-commands-y10-6).
  */
 const KEY_SHAPED = String.raw`["']?(?:(?:Basic|Bearer|Token|Digest|Negotiate|basic|bearer|token)[ \t]+|(?=[A-Za-z+/=_.-]{0,255}\d)(?=[0-9+/=_.-]{0,255}[A-Za-z])[A-Za-z0-9+/=_.-]{8,}(?![^\s"',;}\]]))`;
+
+/** The unchanged environment assignment pattern always requires a literal equals sign. */
+const ENVIRONMENT_ASSIGNMENT = new RegExp(String.raw`((?<![A-Za-z0-9_.-])(?!(?:OLD)?PWD=|(?:LOW|HIGH|BAND|ALL|RENDER)_PASS=|(?:[A-Za-z0-9_]{0,64}_)?(?:PUBLIC|SORT|PRIMARY|FOREIGN|public|sort|primary|foreign)_(?:KEY|key)=)(?:(?:(?:[A-Za-z0-9_]{0,64}_)?(?:PASS|PASSPHRASE|PW|PWD|pass|passphrase|pw|pwd)|[A-Za-z0-9_]{0,64}_(?:AUTH|auth)|(?:[A-Za-z0-9_]{0,64}_)?(?:${SECRET_KEY_WORDS})_(?:KEY|key))=["']?|(?:[A-Za-z0-9_]{0,64}_)?(?:KEY|key|AUTH|auth)=["']?(?=${KEY_SHAPED})))(?![$%{<*[])(?:(?:Basic|Bearer|Token|Digest|Negotiate|basic|bearer|token)[ \t]+)?[^\s"',;]+`, "g");
+/**
+ * Text a value pattern can't match without, whole: a pass whose text lacks any of it is the text as it was, the same
+ * bytes, without the pattern's search (UNGUARDED_PASSES is the proof's other side).
+ */
+const VALUE_NEEDS: ReadonlyMap<RegExp, readonly string[]> = new Map([
+  [VAULT_VALUE, ["vault.azure.net/secrets/", '"value"']],
+  [VAULT_VALUE_FIRST, ["vault.azure.net/secrets/", '"value"']],
+  [ENVIRONMENT_ASSIGNMENT, ["="]],
+]);
 
 const VALUE_PATTERNS: readonly RegExp[] = [
   /(aws_secret_access_key\s*[=:]\s*)\S+/gi,
@@ -148,7 +152,7 @@ const VALUE_PATTERNS: readonly RegExp[] = [
   // KEY, and AUTH or KEY alone, only when its value looks like a key (8 or more letters and digits, both) or a scheme's
   // credential: `SORT_KEY=created_at`, `PRIMARY_KEY=id`, `?key=abc` and `AUTH=on` are ordinary facts, and memory refused
   // them as secrets (r10-commands-y10-6). PUBLIC_, SORT_, PRIMARY_ and FOREIGN_KEY are never hidden.
-  new RegExp(String.raw`((?<![A-Za-z0-9_.-])(?!(?:OLD)?PWD=|(?:LOW|HIGH|BAND|ALL|RENDER)_PASS=|(?:[A-Za-z0-9_]{0,64}_)?(?:PUBLIC|SORT|PRIMARY|FOREIGN|public|sort|primary|foreign)_(?:KEY|key)=)(?:(?:(?:[A-Za-z0-9_]{0,64}_)?(?:PASS|PASSPHRASE|PW|PWD|pass|passphrase|pw|pwd)|[A-Za-z0-9_]{0,64}_(?:AUTH|auth)|(?:[A-Za-z0-9_]{0,64}_)?(?:${SECRET_KEY_WORDS})_(?:KEY|key))=["']?|(?:[A-Za-z0-9_]{0,64}_)?(?:KEY|key|AUTH|auth)=["']?(?=${KEY_SHAPED})))(?![$%{<*[])(?:(?:Basic|Bearer|Token|Digest|Negotiate|basic|bearer|token)[ \t]+)?[^\s"',;]+`, "g"),
+  ENVIRONMENT_ASSIGNMENT,
   // The same names as YAML and JSON print them (`docker compose config`'s `DB_PASS: hunter2`, `"REDIS_AUTH": "abc"`):
   // at a line's start, after a list's `- `, or after `{`, `[` or `,`, so prose keeps its words; a bare lower-case `key:`,
   // `pass:` or `auth:` (a selector's key, a field) needs a prefix (r10-commands-x10-5).
@@ -410,7 +414,7 @@ const passes = (guarded: boolean): readonly ((text: string) => string)[] => [
   t => t.replace(URL_CREDENTIALS, `://${SECRET_HIDDEN}@`),
   hideKeyValues,
 ];
-/** redactSecrets's passes (above), with necessary-text checks before the Azure and MySQL password searches. */
+/** redactSecrets's passes (above), with necessary-text checks before Azure, environment assignment and MySQL searches. */
 export const REDACT_PASSES: readonly ((text: string) => string)[] = passes(true);
 /** The same passes without necessary-text checks: what REDACT_PASSES must equal byte for byte (commands-redact.test.ts). */
 export const UNGUARDED_PASSES: readonly ((text: string) => string)[] = passes(false);
@@ -441,6 +445,9 @@ export const KEY_VALUE_SLICE = 256 * 1024;
 const KEY_REACH = 300;
 const KEY_SPACE = /\s/;
 const KEY_VALUE_CHAR = /[^\s"',;]/;
+const KEY_NAME_CHAR = /[A-Za-z0-9_.-]/;
+const KEY_NAME = /(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)/i;
+const KEY_NAME_MAX = 13;
 
 /**
  * The exact whole-text KEY_VALUE replacement, with bounded work between yields. Every match has an operator and a
@@ -451,6 +458,16 @@ const KEY_VALUE_CHAR = /[^\s"',;]/;
  * Unlike delimiter-based cuts, this also yields when no safe cut exists in a multi-megabyte merged span.
  */
 export function* keyValueSteps(text: string, slice = KEY_VALUE_SLICE): Generator<void, string, void> {
+  // No KEY_VALUE match can exist without one whole secret name. Overlap retains names across scan boundaries;
+  // bounded scans yield even for plain JSON with hundreds of thousands of non-secret ':' operators.
+  const stride = Number.isFinite(slice) && slice > 0 ? Math.max(1, Math.min(KEY_VALUE_SLICE, Math.floor(slice))) : KEY_VALUE_SLICE;
+  let named = false;
+  for (let from = 0; from < text.length; from += stride) {
+    named = KEY_NAME.test(text.slice(from, from + stride + KEY_NAME_MAX - 1));
+    if (from + stride < text.length) yield;
+    if (named) break;
+  }
+  if (!named) return text;
   // A paused generator must not share lastIndex with another redaction or the public whole-text regex.
   const re = new RegExp(KEY_VALUE.source, KEY_VALUE.flags);
   const chunks: string[] = [], pieces: string[] = [];
@@ -476,6 +493,26 @@ export function* keyValueSteps(text: string, slice = KEY_VALUE_SLICE): Generator
     // Key/suffix/quote syntax cannot cross a prior operator. KEY_VALUE has no left-context assertion, so clipping
     // before its maximum possible key reach cannot introduce a match at an artificial boundary.
     const start = Math.max(consumed, previous + 1, before - KEY_REACH);
+    // Only the trailing ASCII key run, before an optional quote/bracket, can contain this operator's secret name.
+    // An older URL's /secrets/ elsewhere in the prefix says nothing about the current `https:` or `"value":` key.
+    // This is only a necessary check; KEY_VALUE still decides every match with its original suffix and case rules.
+    let nameEnd = before;
+    const lastKeyChar = text[nameEnd - 1];
+    if (nameEnd - start >= 2 && lastKeyChar === "]" && (text[nameEnd - 2] === '"' || text[nameEnd - 2] === "'")) nameEnd -= 2;
+    else if (nameEnd > start && (lastKeyChar === '"' || lastKeyChar === "'")) nameEnd--;
+    let nameStart = nameEnd;
+    while (nameStart > start && KEY_NAME_CHAR.test(text[nameStart - 1])) {
+      nameStart--;
+      if (++work >= slice) { work = 0; flush(); yield; }
+    }
+    const possibleName = KEY_NAME.test(text.slice(nameStart, nameEnd));
+    work += (nameEnd - nameStart) * KEY_REACH;
+    if (!possibleName) {
+      cursor = operator + 1;
+      previous = operator;
+      if (work >= slice) { work = 0; flush(); yield; }
+      continue;
+    }
     const prefix = text.slice(start, before);
     const arrow = text[operator] === "=" && text[operator + 1] === ">";
     let valueAt = operator + (arrow ? 2 : 1);

@@ -20,8 +20,12 @@ import { requireWindowsCommandRootOnlyAttestingCurrent, requireWindowsCommandRoo
   requireWindowsCommandRootOnlyReturned, type WindowsCommandRootOnlyReturnedRef, type WindowsCommandRootOnlyAttestingRef } from "./windows-command-stop";
 import { issueWindowsCommandLaunchCancellation, readConsumedWindowsCommandLaunchCancellation, type WindowsCommandLaunchCancellationRef } from "./windows-command-launch-cancel";
 
+type DisposalFailure = Readonly<{ stage: number; object: number; operation: number; predicate: number; result: number }>;
+const disposalFailures = new WeakMap<object, DisposalFailure>();
 export class WindowsNodeToolchainCleanupError extends WindowsCodingCleanupError {
   constructor() { super(); this.name = "WindowsNodeToolchainCleanupError"; this.message = "Windows coding Node assets could not be verified; retain their native owners."; }
+  /** First disposal observation only. Constructed, foreign and serialized errors have no diagnostic authority. */
+  static failure(error: unknown): DisposalFailure | undefined { return typeof error === "object" && error !== null ? disposalFailures.get(error) : undefined; }
 }
 export interface WindowsNodeToolchainFence { failure?: WindowsNodeToolchainCleanupError; retained: unknown[] }
 export interface WindowsNodeToolchainInput {
@@ -53,6 +57,7 @@ type State = {
   createOutput: typeof createWindowsCommandOutput;
   serial: number; nativeEntries: Set<number>; cancellation?: CancellationEvidence;
   attesting?: { ref: WindowsCommandRootOnlyAttestingRef; binding: object };
+  disposal?: { stage: number; object: number; operation: number; predicate: number; result: number };
 };
 const universes = new WeakMap<WindowsNodeToolchainFence, Universe>(), processFence: WindowsNodeToolchainFence = { retained: [] };
 const uses = new WeakMap<object, Use>();
@@ -65,6 +70,43 @@ const uint = (v: unknown): v is number => typeof v === "number" && Number.isInte
 const boolean = (v: unknown): boolean => typeof v === "number" && Number.isInteger(v) && v >= -0x80000000 && v <= 0x7fffffff && v !== 0;
 const refuse = () => new Error("The fixed Windows coding Node toolchain is unavailable.");
 class PreparationCancelled extends ScopedCodingFileError { constructor() { super("cancelled"); } }
+
+// Fixed disposal sites only; neither the observation nor this reader decides ownership or cleanup.
+const DISPOSAL_OPERATIONS = ["GetFileType", "GetFileInformationByHandle", "GetFileInformationByHandleEx", "GetFinalPathNameByHandleW", "NtQueryInformationFile",
+  "GetSecurityInfo", "GetSecurityDescriptorLength", "ConvertSidToStringSidW", "GetSecurityDescriptorControl", "GetAclInformation", "GetAce", "GetSecurityDescriptorSacl",
+  "LocalFree", "NtCreateFile", "GetHandleInformation", "NtQueryObject", "NtSetInformationFile", "CloseHandle"] as const;
+const DISPOSAL_PREDICATES = [0, 1, 2, 6, 2, 3, 6, 2, 4, 7, 6, 6, 6, 8, 9] as const;
+function disposalSite(s: State, stage: number, object: number): void {
+  try { s.disposal = { stage, object, operation: 0, predicate: DISPOSAL_PREDICATES[stage], result: 0 }; }
+  catch { /* Diagnostic storage cannot change the existing cleanup path. */ }
+}
+function disposalOperation(s: State, name?: string): void {
+  try { if (s.disposal) { s.disposal.operation = name === undefined ? 0 : DISPOSAL_OPERATIONS.indexOf(name as typeof DISPOSAL_OPERATIONS[number]) + 1;
+    s.disposal.predicate = DISPOSAL_PREDICATES[s.disposal.stage]; s.disposal.result = 0; } }
+  catch { /* A missing observation cannot replace a native outcome. */ }
+}
+function disposalRejected(s: State, predicate: number, result = 0): void {
+  try { if (s.disposal) { s.disposal.predicate = predicate; s.disposal.result = result; } }
+  catch { /* Preserve the first authoritative failure even if observation fails. */ }
+}
+function disposalResult(name: string, value: unknown): number {
+  try {
+    if (typeof value !== "number" || !Number.isInteger(value) || value < -0x80000000 || value > 0xffffffff) return 7;
+    if (value === 0) return 1;
+    if (name.startsWith("Nt")) {
+      const known = [0xc0000022, 0xc0000043, 0xc0000121, 0xc0000056].indexOf(value >>> 0); if (known >= 0) return known + 2;
+    }
+    return 6;
+  } catch { return 0; /* No result-classification fault can replace the original native refusal. */ }
+}
+function observeDisposalFailure(s: State, error: WindowsNodeToolchainCleanupError): void {
+  try {
+    const d = s.disposal; if (!d) return;
+    const values = [d.stage, d.object, d.operation, d.predicate, d.result], maxima = [14, 5, 18, 9, 7];
+    if (values.some((value, index) => !Number.isInteger(value) || value < 0 || value > maxima[index])) return;
+    disposalFailures.set(error, Object.freeze({ stage: d.stage, object: d.object, operation: d.operation, predicate: d.predicate, result: d.result }));
+  } catch { /* Passive diagnostics must not replace the fixed error or its quarantine. */ }
+}
 
 /** Only a real prepared asset owner's private key can authenticate known cancellation without native uncertainty. */
 export function readWindowsNodeToolchainCancellation(key: object): CancellationEvidence {
@@ -151,6 +193,7 @@ export const WINDOWS_NODE_TOOLCHAIN_FUNCTIONS = {
 function poison(s: State, extra?: unknown): never {
   if (!s.u.failure) {
     s.u.failure = new WindowsNodeToolchainCleanupError(); s.fence.failure = s.u.failure;
+    observeDisposalFailure(s, s.u.failure);
     for (const owner of s.u.owners) { owner.retired = true; owner.fence.retained.push({ owner, extra }); }
     for (const owner of s.u.owners) if (owner.use && !owner.use.finished) try { retainWindowsCommandOutput(owner.use.launch); } catch { /* The actual output owner retains and requests only exact-root termination. */ }
   }
@@ -168,14 +211,16 @@ function active(s: State): void {
   usable(s); if (s.retired || s.input.signal.aborted || !current) { s.retired = true; throw new PreparationCancelled(); }
 }
 function invoke(s: State, name: string, args: unknown[], accepted: (v: unknown) => boolean = boolean): unknown {
-  usable(s); if (s.u.busy) return poison(s); s.u.busy = true;
+  usable(s); if (s.u.busy) { disposalRejected(s, 6); return poison(s); } s.u.busy = true;
   const pending = { name, args }; s.pending.add(pending);
-  try { const result = s.fn[name](...args); usable(s); if (!accepted(result)) return poison(s); s.pending.delete(pending); return result; }
-  catch (error) { return poison(s, error); } finally { s.u.busy = false; }
+  disposalOperation(s, name);
+  try { const result = s.fn[name](...args); usable(s); if (!accepted(result)) { disposalRejected(s, 4, disposalResult(name, result)); return poison(s); }
+    s.pending.delete(pending); disposalOperation(s); return result; }
+  catch (error) { disposalRejected(s, 5); return poison(s, error); } finally { s.u.busy = false; }
 }
 function memory<T>(s: State, name: string, args: unknown[], action: () => T): T {
-  usable(s); if (s.u.busy) return poison(s); s.u.busy = true; const pending = { name, args }; s.pending.add(pending);
-  try { const result = action(); usable(s); s.pending.delete(pending); return result; } catch (error) { return poison(s, error); } finally { s.u.busy = false; }
+  usable(s); if (s.u.busy) { disposalRejected(s, 6); return poison(s); } s.u.busy = true; const pending = { name, args }; s.pending.add(pending); disposalOperation(s);
+  try { const result = action(); usable(s); s.pending.delete(pending); return result; } catch (error) { disposalRejected(s, 5); return poison(s, error); } finally { s.u.busy = false; }
 }
 function buffer(s: State, size: number): Buffer { const b = Buffer.alloc(size); s.buffers.add(b); return b; }
 function wipe(s: State, ...values: Buffer[]): void { usable(s); for (const b of values) { b.fill(0); s.buffers.delete(b); } }
@@ -472,32 +517,45 @@ function owner(s: State): WindowsNodeToolchainOwner {
       catch (error) { return poison(s, error); }
     },
     close(): Promise<void> {
-      if (s.u.busy || s.creating) return Promise.reject(poison(s));
-      if (s.u.failure || s.fence.failure) return Promise.reject(poison(s)); if (s.closed) return Promise.resolve();
-      if (s.use && !s.use.finished) return Promise.reject(refuse()); s.retired = true;
-      return s.closing ??= dispose(s);
+      disposalSite(s, 1, 0);
+      try {
+        if (s.u.busy || s.creating) return Promise.reject(poison(s));
+        if (s.u.failure || s.fence.failure) return Promise.reject(poison(s)); if (s.closed) return Promise.resolve();
+        if (s.use && !s.use.finished) return Promise.reject(refuse()); s.retired = true;
+        return s.closing ??= dispose(s);
+      } finally { try { s.disposal = undefined; } catch { /* A passive close-entry record cannot alter its return or error. */ } }
     },
   });
 }
 
 /** No process can be present: ready unused assets or an authenticated finished use, including prelaunch cancellation. */
 async function dispose(s: State): Promise<void> {
+  disposalSite(s, 1, 0);
   try {
     usable(s); if (s.use && !s.use.finished) throw refuse();
-    for (const f of [s.imageLock, s.rootLock]) if (f && !f.handle.closed) { unchanged(s, f, f.identity.kind === "file"); close(s, f.handle); }
-    for (const f of [s.image, s.root]) if (f && !f.handle.closed) {
-      unchanged(s, f, false); privateOrRx(s, f, true);
-      const parent = f === s.image ? s.root!.handle.raw : f.parent;
-      const candidate = file(s, open(s, parent, f.name, f.identity.kind, DELETE | META | (f.identity.kind === "directory" ? 0x20 : 0), 7), parent, f.name);
-      if (!windowsCodingSame(f.identity, candidate.identity, false)) return poison(s);
-      const disposition = buffer(s, 1), io = buffer(s, 16); disposition[0] = 1; invoke(s, "NtSetInformationFile", [candidate.handle.raw, io, disposition, 1, 13], v => v === 0);
-      if (io.readUInt32LE(0) !== 0) return poison(s); close(s, candidate.handle); close(s, f.handle); wipe(s, disposition, io);
+    for (const [index, f] of [s.imageLock, s.rootLock].entries()) if (f && !f.handle.closed) {
+      disposalSite(s, 2, index + 1); unchanged(s, f, f.identity.kind === "file"); disposalSite(s, 3, index + 1); close(s, f.handle);
     }
-    for (const held of s.handles.slice().reverse()) if (!held.closed) close(s, held);
+    for (const f of [s.image, s.root]) if (f && !f.handle.closed) {
+      const object = f === s.image ? 3 : 4;
+      disposalSite(s, 4, object); unchanged(s, f, false); disposalSite(s, 5, object); privateOrRx(s, f, true);
+      const parent = f === s.image ? s.root!.handle.raw : f.parent;
+      disposalSite(s, 6, object);
+      const candidate = file(s, open(s, parent, f.name, f.identity.kind, DELETE | META | (f.identity.kind === "directory" ? 0x20 : 0), 7), parent, f.name);
+      disposalSite(s, 7, object);
+      if (!windowsCodingSame(f.identity, candidate.identity, false)) return poison(s);
+      const disposition = buffer(s, 1), io = buffer(s, 16); disposition[0] = 1; disposalSite(s, 8, object); invoke(s, "NtSetInformationFile", [candidate.handle.raw, io, disposition, 1, 13], v => v === 0);
+      disposalSite(s, 9, object); if (io.readUInt32LE(0) !== 0) return poison(s);
+      disposalSite(s, 10, object); close(s, candidate.handle); disposalSite(s, 11, object); close(s, f.handle); wipe(s, disposition, io);
+    }
+    disposalSite(s, 12, 5); for (const held of s.handles.slice().reverse()) if (!held.closed) close(s, held);
+    disposalSite(s, 13, 5);
     if (s.allocations.some(a => !a.freed)) return poison(s);
+    disposalSite(s, 14, 0);
     if (s.bound) { releaseWindowsCommandCreatorAssets(s.input.profile, s.key); s.bound = false; }
     s.closed = true; s.u.owners.delete(s);
   } catch (error) { return poison(s, error); }
+  finally { try { s.disposal = undefined; } catch { /* No diagnostic lifetime can change cleanup settlement. */ } }
 }
 
 /** Called only inside Copy's genuine non-consuming witness hook, after matching its actual returned PI. */
