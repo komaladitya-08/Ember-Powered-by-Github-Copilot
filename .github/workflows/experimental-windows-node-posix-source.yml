@@ -1,0 +1,122 @@
+name: Experimental source Node with pinned POSIX rename
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/experimental-windows-node-posix-source.yml'
+      - 'scripts/experimental/*windows-node-posix-source*'
+      - 'scripts/experimental/extract-node-posix-source.py'
+      - 'test/fixtures/windows-node-posix-*'
+      - 'test/unit/windows-node-posix-*'
+      - 'docs/EXPERIMENTAL-WINDOWS-NODE-POSIX.md'
+  workflow_dispatch:
+    inputs:
+      probe:
+        description: Fixed reviewed compile scope
+        required: true
+        default: abi-only
+        type: choice
+        options:
+          - abi-only
+          - source-build
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experimental-windows-node-posix-source-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  contracts:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'ember-improve/20261116-source-node-posix'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.23.5'
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+      - name: Four-patch source, ABI recipe and actual rename-body contracts
+        run: npx vitest run test/unit/windows-node-posix-source.test.ts test/unit/windows-node-posix-source-build.test.ts test/unit/windows-node-posix-rename.test.ts test/unit/windows-node-posix-abi-diagnostic.test.ts test/unit/windows-node-posix-tool-identity.test.ts --maxWorkers=2
+  source-node:
+    # No build on PR registration. A reviewed long build needs one exact-branch manual dispatch.
+    needs: contracts
+    if: github.event_name == 'workflow_dispatch' && github.ref_name == 'ember-improve/20261116-source-node-posix'
+    name: Four-patch source Node build (windows-2022)
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.23.5'
+          cache: npm
+      - name: Select the pinned trusted host Python
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pin = Get-Content -LiteralPath scripts/experimental/windows-node-posix-source-build-pin.json -Raw | ConvertFrom-Json
+          $python = $pin.pythonExecutable
+          if (!(Test-Path -LiteralPath $python -PathType Leaf)) { throw 'The fixed hosted-toolcache Python is unavailable.' }
+          $version = (& $python -I -B -c "import sys; print('.'.join(map(str,sys.version_info[:3])))").Trim()
+          if ($LASTEXITCODE -ne 0 -or $version -cne $pin.pythonVersion) { throw 'The selected Python differs from the fixed host build recipe.' }
+          "EMBER_NODE_POSIX_SOURCE_PYTHON=$python" >> $env:GITHUB_ENV
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Four-patch source and mandatory dual-target ABI contracts
+        run: npx vitest run test/unit/windows-node-posix-source.test.ts test/unit/windows-node-posix-source-build.test.ts test/unit/windows-node-posix-rename.test.ts test/unit/windows-node-posix-abi-diagnostic.test.ts test/unit/windows-node-posix-tool-identity.test.ts --maxWorkers=1
+      - name: Fetch only the fixed signed Node source and separately pinned NASM archive
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pin = Get-Content -LiteralPath scripts/experimental/windows-node-posix-source-pin.json -Raw | ConvertFrom-Json
+          $parent = Join-Path $env:RUNNER_TEMP ('ember-source-node-' + [Guid]::NewGuid().ToString())
+          [IO.Directory]::CreateDirectory($parent) | Out-Null
+          $source = Join-Path $parent 'node-v22.23.5.tar.xz'
+          $nasm = Join-Path $parent 'nasm-2.16.03-win64.zip'
+          Invoke-WebRequest -Uri $pin.sourceArchive.url -OutFile $source -TimeoutSec 120
+          if ((Get-Item -LiteralPath $source).Length -ne $pin.sourceArchive.bytes -or (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant() -cne $pin.sourceArchive.sha256) { throw 'The source archive differs from its signed manifest pin.' }
+          Invoke-WebRequest -Uri $pin.nasmTool.url -OutFile $nasm -TimeoutSec 90
+          if ((Get-Item -LiteralPath $nasm).Length -ne $pin.nasmTool.bytes -or (Get-FileHash -LiteralPath $nasm -Algorithm SHA256).Hash.ToLowerInvariant() -cne $pin.nasmTool.sha256) { throw 'The NASM archive differs from its reviewed independent pin.' }
+          "EMBER_NODE_POSIX_SOURCE_ARCHIVE=$source" >> $env:GITHUB_ENV
+          "EMBER_NODE_POSIX_SOURCE_NASM_ARCHIVE=$nasm" >> $env:GITHUB_ENV
+          "EMBER_NODE_POSIX_SOURCE_BUILD_ROOT=$(Join-Path $parent 'build')" >> $env:GITHUB_ENV
+          "EMBER_NODE_POSIX_SOURCE_BUILD_COMMIT=$env:GITHUB_SHA" >> $env:GITHUB_ENV
+      - name: Build the source Node or run only the mandatory Win8 and Win10RS1 ABI diagnostic
+        id: build
+        timeout-minutes: 70
+        shell: pwsh
+        env:
+          EMBER_NODE_POSIX_PROBE: ${{ inputs.probe }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $arguments = @('--source-archive', $env:EMBER_NODE_POSIX_SOURCE_ARCHIVE, '--nasm-archive', $env:EMBER_NODE_POSIX_SOURCE_NASM_ARCHIVE, '--destination', $env:EMBER_NODE_POSIX_SOURCE_BUILD_ROOT, '--python', $env:EMBER_NODE_POSIX_SOURCE_PYTHON)
+          if ($env:EMBER_NODE_POSIX_PROBE -ceq 'abi-only') { $arguments += '--abi-only' }
+          elseif ($env:EMBER_NODE_POSIX_PROBE -cne 'source-build') { throw 'The fixed compile scope is unavailable.' }
+          & node scripts/experimental/build-windows-node-posix-source.mjs @arguments
+      - name: Keep only the public-source build assets for subsequent reviewed diagnostics
+        if: always() && steps.build.outcome == 'success' && inputs.probe == 'source-build'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: source-node-posix-22.23.5-windows-2022-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            ${{ env.EMBER_NODE_POSIX_SOURCE_BUILD_ROOT }}/source-node.exe
+            ${{ env.EMBER_NODE_POSIX_SOURCE_BUILD_ROOT }}/bootstrap.exe
+            ${{ env.EMBER_NODE_POSIX_SOURCE_BUILD_ROOT }}/build-receipt.json
+            ${{ env.EMBER_NODE_POSIX_SOURCE_BUILD_ROOT }}/LICENSE
+      # No private runtime scratch, source tree, logs, reports, process output, trace or dump is uploaded.
+      # This fixture does not enable product Windows coding or replace the official Node verifier.

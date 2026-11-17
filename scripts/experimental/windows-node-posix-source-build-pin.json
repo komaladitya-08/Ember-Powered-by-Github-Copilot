@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "issuer": "ember-experimental-source-node-cng-pipes-posix-feasibility",
+  "image": "windows-2022",
+  "visualStudioRange": "[17.6,18.0)",
+  "visualStudioVersionPrefix": "17.14.",
+  "platformToolset": "v143",
+  "toolsetDirectory": "14.44.35207",
+  "compilerVersionPrefix": "19.44.",
+  "linkerVersionPrefix": "14.44.",
+  "msbuildVersionPrefix": "17.14.",
+  "sdk": "10.0.26100.0",
+  "pythonVersion": "3.12.10",
+  "pythonExecutable": "C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe",
+  "nasmVersion": "2.16.03",
+  "configuration": "Release",
+  "platform": "x64",
+  "vcbuildArguments": [
+    "x64",
+    "vs2022",
+    "no-cctest",
+    "nonpm",
+    "nocorepack"
+  ],
+  "compilerEnvironment": "/DEMBER_UV_FIXED_PROBE_OFFLINE=1 /DEMBER_NODE_FIXED_PROBE_CNG=1",
+  "msbuildArguments": "/p:VCToolsVersion=14.44.35207 /p:WindowsTargetPlatformVersion=10.0.26100.0 /p:ImportDirectoryBuildProps=false /p:ImportDirectoryBuildTargets=false /nodeReuse:false",
+  "bootstrapCompileArguments": [
+    "/nologo",
+    "/O2",
+    "/W4",
+    "/we4013",
+    "/utf-8",
+    "/GS",
+    "/Zl",
+    "/c"
+  ],
+  "bootstrapLinkArguments": [
+    "/NOLOGO",
+    "/NODEFAULTLIB",
+    "/ENTRY:mainCRTStartup",
+    "/SUBSYSTEM:CONSOLE",
+    "/MACHINE:X64"
+  ],
+  "maximumNodeBytes": 134217728,
+  "maximumBootstrapBytes": 16777216,
+  "maximumToolBytes": 67108864,
+  "maximumReceiptBytes": 32768,
+  "nodeBuildTimeoutMs": 3600000,
+  "entropyImportPolicy": {
+    "module": "bcrypt.dll",
+    "required": "BCryptGenRandom",
+    "forbidden": [
+      "CryptGenRandom"
+    ]
+  },
+  "renameAbi": {
+    "schema": 1,
+    "source": "test/fixtures/windows-node-posix-rename-abi.c",
+    "informationClass": 22,
+    "flags": 3,
+    "sourceAccess": 65664,
+    "targets": [
+      {
+        "winnt": 1538,
+        "ntddi": 100794368
+      },
+      {
+        "winnt": 2560,
+        "ntddi": 167772162
+      }
+    ],
+    "languageStandard": "c11"
+  }
+}
