@@ -3093,6 +3093,32 @@ To start a run by hand: **Actions › ci › Run workflow**, or `gh workflow run
 The Windows and macOS runners can't show everything (§10.3, §11.3): what they can't, a suite prints as "not
 testable on this runner: <reason>", and PLAN.md §9 item 7 keeps it for a real machine.
 
+### 13.1 Historical Windows compatibility experiments
+
+`coding-boundary`, `experimental-windows-node-lpac`, `experimental-powershell-etw` and
+`experimental-windows-lpac-trace` retain their pull-request path triggers and automatically run portable lifecycle,
+binding, privacy and workflow contracts. Their Windows native jobs run only through **Actions › the named workflow ›
+Run workflow**, after those portable checks pass. Manual runs retain the same images, pins, native assertions,
+Stop/cleanup requirements, privacy filters and time limits. A portable pass or an unrequested native job is not a
+native compatibility pass.
+
+These older experiments require positive descendant launch, stock Node LPAC execution or PowerShell startup and
+commands. Those capabilities are outside the supported bundled-Node, root-only product contract. The main-target
+`fb88ec25` runs remain failed evidence: [coding-boundary 44021821226](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44021821226),
+[stock Node 44021821247](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44021821247),
+[PowerShell ETW 44021821439](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44021821439)
+and [LPAC trace 44021821366](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44021821366).
+Their earlier detailed observations remain in [the isolated-command proof](ISOLATED-WINDOWS-COMMAND-PROOF.md),
+[stock Node proof](WINDOWS-NODE-LPAC-PROOF.md), [ETW experiment](EXPERIMENTAL-POWERSHELL-ETW.md) and
+[native fixture/trace evidence](WINDOWS-LPAC-EXPERIMENT.md). Moving native scheduling does not repair or certify them.
+
+The separate required `windows-node-product` matrix still checks the actual native, source Home and packaged Home
+journeys on both Server images. Its exact source/artifact binding, complete reports, refusal/Stop/privacy/cleanup
+assertions, aggregate and release dependency remain unchanged. No shell, stock-Node fallback, child or broader
+capability is enabled by this scheduling split. Repository rulesets were empty when inspected, but the main-branch
+protection read returned HTTP 403; required-status settings remain unknown and were not changed. Verify those settings
+before merging rather than assuming that a skipped compatibility job satisfies a required check.
+
 ## 14. Working on SSH, WSL and commands
 
 What users and administrators see is in [COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md); this section is for changing the

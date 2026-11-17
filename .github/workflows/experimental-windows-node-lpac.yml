@@ -15,6 +15,9 @@ on:
       - "test/unit/windows-node-lpac-fatal.test.ts"
       - "app/main/agent/experimental-windows-lpac*.ts"
       - "app/main/agent/isolated-windows-command-assets.ts"
+      - "app/main/platform/os.ts"
+      - "test/unit/experimental-compatibility-workflows.test.ts"
+      - "docs/DEVELOPING.md"
   workflow_dispatch:
 
 permissions:
@@ -25,8 +28,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  portable:
+    name: Portable stock Node LPAC diagnostic contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Startup, event, stdio lifecycle, fatal privacy and workflow contracts
+        run: npm test -- test/unit/windows-node-lpac-startup.test.ts test/unit/windows-node-lpac-events.test.ts test/unit/windows-node-lpac-io.test.ts test/unit/windows-node-lpac-fatal.test.ts test/unit/experimental-compatibility-workflows.test.ts --maxWorkers=1
+
   node-lpac:
     name: Direct Node ${{ matrix.node }} LPAC (${{ matrix.os }})
+    if: github.event_name == 'workflow_dispatch'
+    needs: portable
     strategy:
       fail-fast: false
       matrix:
@@ -46,8 +70,6 @@ jobs:
       - run: npm ci
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-      - name: Startup, event, stdio lifecycle and fatal-output privacy contracts
-        run: npm test -- test/unit/windows-node-lpac-startup.test.ts test/unit/windows-node-lpac-events.test.ts test/unit/windows-node-lpac-io.test.ts test/unit/windows-node-lpac-fatal.test.ts --maxWorkers=1
       - name: Fetch the independently pinned official Windows archive and extract only node.exe
         timeout-minutes: 2
         shell: pwsh
