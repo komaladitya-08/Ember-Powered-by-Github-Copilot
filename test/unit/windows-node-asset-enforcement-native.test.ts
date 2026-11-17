@@ -36,27 +36,66 @@ function descriptor(index: number, parentLabel: "explicit" | "absent" | "empty" 
 }
 function setup(fault = "") {
   const calls: Call[] = [], handles = new Map<bigint, { row: Row; access: number }>(), allocations = new Map<bigint, Buffer>(), closed: bigint[] = [], freed: bigint[] = [];
+  const tokens = new Set<bigint>(), local = new Set<bigint>();
   const rows = paths.map((file, index): Row => ({ file, index, directory: index !== 2 && index !== 5 && index !== 7, identity: BigInt(index + 100), volume: 7,
     write: 3000n, creation: 1000n, size: 512, security: descriptor(index) }));
   const control = { fault, faultIndex: 0, reenter: undefined as (() => void) | undefined, mutateSecurity: undefined as ((bytes: Buffer) => void) | undefined,
-    threwOutput: undefined as unknown[] | undefined, freedReentry: false, decoded: 0 };
+    threwOutput: undefined as unknown[] | undefined, freedReentry: false, decoded: 0, pid: 31415, integrityRid: 8192, integrityAttributes: 0x60, policy: 1,
+    integrityLength: 28, policyLength: 4, tokenKind: 0, tokenRaw: undefined as bigint | undefined, localRaw: undefined as bigint | undefined,
+    securityRaw: undefined as bigint | undefined, nextFileRaw: undefined as bigint | undefined,
+    failedCloseRaw: undefined as bigint | undefined,
+    mutateIntegrity: undefined as ((bytes: Buffer, raw: bigint) => void) | undefined };
   const fence = { retained: [] as unknown[], failure: undefined as WindowsNodeAssetEnforcementNativeCleanupError | undefined };
   let nextHandle = 20n, nextAllocation = 0x100000n;
   const load = () => ({ func(prototype: string) {
     const name = /\b(\w+)\s*\(/.exec(prototype)![1];
     return (...args: unknown[]) => {
       calls.push({ name, args });
+      if (name === "GetProcessId") {
+        if (control.fault === "pid throw") throw Error("private process diagnostic");
+        if (control.fault === "pid reentry") { try { control.reenter?.(); } catch { /* Model swallowed reentry. */ } }
+        return control.fault === "pid mismatch" ? control.pid + 1 : control.fault === "pid unknown" ? undefined : control.pid;
+      }
+      if (name === "OpenProcessToken") {
+        const raw = control.tokenRaw ?? nextHandle++; (args[2] as unknown[])[0] = raw; tokens.add(raw);
+        if (control.fault === "token open throw") throw Error("private partial token");
+        if (control.fault === "token open reentry") { try { control.reenter?.(); } catch { /* Model swallowed reentry. */ } }
+        return control.fault === "token open false" ? 0 : control.fault === "token open unknown" ? undefined : 1;
+      }
+      if (name === "LocalAlloc") {
+        if (control.fault === "local throw") throw Error("private allocation diagnostic");
+        if (control.fault === "local null") return null;
+        const raw = control.localRaw ?? nextAllocation; nextAllocation += 0x10000n;
+        allocations.set(raw, Buffer.alloc(args[1] as number)); local.add(raw);
+        if (control.fault === "local reentry") { try { control.reenter?.(); } catch { /* Model swallowed reentry. */ } }
+        return raw;
+      }
+      if (name === "GetTokenInformation") {
+        const raw = args[2] as bigint, kind = args[1] as number, bytes = allocations.get(raw)!; control.tokenKind = kind; bytes.fill(0);
+        if (kind === 25) {
+          bytes.writeBigUInt64LE(raw + 16n, 0); bytes.writeUInt32LE(control.integrityAttributes, 8); sid(`S-1-16-${control.integrityRid}`).copy(bytes, 16);
+          control.mutateIntegrity?.(bytes, raw); (args[4] as unknown[])[0] = control.integrityLength;
+        } else { bytes.writeUInt32LE(control.policy, 0); (args[4] as unknown[])[0] = control.policyLength; }
+        if (control.fault === `token query${kind} throw`) throw Error("private token query diagnostic");
+        if (control.fault === `token query${kind} reentry`) { try { control.reenter?.(); } catch { /* Model swallowed reentry. */ } }
+        return control.fault === `token query${kind} false` ? 0 : control.fault === `token query${kind} unknown` ? undefined : 1;
+      }
       if (name === "CreateFileW") {
         if (control.fault === "open throw") throw new Error("private native path and credential");
         if (control.fault === "invalid handle") return 0xffffffffffffffffn;
         const row = rows.find(row => row.file === args[0])!;
         if (control.fault === "aliased handle" && handles.size) return [...handles.keys()][0];
         if (control.fault === "target handle alias" && row.index === control.faultIndex && handles.size) return [...handles.keys()][0];
-        const raw = control.fault === "reuse resources" && closed.length ? closed[closed.length - 1] : nextHandle++;
+        const raw = control.nextFileRaw ?? (control.fault === "reuse resources" && closed.length ? closed[closed.length - 1] : nextHandle++); control.nextFileRaw = undefined;
         handles.set(raw, { row, access: args[1] as number }); return raw;
       }
       if (name === "GetFileType") return control.fault === "wrong file type" ? 2 : 1;
-      if (name === "GetHandleInformation") { (args[1] as unknown[])[0] = control.fault === "inheritable pin" ? 1 : 0; return control.fault === "unknown BOOL" ? undefined : 1; }
+      if (name === "GetHandleInformation") {
+        const token = tokens.has(args[0] as bigint);
+        (args[1] as unknown[])[0] = control.fault === "inheritable pin" || token && control.fault === "token inherit" ? 1 : 0;
+        if (token && control.fault === "token flags reentry") { try { control.reenter?.(); } catch { /* Model swallowed reentry. */ } }
+        return control.fault === "unknown BOOL" || token && control.fault === "token flags unknown" ? undefined : token && control.fault === "token flags false" ? 0 : 1;
+      }
       if (name === "GetFileInformationByHandle") {
         const { row, access } = handles.get(args[0] as bigint)!, bytes = args[1] as Buffer;
         bytes.writeUInt32LE(row.directory ? 16 : 128, 0); bytes.writeBigUInt64LE(row.creation, 4); bytes.writeBigUInt64LE(row.write, 20);
@@ -73,7 +112,7 @@ function setup(fault = "") {
       if (name === "GetSecurityInfo") {
         const { row } = handles.get(args[0] as bigint)!, bytes = Buffer.from(row.security);
         if (row.index === control.faultIndex) control.mutateSecurity?.(bytes);
-        const raw = control.fault === "allocation handle alias" || control.fault === "target allocation handle alias" && row.index === control.faultIndex ? args[0] as bigint : control.fault === "reuse resources" ? 0x100000n : nextAllocation; nextAllocation += 0x10000n;
+        const raw = control.securityRaw ?? (control.fault === "allocation handle alias" || control.fault === "target allocation handle alias" && row.index === control.faultIndex ? args[0] as bigint : control.fault === "reuse resources" ? 0x100000n : nextAllocation); nextAllocation += 0x10000n;
         allocations.set(raw, bytes); (args[3] as unknown[])[0] = raw + BigInt(bytes.readUInt32LE(4));
         (args[5] as unknown[])[0] = raw + BigInt(bytes.readUInt32LE(16)); (args[6] as unknown[])[0] = bytes.readUInt32LE(12) ? raw + BigInt(bytes.readUInt32LE(12)) : null; (args[7] as unknown[])[0] = raw;
         if (control.fault === "foreign owner pointer") (args[3] as unknown[])[0] = raw + 65536n;
@@ -86,17 +125,24 @@ function setup(fault = "") {
       if (name === "GetSecurityDescriptorLength") return control.fault === "short descriptor" ? 19 : control.fault === "oversize descriptor" ? 65537 : allocations.get(args[0] as bigint)!.length;
       if (name === "LocalFree") {
         const raw = args[0] as bigint; freed.push(raw);
+        if (local.has(raw) && control.fault === "token free throw") throw Error("private token buffer free");
+        if (local.has(raw) && control.fault === "token free failed") return raw;
+        if (local.has(raw) && control.fault === "token free reentry") { try { control.reenter?.(); } catch { /* Model swallowed reentry. */ } }
         if (control.fault === "free throw") throw new Error("private native free diagnostic");
         if (control.fault === "free reentry") { control.freedReentry = true; try { control.reenter?.(); } catch { /* Model a swallowed callback. */ } }
         if (control.fault === "free failed") return raw;
-        allocations.delete(raw); return null;
+        allocations.delete(raw); local.delete(raw); return null;
       }
       if (name === "CloseHandle") {
         const raw = args[0] as bigint; closed.push(raw);
+        if (raw === control.failedCloseRaw) return 0;
+        if (tokens.has(raw) && control.fault === "token close throw") throw Error("private token close");
+        if (tokens.has(raw) && control.fault === "token close failed") return 0;
+        if (tokens.has(raw) && control.fault === "token close reentry") { try { control.reenter?.(); } catch { /* Model swallowed reentry. */ } }
         if (control.fault === "close throw") throw new Error("private close diagnostic");
         if (control.fault === "close failed") return 0;
         if (control.fault === "close reentry") { try { control.reenter?.(); } catch { /* Model a swallowed callback. */ } }
-        handles.delete(raw); return 1;
+        handles.delete(raw); tokens.delete(raw); return 1;
       }
       throw new Error("unexpected ABI call");
     };
@@ -107,10 +153,11 @@ function setup(fault = "") {
     if (control.fault === "decode short") return [1];
     if (control.fault === "decode shared") return new Uint8Array(new SharedArrayBuffer(length));
     if (control.fault === "decode reentry") { try { control.reenter?.(); } catch { /* Model a swallowed callback. */ } }
+    if (local.has(raw) && control.fault === `token decode${control.tokenKind} throw`) throw Error("private token decode");
     return Array.from(allocations.get(raw)!.subarray(0, length));
   } } as unknown as Parameters<typeof bindWindowsNodeAssetEnforcementNative>[0];
   const api = bindWindowsNodeAssetEnforcementNative(native, load, fence);
-  return { api, calls, handles, allocations, closed, freed, rows, control, fence, native, load };
+  return { api, calls, handles, allocations, tokens, local, closed, freed, rows, control, fence, native, load };
 }
 
 it("pins the exact eight objects, proves host WDAC/WOWNER and preserves Low/Medium owner/DACL controls without mutation", () => {
@@ -127,7 +174,7 @@ it("pins the exact eight objects, proves host WDAC/WOWNER and preserves Low/Medi
   expect(s.closed).toHaveLength(14); expect(new Set(s.closed).size).toBe(14);
   expect(s.closed.slice(-8)).toEqual(held.reverse());
   expect(s.freed).toHaveLength(24); expect(new Set(s.freed).size).toBe(24);
-  expect(Object.keys(pins).sort()).toEqual(["close", "recheck"]);
+  expect(Object.keys(pins).sort()).toEqual(["close", "observeHeldToken", "recheck", "requireTokenObservation"]);
   expect(Object.values(WINDOWS_NODE_ASSET_ENFORCEMENT_FUNCTIONS).flat().join("\n")).not.toMatch(/SetSecurity|WriteFile|Impersonate|CreateProcess|DeleteFile/);
 });
 
@@ -362,3 +409,196 @@ it.each([6, 7].flatMap(index => ["identity", "creation", "write", "size", "secur
     expect(() => pins.recheck()).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
     const count = s.calls.length; expect(() => pins.close()).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(s.calls).toHaveLength(count);
   });
+
+const heldProcess = 0x7000n, heldThread = 0x7100n, heldPid = 31415;
+const observe = (s: ReturnType<typeof setup>) => {
+  const pins = s.api.pinTargets(input), binding = Object.freeze({});
+  const ref = pins.observeHeldToken(heldProcess, heldThread, heldPid, binding);
+  return { pins, binding, ref };
+};
+it("queries the exact held primary token through stable Native storage and closes auxiliaries before issuing only enums", () => {
+  const s = setup(), pins = s.api.pinTargets(input), binding = Object.freeze({}), start = s.calls.length;
+  const ref = pins.observeHeldToken(heldProcess, heldThread, heldPid, binding), trace = s.calls.slice(start);
+  expect(trace.map(call => call.name)).toEqual(["GetProcessId", "OpenProcessToken", "GetHandleInformation", "LocalAlloc", "GetTokenInformation", "GetTokenInformation", "LocalFree", "CloseHandle"]);
+  expect(trace[0].args).toEqual([heldProcess]); expect(trace[1].args.slice(0, 2)).toEqual([heldProcess, 8]); expect(trace[3].args).toEqual([0x40, 256]);
+  const queries = trace.filter(call => call.name === "GetTokenInformation");
+  expect(queries.map(call => [call.args[1], typeof call.args[2], call.args[3]])).toEqual([[25, "bigint", 256], [27, "bigint", 256]]);
+  expect(queries[0].args[2]).toBe(queries[1].args[2]); expect(trace[6].args[0]).toBe(queries[0].args[2]);
+  const at = s.calls.length, facts = pins.requireTokenObservation(ref, binding);
+  expect(facts).toEqual({ integrity: 3, attributes: 2, policy: 1 }); expect(Object.isFrozen(facts)).toBe(true);
+  expect(Object.keys(ref)).toEqual(["scope"]); expect(Object.isFrozen(ref)).toBe(true); expect(s.calls).toHaveLength(at);
+  expect(s.tokens.size).toBe(0); expect(s.local.size).toBe(0); expect(s.handles.size).toBe(8); expect(s.allocations.size).toBe(0);
+  expect(s.closed).not.toContain(heldProcess); expect(s.closed).not.toContain(heldThread); pins.close(); expect(s.closed).not.toContain(heldProcess); expect(s.closed).not.toContain(heldThread);
+});
+it.each([[0, 1], [4096, 2], [8192, 3], [8448, 4], [12288, 5], [16384, 6], [20480, 7], [1, 0], [0xffffffff, 0]])(
+  "maps integrity RID %s to its closed enum without exposing the SID", (rid, expected) => {
+    const s = setup(); s.control.integrityRid = rid; const { pins, ref, binding } = observe(s);
+    expect(pins.requireTokenObservation(ref, binding).integrity).toBe(expected); pins.close();
+  });
+it.each([[0x20, 1], [0x60, 2], [0, 0], [0x61, 0], [0xffffffff, 0]])("maps integrity attributes %s to a closed enum", (attributes, expected) => {
+  const s = setup(); s.control.integrityAttributes = attributes; const { pins, ref, binding } = observe(s);
+  expect(pins.requireTokenObservation(ref, binding).attributes).toBe(expected); pins.close();
+});
+it.each([[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [0xffffffff, 4]])("maps mandatory policy %s to a closed enum", (policy, expected) => {
+  const s = setup(); s.control.policy = policy; const { pins, ref, binding } = observe(s);
+  expect(pins.requireTokenObservation(ref, binding).policy).toBe(expected); pins.close();
+});
+it.each(["pid mismatch", "pid unknown", "pid throw", "token open false", "token open unknown", "token open throw", "token inherit", "token flags false", "token flags unknown",
+  "local null", "local throw", "token query25 false", "token query25 unknown", "token query25 throw", "token query27 false", "token query27 unknown", "token query27 throw",
+  "token decode25 throw", "token decode27 throw", "decode short", "decode shared", "token free failed", "token free throw", "token close failed", "token close throw"])(
+  "permanently retains the query owner after %s with no later Native work", fault => {
+    const s = setup(), pins = s.api.pinTargets(input), binding = Object.freeze({}); s.control.fault = fault;
+    expect(() => pins.observeHeldToken(heldProcess, heldThread, heldPid, binding)).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+    const count = s.calls.length; expect(s.api.unsafe).toBe(true); expect(s.fence.retained.length).toBeGreaterThan(0);
+    s.control.fault = ""; s.fence.failure = undefined;
+    expect(() => pins.observeHeldToken(heldProcess, heldThread, heldPid, binding)).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+    expect(() => pins.recheck()).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+    expect(() => pins.close()).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(s.calls).toHaveLength(count);
+    expect(s.closed).not.toContain(heldProcess); expect(s.closed).not.toContain(heldThread);
+    if (fault.startsWith("token open")) {
+      const output = s.calls.find(call => call.name === "OpenProcessToken")!.args[2] as unknown[];
+      expect(typeof output[0]).toBe("bigint"); expect(s.tokens.has(output[0] as bigint)).toBe(true);
+      expect(s.calls.some(call => call.name === "LocalAlloc")).toBe(false);
+    }
+    if (fault.startsWith("token query") || fault.startsWith("token decode") || fault.startsWith("decode ") || fault.startsWith("token free")) {
+      expect(s.tokens.size).toBe(1); expect(s.local.size).toBe(1);
+    }
+  });
+it.each(["pid reentry", "token open reentry", "token flags reentry", "local reentry", "token query25 reentry", "token query27 reentry", "token free reentry", "token close reentry", "decode reentry"])(
+  "a swallowed %s permanently fences both token and pin owners", fault => {
+    const s = setup(), pins = s.api.pinTargets(input), binding = Object.freeze({}); s.control.fault = fault; s.control.reenter = () => pins.recheck();
+    expect(() => pins.observeHeldToken(heldProcess, heldThread, heldPid, binding)).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+    const count = s.calls.length; expect(() => pins.close()).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(s.calls).toHaveLength(count);
+    expect(s.closed).not.toContain(heldProcess); expect(s.closed).not.toContain(heldThread); expect(s.fence.retained.length).toBeGreaterThan(0);
+  });
+it.each([0n, -1n, 0x8000000000000000n])("rejects invalid borrowed process %s before a Native call", process => {
+  const s = setup(), pins = s.api.pinTargets(input), count = s.calls.length;
+  expect(() => pins.observeHeldToken(process, heldThread, heldPid, {})).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(s.calls).toHaveLength(count);
+});
+it.each([0, -1, 1.5, NaN, Infinity, 0x100000000])("rejects invalid expected PID %s before a Native call", pid => {
+  const s = setup(), pins = s.api.pinTargets(input), count = s.calls.length;
+  expect(() => pins.observeHeldToken(heldProcess, heldThread, pid, {})).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(s.calls).toHaveLength(count);
+});
+it("rejects a borrowed process that aliases a live pin before querying its PID", () => {
+  const s = setup(), pins = s.api.pinTargets(input), count = s.calls.length;
+  expect(() => pins.observeHeldToken([...s.handles.keys()][0], heldThread, heldPid, {})).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(s.calls).toHaveLength(count);
+});
+it.each(["borrowed", "pin"])("a returned token may not alias the %s handle", kind => {
+  const s = setup(), pins = s.api.pinTargets(input); s.control.tokenRaw = kind === "borrowed" ? heldProcess : [...s.handles.keys()][0];
+  expect(() => pins.observeHeldToken(heldProcess, heldThread, heldPid, {})).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+  expect(s.calls.at(-1)?.name).toBe("OpenProcessToken"); expect(s.closed).not.toContain(heldProcess); expect(s.closed).not.toContain(heldThread);
+});
+it.each(["borrowed exact", "borrowed interior", "pin interior", "token interior"])("rejects LocalAlloc span aliasing %s without freeing it", kind => {
+  const s = setup(), pins = s.api.pinTargets(input); s.control.localRaw = kind === "borrowed exact" ? heldProcess : kind === "borrowed interior" ? heldProcess - 128n : kind === "pin interior" ? 16n : 32n;
+  const freeCount = s.freed.length;
+  expect(() => pins.observeHeldToken(heldProcess, heldThread, heldPid, {})).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+  expect(s.calls.at(-1)?.name).toBe("LocalAlloc"); expect(s.freed).toHaveLength(freeCount); expect(s.tokens.size).toBe(1);
+});
+it.each([0, 16, 27, 257, 1.5, undefined])("retains stable storage after invalid integrity return length %s", length => {
+  const s = setup(), pins = s.api.pinTargets(input); s.control.integrityLength = length as number;
+  expect(() => pins.observeHeldToken(heldProcess, heldThread, heldPid, {})).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+  expect(s.calls.filter(call => call.name === "GetTokenInformation").map(call => call.args[1])).toEqual([25]); expect(s.local.size).toBe(1); expect(s.tokens.size).toBe(1);
+});
+it.each([0, 3, 5, 256, 1.5, undefined])("retains stable storage after invalid policy return length %s", length => {
+  const s = setup(), pins = s.api.pinTargets(input); s.control.policyLength = length as number;
+  expect(() => pins.observeHeldToken(heldProcess, heldThread, heldPid, {})).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+  expect(s.local.size).toBe(1); expect(s.tokens.size).toBe(1);
+});
+const tokenMalformed: readonly [string, (bytes: Buffer, raw: bigint) => void][] = [
+  ["null SID", b => b.writeBigUInt64LE(0n, 0)], ["SID before buffer", (b, raw) => b.writeBigUInt64LE(raw - 4n, 0)],
+  ["SID in header", (b, raw) => b.writeBigUInt64LE(raw + 12n, 0)], ["SID after return span", (b, raw) => b.writeBigUInt64LE(raw + 20n, 0)],
+  ["unaligned SID", (b, raw) => b.writeBigUInt64LE(raw + 17n, 0)], ["wrong SID revision", b => { b[16] = 2; }],
+  ["zero subauthorities", b => { b[17] = 0; }], ["multiple subauthorities", b => { b[17] = 2; }], ["wrong authority", b => { b[23] = 5; }],
+];
+it.each(tokenMalformed)("rejects the integrity token's %s before policy or cleanup", (_name, mutate) => {
+  const s = setup(), pins = s.api.pinTargets(input); s.control.mutateIntegrity = mutate;
+  expect(() => pins.observeHeldToken(heldProcess, heldThread, heldPid, {})).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+  expect(s.calls.filter(call => call.name === "GetTokenInformation").map(call => call.args[1])).toEqual([25]); expect(s.local.size).toBe(1); expect(s.tokens.size).toBe(1);
+});
+it.each(["structural", "foreign owner", "wrong binding"])("opaque observation rejects %s without Native calls or claimed getters", mode => {
+  const first = setup(), a = observe(first), read = () => { throw Error("private claimed fact"); };
+  if (mode === "foreign owner") {
+    const second = setup(), pins = second.api.pinTargets(input), count = second.calls.length;
+    expect(() => pins.requireTokenObservation(a.ref, a.binding)).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(second.calls).toHaveLength(count);
+  } else {
+    const candidate = mode === "structural" ? Object.defineProperty({ ...a.ref }, "integrity", { get: read }) : a.ref, count = first.calls.length;
+    expect(() => a.pins.requireTokenObservation(candidate, mode === "wrong binding" ? {} : a.binding)).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(first.calls).toHaveLength(count);
+  }
+});
+it("keeps a borrowed process reserved against later handle and descriptor aliases", () => {
+  const s = setup(), { pins } = observe(s); s.control.securityRaw = heldProcess - 8n; const freeCount = s.freed.length;
+  expect(() => pins.recheck()).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(s.freed).toHaveLength(freeCount);
+  const count = s.calls.length; expect(() => pins.close()).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(s.calls).toHaveLength(count);
+});
+it("keeps a borrowed process reserved against a later new-owner handle until all pin closes", () => {
+  const s = setup(); observe(s); s.control.nextFileRaw = heldProcess;
+  expect(() => s.api.pinTargets(input)).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(s.calls.at(-1)?.name).toBe("CreateFileW");
+});
+it("releases only the reservation after eight positive closes, permitting later ordinary handle-number reuse", () => {
+  const s = setup(), { pins, ref, binding } = observe(s), held = [...s.handles.keys()]; pins.close();
+  expect(s.closed.slice(-8)).toEqual(held.reverse()); expect(s.closed).not.toContain(heldProcess); expect(s.closed).not.toContain(heldThread);
+  const count = s.calls.length; expect(pins.requireTokenObservation(ref, binding)).toEqual({ integrity: 3, attributes: 2, policy: 1 }); expect(s.calls).toHaveLength(count);
+  s.control.nextFileRaw = heldProcess; const next = s.api.pinTargets(input); next.close(); expect(s.api.unsafe).toBe(false);
+});
+it("an unknown final pin close retains the borrowed reservation and refuses all later facts or work", () => {
+  const s = setup(), { pins, ref, binding } = observe(s); s.control.failedCloseRaw = [...s.handles.keys()][0];
+  expect(() => pins.close()).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(s.handles.size).toBe(1);
+  const count = s.calls.length; expect(() => pins.requireTokenObservation(ref, binding)).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+  expect(() => pins.close()).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(s.calls).toHaveLength(count); expect(s.closed).not.toContain(heldProcess); expect(s.closed).not.toContain(heldThread);
+});
+it("does not reissue or rebind an observation even if the same PID and process number are supplied", () => {
+  const s = setup(), { pins } = observe(s), count = s.calls.length;
+  expect(() => pins.observeHeldToken(heldProcess, heldThread, heldPid, {})).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(s.calls).toHaveLength(count);
+});
+
+it.each([undefined, null, 1, "binding", () => undefined])("rejects a non-object observation binding %# before Native work", binding => {
+  const s = setup(), pins = s.api.pinTargets(input), count = s.calls.length;
+  expect(() => pins.observeHeldToken(heldProcess, heldThread, heldPid, binding as object)).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(s.calls).toHaveLength(count);
+});
+it.each([0n, 0xffffffffffffffffn])("rejects an invalid returned token pointer %s without issuing another Native call", raw => {
+  const s = setup(), pins = s.api.pinTargets(input); s.control.tokenRaw = raw;
+  expect(() => pins.observeHeldToken(heldProcess, heldThread, heldPid, {})).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+  expect(s.calls.at(-1)?.name).toBe("OpenProcessToken"); expect(s.calls.some(call => call.name === "LocalAlloc")).toBe(false);
+});
+it("supports a padded but wholly owned integrity SID span without using the returned pointer after reuse", () => {
+  const s = setup(), pins = s.api.pinTargets(input), binding = Object.freeze({}); s.control.integrityLength = 44;
+  s.control.mutateIntegrity = (bytes, raw) => { bytes.copy(bytes, 32, 16, 28); bytes.fill(0, 16, 28); bytes.writeBigUInt64LE(raw + 32n, 0); };
+  const ref = pins.observeHeldToken(heldProcess, heldThread, heldPid, binding);
+  expect(pins.requireTokenObservation(ref, binding)).toEqual({ integrity: 3, attributes: 2, policy: 1 }); pins.close();
+});
+it("shares borrowed process reservations with sibling Native bindings", () => {
+  const s = setup(); observe(s); const sibling = bindWindowsNodeAssetEnforcementNative(s.native, s.load, s.fence); s.control.nextFileRaw = heldProcess;
+  expect(() => sibling.pinTargets(input)).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+  const count = s.calls.length; expect(s.api.unsafe).toBe(true); expect(() => s.api.pinTargets(input)).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(s.calls).toHaveLength(count);
+});
+
+it.each([0n, -1n, 0x8000000000000000n, heldProcess])("rejects invalid or equal borrowed thread %s before Native entry", thread => {
+  const s = setup(), pins = s.api.pinTargets(input), count = s.calls.length;
+  expect(() => pins.observeHeldToken(heldProcess, thread, heldPid, {})).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(s.calls).toHaveLength(count);
+});
+it("rejects a borrowed thread that aliases a live pin before querying the process", () => {
+  const s = setup(), pins = s.api.pinTargets(input), count = s.calls.length;
+  expect(() => pins.observeHeldToken(heldProcess, [...s.handles.keys()][0], heldPid, {})).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(s.calls).toHaveLength(count);
+});
+it("does not adopt or close an output token that aliases the still-held thread", () => {
+  const s = setup(), pins = s.api.pinTargets(input); s.control.tokenRaw = heldThread;
+  expect(() => pins.observeHeldToken(heldProcess, heldThread, heldPid, {})).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+  expect(s.calls.at(-1)?.name).toBe("OpenProcessToken"); expect(s.closed).not.toContain(heldThread); expect(s.closed).not.toContain(heldProcess);
+});
+it.each([heldThread, heldThread - 128n])("retains LocalAlloc storage aliasing borrowed thread at%s without freeing or closing it", raw => {
+  const s = setup(), pins = s.api.pinTargets(input); s.control.localRaw = raw; const freeCount = s.freed.length;
+  expect(() => pins.observeHeldToken(heldProcess, heldThread, heldPid, {})).toThrow(WindowsNodeAssetEnforcementNativeCleanupError);
+  expect(s.calls.at(-1)?.name).toBe("LocalAlloc"); expect(s.freed).toHaveLength(freeCount); expect(s.closed).not.toContain(heldThread);
+});
+it("keeps the borrowed thread reserved against later descriptor spans", () => {
+  const s = setup(), { pins } = observe(s); s.control.securityRaw = heldThread - 8n; const freeCount = s.freed.length;
+  expect(() => pins.recheck()).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(s.freed).toHaveLength(freeCount); expect(s.closed).not.toContain(heldThread);
+});
+it("keeps the borrowed thread reserved against sibling handles before eight positive pin closes", () => {
+  const s = setup(); observe(s); const sibling = bindWindowsNodeAssetEnforcementNative(s.native, s.load, s.fence); s.control.nextFileRaw = heldThread;
+  expect(() => sibling.pinTargets(input)).toThrow(WindowsNodeAssetEnforcementNativeCleanupError); expect(s.calls.at(-1)?.name).toBe("CreateFileW"); expect(s.closed).not.toContain(heldThread);
+});
+it("releases the thread reservation after all eight pin closes without closing the borrowed thread", () => {
+  const s = setup(), { pins } = observe(s); pins.close(); expect(s.closed).not.toContain(heldThread);
+  s.control.nextFileRaw = heldThread; const next = s.api.pinTargets(input); next.close(); expect(s.api.unsafe).toBe(false);
+});

@@ -11,7 +11,7 @@ type Handle = { raw: bigint; attempted: boolean; closed: boolean };
 type Security = { owner: Buffer; dacl: Buffer; sacl: Buffer; control: number };
 type Pin = { file: string; directory: boolean; handle: Handle; metadata: Buffer; security: Security };
 type Universe = { failure?: WindowsNodeAssetEnforcementNativeCleanupError; busy: boolean; operation: boolean; guarding: boolean;
-  handles: Map<bigint, Handle>; allocations: Map<bigint, Allocation>; owners: Set<object> };
+  handles: Map<bigint, Handle>; allocations: Map<bigint, Allocation>; borrowed: Map<bigint, object>; owners: Set<object> };
 
 /** A failed native contract permanently retains this witness's private owners, without exposing native details. */
 export class WindowsNodeAssetEnforcementNativeCleanupError extends Error {
@@ -28,8 +28,23 @@ export interface WindowsNodeAssetEnforcementTargets {
   mediumFullDirectory: string; mediumFullFile: string;
   ownerSid: string; packageSid: string; parentLabel: "explicit" | "default";
 }
-/** No pin or security readback is a process Stop or publication receipt. */
-export interface WindowsNodeAssetEnforcementPins { recheck(): void; close(): void }
+declare const tokenObservationBrand: unique symbol;
+/** Private Native observation identity only. It contains no token, process, Stop or cleanup authority. */
+export interface WindowsNodeAssetTokenObservationRef {
+  readonly scope: "windows-node-asset-token-observation"; readonly [tokenObservationBrand]: true;
+}
+/** Closed enums only; zero is a valid observed OFF policy and is distinguished by the caller's observed flag. */
+export interface WindowsNodeAssetTokenObservation {
+  readonly integrity: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  readonly attributes: 0 | 1 | 2;
+  readonly policy: 0 | 1 | 2 | 3 | 4;
+}
+/** No pin, security or token readback is a process Stop or publication receipt. */
+export interface WindowsNodeAssetEnforcementPins {
+  recheck(): void; close(): void;
+  observeHeldToken(process: bigint, thread: bigint, pid: number, binding: object): WindowsNodeAssetTokenObservationRef;
+  requireTokenObservation(ref: WindowsNodeAssetTokenObservationRef, binding: object): Readonly<WindowsNodeAssetTokenObservation>;
+}
 /** Only fixed, read-only native inspection is available to the witness. */
 export interface WindowsNodeAssetEnforcementNative {
   readonly unsafe: boolean;
@@ -56,11 +71,14 @@ export const WINDOWS_NODE_ASSET_ENFORCEMENT_FUNCTIONS = {
     "uint32_t __stdcall GetFileType(void *file)", "int __stdcall GetHandleInformation(void *file, _Out_ uint32_t *flags)",
     "int __stdcall GetFileInformationByHandle(void *file, void *information)",
     "uint32_t __stdcall GetFinalPathNameByHandleW(void *file, void *name, uint32_t length, uint32_t flags)",
+    "uint32_t __stdcall GetProcessId(void *process)", "void * __stdcall LocalAlloc(uint32_t flags, size_t bytes)",
     "int __stdcall CloseHandle(void *handle)", "void * __stdcall LocalFree(void *memory)",
   ],
   advapi32: [
     "uint32_t __stdcall GetSecurityInfo(void *file, int kind, uint32_t information, _Out_ void **owner, void *group, _Out_ void **dacl, _Out_ void **sacl, _Out_ void **descriptor)",
     "uint32_t __stdcall GetSecurityDescriptorLength(void *descriptor)",
+    "int __stdcall OpenProcessToken(void *process, uint32_t access, _Out_ void **token)",
+    "int __stdcall GetTokenInformation(void *token, int kind, void *information, uint32_t length, _Out_ uint32_t *returned)",
   ],
 } as const;
 
@@ -70,7 +88,7 @@ export function bindWindowsNodeAssetEnforcementNative(native: Pick<typeof Koffi,
   if (!fence || typeof fence !== "object") throw new WindowsNodeAssetEnforcementNativeCleanupError();
   let universe = universes.get(fence);
   if (!universe) {
-    universe = { busy: false, operation: false, guarding: false, handles: new Map(), allocations: new Map(), owners: new Set() };
+    universe = { busy: false, operation: false, guarding: false, handles: new Map(), allocations: new Map(), borrowed: new Map(), owners: new Set() };
     universes.set(fence, universe);
   }
   const shared = universe, functions: Record<string, Fn> = {}, libraries: unknown[] = [], records: unknown[] = [], owners = new Set<object>();
@@ -110,7 +128,7 @@ export function bindWindowsNodeAssetEnforcementNative(native: Pick<typeof Koffi,
   };
   const acquire = (file: string, directory: boolean, access: number, share: number): Handle => {
     const output = call("CreateFileW", [file, access, share, null, 3, 0x00200000 | (directory ? 0x02000000 : 0), null]);
-    if (!pointer(output) || shared.handles.has(output) || [...shared.allocations.values()].some(a => output >= a.raw && output < a.raw + BigInt(a.length ?? 1))) return fail();
+    if (!pointer(output) || shared.handles.has(output) || shared.borrowed.has(output) || [...shared.allocations.values()].some(a => output >= a.raw && output < a.raw + BigInt(a.length ?? 1))) return fail();
     const handle = { raw: output, attempted: false, closed: false }; shared.handles.set(output, handle); return handle;
   };
   const metadata = (handle: Handle, file: string, directory: boolean): Buffer => {
@@ -146,7 +164,7 @@ export function bindWindowsNodeAssetEnforcementNative(native: Pick<typeof Koffi,
     const status = call("GetSecurityInfo", [pin.handle.raw, 1, 0x15, owner, null, dacl, sacl, output], () => {
       const raw = own(output, "0");
       if (pointer(raw)) {
-        if (shared.handles.has(raw) || [...shared.allocations.values()].some(a => raw >= a.raw && raw < a.raw + BigInt(a.length ?? 1))) aliased = true;
+        if (shared.handles.has(raw) || shared.borrowed.has(raw) || [...shared.allocations.values()].some(a => raw >= a.raw && raw < a.raw + BigInt(a.length ?? 1))) aliased = true;
         else { allocation = { raw, attempted: false }; shared.allocations.set(raw, allocation); }
       }
     });
@@ -154,7 +172,7 @@ export function bindWindowsNodeAssetEnforcementNative(native: Pick<typeof Koffi,
     const sd = allocation, length = call("GetSecurityDescriptorLength", [sd.raw]);
     if (!uint(length) || length < 20 || length > MAX_SECURITY || sd.raw + BigInt(length) >= 0x8000000000000000n) return fail();
     sd.length = length;
-    if ([...shared.handles.keys()].some(raw => raw >= sd.raw && raw < sd.raw + BigInt(length)) ||
+    if ([...shared.handles.keys(), ...shared.borrowed.keys()].some(raw => raw >= sd.raw && raw < sd.raw + BigInt(length)) ||
         [...shared.allocations.values()].some(a => a !== sd && sd.raw < a.raw + BigInt(a.length ?? 1) && a.raw < sd.raw + BigInt(length))) return fail();
     const bytes = copy(sd.raw, length), control = bytes.readUInt16LE(2), spans: { start: number; end: number }[] = [];
     const requiredControl = defaultMedium ? 0x9004 : 0x9014;
@@ -237,7 +255,8 @@ export function bindWindowsNodeAssetEnforcementNative(native: Pick<typeof Koffi,
     },
     pinTargets(input: WindowsNodeAssetEnforcementTargets): WindowsNodeAssetEnforcementPins {
       return operation(() => {
-        const pins: Pin[] = [], record = { input, pins, binding }; owners.add(record); shared.owners.add(record);
+        const pins: Pin[] = [], borrowed = new Map<bigint, object>(), observations = new WeakMap<object, { binding: object; facts: Readonly<WindowsNodeAssetTokenObservation> }>(),
+          tokenRecords: object[] = [], record = { input, pins, binding, borrowed, observations, tokenRecords }; owners.add(record); shared.owners.add(record);
         if (!input || typeof input !== "object" || Object.keys(input).sort().join(",") !== "image,lowFullDirectory,lowFullFile,lowOwner,mediumFullDirectory,mediumFullFile,ownerSid,packageSid,parent,parentLabel,root") return fail();
         const names = ["parent", "root", "image", "lowOwner", "lowFullDirectory", "lowFullFile", "mediumFullDirectory", "mediumFullFile"] as const;
         const files = names.map(key => own(input, key)); const ownerSid = own(input, "ownerSid"), packageSid = own(input, "packageSid"), parentLabel = own(input, "parentLabel");
@@ -274,9 +293,62 @@ export function bindWindowsNodeAssetEnforcementNative(native: Pick<typeof Koffi,
                 !sameSecurity(pin.security, security(pin, ownerSid as string, packageSid as string, expectedKinds[i], i === 0 || i >= 6, i === 0 && parentLabel === "default"))) return fail();
           }
         };
-        return Object.freeze({ recheck() { operation(recheck); }, close() {
+        return Object.freeze({ recheck() { operation(recheck); },
+          observeHeldToken(process: bigint, thread: bigint, pid: number, observationBinding: object): WindowsNodeAssetTokenObservationRef {
+            return operation(() => {
+              if (closed || tokenRecords.length || !observationBinding || typeof observationBinding !== "object" || !pointer(process) || !pointer(thread) || process === thread || !uint(pid) || pid === 0 ||
+                  [process, thread].some(raw => shared.handles.has(raw) || shared.borrowed.has(raw) || [...shared.allocations.values()].some(a => raw >= a.raw && raw < a.raw + BigInt(a.length ?? 1)))) return fail();
+              const pending = { process, thread, pid, binding: observationBinding, token: undefined as Handle | undefined, allocation: undefined as Allocation | undefined };
+              tokenRecords.push(pending); for (const raw of [process, thread]) { borrowed.set(raw, pending); shared.borrowed.set(raw, pending); }
+              if (call("GetProcessId", [process]) !== pid) return fail();
+              const output: unknown[] = [undefined]; let aliased = false;
+              const opened = call("OpenProcessToken", [process, 8, output], () => {
+                const raw = own(output, "0");
+                if (pointer(raw)) {
+                  if (shared.handles.has(raw) || shared.borrowed.has(raw) || [...shared.allocations.values()].some(a => raw >= a.raw && raw < a.raw + BigInt(a.length ?? 1))) aliased = true;
+                  else { pending.token = { raw, attempted: false, closed: false }; shared.handles.set(raw, pending.token); }
+                }
+              });
+              if (!bool(opened) || !pending.token || aliased) return fail();
+              const token = pending.token, flags: unknown[] = [undefined];
+              requireBool("GetHandleInformation", [token.raw, flags]); if (own(flags, "0") !== 0) return fail();
+              const raw = call("LocalAlloc", [0x40, 256]);
+              if (!pointer(raw) || raw % 8n || raw + 256n >= 0x8000000000000000n ||
+                  [...shared.handles.keys(), ...shared.borrowed.keys()].some(value => value >= raw && value < raw + 256n) ||
+                  [...shared.allocations.values()].some(a => raw < a.raw + BigInt(a.length ?? 1) && a.raw < raw + 256n)) return fail();
+              const allocation = { raw, length: 256, attempted: false }; pending.allocation = allocation; shared.allocations.set(raw, allocation);
+              const integrityLength: unknown[] = [undefined]; requireBool("GetTokenInformation", [token.raw, 25, raw, 256, integrityLength]);
+              const length = own(integrityLength, "0"); if (!uint(length) || length < 28 || length > 256) return fail();
+              const integrity = copy(raw, length), sidPointer = integrity.readBigUInt64LE(0), attributesRaw = integrity.readUInt32LE(8);
+              if (sidPointer % 4n || sidPointer < raw + 16n || sidPointer + 12n > raw + BigInt(length)) return fail();
+              const at = Number(sidPointer - raw);
+              if (integrity[at] !== 1 || integrity[at + 1] !== 1 || !integrity.subarray(at + 2, at + 8).equals(Buffer.from([0, 0, 0, 0, 0, 16]))) return fail();
+              const rid = integrity.readUInt32LE(at + 8), levels = new Map<number, WindowsNodeAssetTokenObservation["integrity"]>([
+                [0, 1], [4096, 2], [8192, 3], [8448, 4], [12288, 5], [16384, 6], [20480, 7],
+              ]);
+              const policyLength: unknown[] = [undefined]; requireBool("GetTokenInformation", [token.raw, 27, raw, 256, policyLength]);
+              if (own(policyLength, "0") !== 4) return fail(); const policy = copy(raw, 4), policyRaw = policy.readUInt32LE(0);
+              const facts: Readonly<WindowsNodeAssetTokenObservation> = Object.freeze({ integrity: levels.get(rid) ?? 0,
+                attributes: attributesRaw === 0x20 ? 1 : attributesRaw === 0x60 ? 2 : 0, policy: policyRaw <= 3 ? policyRaw as 0 | 1 | 2 | 3 : 4 });
+              if (allocation.attempted || shared.allocations.get(raw) !== allocation) return fail(); allocation.attempted = true;
+              const freed = call("LocalFree", [raw]); if (freed !== null && freed !== 0n) return fail(); shared.allocations.delete(raw);
+              close(token); integrity.fill(0); policy.fill(0);
+              const ref = Object.freeze({ scope: "windows-node-asset-token-observation" as const }) as WindowsNodeAssetTokenObservationRef;
+              observations.set(ref, { binding: observationBinding, facts }); return ref;
+            });
+          },
+          requireTokenObservation(ref: WindowsNodeAssetTokenObservationRef, observationBinding: object): Readonly<WindowsNodeAssetTokenObservation> {
+            return operation(() => {
+              const value = ref && typeof ref === "object" ? observations.get(ref) : undefined;
+              if (!value || value.binding !== observationBinding) return fail(); return value.facts;
+            });
+          }, close() {
           if (closed) { usable(); return; }
-          operation(() => { recheck(); for (const pin of pins.slice().reverse()) close(pin.handle); closed = true; owners.delete(record); shared.owners.delete(record); });
+          operation(() => {
+            recheck(); for (const pin of pins.slice().reverse()) close(pin.handle);
+            for (const [raw, value] of borrowed) { if (shared.borrowed.get(raw) !== value) return fail(); shared.borrowed.delete(raw); }
+            borrowed.clear(); closed = true; owners.delete(record); shared.owners.delete(record);
+          });
         } });
       });
     },

@@ -10,7 +10,7 @@ import { WindowsNodeToolchainCleanupError } from "../../app/main/agent/windows-n
 import { WindowsCommandCopyProofCleanupError } from "../fixtures/windows-command-copy-proof-native";
 import { WindowsNodeAssetEnforcementNativeCleanupError } from "../fixtures/windows-node-asset-enforcement-native";
 import { bindWindowsNodeAssetEnforcement, observeWindowsNodeAssetStop, requireWindowsNodeAssetOutputFacts,
-  windowsNodeAssetCreationSecurity, windowsNodeAssetPreludeExit, windowsNodeAssetPreludeProbe, windowsNodeAssetErrorClass, NODE_ASSET_READY, NODE_ASSET_ERROR_READY, WindowsNodeAssetEnforcementObservationError } from "../fixtures/windows-node-asset-enforcement-proof";
+  windowsNodeAssetCreationSecurity, windowsNodeAssetPreludeExit, windowsNodeAssetPreludeProbe, windowsNodeAssetErrorClass, requireWindowsNodeAssetTokenFacts, NODE_ASSET_READY, NODE_ASSET_ERROR_READY, WindowsNodeAssetEnforcementObservationError } from "../fixtures/windows-node-asset-enforcement-proof";
 import type { WindowsLpacApi } from "../../app/main/agent/experimental-windows-lpac-api";
 
 const loaded = { requireWindowsCommandRootOnlyCompleted, requireWindowsCommandOutputClosed };
@@ -128,6 +128,37 @@ it("V1 failure205 and V1 frames remain failures and cannot project a V2 diagnost
   expect(windowsNodeAssetPreludeProbe(loaded, input)).toEqual(unknownProbe);
   expect(() => requireWindowsNodeAssetOutputFacts(loaded, input)).toThrow();
 });
+const observation = Object.freeze({ scope: "fixed-test-token-observation" }) as unknown as Parameters<typeof requireWindowsNodeAssetTokenFacts>[1]["observation"];
+it("token metadata is read only after genuine exact-run completion and output closure", async () => {
+  const { input } = await natural(true), facts = Object.freeze({ integrity: 3, attributes: 2, policy: 1 }), read = vi.fn(() => facts);
+  expect(requireWindowsNodeAssetTokenFacts(loaded, { ...input, observedRun: input.run, observedLaunch: input.launch, observation, pins: { requireTokenObservation: read } })).toBe(facts);
+  expect(read).toHaveBeenCalledOnce(); expect(read).toHaveBeenCalledWith(observation, input.launch);
+});
+it.each(["completed", "closed", "run", "launch"] as const)("token projection rejects structural or foreign %s before consulting observation metadata", async field => {
+  const { input } = await natural(true), foreign = await natural(true), read = vi.fn(() => Object.freeze({ integrity: 3, attributes: 2, policy: 1 }));
+  for (const value of [{ ...input[field] }, foreign.input[field]]) {
+    const projected = Object.defineProperty({ ...input, [field]: value, observedRun: input.run, observedLaunch: input.launch, observation, pins: { requireTokenObservation: read } },
+      "observation", { get: () => { throw Error("PRIVATE token observation"); } }) as Parameters<typeof requireWindowsNodeAssetTokenFacts>[1];
+    expect(() => requireWindowsNodeAssetTokenFacts(loaded, projected)).toThrow(); expect(read).not.toHaveBeenCalled();
+  }
+});
+it.each(["observedRun", "observedLaunch"] as const)("token projection cannot rebind an observation through a different %s", async field => {
+  const { input } = await natural(true), foreign = await natural(true), read = vi.fn(() => Object.freeze({ integrity: 3, attributes: 2, policy: 1 }));
+  const projected = { ...input, observedRun: input.run, observedLaunch: input.launch, [field]: field === "observedRun" ? foreign.input.run : foreign.input.launch,
+    observation, pins: { requireTokenObservation: read } };
+  expect(() => requireWindowsNodeAssetTokenFacts(loaded, projected)).toThrow(); expect(read).not.toHaveBeenCalled();
+});
+it("token observation failure after genuine shutdown remains a failure without becoming a disposal receipt", async () => {
+  const { input } = await natural(true), read = vi.fn(() => { throw Error("Fixed refused token observation."); });
+  expect(() => requireWindowsNodeAssetTokenFacts(loaded, { ...input, observedRun: input.run, observedLaunch: input.launch, observation, pins: { requireTokenObservation: read } })).toThrow();
+  expect(read).toHaveBeenCalledOnce();
+});
+it("a token-observation uncertainty thrown by the genuine held attester prevents Resume", async () => {
+  const s = outputFake(), copy = await s.prepare(), io = s.owner();
+  await expect(copy.launchRootOnlyWithOutput(context => io.createSuspended(context, "C:\\trusted\\node.exe", s.command),
+    () => { throw new WindowsNodeAssetEnforcementNativeCleanupError(); })).rejects.toThrow();
+  expect(s.events).toContain("native-create"); expect(s.events).not.toContain("resume");
+});
 it.each(["completed", "closed", "run", "launch"] as const)("probe authentication refuses structural/foreign %s refs before touching stderr", async field => {
   const { input } = await natural(true, 305, { stdout: Buffer.alloc(0), stderr: probeFrame() });
   const foreign = await natural(true, 305, { stdout: Buffer.alloc(0), stderr: probeFrame() });
@@ -154,6 +185,10 @@ it("diagnostic fields are bounded fixed enums and cannot carry raw errors or unl
   expect(unknown).toMatchObject({ preludeStage: 0, cExit: 0, errorClass: 0, probeObject: 0, probeRight: 0, probeOutcome: 0, probeMatrix: Array<number>(24).fill(0) });
   expect(new WindowsNodeAssetEnforcementObservationError("natural", 4, 11, 305, 0, 1, 1, 2, [...matrixValues.slice(0, -1), 99]).probeMatrix).toEqual(unknown.probeMatrix);
   expect(unknown.stack).toBe(`${unknown.name}: ${unknown.message}`);
+  const token = new WindowsNodeAssetEnforcementObservationError("natural", 4, 11, 305, 0, 7, 2, 1, [], 1, 3, 2, 0);
+  expect(token).toMatchObject({ tokenObserved: 1, tokenIntegrity: 3, tokenAttributes: 2, tokenPolicy: 0 });
+  expect(new WindowsNodeAssetEnforcementObservationError("natural", 4, 11, 305, 0, 0, 0, 0, [], 0, 3, 2, 1)).toMatchObject({ tokenObserved: 0, tokenIntegrity: 0, tokenAttributes: 0, tokenPolicy: 0 });
+  expect(new WindowsNodeAssetEnforcementObservationError("natural", 4, 11, 305, 0, 0, 0, 0, [], 1, Infinity, 99, 9)).toMatchObject({ tokenObserved: 1, tokenIntegrity: 0, tokenAttributes: 0, tokenPolicy: 0 });
 });
 it("diagnostic error classes require the exact constructors and never coerce claimed names, messages or causes", () => {
   const classes = { WindowsRootOnlyCommandCopyCleanupError, WindowsCommandCopyCleanupError, WindowsCommandRootOnlyCleanupError, WindowsCommandOutputCleanupError,
@@ -175,9 +210,10 @@ it("the prelude stage schedule authenticates completed/run before projecting C e
   expect(prelude).toContain("preludeStage = 8; cExit = windowsNodeAssetPreludeExit(loaded, done, run)");
   expect(prelude).toContain("preludeStage = 9; const closed = await io.closeOutputAfterStopped(done, run)");
   const stopped = prelude.indexOf("preludeStage = 10; authenticateStop(1);");
+  const token = prelude.indexOf("tokenFacts = native(() => requireWindowsNodeAssetTokenFacts(loaded!");
   const probe = prelude.indexOf("probe = windowsNodeAssetPreludeProbe(loaded, { completed: done, closed, run, launch: launch!, stderr: failureBytes })");
   const facts = prelude.indexOf('preludeStage = 11; facts("prelude", done, closed, run)');
-  expect(stopped).toBeGreaterThan(-1); expect(probe).toBeGreaterThan(stopped); expect(facts).toBeGreaterThan(probe);
+  expect(stopped).toBeGreaterThan(-1); expect(token).toBeGreaterThan(stopped); expect(probe).toBeGreaterThan(token); expect(facts).toBeGreaterThan(probe);
   expect(prelude).toContain("finally { failureBytes.fill(0); }");
 });
 it.each(["cancel", "overflow"] as const)("fixed %s bytes require genuine automatic Stop and incomplete closed output", async mode => {

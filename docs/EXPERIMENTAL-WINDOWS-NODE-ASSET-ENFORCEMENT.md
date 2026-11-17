@@ -116,3 +116,42 @@ V1 evidence remains immutable and unsuccessful:
 Those kernels contradict V1's parent READ_CONTROL-positive and host-only Low WRITE_DAC-positive assumptions.
 No production write escalation was observed. V2 replaces those invalid test expectations under its explicit new
 scope and adds the identical-DACL Low/Medium causal controls; it does not reinterpret any V1 failure as success.
+
+V2 run `43983628743` at `bcce66ad1a5809e0d3a3b4f01cdd10efa83ab8ef` also failed on both images. Genuine C305 at
+prelude11 retained tuple7/2/1 and matrix `222122122222111111111111`: the Medium full-package directory and file
+allowed all three security rights. The original V2 expectations still fail. The actual parent/root/image rows
+remain 222/122/122; this observed no production write escalation. Later cases were blocked and owners retained.
+
+The C prelude's original generic token attester verified its AppContainer/package/capability/AAP facts, but queried
+neither TokenIntegrityLevel25 nor TokenMandatoryPolicy27. The test executable is created with a Medium label;
+the production Node image is Low. Microsoft documents that process integrity is the minimum of user and executable
+integrity and that each token has a separately queried mandatory policy. These source facts identify an evidence
+gap; they do not establish the failed C token's actual level or the cause of either kernel result.
+
+An evidence-only append now reads the held C primary token before Resume. The genuine output launch must still
+hold exactly its process/thread handles and match the attested PID; GetProcessId independently matches that PID.
+TOKEN_QUERY is the only new token right. A real zeroed LocalAlloc buffer owns the returned integrity-label SID;
+the header, returned span, SID authority/count and whole SID bounds are checked before bounded decode copies.
+The policy query returns exactly one DWORD. Auxiliary LocalFree and token CloseHandle must both succeed before
+an opaque observation is issued. Both borrowed process/thread handles are never closed here, are reserved against
+aliases, and remain reserved until all eight target pins close positively. Any unknown allocation/query/free/close or reentry
+permanently fences the owner and leaves the child unresumed with its private graph retained.
+
+The observation is private to the exact eight-pin owner and genuine launch identity; the returned C run is bound
+once. Only after genuine exact-run completion, output closure and Stop may a failure project tokenObserved1 and
+three finite enums. Integrity is0 other,1 untrusted,2 Low,3 Medium,4 MediumPlus,5 High,6 System,7 protected;
+attributes are0 other,1 exactly0x20,2 exactly0x60; policy is0 OFF,1 no-write-up,2 new-process-minimum,3 both,4 other.
+tokenObserved0 forces all fields to zero and distinguishes an absent observation from a measured OFF policy.
+No raw SID/RID, attribute/policy value, native status, handle, path or text is projected. Metadata and reservation
+release confer no Stop or disposal authority. The C executable label, C expectations, V2 success/failure frames,
+production factory, runtime pins and original five-second portable bounds are unchanged.
+
+Primary references:
+
+- [Mandatory Integrity Control](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control)
+  documents minimum-of-user/file process integrity and the token policy query.
+- [TOKEN_MANDATORY_POLICY](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_mandatory_policy)
+  defines OFF0, no-write-up1, new-process-minimum2 and valid mask3.
+- [SYSTEM_MANDATORY_LABEL_ACE](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-system_mandatory_label_ace)
+  defines label policy and Low/Medium integrity RIDs. These pages alone do not establish outcomes for the observed
+  WRITE_DAC/WRITE_OWNER calls without the actual subject-token facts.

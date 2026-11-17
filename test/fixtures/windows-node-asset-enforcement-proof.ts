@@ -16,6 +16,8 @@ type Bundle = typeof import("../../app/main/agent/windows-command-copy") & typeo
   typeof import("./windows-command-copy-proof-native") & typeof import("./windows-node-asset-enforcement-native") &
   typeof import("../../app/main/agent/experimental-windows-lpac-api") & typeof import("../../app/main/agent/coding-platform");
 type Asset = Readonly<{ executable: string; module: string; program: string }>;
+type TargetPins = ReturnType<ReturnType<Bundle["loadWindowsNodeAssetEnforcementNative"]>["pinTargets"]>;
+type TokenObservation = ReturnType<TargetPins["observeHeldToken"]>;
 export type WindowsNodeAssetEnforcementMode = "natural" | "natural-default" | "overflow" | "cancel" | "precreate" | "preresume" | "sharedcreate";
 const MODES: readonly WindowsNodeAssetEnforcementMode[] = ["natural", "natural-default", "overflow", "cancel", "precreate", "preresume", "sharedcreate"];
 export const WINDOWS_NODE_ASSET_ENFORCEMENT_EXPORTS = Object.freeze([
@@ -56,7 +58,8 @@ export class WindowsNodeAssetEnforcementObservationError extends Error {
   readonly preludeStage: number; readonly cExit: number; readonly errorClass: number;
   readonly probeObject: number; readonly probeRight: number; readonly probeOutcome: number;
   readonly probeMatrix: readonly number[];
-  constructor(readonly mode: WindowsNodeAssetEnforcementMode, readonly phase: number, preludeStage = 0, cExit = 0, errorClass = 0, probeObject = 0, probeRight = 0, probeOutcome = 0, probeMatrix: readonly number[] = []) {
+  readonly tokenObserved: number; readonly tokenIntegrity: number; readonly tokenAttributes: number; readonly tokenPolicy: number;
+  constructor(readonly mode: WindowsNodeAssetEnforcementMode, readonly phase: number, preludeStage = 0, cExit = 0, errorClass = 0, probeObject = 0, probeRight = 0, probeOutcome = 0, probeMatrix: readonly number[] = [], tokenObserved = 0, tokenIntegrity = 0, tokenAttributes = 0, tokenPolicy = 0) {
     const stage = Number.isInteger(preludeStage) && preludeStage >= 0 && preludeStage <= 14 ? preludeStage : 0;
     const code = Number.isInteger(cExit) && (cExit === 29 || cExit >= 301 && cExit <= 309) ? cExit : 0;
     const kind = Number.isInteger(errorClass) && errorClass >= 0 && errorClass <= 8 ? errorClass : 0;
@@ -65,12 +68,26 @@ export class WindowsNodeAssetEnforcementObservationError extends Error {
     const outcome = Number.isInteger(probeOutcome) && probeOutcome >= 1 && probeOutcome <= 5 ? probeOutcome : 0;
     const matrix = Array.isArray(probeMatrix) && probeMatrix.length === 24 && probeMatrix.every(value => Number.isInteger(value) && value >= 1 && value <= 5)
       ? Object.freeze([...probeMatrix]) : Object.freeze(Array<number>(24).fill(0));
-    super(`The fixed native Node asset witness was refused in ${mode} at phase ${phase} (prelude ${stage}, C exit ${code}, error class ${kind}, probe ${object}/${right}/${outcome}, matrix ${matrix.join("")}).`);
+    const observed = tokenObserved === 1 ? 1 : 0;
+    const integrity = observed && Number.isInteger(tokenIntegrity) && tokenIntegrity >= 0 && tokenIntegrity <= 7 ? tokenIntegrity : 0;
+    const attributes = observed && Number.isInteger(tokenAttributes) && tokenAttributes >= 0 && tokenAttributes <= 2 ? tokenAttributes : 0;
+    const policy = observed && Number.isInteger(tokenPolicy) && tokenPolicy >= 0 && tokenPolicy <= 4 ? tokenPolicy : 0;
+    super(`The fixed native Node asset witness was refused in ${mode} at phase ${phase} (prelude ${stage}, C exit ${code}, error class ${kind}, probe ${object}/${right}/${outcome}, matrix ${matrix.join("")}, C token ${observed}/${integrity}/${attributes}/${policy}).`);
     this.preludeStage = stage; this.cExit = code; this.errorClass = kind;
     this.probeObject = object; this.probeRight = right; this.probeOutcome = outcome;
     this.probeMatrix = matrix;
+    this.tokenObserved = observed; this.tokenIntegrity = integrity; this.tokenAttributes = attributes; this.tokenPolicy = policy;
     this.name = "WindowsNodeAssetEnforcementObservationError"; this.stack = `${this.name}: ${this.message}`;
   }
+}
+
+/** Read-only token diagnostics require the same genuine completed/closed run before touching the private observation. */
+export function requireWindowsNodeAssetTokenFacts(loaded: Pick<Bundle, "requireWindowsCommandRootOnlyCompleted" | "requireWindowsCommandOutputClosed">,
+  input: { completed: unknown; closed: unknown; run: WindowsCommandRootOnlyRunRef; launch: WindowsCommandOutputLaunchRef;
+    observedRun: WindowsCommandRootOnlyRunRef; observedLaunch: WindowsCommandOutputLaunchRef; observation: TokenObservation; pins: Pick<TargetPins, "requireTokenObservation"> }) {
+  loaded.requireWindowsCommandRootOnlyCompleted(input.completed, input.run); loaded.requireWindowsCommandOutputClosed(input.closed, input.launch, input.run);
+  ensure(input.observedRun === input.run && input.observedLaunch === input.launch);
+  return input.pins.requireTokenObservation(input.observation, input.launch);
 }
 
 /** Diagnostic only. An authentic exact-run completion does not certify output closure or permit disposal. */
@@ -163,6 +180,8 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
     if (busy || !MODES.includes(mode)) { terminal = new WindowsNodeAssetEnforcementObservationError(MODES.includes(mode) ? mode : "natural", 1); throw terminal; }
     busy = true;
     let phase = 1, preludeStage = 0, cExit = 0, probe: Readonly<{ object: number; right: number; outcome: number; matrix: readonly number[] }> = { object: 0, right: 0, outcome: 0, matrix: Object.freeze(Array<number>(24).fill(0)) },
+      tokenObserved = 0, tokenFacts: Readonly<{ integrity: number; attributes: number; policy: number }> = { integrity: 0, attributes: 0, policy: 0 },
+      heldToken: Readonly<{ ref: TokenObservation; launch: WindowsCommandOutputLaunchRef }> | undefined,
       loaded: Bundle | undefined, proof: ReturnType<Bundle["loadWindowsCommandCopyProofNative"]> | undefined,
       security: ReturnType<Bundle["loadWindowsNodeAssetEnforcementNative"]> | undefined,
       targetPins: ReturnType<ReturnType<Bundle["loadWindowsNodeAssetEnforcementNative"]>["pinTargets"]> | undefined,
@@ -175,7 +194,8 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
     let stopped: { ref: WindowsCommandRootOnlyStoppedRef; binding: object } | undefined;
     const graph = { asset, verifyBuild, resources, mode, pins, directories, owners, launches, output, abort, assetAbort, sharedAbort,
       get loaded() { return loaded; }, get proof() { return proof; }, get security() { return security; }, get targetPins() { return targetPins; }, get api() { return api; },
-      get profile() { return profile; }, get node() { return node; }, get copy() { return copy; }, get io() { return io; }, get script() { return script; }, get directory() { return directory; } };
+      get profile() { return profile; }, get node() { return node; }, get copy() { return copy; }, get io() { return io; }, get script() { return script; }, get directory() { return directory; },
+      get heldToken() { return heldToken; } };
     const current = () => live && !terminal && proof?.unsafe !== true && security?.unsafe !== true && !profileClosed;
     const workCurrent = () => current() && !sharedAbort.signal.aborted;
     const guarded = <T>(fn: () => T): T => { ensure(current()); const result = fn(); ensure(current()); return result; };
@@ -241,12 +261,21 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
         let run: WindowsCommandRootOnlyRunRef;
         preludeStage = 2;
         try { run = await copy.launchRootOnlyWithOutput(context => { preludeStage = 3; launch = io!.createSuspended(context, program, line); launches.push(launch); return launch; }, held => {
-          preludeStage = 4; native(() => api!.verifyToken(selected, held.process)); preludeStage = 5; native(() => proof!.image(held.process, held.pid, program)); preludeStage = 6; checkPins(); }); }
+          preludeStage = 4; native(() => api!.verifyToken(selected, held.process));
+          ensure(launch !== undefined && heldToken === undefined); const exact = loaded!.requireWindowsCommandOutputLaunch(launch!);
+          ensure(exact.root.process === held.process && exact.root.thread === held.thread && exact.root.pid === held.pid &&
+            exact.heldPiHandles.length === 2 && exact.heldPiHandles[0] === held.process && exact.heldPiHandles[1] === held.thread);
+          heldToken = Object.freeze({ ref: native(() => targetPins!.observeHeldToken(held.process, held.thread, held.pid, launch!)), launch: launch! });
+          preludeStage = 5; native(() => proof!.image(held.process, held.pid, program)); preludeStage = 6; checkPins(); }); }
         finally { line.fill(0); }
+        ensure(heldToken !== undefined && heldToken.launch === launch);
+        const tokenBinding = Object.freeze({ ...heldToken!, run });
         preludeStage = 7; const done = await copy.completeRootOnly(run, io.signal);
         preludeStage = 8; cExit = windowsNodeAssetPreludeExit(loaded, done, run);
         preludeStage = 9; const closed = await io.closeOutputAfterStopped(done, run);
         preludeStage = 10; authenticateStop(1);
+        tokenFacts = native(() => requireWindowsNodeAssetTokenFacts(loaded!, { completed: done, closed, run, launch: launch!, observedRun: tokenBinding.run,
+          observedLaunch: tokenBinding.launch, observation: tokenBinding.ref, pins: targetPins! })); tokenObserved = 1;
         const failureBytes = Buffer.concat(output.stderr);
         try { probe = windowsNodeAssetPreludeProbe(loaded, { completed: done, closed, run, launch: launch!, stderr: failureBytes }); }
         finally { failureBytes.fill(0); }
@@ -299,7 +328,8 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
         stdinEof: mode === "precreate" || mode === "preresume" || mode === "sharedcreate" ? 0 : 1, rootOnlyStop: 1, snapshot: 1, seedUnchanged: 1,
         assetCleanup: 1, privateCleanup: 1, profileCleanup: 1, emittedCjs: 1 });
     } catch (error) {
-      live = false; terminal ??= new WindowsNodeAssetEnforcementObservationError(mode, phase, preludeStage, cExit, windowsNodeAssetErrorClass(loaded, error), probe.object, probe.right, probe.outcome, probe.matrix); retained.push(graph);
+      live = false; terminal ??= new WindowsNodeAssetEnforcementObservationError(mode, phase, preludeStage, cExit, windowsNodeAssetErrorClass(loaded, error), probe.object, probe.right, probe.outcome, probe.matrix,
+        tokenObserved, tokenFacts.integrity, tokenFacts.attributes, tokenFacts.policy); retained.push(graph);
       for (const value of launches) try { loaded!.retainWindowsCommandOutput(value); } catch { /* Same-graph quarantine supplies no disposal receipt. */ }
       for (const owner of owners) try { owner.retainStop(); } catch { /* Request exact Stop only; never retry cleanup or certify disposal. */ }
       throw terminal;
