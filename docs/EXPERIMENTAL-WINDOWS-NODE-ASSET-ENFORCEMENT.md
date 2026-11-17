@@ -168,6 +168,28 @@ return or error. Checkpoints and inner classes never decide admission or turn fa
 success. No native query, filesystem action, logging, recovery or retry is added. The failed Node sector remains
 unclassified until a separately reviewed diagnostic run supplies evidence.
 
+The Node-checkpoint append at `0553e412060a89513d3191c02cb8bd36a959413f` also failed on both images in run44001782995.
+Contracts256+572 passed; each Windows job passed572 portable tests and retained all seven native cases after the
+first natural refusal. Both observations remained phase5/prelude14/C49/outerclass1/probe000/matrix28zeros/
+token1/2/2/1, with Node checkpoint6/inner0. The real factory had returned a held Node launch, and its ordinary image
+and pin checks had passed. The later creator/output/automatic-asset-attestation/postattest/Resume sector remained
+unclassified; Node execution and full cleanup were not certified. No one-use-copy defect was established.
+
+A further evidence-only observer forwards the real Stop owner's creator, attester and current callbacks unchanged.
+It wraps only a supplied function capture callback, passes the same genuine witness exactly once and returns its
+original value, including an invalid object or Promise that the existing Stop guard must reject. Its identical
+original exception is rethrown. Capture checkpoint0 is not entered,1 is entered and2 is returned; inner class0..8
+uses the same exact-constructor mapping. Per-owner records are separate, and a fresh blank record is installed
+before Node-phase verification, so successful C-capture facts cannot be mistaken for a Node callback.
+
+A passive rejection handler reads only the existing exact-graph branded Stop stage0..14, operation0..7,
+predicate0..11 and constraint0..21. Zero means unobserved/unknown. Native domain and status/code are neither read
+nor published. The original launch Promise is returned unchanged; observer attachment, projection and storage
+faults cannot replace its identity, resolution or rejection. The observer introduces no await, native query,
+filesystem action, logging, grant, Stop attestation or cleanup action. These values only classify the retained
+failure; they cannot change launch admission, Resume or the fatal outer Copy error. The failed runs above remain
+failed, with their private owners retained.
+
 V4 neither recertifies those failures nor silently changes a MIC claim into success. Its new same-Low-label,
 exact-package FA/RX comparison explicitly measures DACL enforcement on the final product graph.
 

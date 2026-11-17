@@ -391,8 +391,8 @@ export function redactSecrets(text: string): string {
 
 /**
  * redactSecrets's passes, in order: each reads and replaces in the whole text it is given, as redactSecrets folds them.
- * A pass can match across lines (a private key block, a list's `\n- ` separator), so the text is never cut into
- * slices but by KEY_VALUE's own pass, which cuts it only where no match can cross (keyValueSteps, integ-x-3); a caller
+ * A pass can match across lines (a private key block, a list's `\n- ` separator), so only KEY_VALUE has its own
+ * bounded recognition and value scans (keyValueSteps, integ-x-3); a caller
  * that must keep Ember's main thread free between passes runs them one at a time (redactSecretsYielding) and gets the
  * same bytes, since it is the same list (merge review integ-y-2).
  */
@@ -433,84 +433,102 @@ function hideKeyValues(text: string): string {
   return runSteps(keyValueSteps(text));
 }
 
-/** The most text KEY_VALUE reads in one step (integ-x-3: on 4 MiB of output one whole-text pass held Ember's main
- * thread 358 ms, longer than Stop's 300 ms). */
+/** The work between key-value steps (integ-x-3: one whole 4 MiB regex pass held Ember's main thread 358 ms,
+ * longer than Stop's 300 ms). Search, whitespace, values, output and bounded regex searches all count. */
 export const KEY_VALUE_SLICE = 256 * 1024;
 /** How far before its `=` or `:` (and the spaces before it) a KEY_VALUE match can start: the secret word (at most 13),
  * its suffix (at most 256) and a quote and a bracket, with room to spare. */
 const KEY_REACH = 300;
-const SPACES_AFTER = /[\s"'>]*/y;
-const VALUE_RUN = /[^\s"',;]*/y;
-const CUT = /[,;\s]/g;
-// Span discovery also runs on the main thread. Overlapping candidate spans can cover megabytes before replacement
-// begins, so yield after a small batch even when the eventual replacement fits into one KEY_VALUE_SLICE.
-const OPS_PER_STEP = 4096;
+const KEY_SPACE = /\s/;
+const KEY_VALUE_CHAR = /[^\s"',;]/;
 
 /**
- * KEY_VALUE's replace in steps of at most `slice` characters, a step yielded between them, with the same bytes as
- * `text.replace(KEY_VALUE, …)` over the whole text (integ-x-3). Every match holds an `=` or `:`, starts at most
- * KEY_REACH before it and its spaces and ends where its value does, so only the spans around them are read (none, in
- * output with neither). A match never holds a `,` or a `;`, nor a run of spaces with no `=`, `:` or `>` before it and
- * no `=` or `:` after it, so a span is cut only after one of those: what each piece matches is what the whole did.
+ * The exact whole-text KEY_VALUE replacement, with bounded work between yields. Every match has an operator and a
+ * key within KEY_REACH of its preceding whitespace. At each operator, the unchanged regex sees only that bounded
+ * prefix, the actual delimiter, one representative of its following \s* run, an optional quote and the first value
+ * character. Nothing else in the regex depends on those whitespace runs or the rest of the value. Original offsets
+ * supply all output; a separate consumed floor preserves global-regex non-overlap even for already-hidden values.
+ * Unlike delimiter-based cuts, this also yields when no safe cut exists in a multi-megabyte merged span.
  */
 export function* keyValueSteps(text: string, slice = KEY_VALUE_SLICE): Generator<void, string, void> {
-  const spans: [number, number][] = [];
-  const op = /[=:]/g;
-  let runStart = -1, runEnd = -1;
-  let ops = 0;
-  for (let m = op.exec(text); m; m = op.exec(text)) {
-    // Finding the spans is a step every OPS_PER_STEP signs too (4 MiB of `a=1 ` holds a million).
-    if (++ops % OPS_PER_STEP === 0) yield;
-    const o = m.index;
-    let s = o;
-    while (s > 0 && /\s/.test(text[s - 1])) s--;
-    s = Math.max(0, s - KEY_REACH);
-    SPACES_AFTER.lastIndex = o + 1;
-    SPACES_AFTER.exec(text);
-    const k = SPACES_AFTER.lastIndex;
-    if (!(k >= runStart && k < runEnd)) {
-      VALUE_RUN.lastIndex = k;
-      VALUE_RUN.exec(text);
-      runStart = k;
-      runEnd = VALUE_RUN.lastIndex;
+  // A paused generator must not share lastIndex with another redaction or the public whole-text regex.
+  const re = new RegExp(KEY_VALUE.source, KEY_VALUE.flags);
+  const chunks: string[] = [], pieces: string[] = [];
+  const flush = (): void => {
+    if (pieces.length) {
+      chunks.push(pieces.join(""));
+      pieces.length = 0;
     }
-    const e = Math.max(k, runEnd);
-    const last = spans[spans.length - 1];
-    if (last && s <= last[1]) last[1] = Math.max(last[1], e);
-    else spans.push([s, e]);
-  }
-  const replace = (piece: string): string => piece.replace(KEY_VALUE, (m, keep: string, _suffix: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN));
-  let out = "";
-  let at = 0;
-  let first = true;
-  for (const [s, e] of spans) {
-    out += text.slice(at, s);
-    let from = s;
-    while (from < e) {
-      const to = e - from <= slice ? e : cutAfter(text, from + slice, e);
-      if (!first) yield;
-      first = false;
-      out += replace(text.slice(from, to));
-      from = to;
+  };
+  let outputAt = 0, consumed = 0, cursor = 0, previous = -1, work = 0;
+  while (cursor < text.length) {
+    while (cursor < text.length && text[cursor] !== "=" && text[cursor] !== ":") {
+      cursor++;
+      if (++work >= slice) { work = 0; flush(); yield; }
     }
-    at = e;
+    if (cursor === text.length) break;
+    const operator = cursor;
+    let before = operator;
+    while (before > consumed && KEY_SPACE.test(text[before - 1])) {
+      before--;
+      if (++work >= slice) { work = 0; flush(); yield; }
+    }
+    // Key/suffix/quote syntax cannot cross a prior operator. KEY_VALUE has no left-context assertion, so clipping
+    // before its maximum possible key reach cannot introduce a match at an artificial boundary.
+    const start = Math.max(consumed, previous + 1, before - KEY_REACH);
+    const prefix = text.slice(start, before);
+    const arrow = text[operator] === "=" && text[operator + 1] === ">";
+    let valueAt = operator + (arrow ? 2 : 1);
+    let tail = text.slice(operator, valueAt);
+    const spaces = valueAt;
+    while (valueAt < text.length && KEY_SPACE.test(text[valueAt])) {
+      valueAt++;
+      if (++work >= slice) { work = 0; flush(); yield; }
+    }
+    if (valueAt > spaces) tail += " ";
+    if (text[valueAt] === '"' || text[valueAt] === "'") tail += text[valueAt++];
+    if (valueAt < text.length) tail += text[valueAt];
+    const candidate = prefix + tail;
+    re.lastIndex = 0;
+    const match = re.exec(candidate);
+    // Each bounded search can try every prefix position and its bounded suffix. Charge that work as well as scans.
+    work += candidate.length * KEY_REACH;
+    if (match && match.index + match[1].search(/[=:]/) === prefix.length) {
+      // If => has no valid following value, the original regex backtracks to '=' with '>' as its value.
+      const valueStart = arrow && match.index + match[1].length === prefix.length + 1 ? operator + 1 : valueAt;
+      let end = valueStart;
+      while (end < text.length && KEY_VALUE_CHAR.test(text[end])) {
+        end++;
+        if (++work >= slice) { work = 0; flush(); yield; }
+      }
+      consumed = end;
+      if (!text.startsWith("[secret", valueStart)) {
+        while (outputAt < valueStart) {
+          const to = Math.min(valueStart, outputAt + KEY_VALUE_SLICE);
+          pieces.push(text.slice(outputAt, to));
+          work += to - outputAt;
+          outputAt = to;
+          if (work >= slice) { work = 0; flush(); yield; }
+        }
+        pieces.push(SECRET_HIDDEN);
+        outputAt = end;
+        work += SECRET_HIDDEN.length;
+      }
+      cursor = end;
+    } else cursor = operator + 1;
+    previous = operator;
+    if (work >= slice) { work = 0; flush(); yield; }
   }
-  return at === 0 && spans.length === 0 ? text : out + text.slice(at);
-}
-
-/** The first place at or after `want` (before `end`; else `end`) that no KEY_VALUE match crosses (keyValueSteps). */
-function cutAfter(text: string, want: number, end: number): number {
-  CUT.lastIndex = want;
-  for (let m = CUT.exec(text); m && m.index < end; m = CUT.exec(text)) {
-    const i = m.index;
-    if (text[i] === "," || text[i] === ";") return i + 1;
-    let a = i, b = i;
-    while (a > 0 && /\s/.test(text[a - 1])) a--;
-    while (b < end && /\s/.test(text[b])) b++;
-    if (!(a > 0 && /[=:>]/.test(text[a - 1])) && !(b < text.length && /[=:]/.test(text[b]))) return b;
-    CUT.lastIndex = b;
+  if (!chunks.length && !pieces.length) return text;
+  while (outputAt < text.length) {
+    const to = Math.min(text.length, outputAt + KEY_VALUE_SLICE);
+    pieces.push(text.slice(outputAt, to));
+    work += to - outputAt;
+    outputAt = to;
+    if (work >= slice) { work = 0; flush(); yield; }
   }
-  return end;
+  flush();
+  return chunks.join("");
 }
 
 /** Runs steps to their end at once: what the synchronous functions return. */

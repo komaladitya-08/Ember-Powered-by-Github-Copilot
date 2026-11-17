@@ -80,6 +80,71 @@ it("refuses a borrowed parent changed to Low before attestation without correcti
   await refused(() => s.launch(owner)); expect(s.io.events).not.toContain("resume"); expect(parent.security).toEqual(before); expect(parent.removed).toBe(false);
 });
 
+it("passes the returned descriptor's owner and group components to every actual modeled AccessCheck", async () => {
+  const s = nodeAssetFake(), owner = await s.prepare(), components: boolean[] = [];
+  s.state.onCall = (name, args) => {
+    if (name !== "AccessCheck") return;
+    const d = s.descriptorRows.get(args[0] as bigint)!;
+    components.push(d.bytes.readUInt32LE(4) > 0 && d.bytes.readUInt32LE(8) > 0);
+  };
+  const value = await s.launch(owner).catch(error => { expect(s.state.accessCheckMissingComponents).toBe(0); throw error; });
+  expect(components).toHaveLength(8); expect(components.every(Boolean)).toBe(true); expect(s.state.accessCheckMissingComponents).toBe(0);
+  expect(s.calls.filter(call => call.name === "GetSecurityInfo").every(call => (Number(call.args[2]) & 3) === 3)).toBe(true);
+  await s.finish(owner, value);
+});
+
+it("preserves a borrowed parent's valid primary group without requiring it to be the owner", async () => {
+  const s = nodeAssetFake(), parent = s.nodes.get("C:\\scratch\\tools")!; parent.security.group = "S-1-5-32-545"; const before = { ...parent.security };
+  const owner = await s.prepare(), value = await s.launch(owner); await s.finish(owner, value);
+  expect(parent.security).toEqual(before); expect(parent.removed).toBe(false); expect(s.handles.size).toBe(0);
+});
+
+it.each(["null-output", "outside-output", "different-offset", "missing-offset", "unaligned-offset", "truncated-sid", "invalid-sid", "absolute-descriptor", "control-mismatch"] as const)(
+  "rejects a %s group descriptor before launching or accessing assets", async fault => {
+    const s = nodeAssetFake(); let changed = false;
+    s.state.afterCall = (name, args, result) => {
+      if (fault === "control-mismatch" && name === "GetSecurityDescriptorControl" && !changed) {
+        const control = args[1] as Buffer; control.writeUInt16LE(control.readUInt16LE() ^ 0x20); changed = true;
+      } else if (fault !== "control-mismatch" && name === "GetSecurityInfo" && !changed) {
+        const raw = (args[7] as unknown[])[0] as bigint, d = s.descriptorRows.get(raw)!, group = args[4] as unknown[]; changed = true;
+        if (fault === "null-output") group[0] = null;
+        else if (fault === "outside-output") group[0] = raw + BigInt(d.bytes.length);
+        else if (fault === "different-offset") group[0] = raw + 644n;
+        else if (fault === "missing-offset") d.bytes.writeUInt32LE(0, 8);
+        else if (fault === "unaligned-offset") { d.bytes.writeUInt32LE(641, 8); group[0] = raw + 641n; }
+        else if (fault === "truncated-sid") {
+          const offset = d.bytes.length - 12; d.bytes.writeUInt32LE(offset, 8); group[0] = raw + BigInt(offset); d.bytes[offset] = 1; d.bytes[offset + 1] = 15;
+        } else if (fault === "invalid-sid") d.bytes[640] = 2;
+        else d.bytes.writeUInt16LE(d.bytes.readUInt16LE(2) & ~0x8000, 2);
+      }
+      return result;
+    };
+    const error = await refused(() => s.prepare()); expect(changed).toBe(true); expect(error).toBeInstanceOf(WindowsNodeToolchainCleanupError);
+    expect(s.calls.some(call => call.name === "AccessCheck")).toBe(false); expect(s.opened.some(open => open.fresh)).toBe(false);
+    expect(s.io.events).not.toContain("native-create"); expect(s.io.events).not.toContain("resume"); expect(s.fence.failure).toBe(error);
+  },
+);
+
+it("rejects a fresh RX asset whose returned primary group differs from its creation descriptor", async () => {
+  const s = nodeAssetFake(); let changed = false;
+  s.state.onCall = (name, args) => {
+    if (name === "GetSecurityInfo" && !changed) {
+      const row = s.handles.get(args[0] as bigint)!.row!;
+      if (row.security.rx) { row.security.group = "S-1-5-32-545"; changed = true; }
+    }
+  };
+  await refused(() => s.prepare()); expect(changed).toBe(true); expect(s.io.events).not.toContain("native-create"); expect(s.fence.failure).toBeDefined();
+});
+
+it.each([4, 8])("models AccessCheck's documented failure for a missing raw SID component at offset %i without a denial fallback", async offset => {
+  const s = nodeAssetFake(), owner = await s.prepare(); let changed = false;
+  s.state.onCall = (name, args) => {
+    if (name === "AccessCheck" && !changed) { s.descriptorRows.get(args[0] as bigint)!.bytes.writeUInt32LE(0, offset); changed = true; }
+  };
+  await refused(() => s.launch(owner)); expect(changed).toBe(true); expect(s.state.accessCheckMissingComponents).toBe(1);
+  expect(s.io.events).not.toContain("resume"); expect(s.fence.retained.length).toBeGreaterThan(0);
+});
+
 it("authenticates the actual held image and both token contexts before Resume, without rescanning 120 MB", async () => {
   const s = nodeAssetFake(), owner = await s.prepare(), reads = s.state.readCalls, value = await s.launch(owner, ["--preserve-symlinks", "--preserve-symlinks-main", "literal & | ; $() \\\"", ""]);
   expect(s.io.events).toContain("resume"); expect(s.state.readCalls).toBe(reads); expect(s.state.nativeReadsAfterCreate).toBe(0);

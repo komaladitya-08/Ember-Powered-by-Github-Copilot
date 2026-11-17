@@ -139,7 +139,7 @@ export const WINDOWS_NODE_TOOLCHAIN_FUNCTIONS = {
     "int __stdcall GetTokenInformation(void *token, int kind, void *information, uint32_t size, _Out_ uint32_t *returned)",
     "int __stdcall ConvertSidToStringSidW(void *sid, _Out_ void **text)",
     "int __stdcall ConvertStringSecurityDescriptorToSecurityDescriptorW(const char16_t *text, uint32_t revision, _Out_ void **descriptor, void *length)",
-    "uint32_t __stdcall GetSecurityInfo(void *file, int kind, uint32_t information, _Out_ void **owner, void *group, _Out_ void **dacl, _Out_ void **sacl, _Out_ void **descriptor)",
+    "uint32_t __stdcall GetSecurityInfo(void *file, int kind, uint32_t information, _Out_ void **owner, _Out_ void **group, _Out_ void **dacl, _Out_ void **sacl, _Out_ void **descriptor)",
     "int __stdcall GetSecurityDescriptorControl(void *descriptor, _Out_ uint16_t *control, _Out_ uint32_t *revision)",
     "uint32_t __stdcall GetSecurityDescriptorLength(void *descriptor)",
     "int __stdcall GetSecurityDescriptorSacl(void *descriptor, _Out_ int *present, _Out_ void **acl, _Out_ int *defaulted)",
@@ -275,13 +275,19 @@ function streams(s: State, file: File): void {
 function file(s: State, handle: Handle, parent: bigint | null, name: string): File { const f = { handle, parent, name, identity: info(s, handle) }; streams(s, f); return f; }
 function unchanged(s: State, f: File, data = true): void { if (!windowsCodingSame(f.identity, info(s, f.handle), data)) return poison(s); }
 function privateOrRx(s: State, f: File, rx: boolean, useDescriptor?: (raw: bigint) => void): void {
-  const own: unknown[] = [undefined], dacl: unknown[] = [undefined], sacl: unknown[] = [undefined], out: unknown[] = [undefined];
-  const sd = allocateResult(s, "GetSecurityInfo", [f.handle.raw, 1, 1 | 4 | 0x10, own, null, dacl, sacl, out], out, v => v === 0);
+  const own: unknown[] = [undefined], group: unknown[] = [undefined], dacl: unknown[] = [undefined], sacl: unknown[] = [undefined], out: unknown[] = [undefined];
+  const sd = allocateResult(s, "GetSecurityInfo", [f.handle.raw, 1, 1 | 2 | 4 | 0x10, own, group, dacl, sacl, out], out, v => v === 0);
   const length = invoke(s, "GetSecurityDescriptorLength", [sd.raw], v => uint(v) && v >= 20 && v <= 65536) as number;
   registerSpan(s, sd, length);
   const view = (value: unknown, minimum: number) => { if (!pointer(value) || value < sd.raw + 20n || value + BigInt(minimum) > sd.raw + BigInt(length)) return poison(s); return value; };
   if (sidText(s, view(own[0], 12), sd.raw + BigInt(length)) !== s.ownerSid) return poison(s);
-  const control = buffer(s, 2), revision = [undefined]; invoke(s, "GetSecurityDescriptorControl", [sd.raw, control, revision]); if (revision[0] !== 1 || (control.readUInt16LE(0) & 0x1004) !== 0x1004) return poison(s);
+  const control = buffer(s, 2), revision = [undefined]; invoke(s, "GetSecurityDescriptorControl", [sd.raw, control, revision]); if (revision[0] !== 1 || (control.readUInt16LE(0) & 0x9004) !== 0x9004) return poison(s);
+  // AccessCheck requires owner and group in the descriptor itself, not only separately returned SID pointers.
+  const header = decode(s, sd.raw, 20), groupOffset = header.readUInt32LE(8), groupPointer = view(group[0], 12);
+  if (header[0] !== 1 || header.readUInt16LE(2) !== control.readUInt16LE(0) || groupOffset < 20 || groupOffset % 4 !== 0 ||
+      sd.raw + BigInt(groupOffset) !== groupPointer) return poison(s);
+  const groupSid = sidText(s, groupPointer, sd.raw + BigInt(length));
+  if (rx && groupSid !== s.ownerSid) return poison(s); wipe(s, header);
   const aclView = (value: unknown) => {
     const raw = view(value, 8), header = decode(s, raw, 8), size = header.readUInt16LE(2), count = header.readUInt16LE(4);
     if (![2, 4].includes(header[0]) || header[1] !== 0 || header.readUInt16LE(6) !== 0 || size < 8 + count * 20 || raw + BigInt(size) > sd.raw + BigInt(length)) return poison(s);

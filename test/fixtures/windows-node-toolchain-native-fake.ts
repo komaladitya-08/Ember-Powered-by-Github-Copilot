@@ -9,10 +9,10 @@ import manifest from "../../app/shared/windows-node-toolchain.json";
 
 const VOLUME = "\\\\?\\Volume{12345678-1234-1234-1234-123456789abc}\\", ALL = 0x1f01ff, RX = 0x1200a9;
 export const ASSET_MARKERS = { node: 78, licence: 76, receipt: 82 } as const;
-interface Security { owner: string; rx: boolean; directory: boolean; ownerRights: boolean; ownerMask: number; packageMask: number; low: boolean; protected: boolean; sacl: "explicit" | "absent" | "empty" }
+interface Security { owner: string; group?: string; rx: boolean; directory: boolean; ownerRights: boolean; ownerMask: number; packageMask: number; low: boolean; protected: boolean; sacl: "explicit" | "absent" | "empty" }
 export interface AssetRow { id: bigint; name: string; kind: "file" | "directory"; size: number; marker: number; damaged: boolean; links: number; attributes: number; created: bigint; written: bigint; changed: bigint; removed: boolean; security: Security }
 interface Handle { row?: AssetRow; access: number; share: number; cursor: number; role?: "host" | "primary" | "duplicate"; source?: bigint }
-interface Descriptor { bytes: Buffer; security: Security; row?: AssetRow; dacl: bigint; sacl: bigint; behaviouralPrincipal?: string }
+interface Descriptor { bytes: Buffer; security: Security; row?: AssetRow; dacl: bigint; sacl: bigint; information: number; behaviouralPrincipal?: string }
 export function nodeAssetFake(configuration: { fence?: WindowsNodeToolchainFence; handleBase?: bigint; io?: ReturnType<typeof outputFake>; signal?: AbortSignal; current?(): boolean } = {}) {
   const io = configuration.io ?? outputFake(), profile = windowsCommandCreatorProfile(io.profile), nodes = new Map<string, AssetRow>(), handles = new Map<bigint, Handle>();
   const buffers = new Map<bigint, Buffer>(), addresses = new WeakMap<Buffer, bigint>(), texts = new Map<bigint, string>(), descriptors = new Map<bigint, Descriptor>();
@@ -22,7 +22,7 @@ export function nodeAssetFake(configuration: { fence?: WindowsNodeToolchainFence
   const overlappingAllocations: { raw: bigint; target: bigint; bytes: number }[] = [];
   const fence: WindowsNodeToolchainFence = configuration.fence ?? { retained: [] };
   const state = { current: true, fault: "", faultMode: "throw", readCalls: 0, writes: 0, maximumRead: 0, maximumWrite: 0, copiedBytes: 0, yieldsSeen: 0,
-    nativeReadsAfterCreate: 0, tokenFault: "", allowWriteDac: false, allowWriteOwner: false, ordinaryAppContainer: false, ownerRights: true, ownerMask: 0x20000, packageMask: RX, low: true,
+    nativeReadsAfterCreate: 0, accessCheckMissingComponents: 0, tokenFault: "", allowWriteDac: false, allowWriteOwner: false, ordinaryAppContainer: false, ownerRights: true, ownerMask: 0x20000, packageMask: RX, low: true,
     imageMismatch: false, imagePath: "", sourceTamper: false, writeTamper: false, closeCalls: 0, frees: 0, nextHandleAlias: undefined as bigint | undefined,
     replaceHandover: "" as "" | "image" | "root",
     textBefore: "" as "" | "profile" | "descriptor",
@@ -50,10 +50,14 @@ export function nodeAssetFake(configuration: { fence?: WindowsNodeToolchainFence
   manifest.files.filter(member => member.ship).forEach(member => add(path.join(sourceRoot, member.name), "file", member.bytes, member.name === "node.exe" ? ASSET_MARKERS.node : member.name === "LICENSE" ? ASSET_MARKERS.licence : ASSET_MARKERS.receipt));
   const row = (raw: unknown) => { const value = handles.get(raw as bigint)?.row; if (!value) throw Error("PRIVATE unknown file handle"); return value; };
   const take = (record: Handle) => { const raw = state.nextHandleAlias ?? serial++; state.nextHandleAlias = undefined; handles.set(raw, record); return raw; };
-  const descriptor = (sec: Security, object?: AssetRow) => {
+  const descriptor = (sec: Security, object?: AssetRow, information = 1 | 2 | 4 | 0x10) => {
     const raw = pointer(), b = Buffer.alloc(1024), dacl = raw + 128n, sacl = raw + 768n;
-    const value: Descriptor = { bytes: b, security: { ...sec }, row: object, dacl, sacl }; descriptors.set(raw, value);
+    const value: Descriptor = { bytes: b, security: { ...sec }, row: object, dacl, sacl, information }; descriptors.set(raw, value);
+    b[0] = 1; b.writeUInt16LE(0x8000 | (information & 4 ? 4 : 0) | (sec.protected ? 0x1000 : 0) | (information & 0x10 && sec.sacl !== "absent" ? 16 : 0), 2);
+    b.writeUInt32LE(information & 1 ? 32 : 0, 4); b.writeUInt32LE(information & 2 ? 640 : 0, 8);
+    b.writeUInt32LE(information & 4 ? 128 : 0, 16); b.writeUInt32LE(information & 0x10 && sec.sacl !== "absent" ? 768 : 0, 12);
     sids.set(raw + 32n, sec.owner); sidBytes(sec.owner).copy(b, 32); aclEntries.set(dacl, { descriptor: value, label: false }); aclEntries.set(sacl, { descriptor: value, label: true });
+    const group = sec.group ?? sec.owner; sids.set(raw + 640n, group); sidBytes(group).copy(b, 640);
     const entries = [{ sid: sec.owner, mask: ALL, type: 0 }, { sid: SYSTEM, mask: ALL, type: 0 }, ...(sec.rx ? [{ sid: profile.sidText, mask: sec.packageMask, type: 0 }, ...(sec.ownerRights ? [{ sid: "S-1-3-4", mask: sec.ownerMask, type: 0 }] : [])] : [])];
     b[128] = 2; b.writeUInt16LE(8 + entries.length * 64, 130); b.writeUInt16LE(entries.length, 132);
     for (const [index, entry] of entries.entries()) { const at = 136 + index * 64; b[at] = entry.type; b[at + 1] = sec.directory ? 3 : 0; b.writeUInt16LE(64, at + 2); b.writeUInt32LE(entry.mask, at + 4); sids.set(raw + BigInt(at + 8), entry.sid); sidBytes(entry.sid).copy(b, at + 8); }
@@ -117,14 +121,18 @@ export function nodeAssetFake(configuration: { fence?: WindowsNodeToolchainFence
     GetFinalPathNameByHandleW: (raw, out) => { const value = VOLUME + row(raw).name.slice(3); (out as Buffer).write(value, "utf16le"); return value.length; },
     NtQueryInformationFile: (raw, io, out) => { const f = row(raw), b = out as Buffer; if (f.kind === "directory") { (io as Buffer).writeBigUInt64LE(0n, 8); return 0; }
       b.writeUInt32LE(14, 4); b.writeBigInt64LE(BigInt(f.size), 8); b.write("::$DATA", 24, "utf16le"); (io as Buffer).writeBigUInt64LE(38n, 8); return 0; },
-    GetSecurityInfo: (raw, _kind, _information, own, _group, dacl, sacl, out) => { const f = row(raw), sec = { ...f.security };
+    GetSecurityInfo: (raw, _kind, information, own, group, dacl, sacl, out) => { const f = row(raw), sec = { ...f.security }, selected = Number(information);
       if (sec.rx) { sec.ownerRights &&= state.ownerRights; sec.ownerMask = state.ownerMask; sec.packageMask = state.packageMask; sec.low &&= state.low; }
-      const sd = descriptor(sec, f), d = descriptors.get(sd)!;
-      (own as unknown[])[0] = sd + 32n; (dacl as unknown[])[0] = d.dacl; if (sacl) (sacl as unknown[])[0] = sec.sacl === "absent" ? null : d.sacl; (out as unknown[])[0] = sd; return 0; },
+      const sd = descriptor(sec, f, selected), d = descriptors.get(sd)!;
+      if (own) (own as unknown[])[0] = selected & 1 ? sd + 32n : null;
+      if (group) (group as unknown[])[0] = selected & 2 ? sd + 640n : null;
+      if (dacl) (dacl as unknown[])[0] = selected & 4 ? d.dacl : null;
+      if (sacl) (sacl as unknown[])[0] = selected & 0x10 && sec.sacl !== "absent" ? d.sacl : null;
+      (out as unknown[])[0] = sd; return 0; },
     GetSecurityDescriptorLength: raw => descriptors.get(raw as bigint)!.bytes.length,
-    GetSecurityDescriptorControl: (raw, out, revision) => { const s = descriptors.get(raw as bigint)!.security; (out as Buffer).writeUInt16LE(4 | (s.protected ? 0x1000 : 0) | (s.sacl === "absent" ? 0 : 16)); (revision as number[])[0] = 1; return 1; },
-    GetSecurityDescriptorSacl: (raw, present, acl, defaulted) => { const d = descriptors.get(raw as bigint)!; (present as number[])[0] = d.security.sacl === "absent" ? 0 : 1;
-      (acl as unknown[])[0] = d.security.sacl === "absent" ? null : d.sacl; (defaulted as number[])[0] = 0; return 1; },
+    GetSecurityDescriptorControl: (raw, out, revision) => { const d = descriptors.get(raw as bigint)!; (out as Buffer).writeUInt16LE(d.bytes.readUInt16LE(2)); (revision as number[])[0] = d.bytes[0]; return 1; },
+    GetSecurityDescriptorSacl: (raw, present, acl, defaulted) => { const d = descriptors.get(raw as bigint)!, included = !!(d.information & 0x10) && d.security.sacl !== "absent";
+      (present as number[])[0] = included ? 1 : 0; (acl as unknown[])[0] = included ? d.sacl : null; (defaulted as number[])[0] = 0; return 1; },
     GetAclInformation: (raw, out) => { const acl = aclEntries.get(raw as bigint)!, s = acl.descriptor.security; (out as Buffer).writeUInt32LE(acl.label ? s.sacl === "explicit" ? 1 : 0 : s.rx ? s.ownerRights ? 4 : 3 : 2); return 1; },
     GetAce: (raw, index, out) => { const acl = aclEntries.get(raw as bigint)!, base = [...descriptors.entries()].find(([, d]) => d === acl.descriptor)![0]; (out as unknown[])[0] = base + BigInt(acl.label ? 776 : 136 + Number(index) * 64); return 1; },
     NtQueryDirectoryFile: (...args) => { const h = handles.get(args[0] as bigint)!, f = h.row!, io = args[4] as Buffer, b = args[5] as Buffer; if (args[10] === 1) h.cursor = 0;
@@ -142,6 +150,9 @@ export function nodeAssetFake(configuration: { fence?: WindowsNodeToolchainFence
     QueryFullProcessImageNameW: (_process, _flags, out, count) => { const image = state.imagePath ? nodes.get(state.imagePath)! : [...nodes.values()].find(f => f.name.startsWith("C:\\scratch\\tools\\ember-node-") && f.kind === "file")!;
       const name = state.imageMismatch ? "C:\\foreign\\node.exe" : image.name; (out as Buffer).write(name, "utf16le"); (count as number[])[0] = name.length; return 1; },
     AccessCheck: (raw, token, desired, _mapping, _privileges, length, granted, allowed) => { const d = descriptors.get(raw as bigint)!, h = handles.get(token as bigint); if (h?.role !== "duplicate") throw Error("PRIVATE AccessCheck requires an impersonation duplicate");
+      const validSid = (offset: number) => offset >= 20 && offset % 4 === 0 && offset + 8 <= d.bytes.length && d.bytes[offset] === 1 &&
+        d.bytes[offset + 1] >= 1 && d.bytes[offset + 1] <= 15 && offset + 8 + d.bytes[offset + 1] * 4 <= d.bytes.length;
+      if (!validSid(d.bytes.readUInt32LE(4)) || !validSid(d.bytes.readUInt32LE(8))) { state.accessCheckMissingComponents++; return 0; }
       const mask = Number(desired), permitted = d.behaviouralPrincipal !== undefined ? mask === 1 && (d.behaviouralPrincipal === profile.sidText || d.behaviouralPrincipal === "S-1-15-2-1" && state.ordinaryAppContainer) :
         state.tokenFault === "unrestricted" || (mask === RX ? d.security.packageMask === RX : mask === 0x40000 ? state.allowWriteDac || !d.security.ownerRights : state.allowWriteOwner);
       (length as number[])[0] = 0; (granted as number[])[0] = permitted ? mask : 0; (allowed as number[])[0] = permitted ? 1 : 0; return 1; },

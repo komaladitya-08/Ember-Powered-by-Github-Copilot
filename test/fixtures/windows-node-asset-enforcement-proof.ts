@@ -1,4 +1,4 @@
-/** Separate fixed native asset/MIC witness. No project coordinator, selector or general program override. */
+/** Separate fixed native asset DACL witness. No project coordinator, selector or general program override. */
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path/win32";
@@ -60,7 +60,9 @@ export class WindowsNodeAssetEnforcementObservationError extends Error {
   readonly probeMatrix: readonly number[];
   readonly tokenObserved: number; readonly tokenIntegrity: number; readonly tokenAttributes: number; readonly tokenPolicy: number;
   readonly nodeCheckpoint: number; readonly nodeInnerClass: number;
-  constructor(readonly mode: WindowsNodeAssetEnforcementMode, readonly phase: number, preludeStage = 0, cExit = 0, errorClass = 0, probeObject = 0, probeRight = 0, probeOutcome = 0, probeMatrix: readonly number[] = [], tokenObserved = 0, tokenIntegrity = 0, tokenAttributes = 0, tokenPolicy = 0, nodeCheckpoint = 0, nodeInnerClass = 0) {
+  readonly captureCheckpoint: number; readonly captureInnerClass: number;
+  readonly stopStage: number; readonly stopOperation: number; readonly stopPredicate: number; readonly stopConstraint: number;
+  constructor(readonly mode: WindowsNodeAssetEnforcementMode, readonly phase: number, preludeStage = 0, cExit = 0, errorClass = 0, probeObject = 0, probeRight = 0, probeOutcome = 0, probeMatrix: readonly number[] = [], tokenObserved = 0, tokenIntegrity = 0, tokenAttributes = 0, tokenPolicy = 0, nodeCheckpoint = 0, nodeInnerClass = 0, launchObservation?: WindowsNodeAssetLaunchObservation) {
     const stage = Number.isInteger(preludeStage) && preludeStage >= 0 && preludeStage <= 14 ? preludeStage : 0;
     const code = Number.isInteger(cExit) && (cExit === 49 || cExit >= 501 && cExit <= 509) ? cExit : 0;
     const kind = Number.isInteger(errorClass) && errorClass >= 0 && errorClass <= 8 ? errorClass : 0;
@@ -75,14 +77,35 @@ export class WindowsNodeAssetEnforcementObservationError extends Error {
     const policy = observed && Number.isInteger(tokenPolicy) && tokenPolicy >= 0 && tokenPolicy <= 4 ? tokenPolicy : 0;
     const node = Number.isInteger(nodeCheckpoint) && nodeCheckpoint >= 0 && nodeCheckpoint <= 7 ? nodeCheckpoint : 0;
     const inner = Number.isInteger(nodeInnerClass) && nodeInnerClass >= 0 && nodeInnerClass <= 8 ? nodeInnerClass : 0;
-    super(`The fixed native Node asset witness was refused in ${mode} at phase ${phase} (prelude ${stage}, C exit ${code}, error class ${kind}, probe ${object}/${right}/${outcome}, matrix ${matrix.join("")}, C token ${observed}/${integrity}/${attributes}/${policy}, Node checkpoint ${node}/${inner}).`);
+    const launch = boundedWindowsNodeAssetLaunchObservation(launchObservation);
+    super(`The fixed native Node asset witness was refused in ${mode} at phase ${phase} (prelude ${stage}, C exit ${code}, error class ${kind}, probe ${object}/${right}/${outcome}, matrix ${matrix.join("")}, C token ${observed}/${integrity}/${attributes}/${policy}, Node checkpoint ${node}/${inner}, capture ${launch.captureCheckpoint}/${launch.captureInnerClass}, Stop ${launch.stopStage}/${launch.stopOperation}/${launch.stopPredicate}/${launch.stopConstraint}).`);
     this.preludeStage = stage; this.cExit = code; this.errorClass = kind;
     this.probeObject = object; this.probeRight = right; this.probeOutcome = outcome;
     this.probeMatrix = matrix;
     this.tokenObserved = observed; this.tokenIntegrity = integrity; this.tokenAttributes = attributes; this.tokenPolicy = policy;
     this.nodeCheckpoint = node; this.nodeInnerClass = inner;
+    this.captureCheckpoint = launch.captureCheckpoint; this.captureInnerClass = launch.captureInnerClass;
+    this.stopStage = launch.stopStage; this.stopOperation = launch.stopOperation; this.stopPredicate = launch.stopPredicate; this.stopConstraint = launch.stopConstraint;
     this.name = "WindowsNodeAssetEnforcementObservationError"; this.stack = `${this.name}: ${this.message}`;
   }
+}
+
+export interface WindowsNodeAssetLaunchObservation {
+  captureCheckpoint: number; captureInnerClass: number;
+  stopStage: number; stopOperation: number; stopPredicate: number; stopConstraint: number;
+}
+export function windowsNodeAssetLaunchObservation(): WindowsNodeAssetLaunchObservation {
+  return { captureCheckpoint: 0, captureInnerClass: 0, stopStage: 0, stopOperation: 0, stopPredicate: 0, stopConstraint: 0 };
+}
+function boundedWindowsNodeAssetLaunchObservation(source: WindowsNodeAssetLaunchObservation | undefined): WindowsNodeAssetLaunchObservation {
+  const result = windowsNodeAssetLaunchObservation();
+  try {
+    for (const [key, maximum] of [["captureCheckpoint", 2], ["captureInnerClass", 8], ["stopStage", 14], ["stopOperation", 7], ["stopPredicate", 11], ["stopConstraint", 21]] as const) {
+      const property = source && Object.getOwnPropertyDescriptor(source, key), value = property && "value" in property ? property.value : 0;
+      result[key] = Number.isInteger(value) && value >= 0 && value <= maximum ? value : 0;
+    }
+    return result;
+  } catch { return windowsNodeAssetLaunchObservation(); }
 }
 
 /** V4 admits the same observed held C token before the trusted attester can return to Resume. */
@@ -155,8 +178,39 @@ export function observeWindowsNodeAssetNodeCall<T>(loaded: DiagnosticClasses | u
 
 /** This wrapper observes the real promise and authenticates its real opaque return before signalling. */
 export function observeWindowsNodeAssetStop(owner: WindowsCommandRootOnlyStopOwner, binding: object,
-  authenticate: Bundle["requireWindowsCommandRootOnlyStopped"], observed: (ref: WindowsCommandRootOnlyStoppedRef, binding: object) => void): WindowsCommandRootOnlyStopOwner {
-  return Object.freeze({ ...owner, stop(...args: Parameters<WindowsCommandRootOnlyStopOwner["stop"]>) {
+  authenticate: Bundle["requireWindowsCommandRootOnlyStopped"], observed: (ref: WindowsCommandRootOnlyStoppedRef, binding: object) => void,
+  readers?: DiagnosticClasses & Pick<Bundle, "windowsCommandRootOnlyFailure">, state?: WindowsNodeAssetLaunchObservation): WindowsCommandRootOnlyStopOwner {
+  const launch = readers && state ? { launch(...args: Parameters<WindowsCommandRootOnlyStopOwner["launch"]>) {
+    const capture = args[3], forwarded: Parameters<WindowsCommandRootOnlyStopOwner["launch"]> = [...args];
+    const observeFailure = (error: unknown): void => {
+      try {
+        const facts = readers.windowsCommandRootOnlyFailure(error); if (!facts) return;
+        const values = [facts.stage, facts.operation, facts.predicate, facts.constraint], maxima = [14, 7, 11, 21];
+        if (values.some((value, index) => !Number.isInteger(value) || value < 0 || value > maxima[index])) return;
+        state.stopStage = values[0]; state.stopOperation = values[1]; state.stopPredicate = values[2]; state.stopConstraint = values[3];
+      } catch { /* A passive projection cannot replace the real launch result or error. */ }
+    };
+    const wrapped = typeof capture !== "function" ? capture : (witness: Parameters<NonNullable<typeof capture>>[0]) => {
+      try { state.captureCheckpoint = 1; } catch { /* Observation cannot prevent the original callback. */ }
+      try {
+        const result = capture(witness);
+        try { state.captureCheckpoint = 2; } catch { /* Preserve even an invalid non-undefined return for Stop's original guard. */ }
+        return result;
+      } catch (error) {
+        let kind = 0; try { kind = windowsNodeAssetErrorClass(readers, error); } catch { /* Unknown classification stays zero. */ }
+        try { state.captureInnerClass = kind; } catch { /* Preserve the identical original exception. */ }
+        throw error;
+      }
+    };
+    if (typeof capture === "function") forwarded[3] = wrapped;
+    let pending: ReturnType<WindowsCommandRootOnlyStopOwner["launch"]>;
+    try { pending = owner.launch(...forwarded); }
+    catch (error) { observeFailure(error); throw error; }
+    try { void pending.then(undefined, error => { observeFailure(error); }); }
+    catch { /* Even observer attachment failure leaves the original promise untouched. */ }
+    return pending;
+  } } : {};
+  return Object.freeze({ ...owner, ...launch, stop(...args: Parameters<WindowsCommandRootOnlyStopOwner["stop"]>) {
     const pending = owner.stop(...args);
     void pending.then(ref => { authenticate(ref, binding); observed(ref, binding); }).catch(() => undefined);
     return pending;
@@ -206,7 +260,7 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
     if (terminal) throw terminal;
     if (busy || !MODES.includes(mode)) { terminal = new WindowsNodeAssetEnforcementObservationError(MODES.includes(mode) ? mode : "natural", 1); throw terminal; }
     busy = true;
-    const nodeObservation = { checkpoint: 0, innerClass: 0 };
+    const nodeObservation = { checkpoint: 0, innerClass: 0 }; let launchObservation = windowsNodeAssetLaunchObservation();
     let phase = 1, preludeStage = 0, cExit = 0, probe: Readonly<{ object: number; right: number; outcome: number; matrix: readonly number[] }> = { object: 0, right: 0, outcome: 0, matrix: Object.freeze(Array<number>(28).fill(0)) },
       tokenObserved = 0, tokenFacts: Readonly<{ integrity: number; attributes: number; policy: number }> = { integrity: 0, attributes: 0, policy: 0 },
       heldToken: Readonly<{ ref: TokenObservation; launch: WindowsCommandOutputLaunchRef }> | undefined,
@@ -289,8 +343,9 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
       copy = await loaded.WindowsRootOnlyCommandCopy.create({ parent: treeParent, protectedPaths: [tools, privateParent, lowOwner, lowFullDirectory, lowReadDirectory, resources, path.dirname(asset.module)],
         entries: [{ path: "seed.txt", kind: "file", bytes: Buffer.from(NODE_ASSET_SEED), executable: false }, { path: "proof.cjs", kind: "file", bytes: script, executable: false }],
         creatorProfile: profile, packageSid: selected.sidText, current: workCurrent, packageCurrent: workCurrent, reviewCurrent: current }, { api,
-        createStopOwner(binding) { const actual = native(() => loaded!.createWindowsCommandRootOnlyStopOwner(binding, api!)); owners.push(actual);
-          return observeWindowsNodeAssetStop(actual, binding, loaded!.requireWindowsCommandRootOnlyStopped, (ref, exact) => { stopped = { ref, binding: exact }; }); } });
+        createStopOwner(binding) { const observation = windowsNodeAssetLaunchObservation(); launchObservation = observation;
+          const actual = native(() => loaded!.createWindowsCommandRootOnlyStopOwner(binding, api!)); owners.push(actual);
+          return observeWindowsNodeAssetStop(actual, binding, loaded!.requireWindowsCommandRootOnlyStopped, (ref, exact) => { stopped = { ref, binding: exact }; }, loaded!, observation); } });
       const authenticateStop = (present: 0 | 1) => { ensure(stopped !== undefined); loaded!.requireWindowsCommandRootOnlyStopped(stopped!.ref, stopped!.binding);
         ensure(loaded!.requireWindowsCommandRootOnlyCompletion(stopped!.ref, stopped!.binding).rootPresent === present); };
       let prelude = 0;
@@ -325,6 +380,7 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
         try { ensure(created.equals(Buffer.from(CONTROL_CREATED))); } finally { created.fill(0); }
         preludeStage = 14; prelude = 1; stopped = undefined; launch = undefined; io = undefined;
       }
+      launchObservation = windowsNodeAssetLaunchObservation();
       phase = 5; verified(); native(() => targetPins!.recheck());
       nodeObservation.checkpoint = 1;
       let result: Readonly<{ exitCode: number | null; reason: string; complete: boolean; stdoutBytes: number; stderrBytes: number }>;
@@ -375,7 +431,7 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
         assetCleanup: 1, privateCleanup: 1, profileCleanup: 1, emittedCjs: 1 });
     } catch (error) {
       live = false; terminal ??= new WindowsNodeAssetEnforcementObservationError(mode, phase, preludeStage, cExit, windowsNodeAssetErrorClass(loaded, error), probe.object, probe.right, probe.outcome, probe.matrix,
-        tokenObserved, tokenFacts.integrity, tokenFacts.attributes, tokenFacts.policy, nodeObservation.checkpoint, nodeObservation.innerClass); retained.push(graph);
+        tokenObserved, tokenFacts.integrity, tokenFacts.attributes, tokenFacts.policy, nodeObservation.checkpoint, nodeObservation.innerClass, launchObservation); retained.push(graph);
       for (const value of launches) try { loaded!.retainWindowsCommandOutput(value); } catch { /* Same-graph quarantine supplies no disposal receipt. */ }
       for (const owner of owners) try { owner.retainStop(); } catch { /* Request exact Stop only; never retry cleanup or certify disposal. */ }
       throw terminal;

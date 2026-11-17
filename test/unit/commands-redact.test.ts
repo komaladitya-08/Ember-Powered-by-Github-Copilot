@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { commandLineSecret, KEY_VALUE, keyValueSteps, REDACT_PASSES, redactSecrets, redactSteps, runSteps, SECRET_HIDDEN, UNGUARDED_PASSES } from "../../app/main/commands/redact";
+import { commandLineSecret, KEY_VALUE, keyValueSteps, REDACT_PASSES, redactSecrets, redactSteps, runSteps, runStepsYielding, SECRET_HIDDEN, UNGUARDED_PASSES } from "../../app/main/commands/redact";
 import { memoryRefusal } from "../../app/main/memory/guard";
 
 const GH = `ghp_${"a1B2".repeat(9)}`;
@@ -715,6 +715,66 @@ describe("the key-value pass in slices (integ-x-3)", () => {
     for (const t of ["token = \n  abc, password:\n\n'x' y", `${"token".repeat(100)}:v ${"a".repeat(500)} token=z`, "a; token\t=>\t\"v\";b", "pwd:" + "x".repeat(2000)]) {
       for (const slice of [1, 7, 64]) expect(runSteps(keyValueSteps(t, slice)), t.slice(0, 60)).toBe(atOnce(t));
     }
+  });
+
+  it("preserves operator preference, original whitespace, key bounds and consumed hidden matches", () => {
+    const whitespace = "\t\n\r\f\v \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
+    const cases = [
+      ": password=> secret", "token=>", "token=>''", "token=>\"\"", "token=>>abc", "token=> ;password=x",
+      "token=one:password=two token=three", "token=x=password=>y;password=z",
+      "token=[secretpassword \n : leak", "token=[secretpassword" + " \n".repeat(2000) + ": leak",
+      "token=[secretpassword \n : leak; password=real", "token='[secret hidden]' password=x", "token=[Secret]",
+      `token${whitespace}=${whitespace}'value' tail`, `token${whitespace}=>${whitespace}"value"`,
+      "token='\nnot-a-value' password=x", "token=\u0085value", "token=\ud83d\ude00 tail", "token=\ud800 tail",
+      ...["password", "passwd", "pwd", "secret", "token", "api_key", "access-key", "private_key", "client-secret"].flatMap(key =>
+        [0, 255, 256, 257, 301].map(n => `prefix_${key}${"x".repeat(n)}'] \n => \t'v'`)),
+      "token" + " ".repeat(32 * 1024) + "=value",
+      "token=>" + "\n ".repeat(16 * 1024) + "'';password=x",
+      "token=" + "x=:>".repeat(8192) + ";password=after",
+    ];
+    for (const text of cases) {
+      for (const slice of [1, 7, 64, 256 * 1024]) expect(runSteps(keyValueSteps(text, slice))).toBe(atOnce(text));
+    }
+    expect(runSteps(keyValueSteps(": password=> secret", 1))).toBe(`: password=> ${SECRET_HIDDEN}`);
+    expect(runSteps(keyValueSteps("token=>''", 1))).toBe(`token=${SECRET_HIDDEN}''`);
+    expect(runSteps(keyValueSteps("token=[secretpassword \n : leak", 1))).toBe("token=[secretpassword \n : leak");
+  });
+
+  it("leaves dense non-secret operators unchanged without searching each remaining value suffix", () => {
+    const text = "x=1".repeat(40_000) + "; token=last";
+    expect(runSteps(keyValueSteps(text))).toBe(`${"x=1".repeat(40_000)}; token=${SECRET_HIDDEN}`);
+    expect(runSteps(keyValueSteps(text))).toBe(atOnce(text));
+  });
+
+  it("keeps paused generators independent from each other and the whole-text regex", () => {
+    const texts = ["token=[secretpassword \n : leak; password=x", ": password=> secret; token=>''", "token" + " ".repeat(70) + "='v' tail"];
+    const steps = texts.map(text => keyValueSteps(text, 1));
+    const results: (string | undefined)[] = texts.map(() => undefined);
+    while (results.some(result => result === undefined)) {
+      for (let i = 0; i < steps.length; i++) {
+        if (results[i] !== undefined) continue;
+        atOnce("token=another password=another");
+        const next = steps[i].next();
+        if (next.done) results[i] = next.value;
+      }
+    }
+    expect(results).toEqual(texts.map(atOnce));
+  });
+
+  it.each([
+    "unrelated-output ".repeat(1000),
+    "token" + " ".repeat(16 * 1024) + "=private-value",
+    "token=" + " \n".repeat(8192) + "'private-value'",
+    "token=" + "private-value".repeat(2000),
+    "token=private-value;" + "ordinary-output ".repeat(1000),
+    "x=1".repeat(5000) + ";token=private-value",
+  ])("honors Stop during bounded search, whitespace, value and output work without a partial result (%#)", async text => {
+    const steps = keyValueSteps(text, 64);
+    let polls = 0;
+    expect(await runStepsYielding(steps, () => ++polls > 2)).toBeNull();
+    expect(polls).toBe(3);
+    expect(steps.next()).toEqual({ done: true, value: undefined });
+    expect(runSteps(keyValueSteps(text))).toBe(atOnce(text));
   });
 
   it("never holds Ember's main thread for a whole 4 MiB pass, so Stop gets it within 300 ms", () => {

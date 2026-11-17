@@ -1,21 +1,32 @@
 import { expect, it, vi } from "vitest";
 import fs from "node:fs";
 import { outputFake } from "../fixtures/windows-command-output-fake";
-import { requireWindowsCommandRootOnlyCompleted, WindowsRootOnlyCommandCopyCleanupError } from "../../app/main/agent/windows-command-copy";
+import { requireWindowsCommandRootOnlyCompleted, WindowsRootOnlyCommandCopy, WindowsRootOnlyCommandCopyCleanupError } from "../../app/main/agent/windows-command-copy";
 import { requireWindowsCommandOutputClosed, requireWindowsCommandOutputLaunch, WindowsCommandOutputCleanupError } from "../../app/main/agent/windows-command-output";
-import { closeWindowsCommandCreatorProfile, WindowsCommandCreatorProfileCleanupError } from "../../app/main/agent/windows-command-creator-profile";
-import { createWindowsCommandRootOnlyStopOwner, requireWindowsCommandRootOnlyStopped, WindowsCommandRootOnlyCleanupError, type WindowsCommandRootOnlyStopOwner } from "../../app/main/agent/windows-command-stop";
+import { closeWindowsCommandCreatorProfile, windowsCommandCreatorProfile, WindowsCommandCreatorProfileCleanupError } from "../../app/main/agent/windows-command-creator-profile";
+import { createWindowsCommandRootOnlyStopOwner, requireWindowsCommandRootOnlyStopped, requireWindowsCommandRootOnlyAttestingCurrent, windowsCommandRootOnlyFailure, WindowsCommandRootOnlyCleanupError, type WindowsCommandRootOnlyStopOwner } from "../../app/main/agent/windows-command-stop";
 import { WindowsCommandCopyCleanupError } from "../../app/main/agent/windows-command-copy-native";
 import { WindowsNodeToolchainCleanupError } from "../../app/main/agent/windows-node-toolchain-native";
 import { WindowsCommandCopyProofCleanupError } from "../fixtures/windows-command-copy-proof-native";
 import { WindowsNodeAssetEnforcementNativeCleanupError } from "../fixtures/windows-node-asset-enforcement-native";
-import { bindWindowsNodeAssetEnforcement, observeWindowsNodeAssetStop, observeWindowsNodeAssetNodeCall, requireWindowsNodeAssetOutputFacts,
+import { bindWindowsNodeAssetEnforcement, observeWindowsNodeAssetStop, observeWindowsNodeAssetNodeCall, windowsNodeAssetLaunchObservation, requireWindowsNodeAssetOutputFacts,
   windowsNodeAssetCreationSecurity, windowsNodeAssetPreludeExit, windowsNodeAssetPreludeProbe, windowsNodeAssetErrorClass, requireWindowsNodeAssetHeldToken, requireWindowsNodeAssetTokenFacts, NODE_ASSET_READY, NODE_ASSET_ERROR_READY, WindowsNodeAssetEnforcementObservationError } from "../fixtures/windows-node-asset-enforcement-proof";
 import type { WindowsLpacApi } from "../../app/main/agent/experimental-windows-lpac-api";
 
 const loaded = { requireWindowsCommandRootOnlyCompleted, requireWindowsCommandOutputClosed };
 const diagnosticClasses = { WindowsRootOnlyCommandCopyCleanupError, WindowsCommandCopyCleanupError, WindowsCommandRootOnlyCleanupError, WindowsCommandOutputCleanupError,
   WindowsCommandCreatorProfileCleanupError, WindowsCommandCopyProofCleanupError, WindowsNodeAssetEnforcementNativeCleanupError, WindowsNodeToolchainCleanupError };
+const launchReaders = { ...diagnosticClasses, windowsCommandRootOnlyFailure };
+function actualStopFixture() {
+  const binding = Object.freeze({}), events: string[] = [], state = { assigned: false, ended: false };
+  const api = { createJob: () => 901n, assign() { state.assigned = true; }, resume() { events.push("resume"); },
+    terminateProcess() { state.ended = true; }, terminateJob() { state.ended = true; } } as unknown as WindowsLpacApi;
+  const native = { configure() {}, assertLimits() {}, state: () => ({ total: state.assigned ? 1 : 0, active: state.assigned && !state.ended ? 1 : 0, pids: state.assigned && !state.ended ? [31] : [] }),
+    processId: () => 31, threadProcessId: () => 31, member: () => state.assigned, wait: (): 0 => 0, close() { events.push("close"); } };
+  const fence = { retained: [] as unknown[] }, real = createWindowsCommandRootOnlyStopOwner(binding, api, native, () => 1, fence);
+  const create = () => ({ process: 902n, thread: 903n, pid: 31 });
+  return { binding, events, state, fence, real, create };
+}
 const until = async (check: () => boolean) => { const deadline = performance.now() + 4000; while (!check()) { if (performance.now() > deadline) throw Error("Fixed portable asset deadline."); await new Promise<void>(resolve => setTimeout(resolve, 5)); } };
 const chunks = (s: ReturnType<typeof outputFake>, stream: number, bytes: Buffer) => { for (let at = 0; at < bytes.length; at += 16384) s.enqueue(stream, bytes.subarray(at, at + 16384)); };
 async function natural(prelude = false, exitCode = prelude ? 49 : 17, frames?: { stdout?: Buffer; stderr?: Buffer }) {
@@ -360,6 +371,130 @@ it("observes the exact genuine Stop promise only after its same-binding opaque r
 it("callback-shaped Stop returns cannot reach the observed receipt path", async () => {
   const seen = vi.fn(), owner = { scope: "root-only", stop: () => Promise.resolve({ scope: "root-only" }) } as unknown as WindowsCommandRootOnlyStopOwner;
   await observeWindowsNodeAssetStop(owner, {}, requireWindowsCommandRootOnlyStopped, seen).stop(); await Promise.resolve(); expect(seen).not.toHaveBeenCalled();
+});
+it("passive launch observation preserves the original promise, genuine witness and callback return", async () => {
+  const s = actualStopFixture(), state = windowsNodeAssetLaunchObservation(); let original: Promise<number> | undefined;
+  const capture = vi.fn((witness: Parameters<NonNullable<Parameters<WindowsCommandRootOnlyStopOwner["launch"]>[3]>>[0]) => {
+    requireWindowsCommandRootOnlyAttestingCurrent(witness, s.binding); expect(state.captureCheckpoint).toBe(1);
+  });
+  const tracked: WindowsCommandRootOnlyStopOwner = { ...s.real, launch(...args) { original = s.real.launch(...args); return original; } };
+  const observed = observeWindowsNodeAssetStop(tracked, s.binding, requireWindowsCommandRootOnlyStopped, () => undefined, launchReaders, state);
+  const pending = observed.launch(s.create, () => undefined, () => true, capture); expect(pending).toBe(original);
+  expect(await pending).toBe(31); expect(capture).toHaveBeenCalledOnce(); expect(state).toEqual({ ...windowsNodeAssetLaunchObservation(), captureCheckpoint: 2 });
+  expect(() => requireWindowsCommandRootOnlyAttestingCurrent(capture.mock.calls[0][0], s.binding)).toThrow();
+  await observed.stop();
+});
+it.each([{ name: "object", value: Object.freeze({}) }, { name: "promise", value: Promise.resolve() }])("the real Stop guard still rejects a capture's invalid $name return", async ({ value }) => {
+  const s = actualStopFixture(), state = windowsNodeAssetLaunchObservation(); let original: Promise<number> | undefined;
+  const tracked: WindowsCommandRootOnlyStopOwner = { ...s.real, launch(...args) { original = s.real.launch(...args); return original; } };
+  const observed = observeWindowsNodeAssetStop(tracked, s.binding, requireWindowsCommandRootOnlyStopped, () => undefined, launchReaders, state);
+  const capture = vi.fn(() => value), pending = observed.launch(s.create, () => undefined, () => true, capture);
+  expect(pending).toBe(original); const error = await pending.catch(error => error);
+  expect(error).toBeInstanceOf(WindowsCommandRootOnlyCleanupError); expect(capture).toHaveBeenCalledOnce(); expect(s.events).not.toContain("resume");
+  expect(state).toEqual({ captureCheckpoint: 2, captureInnerClass: 0, stopStage: 8, stopOperation: 0, stopPredicate: 8, stopConstraint: 0 });
+  expect(s.fence.retained.length).toBeGreaterThan(0);
+});
+it("a supplied capture sees the same original exception before genuine Stop transforms its rejection", async () => {
+  const s = actualStopFixture(), state = windowsNodeAssetLaunchObservation(), original = new WindowsNodeToolchainCleanupError();
+  const observed = observeWindowsNodeAssetStop(s.real, s.binding, requireWindowsCommandRootOnlyStopped, () => undefined, launchReaders, state);
+  let rethrown: unknown;
+  const pending = observed.launch(s.create, () => undefined, () => true, () => {
+    try { throw original; } catch (error) { rethrown = error; throw error; }
+  });
+  const error = await pending.catch(error => error); expect(rethrown).toBe(original); expect(error).toBeInstanceOf(WindowsCommandRootOnlyCleanupError);
+  expect(state).toEqual({ captureCheckpoint: 1, captureInnerClass: 8, stopStage: 8, stopOperation: 0, stopPredicate: 1, stopConstraint: 0 });
+  expect(s.events).not.toContain("resume");
+});
+it.each([null, {}, Promise.resolve()])("an invalid capture argument %# remains invalid before any creator call", async capture => {
+  const s = actualStopFixture(), state = windowsNodeAssetLaunchObservation(), create = vi.fn(s.create);
+  const observed = observeWindowsNodeAssetStop(s.real, s.binding, requireWindowsCommandRootOnlyStopped, () => undefined, launchReaders, state);
+  const pending = observed.launch(create, () => undefined, () => true, capture as Parameters<WindowsCommandRootOnlyStopOwner["launch"]>[3]);
+  await expect(pending).rejects.toBeInstanceOf(Error); expect(create).not.toHaveBeenCalled(); expect(state.captureCheckpoint).toBe(0);
+  expect(s.events).not.toContain("resume"); await observed.stop();
+});
+it("no-capture launch preserves exact arguments and records no invented capture", async () => {
+  const s = actualStopFixture(), state = windowsNodeAssetLaunchObservation(), attest = () => undefined, current = () => true;
+  let actualArgs: unknown[] = [], original: Promise<number> | undefined;
+  const tracked: WindowsCommandRootOnlyStopOwner = { ...s.real, launch(...args) { actualArgs = args; original = s.real.launch(...args); return original; } };
+  const observed = observeWindowsNodeAssetStop(tracked, s.binding, requireWindowsCommandRootOnlyStopped, () => undefined, launchReaders, state);
+  const pending = observed.launch(s.create, attest, current); expect(pending).toBe(original); expect(actualArgs).toEqual([s.create, attest, current]);
+  expect(await pending).toBe(31); expect(state).toEqual(windowsNodeAssetLaunchObservation()); await observed.stop();
+});
+it.each([false, true])("observer attachment failure preserves original promise and settlement %#", async failure => {
+  const s = actualStopFixture(), state = windowsNodeAssetLaunchObservation(), attachment = vi.fn(() => { throw Error("PRIVATE attachment failure"); });
+  let original: Promise<number> | undefined;
+  const tracked: WindowsCommandRootOnlyStopOwner = { ...s.real, launch(...args) {
+    original = s.real.launch(...args); Object.defineProperty(original, "then", { get: attachment }); return original;
+  } };
+  const observed = observeWindowsNodeAssetStop(tracked, s.binding, requireWindowsCommandRootOnlyStopped, () => undefined, launchReaders, state);
+  const pending = observed.launch(s.create, () => undefined, () => true, failure ? () => ({}) : undefined); expect(pending).toBe(original);
+  let value: unknown, error: unknown; try { value = await pending; } catch (caught) { error = caught; }
+  expect(attachment).toHaveBeenCalledOnce(); expect(state.stopStage).toBe(0);
+  if (failure) { expect(error).toBeInstanceOf(WindowsCommandRootOnlyCleanupError); expect(s.events).not.toContain("resume"); }
+  else { expect(value).toBe(31); expect(error).toBeUndefined(); await observed.stop(); }
+});
+it("observer storage and branded-reader faults cannot replace a real failed promise", async () => {
+  const s = actualStopFixture(), state = Object.freeze(windowsNodeAssetLaunchObservation());
+  const readers = Object.defineProperty({ ...launchReaders }, "windowsCommandRootOnlyFailure", { get: () => { throw Error("PRIVATE reader fault"); } });
+  let original: Promise<number> | undefined;
+  const tracked: WindowsCommandRootOnlyStopOwner = { ...s.real, launch(...args) { original = s.real.launch(...args); return original; } };
+  const observed = observeWindowsNodeAssetStop(tracked, s.binding, requireWindowsCommandRootOnlyStopped, () => undefined, readers, state);
+  const pending = observed.launch(s.create, () => undefined, () => true, () => { throw new WindowsCommandOutputCleanupError(); });
+  expect(pending).toBe(original); await expect(pending).rejects.toBeInstanceOf(WindowsCommandRootOnlyCleanupError);
+  expect(state).toEqual(windowsNodeAssetLaunchObservation()); expect(s.events).not.toContain("resume");
+});
+it("foreign error metadata getters are never consulted by the genuine Stop diagnostic accessor", async () => {
+  const read = vi.fn(() => { throw Error("PRIVATE foreign metadata"); });
+  const error = Object.defineProperties({}, Object.fromEntries(["stage", "operation", "predicate", "constraint", "domain", "code", "name", "message", "cause", "stack"].map(key => [key, { get: read }])));
+  const original = Promise.reject<number>(error), state = windowsNodeAssetLaunchObservation();
+  const owner = { scope: "root-only", launch: () => original } as unknown as WindowsCommandRootOnlyStopOwner;
+  const observed = observeWindowsNodeAssetStop(owner, {}, requireWindowsCommandRootOnlyStopped, () => undefined, launchReaders, state);
+  const pending = observed.launch(() => ({ process: 1n, thread: 2n, pid: 1 }), () => undefined, () => true); expect(pending).toBe(original);
+  let caught: unknown; try { await pending; } catch (value) { caught = value; }
+  expect(caught).toBe(error); expect(read).not.toHaveBeenCalled(); expect(state).toEqual(windowsNodeAssetLaunchObservation());
+});
+it("C capture and failure facts cannot bleed into a fresh Node generation without capture", async () => {
+  const c = actualStopFixture(), first = windowsNodeAssetLaunchObservation(); let latest = first;
+  const prior = observeWindowsNodeAssetStop(c.real, c.binding, requireWindowsCommandRootOnlyStopped, () => undefined, launchReaders, first);
+  await prior.launch(c.create, () => undefined, () => true, () => undefined); await prior.stop(); expect(first.captureCheckpoint).toBe(2); expect(latest).toBe(first);
+  latest = windowsNodeAssetLaunchObservation(); expect(latest).toEqual(windowsNodeAssetLaunchObservation());
+  const n = actualStopFixture(), current = windowsNodeAssetLaunchObservation(); latest = current;
+  const next = observeWindowsNodeAssetStop(n.real, n.binding, requireWindowsCommandRootOnlyStopped, () => undefined, launchReaders, current);
+  await expect(next.launch(n.create, () => { throw Error("Fixed attester refusal."); }, () => true, () => undefined)).rejects.toBeInstanceOf(WindowsCommandRootOnlyCleanupError);
+  expect(latest.captureCheckpoint).toBe(0); expect(latest.captureInnerClass).toBe(0); expect(latest.stopStage).toBe(8); expect(first.captureCheckpoint).toBe(2);
+});
+it("an observed capture failure remains outer Copy class1 with an unknown real launch retained", async () => {
+  const s = outputFake(), observation = windowsNodeAssetLaunchObservation(), seen = vi.fn();
+  const api = { createJob: () => 50000n, assign() { s.state.assigned = true; }, resume() { s.events.push("resume"); },
+    terminateProcess() { s.state.ended = true; }, terminateJob() { s.state.ended = true; } } as unknown as WindowsLpacApi;
+  const native = { configure() {}, assertLimits() {}, state: () => ({ total: s.state.assigned ? 1 : 0, active: s.state.assigned && !s.state.ended ? 1 : 0, pids: s.state.assigned && !s.state.ended ? [s.state.returnedPid] : [] }),
+    processId: () => s.state.returnedPid, threadProcessId: () => s.state.returnedPid, member: () => s.state.assigned, wait: (): 0 | 258 => s.state.ended ? 0 : 258, close() {} };
+  const copy = await WindowsRootOnlyCommandCopy.create({ ...s.source.input(), creatorProfile: s.profile, packageSid: windowsCommandCreatorProfile(s.profile).sidText,
+    packageCurrent: () => true, reviewCurrent: () => true }, { api, fence: s.copyFence,
+    async createTree(input) { const tree = await s.source.binding.createFreshWindowsCommandTree(input); return { ...tree, captureCreator(ref, witness) { tree.captureCreator!(ref, witness); throw new WindowsNodeToolchainCleanupError(); } }; },
+    createStopOwner(binding) { const real = createWindowsCommandRootOnlyStopOwner(binding, api, native, () => 100, s.stopFence);
+      return observeWindowsNodeAssetStop(real, binding, requireWindowsCommandRootOnlyStopped, seen, launchReaders, observation); } });
+  const io = s.owner(), error = await copy.launchRootOnlyWithOutput(context => io.createSuspended(context, "C:\\trusted\\node.exe", s.command), () => undefined).catch(error => error);
+  expect(error).toBeInstanceOf(WindowsRootOnlyCommandCopyCleanupError); expect(windowsNodeAssetErrorClass(diagnosticClasses, error)).toBe(1);
+  expect(observation).toMatchObject({ captureCheckpoint: 1, captureInnerClass: 8, stopStage: 8, stopPredicate: 1 });
+  expect(s.events).not.toContain("resume"); expect(seen).not.toHaveBeenCalled(); expect([...s.handles.values()].some(handle => !handle.closed)).toBe(true);
+  await expect(copy.close()).rejects.toBe(error);
+});
+it("capture and branded Stop projections are bounded, detached and read no raw status or accessor", () => {
+  const value = { captureCheckpoint: 2, captureInnerClass: 8, stopStage: 14, stopOperation: 7, stopPredicate: 11, stopConstraint: 21 };
+  const project = (observation: typeof value) => new WindowsNodeAssetEnforcementObservationError("natural", 5, 14, 49, 1, 0, 0, 0, [], 1, 2, 2, 1, 6, 0, observation);
+  const known = project(value); value.stopStage = 0; expect(known).toMatchObject({ captureCheckpoint: 2, captureInnerClass: 8, stopStage: 14, stopOperation: 7, stopPredicate: 11, stopConstraint: 21 });
+  for (const [key, bad] of [["captureCheckpoint", 3], ["captureInnerClass", 9], ["stopStage", 15], ["stopOperation", 8], ["stopPredicate", 12], ["stopConstraint", 22]] as const)
+    expect(project({ ...value, [key]: bad })[key]).toBe(0);
+  const read = vi.fn(() => { throw Error("PRIVATE status"); });
+  const claimed = Object.defineProperties({ ...value }, { stopStage: { get: read }, domain: { get: read }, code: { get: read } });
+  expect(project(claimed).stopStage).toBe(0); expect(read).not.toHaveBeenCalled();
+});
+it("the fixed observer resets before Node verification and gives each Stop owner an isolated record", () => {
+  const source = fs.readFileSync(new URL("../fixtures/windows-node-asset-enforcement-proof.ts", import.meta.url), "utf8");
+  expect(source).toContain("createStopOwner(binding) { const observation = windowsNodeAssetLaunchObservation(); launchObservation = observation;");
+  expect(source).toContain("launchObservation = windowsNodeAssetLaunchObservation();\n      phase = 5; verified();");
+  expect(source).toContain("loaded!, observation);");
 });
 it("first source/loader failure permanently closes the private observer before another loader/native entry", async () => {
   const load = vi.fn(() => { throw Error("PRIVATE source location"); }), observe = bindWindowsNodeAssetEnforcement({ load });
