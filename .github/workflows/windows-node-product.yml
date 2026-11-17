@@ -142,7 +142,7 @@ jobs:
         run: |
           try {
             const fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto");
-            const { transformSync } = require("esbuild"), { Script } = require("node:vm");
+            const { createRequire } = require("node:module"), { Script } = require("node:vm");
             const proofCommit = process.env.REVIEWED_ASSET_PROOF_COMMIT, catalog = process.env.REVIEWED_ASSET_PROOF_MANIFEST;
             const verifierSha256 = process.env.REVIEWED_ASSET_PROOF_VERIFIER, image = process.env.EMBER_WINDOWS_NODE_PRODUCT_IMAGE;
             if (!/^[0-9a-f]{40}$/.test(proofCommit ?? "") || !/^[0-9a-f]{64}$/.test(catalog ?? "") ||
@@ -171,6 +171,8 @@ jobs:
             } finally { if (fd !== undefined) fs.closeSync(fd); }
             if (crypto.createHash("sha256").update(bytes).digest("hex") !== verifierSha256) throw new Error();
             const source = bytes.toString("utf8"); if (!Buffer.from(source, "utf8").equals(bytes)) throw new Error();
+            // The node shell script is temporary; resolve dependencies from the canonical checkout.
+            const { transformSync } = createRequire(path.join(repository, "package.json"))("esbuild");
             const compiled = transformSync(source, { loader: "ts", format: "cjs", target: "node22", sourcemap: false, logLevel: "silent" }).code;
             const module = { exports: {} }, allowed = { "node:fs": fs, "node:path": path, "node:crypto": crypto };
             const facts = new Script(compiled + "\nmodule.exports.verifyWindowsNodeAssetEnforcementRun(repository, input);",

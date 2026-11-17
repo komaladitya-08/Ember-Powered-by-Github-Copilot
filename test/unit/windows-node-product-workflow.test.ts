@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { runInNewContext, Script } from "node:vm";
 import { transformSync } from "esbuild";
@@ -108,14 +109,16 @@ function sourceFixture(selectedScript = Script) {
   const env: Record<string, string> = { REVIEWED_ASSET_PROOF_COMMIT: "1".repeat(40), EMBER_WINDOWS_NODE_PRODUCT_IMAGE: "windows-2022",
     REVIEWED_ASSET_PROOF_MANIFEST: digest(JSON.stringify(WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS)), REVIEWED_ASSET_PROOF_VERIFIER: digest(fs.readFileSync(verifier)) };
   const transformed = vi.fn(transformSync);
+  const requested = vi.fn((name: string) => { expect(name).toBe("esbuild"); return { transformSync: transformed }; });
+  const anchored = vi.fn((file: string) => { expect(file).toBe(path.join(repository, "package.json")); return requested; });
   const readFs: typeof fs = Object.create(fs);
-  return { repository, verifier, env, transformed, readFs,
+  return { repository, verifier, env, transformed, anchored, requested, readFs,
     run: () => runInNewContext(binding, { Buffer, process: { env, cwd: () => repository }, require: (name: string) => {
       if (name === "node:fs") return readFs;
       if (name === "node:path") return path;
       if (name === "node:crypto") return { createHash };
       if (name === "node:vm") return { Script: selectedScript };
-      if (name === "esbuild") return { transformSync: transformed };
+      if (name === "node:module") return { createRequire: anchored };
       throw new Error("PRIVATE unsupported module");
     } }), close: () => fs.rmSync(repository, { recursive: true, force: false }) };
 }
@@ -142,7 +145,22 @@ it.each(["windows-2022", "windows-2025"])("uses the genuine current source reade
     f.env.EMBER_WINDOWS_NODE_PRODUCT_IMAGE = image;
     expect(WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS).toHaveLength(125);
     expect(f.run).not.toThrow(); expect(f.transformed).toHaveBeenCalledTimes(1);
+    expect(f.anchored).toHaveBeenCalledExactlyOnceWith(path.join(f.repository, "package.json")); expect(f.requested).toHaveBeenCalledExactlyOnceWith("esbuild");
   } finally { f.close(); }
+});
+
+it("loads the repository transformer when the actual binding script lives outside the checkout", () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "product-external-binding-")), external = path.join(temporary, "workflow.cjs");
+  try {
+    const relative = path.relative(root, temporary); expect(relative.startsWith(".." + path.sep) || path.isAbsolute(relative)).toBe(true);
+    fs.writeFileSync(external, binding + '\nprocess.stdout.write("EXTERNAL_BINDING_OK");\n');
+    const result = spawnSync(process.execPath, [external], { cwd: root, env: { ...process.env,
+      REVIEWED_ASSET_PROOF_COMMIT: "1".repeat(40), EMBER_WINDOWS_NODE_PRODUCT_IMAGE: "windows-2022",
+      REVIEWED_ASSET_PROOF_MANIFEST: createHash("sha256").update(JSON.stringify(WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS)).digest("hex"),
+      REVIEWED_ASSET_PROOF_VERIFIER: createHash("sha256").update(fs.readFileSync(path.join(root, "test/fixtures/windows-node-asset-enforcement-run.ts"))).digest("hex"),
+    }, encoding: "utf8", timeout: 4000, maxBuffer: 64 * 1024, windowsHide: true });
+    expect(result.status).toBe(0); expect(result.signal).toBeNull(); expect(result.stdout).toBe("EXTERNAL_BINDING_OK");
+  } finally { fs.rmSync(temporary, { recursive: true, force: false }); }
 });
 
 it.each(["REVIEWED_ASSET_PROOF_COMMIT", "REVIEWED_ASSET_PROOF_MANIFEST", "REVIEWED_ASSET_PROOF_VERIFIER", "EMBER_WINDOWS_NODE_PRODUCT_IMAGE"])("rejects an absent trusted step output or unsupported image at %s before transformation", field => {
