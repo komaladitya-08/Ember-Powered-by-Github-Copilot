@@ -25,8 +25,8 @@ import { hasConsent, type SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
 import type { ConversationContext } from "../../shared/ipc";
 import { TaskManager, handedElsewhere, taskOutcome, titleOf, type KeptCard, type RetriedWords, type StopCause, type Task, type WorkerLike } from "./tasks";
-import { waitForTaskSettlement, type TaskWaitResult } from "./task-wait";
-import { TaskCompletion } from "./task-completion";
+import { waitForTaskSettlement, type TaskWaitObservation, type TaskWaitResult } from "./task-wait";
+import { TaskCompletion, type CompletionPlan, type CompletionTask } from "./task-completion";
 import { redactingClient, type ModelRedactor } from "./redacting-client";
 import { CHECKING_STEP, LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerResult, type WorkerSystem, type WorkerVault } from "./worker";
 import { CodingWorker } from "./coding-worker";
@@ -1120,8 +1120,15 @@ export class AgentHost {
   private readonly codingRetirement = new CodingRetirement();
   private vaultFillHolds = 0;
   private readonly mixedHandoffs = new MixedHandoffs<WorkerResult | null>();
+  private readonly mixedCompletionPlans = new Map<string, { close(): void; revoke(): void }>();
   private readonly desktopHandoffs = new MixedHandoffs<WorkerResult | null>();
   private readonly desktopSequences = new Map<string, { release(reason?: ProjectSequenceReason | null): void }>();
+
+  /** Latch workspace and policy revocation even if their visible facts change back before observation. */
+  private revokeMixedCompletion(id?: string): void {
+    if (id !== undefined) { this.mixedCompletionPlans.get(id)?.revoke(); this.mixedCompletionPlans.delete(id); }
+    else { for (const plan of this.mixedCompletionPlans.values()) plan.revoke(); this.mixedCompletionPlans.clear(); }
+  }
 
   private clearDesktopSequences(reason: ProjectSequenceReason = "context-changed"): void {
     for (const sequence of this.desktopSequences.values()) sequence.release(reason);
@@ -1133,9 +1140,9 @@ export class AgentHost {
   codingWorkspaceChanged(projectId?: string): void {
     for (const intake of this.codingIntakes()) if (projectId === undefined || intake.projectId === projectId) intake.revoke();
     if (projectId === undefined) this.codingRetirement.retire();
-    if (projectId === undefined) { this.mixedHandoffs.clear(); this.mixedCodingProjects?.clear(); this.mixedCodingCurrent?.clear(); }
+    if (projectId === undefined) { this.mixedHandoffs.clear(); this.revokeMixedCompletion(); this.mixedCodingProjects?.clear(); this.mixedCodingCurrent?.clear(); }
     else for (const [id, project] of this.mixedCodingProjects ?? []) if (project === projectId) {
-      this.mixedHandoffs.cancel(id); this.mixedCodingProjects.delete(id); this.mixedCodingCurrent.delete(id);
+      this.mixedHandoffs.cancel(id); this.revokeMixedCompletion(id); this.mixedCodingProjects.delete(id); this.mixedCodingCurrent.delete(id);
     }
     for (const id of this.codingTasks) {
       const scope = this.codingScopes?.get(id);
@@ -1163,7 +1170,7 @@ export class AgentHost {
       scope.revoke(); scope.worker?.invalidate(); this.tasks?.cancel(id);
     }
     for (const [id, current] of this.mixedCodingCurrent) if (!current()) {
-      this.mixedHandoffs.cancel(id); this.mixedCodingProjects.delete(id); this.mixedCodingCurrent.delete(id);
+      this.mixedHandoffs.cancel(id); this.revokeMixedCompletion(id); this.mixedCodingProjects.delete(id); this.mixedCodingCurrent.delete(id);
     }
   }
 
@@ -1247,6 +1254,8 @@ export class AgentHost {
   private turnTasks = new WeakMap<UserRequest, Set<string>>();
   private taskWaitAbort = new AbortController();
   private readonly taskWaitProjects = new WeakMap<Task, { projectId: string | null; association?: string; metadataFree?: true }>();
+  private readonly expiredTaskCards = new WeakSet<Task>();
+  private readonly completionTaskFinished = new WeakMap<Task, () => void>();
   private taskCompletion: { request: UserRequest; observer: TaskCompletion } | null = null;
   private taskCompletionQuestion: Promise<void> | null = null;
 
@@ -1267,13 +1276,13 @@ export class AgentHost {
     return !this.answerOpen && !this.presenter.atWork && !this.waitingAsks && !this.held.length && !this.pinned && !this.mainHold;
   }
 
-  /** Capture only tasks this request delegates, never tasks it merely lists, steers or cancels. */
-  private trackTaskCompletion(request: UserRequest, manager: TaskManager, generation: number, task: Task): void {
-    if (task.mode === "guide" || this.fromElsewhere.has(task) || request.waitSignal !== this.taskWaitAbort.signal) return;
+  /** Capture the original accepted request before reserving any read-only dependent-plan slots. */
+  private taskCompletionFor(request: UserRequest, manager: TaskManager, generation: number): TaskCompletion | null {
+    if (request.waitSignal !== this.taskWaitAbort.signal) return null;
     if (!this.taskCompletion || this.taskCompletion.request !== request) {
       this.taskCompletion?.observer.retire();
       const client = this.client, abort = this.taskWaitAbort, epoch = this.stopEpoch, conversation = this.conversationEpoch;
-      if (!client || abort.signal.aborted || this.tasks !== manager) return;
+      if (!client || abort.signal.aborted || this.tasks !== manager) return null;
       const projectId = request.projectId ?? null, model = this.status.conductorModel, workerModel = this.status.workerModel;
       const modelSettings = JSON.stringify(this.o.settings.get().models);
       const login = this.status.login, mode = modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null);
@@ -1300,12 +1309,45 @@ export class AgentHost {
       });
       this.taskCompletion = { request, observer };
     }
+    return this.taskCompletion.observer;
+  }
+
+  /** Capture exact delegated identities; only a ticket accepted during the original turn may bind a later plan slot. */
+  private trackTaskCompletion(request: UserRequest, manager: TaskManager, generation: number, task: Task, plan?: { ticket: CompletionPlan; index: number }): void {
+    if (task.mode === "guide" || this.fromElsewhere.has(task)) return;
+    const observer = plan ? null : this.taskCompletionFor(request, manager, generation);
+    if (!plan && !observer) return;
     const projectId = request.projectId ?? null, receipt = this.taskWaitProjects.get(task);
     const source = this.codingWaitScopes.get(task);
     const original = this.taskBindings.get(task.id) ?? this.finishedTaskBindings.get(task), binding = original ? { ...original } : undefined;
     const bindingKey = binding ? JSON.stringify(binding) : "", target = task.targetId;
-    this.taskCompletion.observer.add({ id: task.id, title: task.title, observe: () => manager.observeSettlement(task), current: () => {
-      if (manager.get(task.id) !== task || task.targetId !== target || this.fromElsewhere.has(task) || source && !source()) return false;
+    // Keep a bounded settled outcome for this exact task if its card expires while the accepted work is still running.
+    let settled: TaskWaitObservation | undefined;
+    let unsubscribe: (() => void) | undefined;
+    const detach = () => {
+      this.completionTaskFinished.delete(task);
+      unsubscribe?.(); unsubscribe = undefined;
+    };
+    const capture = () => {
+      const value = manager.observeSettlement(task);
+      if (value.status === "missing") { detach(); return true; }
+      if ((value.status === "done" || value.status === "failed" || value.status === "cancelled") && value.cleanup !== "pending") {
+        settled = { ...value, summary: value.summary.slice(0, 512) };
+        detach(); return true;
+      }
+      return false;
+    };
+    const finished = () => {
+      // Ordinary workers finish their cards before disposal. Watch only until this task has settled.
+      if (!capture()) unsubscribe = manager.subscribeSettlement(capture);
+    };
+    const entry: CompletionTask = { id: task.id, title: task.title, observe: () => {
+      if (settled && this.expiredTaskCards.has(task) && manager.get(task.id) === undefined) return settled;
+      return manager.observeSettlement(task);
+    }, release: () => { detach(); settled = undefined; }, current: () => {
+      const liveTask = manager.get(task.id);
+      if (liveTask !== task && (liveTask !== undefined || !settled || !this.expiredTaskCards.has(task))) return false;
+      if (task.targetId !== target || this.fromElsewhere.has(task) || source && !source()) return false;
       if (!receipt || receipt.projectId !== projectId) return false;
       if (projectId !== null) this.sessionProjects.destination(projectId);
       const association = this.taskProjectAssociations().get(task.id);
@@ -1319,7 +1361,11 @@ export class AgentHost {
       if (!binding) return false;
       const got = this.o.targets.handsFor(binding.id);
       return got.ok && JSON.stringify(got.hands.binding) === bindingKey;
-    } });
+    } };
+    const accepted = plan ? plan.ticket.bind(plan.index, entry) : observer?.add(entry);
+    if (!accepted) return;
+    if (task.status === "running" || task.status === "queued") this.completionTaskFinished.set(task, finished);
+    else finished();
   }
 
   private taskProjectAssociations(): Map<string, string> {
@@ -2621,12 +2667,15 @@ export class AgentHost {
         audit: hands?.audit ?? this.o.taskBase?.audit,
         settingsKey: this.o.settingsKey ?? this.sys.shortcuts?.settings.label,
         beforeFinish: task => {
+          const completion = this.mixedCompletionPlans.get(task.id);
+          this.mixedCompletionPlans.delete(task.id);
           this.mixedCodingProjects.delete(task.id);
           this.mixedCodingCurrent.delete(task.id);
           const sequence = this.desktopSequences.get(task.id);
           this.desktopSequences.delete(task.id);
           const desktopHandoff = this.desktopHandoffs.finish(task.id, task.status, task.result);
           const handoff = desktopHandoff === "absent" ? this.mixedHandoffs.finish(task.id, task.status, task.result) : desktopHandoff;
+          if (handoff !== "started") completion?.close();
           if (sequence && handoff !== "started") sequence.release(task.status === "failed" ? "failed" : task.status === "cancelled" ? "stopped" : "context-changed");
           if (handoff === "failed") this.o.log.warn("agent.mixed_handoff_failed", { id: task.id });
           if ((handoff === "failed" || handoff === "skipped") && task.status === "done" && task.result) {
@@ -2637,6 +2686,7 @@ export class AgentHost {
           }
         },
         onFinished: task => {
+          this.completionTaskFinished.get(task)?.();
           this.codingScopes.delete(task.id);
           if (this.codingTasks.delete(task.id)) this.o.onCodingRunning?.(this.codingTasks.size > 0);
           this.finishedLately = [...this.finishedLately.filter(t => t !== task && Date.now() - (t.finished ?? 0) <= CATCH_UP_MS), task].slice(-FINISHED_KEPT);
@@ -2686,6 +2736,7 @@ export class AgentHost {
           this.outcomes.set(task.id, presenter);
         },
         onRemoved: (task, byUser) => {
+          if (!byUser) this.expiredTaskCards.add(task);
           this.taskMarks.delete(task.id);
           const p = this.outcomes.get(task.id);
           this.outcomes.delete(task.id);
@@ -3040,7 +3091,15 @@ export class AgentHost {
           const epoch = this.stopEpoch, generation = this.gen;
           const current = () => this.tasks === tasks && this.gen === generation && this.status.phase === "ready" && !this.providerMoved() && this.stopEpoch === epoch && !this.vaultFillHolds && !this.o.redact?.active && workspace.current()
             && this.o.admin?.().features.actions !== false && modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null) === mode;
-          const start = (kind: "coding" | "desktop", goal: string, handoffSummary?: string, deferHandoff = false) => {
+          let completionCurrent = true;
+          const completion = this.taskCompletionFor(r, tasks, gen)?.acceptPlan([titleOf(firstGoal), titleOf(secondGoal)], () => {
+            if (!completionCurrent || !current()) return false;
+            if (projectId !== null) this.sessionProjects.destination(projectId);
+            if (!binding || !targets) return true;
+            const got = targets.handsFor(binding.id);
+            return got.ok && JSON.stringify(got.hands.binding) === JSON.stringify(binding);
+          }) ?? null;
+          const start = (kind: "coding" | "desktop", goal: string, handoffSummary?: string, deferHandoff = false, index = 0) => {
             if (!current()) throw new Error("The task context changed.");
             const t = tasks.start(goal, {
               target: kind === "coding" ? {} : target,
@@ -3056,15 +3115,22 @@ export class AgentHost {
             if (kind === "desktop" && binding) this.taskBindings.set(t.id, binding);
             if (r.verifiedAt !== undefined) this.o.voiceTrust?.grant(t.id, r.verifiedAt);
             touch(r, t.id);
-            this.trackTaskCompletion(r, tasks, gen, t);
+            if (completion) this.trackTaskCompletion(r, tasks, gen, t, { ticket: completion, index });
             return t;
           };
-          const t = start(first, firstGoal, undefined, true);
-          if (t.status !== "running" && t.status !== "queued") return `The first part could not start: ${t.result?.summary ?? "an error occurred"}. Tell the user.`;
-          this.mixedHandoffs.arm(t.id, current, result => {
-            const next = start(first === "coding" ? "desktop" : "coding", secondGoal, result?.summary);
+          let t: Task;
+          try { t = start(first, firstGoal, undefined, true); }
+          catch (err) { completion?.close(); throw err; }
+          if (t.status !== "running" && t.status !== "queued") { completion?.close(); return `The first part could not start: ${t.result?.summary ?? "an error occurred"}. Tell the user.`; }
+          const armed = this.mixedHandoffs.arm(t.id, current, result => {
+            const next = start(first === "coding" ? "desktop" : "coding", secondGoal, result?.summary, false, 1);
+            completion?.close();
             if (next.status !== "running" && next.status !== "queued") throw new Error("The next part could not start.");
           });
+          if (armed && completion) this.mixedCompletionPlans.set(t.id, { close: completion.close, revoke: () => {
+            completionCurrent = false;
+            completion.close();
+          } }); else completion?.close();
           this.mixedCodingProjects.set(t.id, workspace.projectId);
           this.mixedCodingCurrent.set(t.id, current);
           return `Task ${t.id} started. The second part will start after the first succeeds. Tell the user briefly.`;
@@ -3102,9 +3168,10 @@ export class AgentHost {
           try { sequenceId = this.sessionProjects.beginSequence(projectId, plan); }
           catch (err) { return err instanceof Error ? err.message : "The sequence could not be recorded."; }
           let active = true;
+          let completion: CompletionPlan | null = null;
           let unsubscribe = () => undefined as void;
           const release = (reason: ProjectSequenceReason | null = "context-changed") => {
-            active = false; unsubscribe(); unsubscribe = () => undefined;
+            active = false; completion?.close(); unsubscribe(); unsubscribe = () => undefined;
             if (reason !== null) {
               try { this.sessionProjects.retireSequence(projectId, sequenceId, reason); } catch { /* The user may have forgotten the project. */ }
             }
@@ -3113,8 +3180,8 @@ export class AgentHost {
           unsubscribe = this.o.settings.onChange(() => {
             if (modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null) !== mode || this.providerMoved()) release();
           });
-          const current = () => {
-            if (!active || this.tasks !== tasks || gen !== this.gen || this.status.phase !== "ready" || this.providerMoved() || epoch !== this.stopEpoch
+          const contextCurrent = () => {
+            if (this.tasks !== tasks || gen !== this.gen || this.status.phase !== "ready" || this.providerMoved() || epoch !== this.stopEpoch
               || this.o.screenLocked?.() || this.o.admin?.().features.actions === false || modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null) !== mode) return false;
             try { this.sessionProjects.destination(projectId); } catch { return false; }
             if (binding && targets) {
@@ -3123,6 +3190,8 @@ export class AgentHost {
             }
             return true;
           };
+          const current = () => active && contextCurrent();
+          completion = this.taskCompletionFor(r, tasks, gen)?.acceptPlan(plan.map(step => step.name), contextCurrent) ?? null;
           const start = (index: number, summary?: string): Task => {
             if (!current()) throw new Error("The sequence context changed.");
             this.sessionProjects.refresh(this.taskActivities());
@@ -3139,7 +3208,7 @@ export class AgentHost {
             this.sessionProjects.linkSequenceStep(projectId, sequenceId, index, t.id);
             touch(r, t.id);
             if (binding) this.taskBindings.set(t.id, binding);
-            this.trackTaskCompletion(r, tasks, gen, t);
+            if (completion) this.trackTaskCompletion(r, tasks, gen, t, { ticket: completion, index });
             if (mark !== undefined) this.taskMarks.set(t.id, mark);
             if (r.verifiedAt !== undefined) this.o.voiceTrust?.grant(t.id, r.verifiedAt);
             this.announced.add(t.id);
@@ -4829,7 +4898,7 @@ export class AgentHost {
     const codingRetired = this.codingRetirement.wait(5000);
     this.tasks?.cancelAll(cutOff ?? undefined);
     this.clearDesktopSequences();
-    this.mixedHandoffs.clear();
+    this.mixedHandoffs.clear(); this.revokeMixedCompletion();
     this.confirmer?.cancelAll();
     // First, while the runtime surely still runs (quitting doesn't wait long).
     if (forget) await this.forgetCurrent(2000);

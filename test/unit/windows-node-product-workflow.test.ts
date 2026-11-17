@@ -445,7 +445,8 @@ function diagnosticOperations(o: ObservationHelper, ports: Record<string, unknow
   const method = (begin: string, end: string) => {
     const first = source.indexOf(begin), last = source.indexOf(end, first); expect(first >= 0 && last > first).toBe(true); return source.slice(first, last);
   };
-  const code = transformSync(`module.exports = class {
+  const code = transformSync(`${method("function sameNode(", "function subtree(")}
+  module.exports = class {
     phase = 0; home = 99; profile = "/PRIVATE/profile"; key = "PRIVATE key"; previousCard = ""; failureCaptured = false;
     constructor(observation, ports) { this.observation = observation; Object.assign(this, ports); }
     ${method("  private observe(values:", "  private observeInput")}
@@ -498,7 +499,7 @@ it.each([false, true])("the actual provider, Commands setup and decision operati
     async fill() { trace.push("fill"); }, async armed() { trace.push("armed"); }, async idle() { trace.push("idle"); },
     async node(_window: number, selected: { label?: string }) { trace.push("node"); return { patterns: { toggle: selected.label === "Run commands on this computer" || asked ? "On" : "Off" }, isEnabled: true }; },
     async command() { trace.push("command"); decision++; return 99; },
-    async nodes() { trace.push("snapshot"); return [{ automationId: "ask-cmd", runtimeId: "PRIVATE runtime " + decision }, { name: "\\work", controlType: "Text" }, { controlType: "TabItem", runtimeId: "PRIVATE tab " + decision }]; },
+    async nodes() { trace.push("snapshot"); return [{ automationId: "ask-cmd", controlType: "Text", pid: 41, runtimeId: "PRIVATE runtime " + decision }, { name: "\\work", controlType: "Text" }, { controlType: "TabItem", runtimeId: "PRIVATE tab " + decision }]; },
     async until(read: () => Promise<unknown>, accept: (value: unknown) => boolean, timeout: number) { expect(timeout).toBe(45_000); const value = await read(); expect(accept(value)).toBe(true); return value; },
     async focus() { trace.push("focus"); }, async text() { trace.push("text"); return "Node arguments: " + JSON.stringify(argv); },
   };

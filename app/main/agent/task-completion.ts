@@ -7,7 +7,11 @@ export interface CompletionTask {
   readonly title: string;
   current(): boolean;
   observe(): TaskWaitObservation;
+  release?(): void;
 }
+
+/** Fixed slots accepted during the original turn; later binding observes that plan and never admits new work. */
+export interface CompletionPlan { bind(index: number, task: CompletionTask): boolean; close(): void }
 
 export interface TaskCompletionInput {
   readonly request: string;
@@ -29,6 +33,9 @@ const SYSTEM = "You are Ember's conductor reporting work the user already reques
 export class TaskCompletion {
   private tasks: CompletionTask[] = [];
   private observed = new Set<string>();
+  private aliases = new Map<string, string>();
+  private planRetire = new Set<() => void>();
+  private nextPlan = 0;
   private abort = new AbortController();
   private unsubscribe = () => undefined as void;
   private stopped = false;
@@ -42,24 +49,63 @@ export class TaskCompletion {
     if (input.signal.aborted) this.retire();
   }
 
-  add(task: CompletionTask): void {
-    if (this.stopped || this.sealed || this.tasks.some(value => value.id === task.id)) return;
-    if (this.tasks.length >= LIMIT || !task.id || task.id.length > 60 || typeof task.title !== "string") { this.retire(); return; }
+  add(task: CompletionTask): boolean {
+    if (this.stopped || this.sealed || this.tasks.some(value => value.id === task.id)) return false;
+    if (this.tasks.length >= LIMIT || !task.id || task.id.length > 60 || typeof task.title !== "string") { this.retire(); return false; }
     this.tasks.push(task);
     this.changed();
+    return true;
+  }
+
+  /** Reserve only an already accepted bounded plan. A ticket can fill its fixed slots after sealing, once each. */
+  acceptPlan(titles: readonly string[], current: () => boolean): CompletionPlan | null {
+    if (this.stopped || this.sealed) return null;
+    if (!Array.isArray(titles) || titles.length < 2 || titles.length > LIMIT || this.tasks.length + titles.length > LIMIT ||
+        titles.some(title => typeof title !== "string" || !title.trim() || title.length > 120) || typeof current !== "function") { this.retire(); return null; }
+    let closed = false;
+    const number = ++this.nextPlan;
+    const bindings: ({ task: CompletionTask; id: string } | null)[] = titles.map(() => null);
+    const slots = titles.map((title, index): CompletionTask => {
+      const id = `@plan:${number}:${index}`;
+      return { id, title, current: () => current() === true && (!bindings[index] || bindings[index]!.task.current() === true),
+        release: () => bindings[index]?.task.release?.(), observe: () => {
+        const binding = bindings[index];
+        if (!binding) return { id, status: closed ? "cancelled" : "queued", cleanup: closed ? "complete" : "pending", handoffSafe: false,
+          summary: closed ? "This planned session did not start." : "" };
+        const value = binding.task.observe();
+        if (binding.task.id !== binding.id || value.id !== binding.id) throw new Error("The accepted plan task changed.");
+        return { ...value, id };
+      } };
+    });
+    this.planRetire.add(() => { closed = true; bindings.fill(null); });
+    for (const slot of slots) this.add(slot);
+    return Object.freeze({
+      bind: (index: number, task: CompletionTask) => {
+        if (this.stopped) return false;
+        if (closed || !Number.isInteger(index) || index < 0 || index >= slots.length || bindings[index] || !task ||
+            typeof task.id !== "string" || !task.id || task.id.length > 60 || this.aliases.has(task.id) || this.tasks.some(value => value.id === task.id)) { this.retire(); return false; }
+        bindings[index] = { task, id: task.id };
+        this.aliases.set(task.id, slots[index].id);
+        this.changed();
+        return true;
+      },
+      close: () => { if (!this.stopped && !closed) { closed = true; this.changed(); } },
+    });
   }
 
   /** A successful foreground join already supplied these exact settled outcomes to the initial conductor turn. */
   saw(result: TaskWaitResult): void {
     if (this.stopped || this.sealed || result.reason !== "settled") return;
-    for (const value of result.tasks) if (terminal.has(value.status) && value.cleanup !== "pending" && this.tasks.some(task => task.id === value.id)) this.observed.add(value.id);
+    for (const value of result.tasks) {
+      const id = this.aliases.get(value.id) ?? value.id;
+      if (terminal.has(value.status) && value.cleanup !== "pending" && this.tasks.some(task => task.id === id)) this.observed.add(id);
+    }
   }
 
-  /** No task can join the accepted set after its original conductor turn ends. */
+  /** No task or plan slot can join the accepted set after its original conductor turn ends. */
   end(aborted: boolean): void {
     if (this.stopped || this.sealed) return;
     if (aborted || this.tasks.length < 2 || this.tasks.every(task => this.observed.has(task.id))) { this.retire(); return; }
-    // A foreground join owns its own listener. Subscribe only when this accepted turn actually leaves work behind.
     this.sealed = true;
     let unsubscribe: () => void;
     try { unsubscribe = this.input.subscribe(() => this.changed()); }
@@ -88,6 +134,11 @@ export class TaskCompletion {
     this.abort.abort();
     this.input.signal.removeEventListener("abort", this.retire);
     try { this.unsubscribe(); } catch { /* Retired observations never grant publication authority. */ }
+    for (const task of this.tasks) {
+      try { task.release?.(); } catch { /* Release the other observers even if one fails. */ }
+    }
+    for (const retire of this.planRetire) retire();
+    this.planRetire.clear(); this.aliases.clear();
     this.tasks = []; this.observed.clear(); this.answer = "";
   };
 

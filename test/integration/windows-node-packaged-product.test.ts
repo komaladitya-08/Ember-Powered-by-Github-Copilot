@@ -30,6 +30,7 @@ const environmentCanary = "PACKAGED_NODE_HOST_ENVIRONMENT_MUST_STAY_LOCAL", read
 let quarantined = false;
 type Model = Awaited<ReturnType<typeof createWindowsNodeProductModel>>;
 type Selector = (node: RawNode) => boolean;
+type SnapshotGuard = (nodes: readonly RawNode[]) => boolean;
 const id = (value: string): Selector => node => node.automationId === value;
 const named = (value: string): Selector => node => node.name === value;
 // Bridge handles address one observation. UIA runtime IDs identify the same actual element across observations.
@@ -291,8 +292,11 @@ class Journey {
     try { this.observation.controls(result.nodes); } catch { /* Cached stage13 controls only. */ }
     return result.nodes;
   }
-  private async node(hwnd: number, select: Selector, enabled = true): Promise<RawNode> {
-    const found = await this.until(async () => (await this.nodes(hwnd)).find(node => select(node) && (!enabled || node.isEnabled === true)), value => !!value);
+  private async node(hwnd: number, select: Selector, enabled = true, guard?: SnapshotGuard): Promise<RawNode> {
+    const found = await this.until(async () => {
+      const nodes = await this.nodes(hwnd);
+      return !guard || guard(nodes) ? nodes.find(node => select(node) && (!enabled || node.isEnabled === true)) : undefined;
+    }, value => !!value);
     return found!;
   }
   private async text(hwnd: number, select: Selector): Promise<string> {
@@ -311,7 +315,7 @@ class Journey {
     const text = texts.join("\n"); if (text.length > 32_000) throw refusal(this.phase);
     return text || node.name || "";
   }
-  private async focus(hwnd: number, node: RawNode): Promise<RawNode> {
+  private async focus(hwnd: number, node: RawNode, guard?: SnapshotGuard): Promise<RawNode> {
     this.observe({ operation: 10, focusFlags: 0, inputResult: 0, focusIdentity: 0 }); try { this.observation.node(node); } catch { /* Cached target only. */ }
     if (!this.input || this.input.blockedReason?.(hwnd)) throw refusal(this.phase);
     this.observeInput(this.input.activate(hwnd));
@@ -320,7 +324,8 @@ class Journey {
     await this.until(() => this.bridge!.call<{ element: RawNode | null; hwnd: number | null }>("focused", { values: false, deadlineMs: 2500 }, 5000),
       result => { try { this.observation.focused(result, node, hwnd); } catch { /* Preserve the original predicate. */ }
         return result.hwnd === hwnd && !!result.element && sameNode(result.element, node) && result.element.hasKeyboardFocus === true; }, 10_000);
-    const fresh = (await this.nodes(hwnd)).find(value => sameNode(value, node));
+    const nodes = await this.nodes(hwnd);
+    const fresh = !guard || guard(nodes) ? nodes.find(value => sameNode(value, node)) : undefined;
     this.observe({ operation: 12 }); try { this.observation.fresh(fresh); } catch { /* Cached guard fields only. */ }
     if (!fresh || fresh.isOffscreen || !fresh.bounds || fresh.bounds.width <= 0 || fresh.bounds.height <= 0 || this.observeInput(this.input.activeWindow() !== hwnd, true)) throw refusal(this.phase);
     return fresh;
@@ -337,8 +342,8 @@ class Journey {
     if (!this.input?.textKey) throw refusal(this.phase);
     for (const character of value) { this.current(); if (!this.input.textKey(character, true) || !this.input.textKey(character, false)) throw refusal(this.phase); }
   }
-  private async click(hwnd: number, select: Selector): Promise<void> {
-    const node = await this.focus(hwnd, await this.node(hwnd, select)), box = node.bounds!;
+  private async click(hwnd: number, select: Selector, guard?: SnapshotGuard): Promise<void> {
+    const node = await this.focus(hwnd, await this.node(hwnd, select, true, guard), guard), box = node.bounds!;
     this.observe({ operation: 13, inputResult: 0 }); this.observeInput(this.input!.move(box.x + Math.floor(box.width / 2), box.y + Math.floor(box.height / 2)));
     try { this.observe({ operation: 14, inputResult: 0 }); this.observeInput(this.input!.button(1, true)); }
     catch (error) { this.captureFailure(); throw error; }
@@ -516,13 +521,36 @@ class Journey {
   async decide(argv: readonly string[], answer: "Allow" | "Not now" = "Allow"): Promise<void> {
     this.phase = 6; try { this.observation.decision(); } catch { /* Count only this existing call. */ } this.observe({ commandStage: 6, cardFlags: 0, allowFlags: 0, denyFlags: 0, hintFlags: 0 }); const hwnd = await this.command();
     this.observe({ commandStage: 7 });
-    const display = (await this.until(() => this.nodes(hwnd), nodes => { try { this.observation.card(nodes, this.previousCard); } catch { /* Cached poll only. */ } return nodes.some(node => node.automationId === "ask-cmd" && !!node.runtimeId && node.runtimeId !== this.previousCard); }, 45_000)).find(id("ask-cmd"))!;
+    const commandBlock = id("ask-cmd");
+    const display = (await this.until(async () => {
+      const nodes = await this.nodes(hwnd);
+      try { this.observation.card(nodes, this.previousCard); } catch { /* Cached poll only. */ }
+      const fresh = nodes.filter(node => commandBlock(node) && !!node.runtimeId && node.runtimeId !== this.previousCard);
+      if (fresh.length > 1) throw refusal(this.phase);
+      return fresh[0];
+    }, node => !!node, 45_000))!;
+    const matchesDisplay = (node: RawNode) => sameNode(node, display);
+    const hasDisplay: SnapshotGuard = nodes => {
+      const blocks = nodes.filter(commandBlock);
+      if (blocks.length > 1) throw refusal(this.phase);
+      return blocks.length === 1 && matchesDisplay(blocks[0]);
+    };
     this.observe({ commandStage: 8 }); await this.focus(hwnd, display);
-    this.observe({ commandStage: 9 }); expect(await this.text(hwnd, id("ask-cmd"))).toBe("Node arguments: " + JSON.stringify(argv));
-    this.observe({ commandStage: 10 }); expect((await this.nodes(hwnd)).map(node => node.name ?? "").join("\n")).toContain("\\work");
+    this.observe({ commandStage: 9 }); expect(await this.text(hwnd, matchesDisplay)).toBe("Node arguments: " + JSON.stringify(argv));
+    this.observe({ commandStage: 10 });
+    const commandNodes = await this.nodes(hwnd);
+    if (!hasDisplay(commandNodes)) throw refusal(this.phase);
+    expect(commandNodes.map(node => node.name ?? "").join("\n")).toContain("\\work");
     this.observe({ commandStage: 11 }); this.previousCard = display.runtimeId!;
     this.observe({ commandStage: 12 }); this.previousTabs = new Set((await this.nodes(hwnd)).filter(node => node.controlType === "TabItem" && node.runtimeId).map(node => node.runtimeId!));
-    this.observe({ commandStage: 13 }); await this.click(hwnd, named(answer)); this.observe({ commandStage: 14 });
+    const answerButton = named(answer);
+    this.observe({ commandStage: 13 });
+    await this.click(hwnd, answerButton, nodes => {
+      if (!hasDisplay(nodes)) return false;
+      if (nodes.filter(answerButton).length > 1) throw refusal(this.phase);
+      return true;
+    });
+    this.observe({ commandStage: 14 });
   }
   private async review(goal: string, counts: string): Promise<string> {
     this.phase = 7; await this.pane("Projects");

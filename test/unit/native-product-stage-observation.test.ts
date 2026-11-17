@@ -76,6 +76,24 @@ it("preserves the entire native WSL test after reversing only the new observatio
 });
 it("preserves the entire packaged test after reversing only the new project/folder stage field and markers", () => {
   let source = fs.readFileSync("test/integration/windows-node-packaged-product.test.ts", "utf8");
+  // Reverse the separately covered native card selector correction before checking the historic observer change.
+  source = source.replace("type SnapshotGuard = (nodes: readonly RawNode[]) => boolean;\n", "");
+  source = source.replace("  private async node(hwnd: number, select: Selector, enabled = true, guard?: SnapshotGuard): Promise<RawNode> {\n    const found = await this.until(async () => {\n      const nodes = await this.nodes(hwnd);\n      return !guard || guard(nodes) ? nodes.find(node => select(node) && (!enabled || node.isEnabled === true)) : undefined;\n    }, value => !!value);\n    return found!;\n  }\n", "  private async node(hwnd: number, select: Selector, enabled = true): Promise<RawNode> {\n    const found = await this.until(async () => (await this.nodes(hwnd)).find(node => select(node) && (!enabled || node.isEnabled === true)), value => !!value);\n    return found!;\n  }\n");
+  source = source.replace("hwnd: number, node: RawNode, guard?: SnapshotGuard): Promise<RawNode> {", "hwnd: number, node: RawNode): Promise<RawNode> {");
+  source = source.replace("    const nodes = await this.nodes(hwnd);\n    const fresh = !guard || guard(nodes) ? nodes.find(value => sameNode(value, node)) : undefined;", "    const fresh = (await this.nodes(hwnd)).find(value => sameNode(value, node));");
+  source = source.replace("  private async click(hwnd: number, select: Selector, guard?: SnapshotGuard): Promise<void> {\n    const node = await this.focus(hwnd, await this.node(hwnd, select, true, guard), guard), box = node.bounds!;\n", "  private async click(hwnd: number, select: Selector): Promise<void> {\n    const node = await this.focus(hwnd, await this.node(hwnd, select)), box = node.bounds!;\n");
+  const selectorStart = source.indexOf("    const commandBlock = id(\"ask-cmd\");"), selectorEnd = source.indexOf("\n  }\n  private async review(", selectorStart);
+  expect(selectorStart > 0 && selectorEnd > selectorStart).toBe(true);
+  expect(digest(source.slice(selectorStart, selectorEnd))).toBe("e87a5717449926b730fb4f9296352422bacb04ca0a75abd333240465301d21ea");
+  source = source.slice(0, selectorStart) + [
+    "    const display = (await this.until(() => this.nodes(hwnd), nodes => { try { this.observation.card(nodes, this.previousCard); } catch { /* Cached poll only. */ } return nodes.some(node => node.automationId === \"ask-cmd\" && !!node.runtimeId && node.runtimeId !== this.previousCard); }, 45_000)).find(id(\"ask-cmd\"))!;",
+    "    this.observe({ commandStage: 8 }); await this.focus(hwnd, display);",
+    "    this.observe({ commandStage: 9 }); expect(await this.text(hwnd, id(\"ask-cmd\"))).toBe(\"Node arguments: \" + JSON.stringify(argv));",
+    "    this.observe({ commandStage: 10 }); expect((await this.nodes(hwnd)).map(node => node.name ?? \"\").join(\"\\n\")).toContain(\"\\\\work\");",
+    "    this.observe({ commandStage: 11 }); this.previousCard = display.runtimeId!;",
+    "    this.observe({ commandStage: 12 }); this.previousTabs = new Set((await this.nodes(hwnd)).filter(node => node.controlType === \"TabItem\" && node.runtimeId).map(node => node.runtimeId!));",
+    "    this.observe({ commandStage: 13 }); await this.click(hwnd, named(answer)); this.observe({ commandStage: 14 });",
+  ].join("\n") + source.slice(selectorEnd);
   const commandAdditions = [
     'import { readCommandCardObservationLog, type PackagedCommandCardObservation } from "../fixtures/command-card-observation-log";\n',
     '  private commandObservation?: Readonly<PackagedCommandCardObservation>;\n',
@@ -174,4 +192,102 @@ it("preserves the whole workflow after reversing only the known diagnostic field
   expect(source.split(reviewed)).toHaveLength(2);
   source = source.replace(reviewed, historical);
   expect(digest(source)).toBe("54d77bc05dbb2d2d3a9b684709da9b8f8d4fbd196cee0f1809487afdb3f23271");
+});
+
+function packagedDecision() {
+  const source = fs.readFileSync("test/integration/windows-node-packaged-product.test.ts", "utf8");
+  const slice = (start: string, end: string) => {
+    const begin = source.indexOf(start), stop = source.indexOf(end, begin);
+    expect(begin >= 0 && stop > begin).toBe(true);
+    return source.slice(begin, stop);
+  };
+  const code = transformSync(slice("type Selector =", "function subtree(") + "\nclass TestJourney {\n"
+    + slice("  private async node(", "  private async text(")
+    + slice("  async decide(", "  private async review(")
+    + "}\nmodule.exports = TestJourney.prototype;", { loader: "ts", format: "cjs", target: "node22" }).code;
+  const module = { exports: undefined as unknown as { decide(this: object, argv: readonly string[]): Promise<void> } };
+  runInNewContext(code, { module, expect, refusal: (phase: number) => new Error("Packaged fixture refused phase " + phase) });
+  return module.exports;
+}
+
+type CardNode = { automationId?: string; controlType?: string; isEnabled?: boolean; name?: string; pid: number; runtimeId: string };
+it.each(["old-first", "ambiguous-fresh", "swapped-before-allow", "disabled-allow", "ambiguous-allow"] as const)(
+  "keeps the packaged decision bound to the observed fresh native card with %s",
+  async condition => {
+    const old = { automationId: "ask-cmd", controlType: "Text", pid: 11, runtimeId: "first" };
+    const fresh = { ...old, runtimeId: "second" };
+    const allow = { controlType: "Button", isEnabled: condition !== "disabled-allow", name: "Allow", pid: 11, runtimeId: "allow" };
+    const heading = { name: "On this computer · Node · in \\work", pid: 11, runtimeId: "header" };
+    let stage = 0, clicked = 0;
+    const focus = vi.fn(), text = vi.fn();
+    const driver = Object.assign(Object.create(packagedDecision()) as ReturnType<typeof packagedDecision>, {
+      phase: 0, previousCard: old.runtimeId, previousTabs: new Set(), observation: { decision() {}, card() {} },
+      command: async () => 1,
+      observe: (value: { commandStage?: number }) => { stage = value.commandStage ?? stage; },
+      async nodes() {
+        if (stage === 7) return condition === "ambiguous-fresh" ? [old, fresh, { ...fresh, runtimeId: "other" }] : [old, fresh];
+        if (stage === 13 && condition === "swapped-before-allow") return [old, heading, allow];
+        if (stage === 13 && condition === "ambiguous-allow") return [fresh, heading, allow, { ...allow, runtimeId: "other" }];
+        return [fresh, heading, allow];
+      },
+      async until<T>(read: () => Promise<T>, accepts: (value: T) => boolean, deadline = 30_000) {
+        expect(deadline).toBe(stage === 7 ? 45_000 : 30_000);
+        const value = await read();
+        if (!accepts(value)) throw new Error("Original poll would refuse.");
+        return value;
+      },
+      async focus(_hwnd: number, node: CardNode) { focus(node); },
+      async text(_hwnd: number, select: (node: CardNode) => boolean) {
+        text([select(old), select(fresh), select({ ...fresh, pid: 12 })]);
+        return 'Node arguments: ["--test"]';
+      },
+      async click(_hwnd: number, select: (node: CardNode) => boolean, guard: (nodes: CardNode[]) => boolean) {
+        const current = this as unknown as { node(hwnd: number, select: (node: CardNode) => boolean, enabled: boolean, guard: (nodes: CardNode[]) => boolean): Promise<CardNode> };
+        expect(await current.node(1, select, true, guard)).toBe(allow);
+        clicked++;
+      },
+    });
+    const decision = driver.decide(["--test"]);
+    if (condition === "old-first") await expect(decision).resolves.toBeUndefined();
+    else await expect(decision).rejects.toThrow(/refuse/i);
+    if (condition === "ambiguous-fresh") {
+      expect(focus).not.toHaveBeenCalled();
+      expect(text).not.toHaveBeenCalled();
+    } else {
+      expect(focus).toHaveBeenCalledExactlyOnceWith(fresh);
+      expect(text).toHaveBeenCalledExactlyOnceWith([false, true, false]);
+    }
+    expect(clicked).toBe(condition === "old-first" ? 1 : 0);
+  },
+);
+
+it("refuses an already focused Allow if the fresh snapshot loses the selected card", async () => {
+  const source = fs.readFileSync("test/integration/windows-node-packaged-product.test.ts", "utf8");
+  const first = source.indexOf("function sameNode("), firstEnd = source.indexOf("function subtree(", first);
+  const begin = source.indexOf("  private async focus("), end = source.indexOf("  private pressKey(", begin);
+  expect(first >= 0 && firstEnd > first && begin >= 0 && end > begin).toBe(true);
+  const code = transformSync(source.slice(first, firstEnd) + "\nclass TestJourney {\n" + source.slice(begin, end)
+    + "}\nmodule.exports = TestJourney.prototype.focus;", { loader: "ts", format: "cjs", target: "node22" }).code;
+  const module = { exports: undefined as unknown as (this: object, hwnd: number, node: object, guard: (nodes: readonly object[]) => boolean) => Promise<object> };
+  const refusal = new Error("The current native card was replaced.");
+  runInNewContext(code, { module, refusal: () => refusal });
+  const allow = { name: "Allow", controlType: "Button", isEnabled: true, isOffscreen: false, pid: 11, runtimeId: "allow", h: 21,
+    bounds: { x: 1, y: 1, width: 10, height: 10 } };
+  const replacement = { automationId: "ask-cmd", runtimeId: "replacement" };
+  const receiver = {
+    phase: 6, input: { activate: vi.fn(), activeWindow: () => 1 },
+    bridge: { call: vi.fn(async (method: string) => method === "focused" ? { hwnd: 1, element: { ...allow, hasKeyboardFocus: true } } : { ok: true }) },
+    observe: vi.fn(), observation: { node: vi.fn(), focused: vi.fn(), fresh: vi.fn() }, observeInput: (value: unknown) => value,
+    async until<T>(read: () => Promise<T>, accepts: (value: T) => boolean, deadline: number) {
+      expect(deadline).toBe(10_000);
+      const value = await read();
+      expect(accepts(value)).toBe(true);
+      return value;
+    },
+    nodes: vi.fn(async () => [replacement, allow]),
+  };
+  const guard = vi.fn(() => false);
+  await expect(module.exports.call(receiver, 1, allow, guard)).rejects.toBe(refusal);
+  expect(guard).toHaveBeenCalledExactlyOnceWith([replacement, allow]);
+  expect(receiver.observation.fresh).toHaveBeenCalledExactlyOnceWith(undefined);
 });

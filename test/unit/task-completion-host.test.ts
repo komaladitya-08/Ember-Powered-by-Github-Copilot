@@ -193,3 +193,137 @@ for (const why of ["new-intake", "stop", "forget", "mode", "model", "provider", 
     expect(s.completed).not.toHaveBeenCalled(); expect(s.host.getTranscript().some(entry => entry.text.includes("PRIVATE_LATE_COMBINED_RESULT"))).toBe(false); expect(s.workers).toHaveLength(2);
   });
 }
+
+for (const independent of [false, true]) {
+  it(`includes accepted dependent sessions after the initial turn${independent ? " alongside independent work" : " for a lone bounded plan"}`, async () => {
+    const s = await setup(); s.options.hold = true;
+    s.host.projectSessionsAction({ action: "create", name: "Accepted page plan" });
+    await s.host.ask("Inspect the project page, then verify its changed title" + (independent ? " and independently inspect another page" : ""));
+    const steps = [{ name: "Inspect planned page", goal: "Inspect the project page in the browser" },
+      { name: "Verify planned title", goal: "Verify the changed title in the browser" }];
+    expect(await s.tool("start_sequence", { steps })).toMatch(/started|queued/);
+    if (independent) await s.tool("start_task", { goal: "Inspect another independent page", sessionName: "Independent page" });
+    const heads = independent ? 2 : 1;
+    await vi.waitFor(() => expect(s.workers).toHaveLength(heads)); s.end();
+    s.workers[0].outcome.resolve({ success: true, summary: "The planned page was inspected." });
+    if (independent) s.workers[1].outcome.resolve({ success: true, summary: "The independent page was inspected." });
+    await vi.waitFor(() => expect(s.workers.slice(0, heads).every(worker => worker.disposing)).toBe(true));
+    expect(summaryCalls()).toEqual([]);
+    for (const worker of s.workers.slice(0, heads)) worker.disposal.resolve();
+    await vi.waitFor(() => expect(s.workers).toHaveLength(heads + 1));
+    await new Promise(resolve => setImmediate(resolve));
+    expect(summaryCalls()).toEqual([]);
+    const tail = s.workers[heads];
+    tail.outcome.resolve({ success: true, summary: "The final planned title was verified." });
+    await vi.waitFor(() => expect(tail.disposing).toBe(true)); expect(summaryCalls()).toEqual([]);
+    tail.disposal.resolve(); await vi.waitFor(() => expect(s.completed).toHaveBeenCalledTimes(1));
+    expect(summaryCalls()).toHaveLength(1); expect(summaryCalls()[0].config.tools).toEqual([]);
+    expect(summaryCalls()[0].prompt).toContain("The planned page was inspected.");
+    expect(summaryCalls()[0].prompt).toContain("The final planned title was verified.");
+    if (independent) expect(summaryCalls()[0].prompt).toContain("The independent page was inspected.");
+    expect(s.host.getTranscript().filter(entry => entry.who === "you")).toHaveLength(1);
+    expect(s.own).toHaveBeenCalledTimes(1); expect(s.workers).toHaveLength(heads + 1);
+  });
+}
+
+it.each(["failed", "cancelled"] as const)("reports an unstarted desktop tail after its head is %s and cleaned up", async status => {
+  const s = await setup(); s.options.hold = true;
+  s.host.projectSessionsAction({ action: "create", name: "Accepted page plan" });
+  await s.host.ask("Inspect the project page, then verify its changed title");
+  const steps = [{ name: "Inspect planned page", goal: "Inspect the project page in the browser" },
+    { name: "Verify planned title", goal: "Verify the changed title in the browser" }];
+  expect(await s.tool("start_sequence", { steps })).toMatch(/started|queued/);
+  await vi.waitFor(() => expect(s.workers).toHaveLength(1)); s.end();
+  const head = s.workers[0];
+  if (status === "cancelled") s.host.tasks?.cancel(head.spec.id);
+  else head.outcome.resolve({ success: false, summary: "The planned page could not be inspected." });
+  await vi.waitFor(() => expect(head.disposing).toBe(true));
+  expect(summaryCalls()).toEqual([]);
+  head.disposal.resolve();
+  await vi.waitFor(() => expect(s.completed).toHaveBeenCalledTimes(1));
+  expect(s.workers).toHaveLength(1);
+  expect(summaryCalls()).toHaveLength(1);
+  const { tasks } = JSON.parse(summaryCalls()[0].prompt.match(/<accepted_work untrusted="true">(.*)<\/accepted_work>/u)?.[1] ?? "");
+  expect(tasks).toMatchObject([{ title: "Inspect planned page", status, cleanup: "complete" },
+    { title: "Verify planned title", status: "cancelled", cleanup: "complete", summary: "This planned session did not start." }]);
+});
+
+it.each(["sequence", "independent", "foreground", "dismissed"] as const)("keeps an exact settled outcome through default card expiry (%s)", async scenario => {
+  const s = await setup(); s.options.hold = true;
+  s.host.projectSessionsAction({ action: "create", name: "Long page plan" });
+  const independent = scenario === "independent";
+  await s.host.ask("Inspect the project page, then verify its changed title" + (independent ? " and independently inspect another page" : ""));
+  const steps = [{ name: "Inspect planned page", goal: "Inspect the project page in the browser" },
+    { name: "Verify planned title", goal: "Verify the changed title in the browser" }];
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  expect(await s.tool("start_sequence", { steps })).toMatch(/started|queued/);
+  if (independent) await s.tool("start_task", { goal: "Inspect another independent page", sessionName: "Independent page" });
+  const heads = independent ? 2 : 1;
+  await vi.waitFor(() => expect(s.workers).toHaveLength(heads));
+  if (scenario !== "foreground") s.end();
+  const early = s.workers.slice(0, heads);
+  early.forEach((worker, index) => {
+    worker.outcome.resolve({ success: true, summary: index ? "The independent page was inspected." : "The planned page was inspected." });
+    worker.disposal.resolve();
+  });
+  await vi.waitFor(() => expect(s.workers).toHaveLength(heads + 1));
+  if (scenario === "dismissed") s.host.tasks?.dismiss(early[0].spec.id);
+  else await vi.advanceTimersByTimeAsync(15_001);
+  expect(early.every(worker => s.host.tasks?.get(worker.spec.id) === undefined)).toBe(true);
+  if (scenario === "foreground") s.end();
+  expect(summaryCalls()).toEqual([]);
+  const tail = s.workers[heads];
+  tail.outcome.resolve({ success: true, summary: "The final planned title was verified." });
+  await vi.waitFor(() => expect(tail.disposing).toBe(true));
+  expect(summaryCalls()).toEqual([]);
+  tail.disposal.resolve();
+  if (scenario === "dismissed") {
+    await vi.waitFor(() => expect(tail.disposed).toBe(true));
+    expect(summaryCalls()).toEqual([]); expect(s.completed).not.toHaveBeenCalled();
+    return;
+  }
+  await vi.waitFor(() => expect(s.completed).toHaveBeenCalledTimes(1));
+  expect(summaryCalls()).toHaveLength(1);
+  expect(summaryCalls()[0].config.tools).toEqual([]);
+  expect(summaryCalls()[0].prompt).toContain("The planned page was inspected.");
+  expect(summaryCalls()[0].prompt).toContain("The final planned title was verified.");
+  if (independent) expect(summaryCalls()[0].prompt).toContain("The independent page was inspected.");
+});
+
+it.each(["settled", "pending"] as const)("handles an independent card that expires before accepting the plan (%s cleanup)", async cleanup => {
+  const s = await setup(); s.options.hold = true;
+  s.host.projectSessionsAction({ action: "create", name: "Long page plan" });
+  await s.host.ask("Inspect the other page independently, and inspect the project page then verify its title");
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  await s.tool("start_task", { goal: "Inspect another independent page", sessionName: "Independent page" });
+  await vi.waitFor(() => expect(s.workers).toHaveLength(1));
+  const independent = s.workers[0];
+  independent.outcome.resolve({ success: true, summary: "The independent page was inspected first." });
+  await vi.waitFor(() => expect(independent.disposing).toBe(true));
+  if (cleanup === "settled") {
+    independent.disposal.resolve();
+    await vi.waitFor(() => expect(independent.disposed).toBe(true));
+  }
+  await vi.advanceTimersByTimeAsync(15_001);
+  expect(s.host.tasks?.get(independent.spec.id)).toBeUndefined();
+  independent.disposal.resolve();
+  const steps = [{ name: "Inspect planned page", goal: "Inspect the project page in the browser" },
+    { name: "Verify planned title", goal: "Verify the changed title in the browser" }];
+  expect(await s.tool("start_sequence", { steps })).toMatch(/started|queued/);
+  s.end();
+  await vi.waitFor(() => expect(s.workers).toHaveLength(2));
+  const head = s.workers[1];
+  head.outcome.resolve({ success: true, summary: "The planned page was inspected." }); head.disposal.resolve();
+  await vi.waitFor(() => expect(s.workers).toHaveLength(3));
+  const tail = s.workers[2];
+  tail.outcome.resolve({ success: true, summary: "The final planned title was verified." }); tail.disposal.resolve();
+  await vi.waitFor(() => expect(tail.disposed).toBe(true));
+  if (cleanup === "pending") {
+    expect(summaryCalls()).toEqual([]); expect(s.completed).not.toHaveBeenCalled();
+    return;
+  }
+  await vi.waitFor(() => expect(s.completed).toHaveBeenCalledTimes(1));
+  expect(summaryCalls()).toHaveLength(1);
+  expect(summaryCalls()[0].prompt).toContain("The independent page was inspected first.");
+  expect(summaryCalls()[0].prompt).toContain("The final planned title was verified.");
+});

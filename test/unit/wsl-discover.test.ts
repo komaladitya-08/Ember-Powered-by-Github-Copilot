@@ -515,3 +515,17 @@ describe("readRunningKnown", () => {
     expect(await readRunningKnown(exec({ code: null, error: "couldn't start wsl.exe" }), ["Ubuntu"])).toBeNull();
   });
 });
+
+it("refuses the resource proof user observation when the previously provisioned CI distro idles out", async () => {
+  const { wsl, running, calls } = pc({ running: ["Ubuntu"], uid: { Ubuntu: 1000 } });
+  try {
+    expect((await wsl.facts({ refresh: true })).distros.find(d => d.name === "Ubuntu")).toMatchObject({ version: 2, running: true, needsSetup: false });
+    running.delete("Ubuntu");
+    expect((await wsl.facts({ refresh: true })).distros.find(d => d.name === "Ubuntu")).toMatchObject({ version: 2, running: false, needsSetup: false });
+    const uid = await wsl.defaultUid("Ubuntu");
+    expect(Number.isSafeInteger(uid) && uid !== null && uid > 0).toBe(false);
+    expect(inDistro(calls)).toHaveLength(0);
+    running.add("Ubuntu");
+    expect(await wsl.defaultUid("Ubuntu")).toBe(1000);
+  } finally { wsl.dispose(); }
+});

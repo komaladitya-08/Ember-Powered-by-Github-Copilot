@@ -595,6 +595,71 @@ it("permanently retires a desktop-first coding tail on approval mode changes, in
   expect(sim.workers).toHaveLength(0);
 });
 
+it.each(["coding", "desktop", "revoked"] as const)("observes mixed outcomes only after the accepted turn and cleanup (%s)", async scenario => {
+  const first = scenario === "coding" ? "coding" : "desktop";
+  const completed = vi.fn(), h = await setup({ onTaskCompletion: completed });
+  h.settings.update({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() } });
+  const project = h.create("Mixed project");
+  const oneShot = await import("../../app/main/agent/one-shot"), original = oneShot.copilotOneShot;
+  const model = vi.fn(async (_system: string, _prompt: string) => "Both project sessions completed.");
+  const factory = vi.spyOn(oneShot, "copilotOneShot").mockImplementation(input => input.purpose === "coordination" ? model : original(input));
+  const oldFactory = (h.host.tasks as any).d.makeWorker;
+  const desktop: { finish?: (result: WorkerResult) => void; release?: () => void; disposing: boolean; disposed: boolean } = { disposing: false, disposed: false };
+  const disposal = new Promise<void>(resolve => { desktop.release = resolve; });
+  (h.host.tasks as any).d.makeWorker = (spec: TaskSpec, ...rest: any[]) => spec.codingWorkspace ? oldFactory(spec, ...rest) : {
+    sessionId: null, handoffSafe: () => true, cleanupComplete: () => desktop.disposed, steer: async () => false,
+    run: (signal: AbortSignal) => new Promise<WorkerResult>(resolve => {
+      desktop.finish = resolve;
+      signal.addEventListener("abort", () => resolve({ success: false, stopped: true, summary: "Stopped." }), { once: true });
+    }),
+    dispose: async () => { desktop.disposing = true; await disposal; desktop.disposed = true; },
+  };
+  sim.holdCleanup = true;
+  const settleCoding = async () => {
+    await vi.waitFor(() => expect(sim.workers).toHaveLength(1));
+    const worker = sim.workers[0];
+    worker.complete({ success: true, summary: "The copied parser was checked." });
+    await Promise.resolve();
+    expect(model).not.toHaveBeenCalled();
+    worker.releaseCleanup();
+  };
+  const settleDesktop = async () => {
+    await vi.waitFor(() => expect(desktop.finish).toBeDefined());
+    desktop.finish?.({ success: true, summary: "The report was opened." });
+    await vi.waitFor(() => expect(desktop.disposing).toBe(true));
+    expect(model).not.toHaveBeenCalled();
+    desktop.release?.();
+  };
+  try {
+    await h.host.ask(first === "coding" ? "Check the copied parser then open its report" : "Open the report then check its copied parser");
+    expect(await h.tool("start_mixed", { first, firstGoal: first === "coding" ? "Check parser" : "Open report",
+      secondGoal: first === "coding" ? "Open report" : "Check parser" })).toMatch(/started/);
+    h.session.emit("assistant.message", { content: "The first session is running." });
+    h.session.emit("session.idle");
+    if (scenario === "revoked") {
+      h.host.codingWorkspaceChanged(project);
+      await settleDesktop();
+      await vi.waitFor(() => expect(h.host.tasks?.list()[0].status).toBe("done"));
+      expect(sim.workers).toHaveLength(0);
+      expect(model).not.toHaveBeenCalled();
+      expect(completed).not.toHaveBeenCalled();
+      return;
+    }
+    if (first === "coding") { await settleCoding(); await settleDesktop(); }
+    else { await settleDesktop(); await settleCoding(); }
+    await vi.waitFor(() => expect(completed).toHaveBeenCalledExactlyOnceWith("Both project sessions completed."));
+    expect(model).toHaveBeenCalledTimes(1);
+    expect(model.mock.calls[0][0]).toContain("You have no tools");
+    expect(model.mock.calls[0][1]).toContain("The copied parser was checked.");
+    expect(model.mock.calls[0][1]).toContain("The report was opened.");
+    expect(h.host.tasks?.list()).toHaveLength(2);
+  } finally {
+    factory.mockRestore();
+    desktop.finish?.({ success: false, stopped: true, summary: "Fixture shutdown." });
+    desktop.release?.();
+  }
+});
+
 it("fences a queued coding task if its source is withdrawn, before its worker can be constructed", async () => {
   const h = await setup(); const project = h.create("App");
   for (let n = 0; n < 3; n++) { await h.host.ask(`Fix source ${n}`); await h.tool("start_coding", { goal: `Repair source ${n}` }); }

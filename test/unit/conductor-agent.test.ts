@@ -37,6 +37,31 @@ describe("start_task's goal (review #149)", () => {
 });
 
 describe("conductor project coordination", () => {
+  it("does not describe a running coding task as ended when it cannot accept an update", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ember-coding-steer-"));
+    const settings = new SettingsStore(path.join(directory, "settings.json")); settings.load();
+    const updates: unknown[][] = [];
+    let cancellations = 0;
+    const tasks = {
+      list: () => [{ id: "coding-1", title: "Repair the parser", status: "running", detail: "Coding in the private project copy" }],
+      cancel: () => { cancellations++; return true; },
+      steer: async (id: string, instruction: string) => { updates.push([id, instruction]); return false; },
+    };
+    try {
+      const tools = conductorTools(settings, undefined, undefined, undefined, tasks);
+      const call = (name: string, raw: unknown) => tools.find(tool => tool.name === name)!.handler!(raw, { sessionId: "test", toolCallId: name, toolName: name, arguments: raw });
+      expect(await call("steer_task", { id: "coding-1", instruction: "Use the other parser" }))
+        .toBe("Task coding-1 did not accept the update. Use list_tasks to check its current status.");
+      expect(await call("list_tasks", {})).toContain('coding-1: "Repair the parser" running');
+      expect(updates).toEqual([["coding-1", "Use the other parser"]]);
+      expect(cancellations).toBe(0);
+      const description = tools.find(tool => tool.name === "steer_task")!.description;
+      expect(description).toContain("Running coding tasks cannot accept updates through this tool.");
+      expect(description).toContain("Stop, review of any captured changes, and a new explicit coding request");
+      expect(description).toContain("Do not stop or restart them automatically.");
+    } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+  });
+
   it("preserves the default wait prompt and describes passive completion without promising further actions", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "ember-completion-prompt-"));
     const settings = new SettingsStore(path.join(directory, "settings.json")); settings.load();

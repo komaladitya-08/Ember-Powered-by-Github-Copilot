@@ -1,6 +1,6 @@
 # Conductor progress and remaining work
 
-Software progress updated on 17 November 2026, following published product checkpoint `1df47927` and its local software follow-up. The original submitted
+Software progress updated on 17 November 2026, following published product checkpoint `656dd12b` and its local software follow-up. The original submitted
 baseline was `audit/beta-readiness` at `76d0a2c9`; main was `85b5bd56` at that audit.
 [draft #262](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/262) targets main and records
 the latest head and its exact checks. The integration adds reviewed WSL/public-dependency and saved-draft
@@ -9,6 +9,14 @@ source graph is qualified; complete current-source Windows product journeys rema
 `codingAvailable()` gate remains false. This is not merge readiness.
 
 ## Current software work on 17 November 2026
+
+Published P4 `656dd12b` completed the full required product inventory at **22 of 46**: Node 18/20, WSL 2/24 and encrypted-draft restart 2/2, across seven successful and seven failed strict leaves. All twelve preservation workflows passed. Ordinary CI finished four successful jobs and three failures (Ubuntu, macOS and Windows), each first failing the same obsolete IPC test call: a generic string no longer exercises the validated command-card API. Windows nevertheless passed the full 198-case worker-tools file, including the pointer-fixture repair; its later build/native-app steps skipped. Registration failed during its unchanged 2.5-second C compiler setup; the ordinary Ubuntu C model separately passed all 256 cases. Source/setup bytes match successful preceding checkpoints, and the cause of the registration timeout remains unknown.
+
+The actual Server 2025 packaged command failure now has a known, uncapped renderer observation: its second card was seen and armed and its DOM Allow enabled, while the last measured document was not visible or in-view. A separately cached UIA snapshot reported Allow disabled. These observations are not atomic and establish no causal repair. Server 2022 stopped earlier at provider focus, with unknown card evidence. Both WSL source suites failed their first phase-2 case and quarantined their tails; packaged WSL stopped at environment configuration; WSL resources passed only on Server 2022.
+
+The local follow-up corrects the IPC harness using a valid legacy seen/in-view report while preserving its exact closed channel assertion. It also owns the dedicated CI WSL fixture through the proof with a guest pipe: readiness is observed before the proof, and terminal acknowledgement plus a genuine clean close are required before successful outputs. A portable real-service composition reproduces the idle-stop precondition gap; this is not attribution of the hosted phase-2 failures. The four-path fixture batch passed 171 affected tests and independent review, with all 146 qualified source pins unchanged.
+
+A further actual-Host counterexample found that combined completion sealed membership before later accepted sequence/mixed sessions started. Independent review also caught ordinary finished-card expiry while dependent work continued. The fixed-slot/witness and fresh native readout changes have passed independent review and are integrated locally, with 217 and 368 affected portable cases respectively. They are not yet published or qualified. If a card disappears before its exact cleanup outcome can be observed, combined completion remains suppressed. Existing foreground-wait, explicit dismissal, source/owner revocation, cleanup and Stop behavior must remain intact. No physical laptop acceptance, chosen-account live-provider request, merge, tag or release has occurred.
 
 The local P4 follow-up fixes a reproduced WSL first-use cycle: a fresh listing had an unknown default user, but execution readiness blocked the route that learned it. Explicit Home environment selection now checks an already-running personal WSL2 distro through the existing user-facts API, under current policy, command consent and project/account/folder/selection latches. Root and unknown users remain blocked, and no distro or coding command is started by this check. A host-derived **Check environment** action permits an explicit retry.
 

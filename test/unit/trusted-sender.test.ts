@@ -137,17 +137,23 @@ describe("the prompt window's channels", () => {
 
 describe("each preload bridges only its own window's channels", () => {
   /** Calls every function a preload exposed, and returns the channels they used. */
-  async function channelsOf(preload: string, world: string): Promise<string[]> {
+  async function channelsOf(preload: string, world: string, argsByMethod: Record<string, unknown[]> = {}): Promise<string[]> {
     await import(preload);
     const api = bridge.exposed.get(world);
     expect(api, world).toBeDefined();
     bridge.channels.length = 0;
-    for (const fn of Object.values(api!)) if (typeof fn === "function") (fn as (...a: unknown[]) => unknown)("0123456789abcdef", { n: 1, answer: "deny", sha256: "x" });
+    for (const [method, fn] of Object.entries(api!)) {
+      if (typeof fn !== "function") continue;
+      const args = argsByMethod[method] ?? ["0123456789abcdef", { n: 1, answer: "deny", sha256: "x" }];
+      (fn as (...a: unknown[]) => unknown)(...args);
+    }
     return [...bridge.channels];
   }
 
   it("the command window's: commands:* only", async () => {
-    const used = await channelsOf("../../app/preload/command", "emberCommands");
+    const used = await channelsOf("../../app/preload/command", "emberCommands", {
+      cardSeen: [{ n: 1, inView: true, seen: true }],
+    });
     expect(used.length).toBeGreaterThan(0);
     for (const c of used) expect(c).toMatch(/^commands:/);
     expect(new Set(used)).toEqual(new Set([...Object.values(COMMANDS_IPC), ...Object.values(COMMANDS_EXTRA_IPC)]));
