@@ -9,14 +9,15 @@ saved projects restores inert records, ordered goals and observed outcomes and m
 Review remaining steps prepares a fresh editable request without replaying actions. Save again to retain later progress.
 It never resumes model sessions. Current consent version 14 covers saved records and copied-folder reviews. The
 published Windows draft preserves commands-OFF files-only copied edits, sealed review, export and Forget through
-the ordinary Host. It also implements a captured commands-ON Node-only path, whose complete native/product proof
-is still blocked. Dependency installation remains unavailable, and the legacy native-SDK gate stays false.
+the ordinary Host. It also implements a captured commands-ON Node-only path. Its complete product proof is a
+separate acceptance condition; dependency installation remains unavailable, and the legacy native-SDK gate stays false.
 Do not change execution or reviewed-producer gates to perform acceptance. Continuation was enabled at `7eabd077`
 after the separate real Home continuation proof. Automatic crash checkpointing is not implemented.
 
-The native-proof baseline for this integration is `546793a3f94d89ae2ed2593727d9c35aa5571831`;
-[draft #262](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/262) tracks the current metadata
-and documentation head. The integration includes literal direct-Node
+This document records checkpoint `b294347e0e244ae95c46dc9f5989147722843d14` on 17 November 2026. The qualified
+native-proof baseline is `546793a3f94d89ae2ed2593727d9c35aa5571831`;
+[draft #262](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/262) targets main and records
+the latest head and its exact completed checks. The integration includes literal direct-Node
 execution on the isolated Linux backend, Windows resource/coordinator integration, the preceding coordination work
 and the exact-session
 Review changes control from [draft #235](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/235)
@@ -41,25 +42,54 @@ The prior `46a68f2c` Windows unit step failed unchanged Azure limits at 2,096/2,
 performance certification by itself. At 04:45 UTC, the ordinary Windows job at `546793a3` completed successfully:
 21,436 remaining units (433 skipped), 23 fixed-C cases (233 platform skips), two kill, 74 desktop, 44 speech and eight
 Ember cases, plus build/smoke/UIA/ZIP/fuse checks. Its 426 redactor cases passed the original limits; no individual
-timings were reported. Linux, macOS and EL8 full jobs remain pending. The separate Node product journeys are still
-unrun. Local registration 876, Native-model/transfer/CJS 157,
+timings were reported. That head's EL8, package, evaluation and voice jobs also passed; Linux and macOS were
+cancelled without a failed step and remain incomplete. Local registration 876, Native-model/transfer/CJS 157,
 probe 207 and source 105 scopes passed; they overlap. Full Type checking for `546793a3` exited 0 on an unchanged
 1,479-file catalog (`dfed…`). All separate preservation matrices remain distinct from the required product gate.
 
-The 119-case source-binding preparation stayed frozen with false readiness and null proof metadata. Its reviewed
-copy and exact producer/proof promotion are now prepared locally, with 119 cases, lint and YAML checks passed.
-They are not yet published. Their normal joint Type check (`58520`) completed with exit 0 on an unchanged
-1,479-file catalog (`ba9b8fce…`); no required product journey has run.
-All six leaves—three journeys on each server—must pass before acceptance. Main `85b5bd56` is an ancestor of this
-190-commit-ahead candidate with no divergence, but #262 targets base `68860d55` at this snapshot. A main-targeted
-cumulative 527-file review and exact-result checks remain before merge. These results do not establish merge,
-tag or release readiness.
+The 119-case preparation with false readiness stayed frozen separately. Its reviewed copy and exact producer/proof
+promotion were published at `88e063c2`, after lint, YAML checks and full Type checking (`58520`, unchanged
+1,479-file catalog `ba9b8fce…`) passed. All six enabled leaves in
+[44019676539](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44019676539)
+failed extraction before app cases ran because the caller supplied a relative path to the strict absolute-path
+verifier. The caller correction at `fb88ec25` passed 120 focused cases and full types. Its
+[44021821323](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44021821323)
+authenticated and extracted the producer in all six leaves, then failed source binding, with zero product cases
+executed. Real Node controls reproduced temporary-script dependency resolution; the repository-anchored correction
+at `5ba19a15`, included in `b294347e`, passed 121 focused cases and full types. All 125 source pins, catalog
+`bcf191c0…`, verifier hash `a581968c…`, producer and strict inventories remain unchanged.
 
-Before physical acceptance, finish the prerequisite promotion, pass all six product leaves and all platform CI,
-complete cumulative main review, and verify the chosen live account. No accepted live credential was supplied and
-no live model request was made; account verification is not Windows-only. The Node subset still permits regular-file
-rename only; directory rename, shells, npm, installation, networking and child processes remain unavailable.
-See [current progress](CONDUCTOR-PROGRESS.md#current-status).
+At `fb88ec25`, ordinary macOS, EL8, package, evaluation and voice passed. Windows failed a Stop assertion at
+144.0222/40 ms, with unresolved cause; later packaging failures followed its skipped build. Linux's empty
+named-session review preview also remained a failed observation. Three deterministic browser reproductions separately
+proved review gestures lost during row refresh. The repair passed 70 browser cases in three files, 27 project units,
+one real Host/SDK case, one normal-sandbox Electron case, build and full Type checking across 1,480 inputs.
+All 24 built Home/review screenshots were individually reviewed without visible clipping, overlap or readability
+defects. This does not establish the exact cause of the earlier hosted or local empty-preview observations.
+
+The broad parallel unit attempt stopped with exit 130 after 51 failed-case reports in ten files and remains incomplete.
+The controlled serial run passed 21,840 cases, skipped 106 and timed out one Desk listener test at 5,626.9/5,000 ms;
+the ten earlier failing files passed. No CPU, GC or load cause is established. A test-only empty `/proc` fixture for
+that listener case preserved all 20 manager cycles, listener assertions and the deadline; 29 Desk cases and the final
+unchanged 1,480-input Type catalog passed. These are not a full-suite pass.
+
+At the `b294347e` checkpoint, main `85b5bd56` was an ancestor with no divergence, 196 candidate commits ahead
+and a cumulative 529-file diff. #262 already targeted main and bounded feature wiring had been reviewed; no merge,
+tag or release was performed. The first [CI run 44031570588](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44031570588)
+still had ordinary jobs active at this checkpoint. All six product leaves passed authentication, extraction and the
+actual 125-pin source binding, then failed the development stager's fixed refusal before `npm run build`. All
+app-proof steps were skipped, with zero product cases executed; the exact stager cause remains unknown.
+[Registration 44031570459](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44031570459)
+failed with C compiler `ETIMEDOUT` at the unchanged 2,500 ms bound: 23 compiler-fact cases passed, 233 C-dependent
+cases were skipped after setup failure and the native PR leaf was skipped. No CPU cause is established.
+Native controller/file foundations on both images and toolchain authentication
+had passed; they are separate from complete product verification. See #262 for subsequent exact-head outcomes.
+
+For merge readiness, require all six product leaves (2 native, 7 source Home and 1 packaged Home case per
+image, zero skipped), successful affected platform checks, chosen live-account verification and the physical checks
+below. No accepted live credential was supplied and no live model request was made; account verification is not Windows-only. The Node
+subset permits regular-file rename only; directory rename, shells, npm, installation, networking and child processes
+remain unavailable. See [current progress](CONDUCTOR-PROGRESS.md#current-status).
 
 At earlier `4de1889b`, all seven ordinary jobs in
 [43988264446](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43988264446)
@@ -236,8 +266,8 @@ recipe or dispatch its matching preservation workflow and use the newly complete
 Record that run's full checkout SHA; a newer branch name alone does not identify the tested build. These are review
 artifacts, not a published release, and they cannot satisfy the Node-product gate.
 
-For the Node candidate, use the authenticated build only after the reviewed asset enforcement and manifest/tuple gates above close.
-Then use the exact tested Windows Server 2022 ZIP from a successful required `windows-node-product` workflow;
+For the Node candidate, the fixed asset and manifest/tuple prerequisites above are qualified. Product acceptance
+additionally requires the exact tested Windows Server 2022 ZIP from a successful required `windows-node-product` workflow;
 Server 2025 must independently pass its native, source Home and packaged Home journeys too. That recipe includes
 the complete required assets/runtimes/voice payload and unchanged fuses. No such complete product result is
 established at this snapshot. A generic desktop or old files-only ZIP cannot replace it. If an accepted artifact
