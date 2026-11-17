@@ -127,7 +127,7 @@ jobs:
                 }
               }
             } finally { $archive.Dispose() }
-            $verification = & node --input-type=module -e 'import { verifyWindowsNodeToolchain } from "./scripts/package/windows-node-toolchain.mjs"; verifyWindowsNodeToolchain(".cache/windows-node-toolchain", "producer");' 2>&1
+            $verification = & node --input-type=module -e 'import path from "node:path"; import { verifyWindowsNodeToolchain } from "./scripts/package/windows-node-toolchain.mjs"; verifyWindowsNodeToolchain(path.resolve(".cache/windows-node-toolchain"), "producer");' 2>&1
             if ($LASTEXITCODE -ne 0) { throw "The exact producer package verification failed." }
           } catch { throw "The authenticated Windows Node producer members could not be verified." }
       - run: npm install -g npm@11.6.2

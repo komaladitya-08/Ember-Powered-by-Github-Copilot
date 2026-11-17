@@ -27,11 +27,28 @@ const aggregate = script("Require all configured Windows product matrix leaves")
 const proof = script("Require the actual native, source Home or packaged Home proof without skipped cases");
 const producer = script("Require the reviewed POSIX producer and authenticate its exact archive");
 const binding = script("Bind all product journeys to the reviewed native source catalog");
+const extraction = script("Extract only the authenticated producer members");
 const cases = {
   native: "test/integration/windows-node-product-native.test.ts",
   source: "test/integration/project-coding-windows-node-electron.test.ts",
   packaged: "test/integration/windows-node-packaged-product.test.ts",
 } as const;
+
+it("executes the extraction step's actual inline Node command with an absolute controlled producer directory", () => {
+  const matched = extraction.match(/node --input-type=module -e '([^']+)'/); expect(matched).not.toBeNull();
+  const verify = vi.fn((directory: string, kind: string) => {
+    if (!path.isAbsolute(directory)) throw new Error("The strict producer verifier requires an absolute directory.");
+    expect(directory).toBe(path.resolve(".cache/windows-node-toolchain")); expect(kind).toBe("producer");
+  });
+  expect(() => verify(".cache/windows-node-toolchain", "producer")).toThrow("requires an absolute directory"); verify.mockClear();
+  const compiled = transformSync(matched![1], { loader: "js", format: "cjs", target: "node22" }).code;
+  runInNewContext(compiled, { require: (name: string) => {
+    if (name === "node:path") return path;
+    if (name === "./scripts/package/windows-node-toolchain.mjs") return { verifyWindowsNodeToolchain: verify };
+    throw new Error("The extraction command requested an unsupported import.");
+  } });
+  expect(verify).toHaveBeenCalledExactlyOnceWith(path.resolve(".cache/windows-node-toolchain"), "producer");
+});
 
 it("requires the bounded C model once before all remaining units in each ordinary platform job", () => {
   const model = "test/unit/windows-node-asset-enforcement-c.test.ts";
