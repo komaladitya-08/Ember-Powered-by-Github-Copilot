@@ -12,6 +12,7 @@ import type { TargetsForAgent } from "../../app/main/targets/types";
 import type { ActiveProvider } from "../../app/main/provider";
 import type { CodingPlatformAdapter } from "../../app/main/agent/coding-platform";
 import type { CodingContinuationRef } from "../../app/main/agent/coding-continuation";
+import { WINDOWS_NODE_CODING_CONSTRAINTS } from "../../app/main/agent/windows-node-coding-platform";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- scripted SDK and inert worker boundaries */
 const sim = vi.hoisted(() => ({ sessions: [] as any[], workers: [] as any[], holdTurns: false, holdCleanup: false, login: "test-user" }));
@@ -345,6 +346,7 @@ it("captures fixed Windows Node constraints with the accepted request before a q
   h.create("App"); sim.holdTurns = true; await h.host.ask("Fix and verify copied code");
   expect(h.session.waiting[0]).toContain("Only bundled Node is supplied");
   expect(h.session.waiting[0]).toContain("--experimental-test-isolation=none");
+  expect(h.session.waiting[0]).toContain(WINDOWS_NODE_CODING_CONSTRAINTS);
   scoped.toolchain = undefined;
   (scoped as { mode?: string }).mode = "files-only";
   h.session.nextTurn(); expect(await h.tool("start_coding", { goal: "Fix copied code" })).toMatch(/started/);

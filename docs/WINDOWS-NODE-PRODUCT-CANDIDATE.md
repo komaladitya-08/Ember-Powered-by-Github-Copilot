@@ -29,6 +29,8 @@ files, model responses and RunnerFacts cannot supply the constraints. The actual
 genuine Node availability, Windows facts and zero shells. The initial policy cwd is `\work`; file tools retain
 their logical `/work` spelling. No argv rewriting, implicit flags or host-path substitution is introduced.
 The legacy native-SDK `codingAvailable()` gate stays false.
+The fixed model constraints disclose that only regular files can be renamed; directory renames are unavailable
+in the supported Windows Node subset.
 
 ## Protected command-parent allocation
 

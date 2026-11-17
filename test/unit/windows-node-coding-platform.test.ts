@@ -41,6 +41,7 @@ it("advertises genuine Windows Node-only inventory and keeps host protections wi
   expect(hostFacts.ember.paths).toEqual(["C:\\private\\Ember"]); expect(hostFacts.ember.pids).toEqual([123]);
   expect(facts.ember.names).not.toBe(hostFacts.ember.names);
   expect(WINDOWS_NODE_CODING_CONSTRAINTS).toContain("literal argv"); expect(WINDOWS_NODE_CODING_CONSTRAINTS).toContain("/work as cwd");
+  expect(WINDOWS_NODE_CODING_CONSTRAINTS).toContain("Only regular files can be renamed. Directory renames are unavailable.");
 });
 it("refuses structural, serialized, prototype, Proxy and unavailable claims before broker delegation", async () => {
   const f = setup(), forgedBroker = vi.fn();

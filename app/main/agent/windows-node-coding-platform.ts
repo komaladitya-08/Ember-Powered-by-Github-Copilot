@@ -1,10 +1,10 @@
-/** Opt-in adapter only. The product Windows selector remains files-only. */
+/** Windows Node-only adapter for the captured command capability. */
 import type { PathFact, RunnerFacts } from "../commands/types";
 import { ScopedCodingFileError, type CodingFileBroker, type CodingPlatformAdapter, type CodingCommandWorkspace, type CodingReviewWorkspace } from "./coding-platform";
 import { windowsCodingRelative } from "./windows-coding-policy";
 import { WindowsNodeWorkspace, windowsNodeWorkspacePorts } from "./windows-node-workspace";
 
-export const WINDOWS_NODE_CODING_CONSTRAINTS = "Only bundled Node is supplied. Use run_node with literal argv and /work as cwd. /work names the folder in Ember's tools; use relative script and file paths in argv. No shell, npm or dependencies are supplied. Package installation, network access and child processes are unavailable. Supply --preserve-symlinks and --preserve-symlinks-main explicitly; with --test, also supply --experimental-test-isolation=none. No flags are added automatically.";
+export const WINDOWS_NODE_CODING_CONSTRAINTS = "Only bundled Node is supplied. Use run_node with literal argv and /work as cwd. /work names the folder in Ember's tools; use relative script and file paths in argv. No shell, npm or dependencies are supplied. Package installation, network access and child processes are unavailable. Only regular files can be renamed. Directory renames are unavailable. Supply --preserve-symlinks and --preserve-symlinks-main explicitly; with --test, also supply --experimental-test-isolation=none. No flags are added automatically.";
 const unknown = (): PathFact => ({ exists: null, real: null });
 
 function requireWorkspace(value: unknown): WindowsNodeWorkspace {

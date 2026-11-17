@@ -5,6 +5,7 @@ import { CodingControllerCleanupError, CustomCodingController, type CustomCoding
 import { ScopedCodingFileError, type CodingFileTools } from "../../app/main/agent/coding-platform";
 import { CodingPrivacyCleanupError } from "../../app/main/agent/coding-privacy-scanner";
 import { PrivateControllerCleanupError } from "../../app/main/agent/private-controller-runtime";
+import { WINDOWS_NODE_CODING_CONSTRAINTS } from "../../app/main/agent/windows-node-coding-platform";
 
 const sim = vi.hoisted(() => ({ sessions: [] as any[], inputs: [] as any[], drive: null as null | ((session: any) => Promise<void>), stops: 0, calls: 0, createFailure: false,
   runtimeCloseGate: null as Promise<void> | null, runtimeCloseFailure: false, runtimeStartFailure: false }));
@@ -495,6 +496,7 @@ it("adds only the fixed host Windows constraints to a genuine Node-only tool inv
   await start({ ...base, commands: { target: "This computer", shells: [], node: true }, runNode, toolchain: "windows-node" });
   const config = sim.sessions[0].config, text = JSON.stringify(config.systemMessage);
   expect(text).toContain("Only bundled Node is supplied"); expect(text).toContain("--experimental-test-isolation=none");
+  expect(config.systemMessage.sections.last_instructions.content).toContain(WINDOWS_NODE_CODING_CONSTRAINTS);
   expect(config.tools.map((tool: any) => tool.name)).toContain("run_node");
   expect(config.tools.map((tool: any) => tool.name)).not.toContain("run_command");
 });
