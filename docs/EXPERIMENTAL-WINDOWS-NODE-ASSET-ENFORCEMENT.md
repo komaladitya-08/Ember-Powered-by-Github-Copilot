@@ -190,6 +190,37 @@ filesystem action, logging, grant, Stop attestation or cleanup action. These val
 failure; they cannot change launch admission, Resume or the fatal outer Copy error. The failed runs above remain
 failed, with their private owners retained.
 
+The combined candidate `d68bbdea5cf0216dff92fdebf4bf5124b2984c18` failed run44007986934 overall on both images.
+Contracts256+588 passed, and each Windows job passed588 portable tests. Its first explicit-parent `natural` case
+genuinely closed: C49 authenticated all32 checks, the pinned Node exited17, and real Stop, output closure,
+snapshot/source preservation and asset/private/profile cleanup were positive. Each following `natural-default`
+case failed at phase2/prelude0/C0/proof-native class6, with no C-token, Node, capture or Stop observation. Five
+later cases were blocked; the failed owners and suite build remain retained. This closes one case per image,
+not the seven-case proof. The separately repaired AccessCheck descriptor precondition is not retrospectively
+assigned as the cause of an earlier run.
+
+A passive phase2 observer now runs inside each existing proof guard, before that guard wraps an exception.
+Its operation enum0..13 means unknown, API load, fresh profile, profile read, owner SID, directory create,
+directory pin, control write, original C read, copied C write, copied C pin, copied C read, original C reread,
+and script read. Object0 is none;1..7 identify the fixed ancestor/tools/trees/assets/host-only/full/read
+directories;8/9 are the full/read control files and10 is the copied C image. The inner class0..8 uses the
+existing exact-constructor map. The operation is the last attempted helper, not a native-subcall receipt.
+The record is fresh per case and cleared before phase3, so later failures cannot inherit phase2 metadata.
+
+One further enum authenticates a native Error with `types.isNativeError`, then classifies its own data `message`
+without invoking a getter:0unknown,
+1directory-create privilege-not-held,2directory-create access-denied,3descriptor-conversion failure and
+4other directory-create failure. Only the two exact source-generated message shapes and their bounded
+decimal-status grammar are recognized; no message, path, status/code, SID or pointer is published. Projection
+and storage faults are ignored, the identical original exception reaches the unchanged proof guard, and
+the original return value is preserved. There are no new native queries, awaits, privileges, label changes,
+retries, admission decisions or cleanup actions. Outer class6 remains fatal and retains the graph.
+
+Microsoft documents empty-present SACLs separately from absent SACLs and identifies a privilege precondition
+for assigning a new object's SACL. That is a source lead for the fixed empty protected ancestor SACL, not an
+established failure site or cause. The descriptor and positive absent/empty label readback requirements
+remain unchanged while the operation is unmeasured.
+
 V4 neither recertifies those failures nor silently changes a MIC claim into success. Its new same-Low-label,
 exact-package FA/RX comparison explicitly measures DACL enforcement on the final product graph.
 
@@ -203,6 +234,10 @@ Primary references:
   defines OWNER_RIGHTS suppression of implicit owner permissions.
 - [DACL access checks](https://learn.microsoft.com/en-us/windows/win32/secauthz/how-dacls-control-access-to-an-object)
   describes explicit allow/deny evaluation.
+- [Security descriptor string format](https://learn.microsoft.com/en-us/windows/win32/secauthz/security-descriptor-string-format)
+  distinguishes empty-present ACLs and protected flags from omitted ACLs;
+  [SACL for a new object](https://learn.microsoft.com/en-us/windows/win32/secauthz/sacl-for-a-new-object)
+  documents explicit SACL assignment's privilege precondition.
 - [File access rights](https://learn.microsoft.com/en-us/windows/win32/fileio/file-access-rights-constants) defines
   FILE_WRITE_DATA/FILE_ADD_FILE0x2; [CreateFileW](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilew)
   documents sharing compatibility. [Token policy](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_mandatory_policy)

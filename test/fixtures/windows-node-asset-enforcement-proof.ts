@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path/win32";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
+import { types } from "node:util";
 import type { WindowsHandle } from "../../app/main/agent/experimental-windows-lpac-api";
 import type { WindowsCommandRootOnlyStopOwner, WindowsCommandRootOnlyStoppedRef } from "../../app/main/agent/windows-command-stop";
 import type { WindowsCommandOutputLaunchRef } from "../../app/main/agent/windows-command-output";
@@ -62,7 +63,8 @@ export class WindowsNodeAssetEnforcementObservationError extends Error {
   readonly nodeCheckpoint: number; readonly nodeInnerClass: number;
   readonly captureCheckpoint: number; readonly captureInnerClass: number;
   readonly stopStage: number; readonly stopOperation: number; readonly stopPredicate: number; readonly stopConstraint: number;
-  constructor(readonly mode: WindowsNodeAssetEnforcementMode, readonly phase: number, preludeStage = 0, cExit = 0, errorClass = 0, probeObject = 0, probeRight = 0, probeOutcome = 0, probeMatrix: readonly number[] = [], tokenObserved = 0, tokenIntegrity = 0, tokenAttributes = 0, tokenPolicy = 0, nodeCheckpoint = 0, nodeInnerClass = 0, launchObservation?: WindowsNodeAssetLaunchObservation) {
+  readonly preparationOperation: number; readonly preparationObject: number; readonly preparationInnerClass: number; readonly preparationNativeFailure: number;
+  constructor(readonly mode: WindowsNodeAssetEnforcementMode, readonly phase: number, preludeStage = 0, cExit = 0, errorClass = 0, probeObject = 0, probeRight = 0, probeOutcome = 0, probeMatrix: readonly number[] = [], tokenObserved = 0, tokenIntegrity = 0, tokenAttributes = 0, tokenPolicy = 0, nodeCheckpoint = 0, nodeInnerClass = 0, launchObservation?: WindowsNodeAssetLaunchObservation, preparationObservation?: WindowsNodeAssetPreparationObservation) {
     const stage = Number.isInteger(preludeStage) && preludeStage >= 0 && preludeStage <= 14 ? preludeStage : 0;
     const code = Number.isInteger(cExit) && (cExit === 49 || cExit >= 501 && cExit <= 509) ? cExit : 0;
     const kind = Number.isInteger(errorClass) && errorClass >= 0 && errorClass <= 8 ? errorClass : 0;
@@ -78,7 +80,8 @@ export class WindowsNodeAssetEnforcementObservationError extends Error {
     const node = Number.isInteger(nodeCheckpoint) && nodeCheckpoint >= 0 && nodeCheckpoint <= 7 ? nodeCheckpoint : 0;
     const inner = Number.isInteger(nodeInnerClass) && nodeInnerClass >= 0 && nodeInnerClass <= 8 ? nodeInnerClass : 0;
     const launch = boundedWindowsNodeAssetLaunchObservation(launchObservation);
-    super(`The fixed native Node asset witness was refused in ${mode} at phase ${phase} (prelude ${stage}, C exit ${code}, error class ${kind}, probe ${object}/${right}/${outcome}, matrix ${matrix.join("")}, C token ${observed}/${integrity}/${attributes}/${policy}, Node checkpoint ${node}/${inner}, capture ${launch.captureCheckpoint}/${launch.captureInnerClass}, Stop ${launch.stopStage}/${launch.stopOperation}/${launch.stopPredicate}/${launch.stopConstraint}).`);
+    const preparation = boundedWindowsNodeAssetPreparationObservation(preparationObservation);
+    super(`The fixed native Node asset witness was refused in ${mode} at phase ${phase} (prelude ${stage}, C exit ${code}, error class ${kind}, probe ${object}/${right}/${outcome}, matrix ${matrix.join("")}, C token ${observed}/${integrity}/${attributes}/${policy}, Node checkpoint ${node}/${inner}, capture ${launch.captureCheckpoint}/${launch.captureInnerClass}, Stop ${launch.stopStage}/${launch.stopOperation}/${launch.stopPredicate}/${launch.stopConstraint}, preparation ${preparation.operation}/${preparation.object}/${preparation.innerClass}/${preparation.nativeFailure}).`);
     this.preludeStage = stage; this.cExit = code; this.errorClass = kind;
     this.probeObject = object; this.probeRight = right; this.probeOutcome = outcome;
     this.probeMatrix = matrix;
@@ -86,8 +89,21 @@ export class WindowsNodeAssetEnforcementObservationError extends Error {
     this.nodeCheckpoint = node; this.nodeInnerClass = inner;
     this.captureCheckpoint = launch.captureCheckpoint; this.captureInnerClass = launch.captureInnerClass;
     this.stopStage = launch.stopStage; this.stopOperation = launch.stopOperation; this.stopPredicate = launch.stopPredicate; this.stopConstraint = launch.stopConstraint;
+    this.preparationOperation = preparation.operation; this.preparationObject = preparation.object; this.preparationInnerClass = preparation.innerClass; this.preparationNativeFailure = preparation.nativeFailure;
     this.name = "WindowsNodeAssetEnforcementObservationError"; this.stack = `${this.name}: ${this.message}`;
   }
+}
+
+export interface WindowsNodeAssetPreparationObservation { operation: number; object: number; innerClass: number; nativeFailure: number }
+function boundedWindowsNodeAssetPreparationObservation(source: WindowsNodeAssetPreparationObservation | undefined): WindowsNodeAssetPreparationObservation {
+  const result = { operation: 0, object: 0, innerClass: 0, nativeFailure: 0 };
+  try {
+    for (const [key, maximum] of [["operation", 13], ["object", 10], ["innerClass", 8], ["nativeFailure", 4]] as const) {
+      const property = source && Object.getOwnPropertyDescriptor(source, key), value = property && "value" in property ? property.value : 0;
+      result[key] = Number.isInteger(value) && value >= 0 && value <= maximum ? value : 0;
+    }
+    return result;
+  } catch { return { operation: 0, object: 0, innerClass: 0, nativeFailure: 0 }; }
 }
 
 export interface WindowsNodeAssetLaunchObservation {
@@ -160,6 +176,32 @@ export const windowsNodeAssetErrorClass = (loaded: DiagnosticClasses | undefined
     const index = classes.findIndex(type => error instanceof type); return index < 0 ? 0 : index + 1;
   } catch { return 0; }
 };
+
+/** Only fixed source-generated message shapes become an enum; neither text nor native status leaves this helper. */
+export function windowsNodeAssetPreparationNativeFailure(error: unknown): number {
+  try {
+    if (!types.isNativeError(error)) return 0;
+    const property = Object.getOwnPropertyDescriptor(error, "message"), message = property && "value" in property ? property.value : undefined;
+    if (typeof message !== "string") return 0;
+    if (message === "CreateDirectoryW failed (Windows error 1314).") return 1;
+    if (message === "CreateDirectoryW failed (Windows error 5).") return 2;
+    const match = /^(ConvertStringSecurityDescriptorToSecurityDescriptorW|CreateDirectoryW) failed \(Windows error (0|[1-9][0-9]{0,9})\)\.$/.exec(message);
+    if (!match || Number(match[2]) > 0xffffffff) return 0;
+    return match[1] === "ConvertStringSecurityDescriptorToSecurityDescriptorW" ? 3 : 4;
+  } catch { return 0; }
+}
+
+/** Runs inside the existing proof guard so the original exception is observed before that guard wraps it. */
+export function observeWindowsNodeAssetPreparation<T>(loaded: DiagnosticClasses | undefined, state: WindowsNodeAssetPreparationObservation,
+  operation: number, object: number, action: () => T): T {
+  try { state.operation = operation; state.object = object; state.innerClass = 0; state.nativeFailure = 0; } catch { /* Diagnostic storage cannot prevent the original operation. */ }
+  try { return action(); }
+  catch (error) {
+    let kind = 0; try { kind = windowsNodeAssetErrorClass(loaded, error); } catch { /* Unknown classification stays zero. */ }
+    try { state.innerClass = kind; state.nativeFailure = windowsNodeAssetPreparationNativeFailure(error); } catch { /* Preserve the original exception for the existing guard. */ }
+    throw error;
+  }
+}
 
 /** Synchronous observation only: the original result or identical thrown value remains authoritative. */
 export function observeWindowsNodeAssetNodeCall<T>(loaded: DiagnosticClasses | undefined, state: { checkpoint: number; innerClass: number },
@@ -261,6 +303,7 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
     if (busy || !MODES.includes(mode)) { terminal = new WindowsNodeAssetEnforcementObservationError(MODES.includes(mode) ? mode : "natural", 1); throw terminal; }
     busy = true;
     const nodeObservation = { checkpoint: 0, innerClass: 0 }; let launchObservation = windowsNodeAssetLaunchObservation();
+    let preparationObservation: WindowsNodeAssetPreparationObservation = { operation: 0, object: 0, innerClass: 0, nativeFailure: 0 };
     let phase = 1, preludeStage = 0, cExit = 0, probe: Readonly<{ object: number; right: number; outcome: number; matrix: readonly number[] }> = { object: 0, right: 0, outcome: 0, matrix: Object.freeze(Array<number>(28).fill(0)) },
       tokenObserved = 0, tokenFacts: Readonly<{ integrity: number; attributes: number; policy: number }> = { integrity: 0, attributes: 0, policy: 0 },
       heldToken: Readonly<{ ref: TokenObservation; launch: WindowsCommandOutputLaunchRef }> | undefined,
@@ -283,6 +326,7 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
     const workCurrent = () => current() && !sharedAbort.signal.aborted;
     const guarded = <T>(fn: () => T): T => { ensure(current()); const result = fn(); ensure(current()); return result; };
     const native = <T>(fn: () => T): T => guarded(() => proof!.guard(fn));
+    const preparation = <T>(operation: number, object: number, fn: () => T): T => native(() => observeWindowsNodeAssetPreparation(loaded, preparationObservation, operation, object, fn));
     const checkPins = () => { for (const pin of pins) guarded(() => pin.unchanged()); };
     const verified = () => { ensure(guarded(verifyBuild) === undefined); checkPins(); };
     const wait = async (condition: () => boolean, budget: number) => {
@@ -307,23 +351,24 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
       ensure(Object.keys(loaded).sort().join("|") === WINDOWS_NODE_ASSET_ENFORCEMENT_EXPORTS.join("|") && Object.values(loaded).every(value => typeof value === "function"));
       proof = guarded(() => loaded!.loadWindowsCommandCopyProofNative()); security = native(() => loaded!.loadWindowsNodeAssetEnforcementNative());
       for (const file of [asset.module, asset.executable, asset.program]) pins.push(native(() => proof!.pin(file, 16 * 1024 * 1024))); verified();
-      phase = 2; api = native(() => loaded!.loadExperimentalWindowsLpacApi()); profile = native(() => loaded!.createFreshWindowsCommandCreatorProfile());
-      const selected = native(() => loaded!.windowsCommandCreatorProfile(profile!)), owner = native(() => api!.ownerSid());
+      phase = 2; api = preparation(1, 0, () => loaded!.loadExperimentalWindowsLpacApi()); profile = preparation(2, 0, () => loaded!.createFreshWindowsCommandCreatorProfile());
+      const selected = preparation(3, 0, () => loaded!.windowsCommandCreatorProfile(profile!)), owner = preparation(4, 0, () => api!.ownerSid());
       const id = guarded(dependencies.id ?? randomUUID); ensure(typeof id === "string" && /^[0-9a-f-]{36}$/.test(id)); directory = path.join(scratchParent, `ember-node-asset-${id}`);
       const tools = path.join(directory, "tools"), treeParent = path.join(directory, "trees"), privateParent = path.join(directory, "assets"),
         lowOwner = path.join(directory, "low-owner"), lowFullDirectory = path.join(directory, "low-full"), lowFullFile = path.join(lowFullDirectory, "full-file.txt"),
         lowReadDirectory = path.join(directory, "low-read"), lowReadFile = path.join(lowReadDirectory, "full-file.txt"), program = path.join(tools, "access-proof.exe");
       const creation = windowsNodeAssetCreationSecurity(owner, selected.sidText, mode);
-      for (const [folder, descriptor] of [[directory, creation.directory], [tools, creation.tools], [treeParent, creation.treeParent], [privateParent, creation.privateParent],
-        [lowOwner, creation.lowOwner], [lowFullDirectory, creation.lowFullDirectory], [lowReadDirectory, creation.lowReadDirectory]] as const) {
-        native(() => api!.createDirectory(folder, descriptor)); directories.push(native(() => api!.pinDirectory(folder)));
+      for (const [index, [folder, descriptor]] of ([[directory, creation.directory], [tools, creation.tools], [treeParent, creation.treeParent], [privateParent, creation.privateParent],
+        [lowOwner, creation.lowOwner], [lowFullDirectory, creation.lowFullDirectory], [lowReadDirectory, creation.lowReadDirectory]] as const).entries()) {
+        preparation(5, index + 1, () => api!.createDirectory(folder, descriptor)); directories.push(preparation(6, index + 1, () => api!.pinDirectory(folder)));
       }
-      native(() => api!.writeNewFile(lowFullFile, Buffer.from("EMBER_ASSET_CONTROL\n"), creation.lowFullFile));
-      native(() => api!.writeNewFile(lowReadFile, Buffer.from("EMBER_ASSET_CONTROL\n"), creation.lowReadFile));
-      const bytes = native(() => pins[1].read()); try { native(() => api!.writeNewFile(program, bytes, creation.program)); } finally { bytes.fill(0); }
-      pins.push(native(() => proof!.pin(program, 16 * 1024 * 1024))); const copied = native(() => pins[3].read()), original = native(() => pins[1].read());
+      preparation(7, 8, () => api!.writeNewFile(lowFullFile, Buffer.from("EMBER_ASSET_CONTROL\n"), creation.lowFullFile));
+      preparation(7, 9, () => api!.writeNewFile(lowReadFile, Buffer.from("EMBER_ASSET_CONTROL\n"), creation.lowReadFile));
+      const bytes = preparation(8, 0, () => pins[1].read()); try { preparation(9, 10, () => api!.writeNewFile(program, bytes, creation.program)); } finally { bytes.fill(0); }
+      pins.push(preparation(10, 10, () => proof!.pin(program, 16 * 1024 * 1024))); const copied = preparation(11, 10, () => pins[3].read()), original = preparation(12, 0, () => pins[1].read());
       try { ensure(copied.equals(original)); } finally { copied.fill(0); original.fill(0); }
-      script = native(() => pins[2].read());
+      script = preparation(13, 0, () => pins[2].read());
+      preparationObservation = { operation: 0, object: 0, innerClass: 0, nativeFailure: 0 };
       phase = 3; node = await loaded.createWindowsNodeToolchainAssets({ resourcesPath: resources, privateParent, profile,
         signal: AbortSignal.any([assetAbort.signal, sharedAbort.signal]), current: () => workCurrent() && assetCurrent });
       verified(); const roots = guarded(() => files.readdirSync(privateParent)); ensure(roots.length === 1 && /^ember-node-[0-9a-f-]{36}$/.test(String(roots[0])));
@@ -431,7 +476,7 @@ export function bindWindowsNodeAssetEnforcement(dependencies: WindowsNodeAssetEn
         assetCleanup: 1, privateCleanup: 1, profileCleanup: 1, emittedCjs: 1 });
     } catch (error) {
       live = false; terminal ??= new WindowsNodeAssetEnforcementObservationError(mode, phase, preludeStage, cExit, windowsNodeAssetErrorClass(loaded, error), probe.object, probe.right, probe.outcome, probe.matrix,
-        tokenObserved, tokenFacts.integrity, tokenFacts.attributes, tokenFacts.policy, nodeObservation.checkpoint, nodeObservation.innerClass, launchObservation); retained.push(graph);
+        tokenObserved, tokenFacts.integrity, tokenFacts.attributes, tokenFacts.policy, nodeObservation.checkpoint, nodeObservation.innerClass, launchObservation, preparationObservation); retained.push(graph);
       for (const value of launches) try { loaded!.retainWindowsCommandOutput(value); } catch { /* Same-graph quarantine supplies no disposal receipt. */ }
       for (const owner of owners) try { owner.retainStop(); } catch { /* Request exact Stop only; never retry cleanup or certify disposal. */ }
       throw terminal;

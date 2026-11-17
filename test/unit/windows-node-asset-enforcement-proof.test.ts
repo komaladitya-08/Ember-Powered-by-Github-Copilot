@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import fs from "node:fs";
+import { runInNewContext } from "node:vm";
 import { outputFake } from "../fixtures/windows-command-output-fake";
 import { requireWindowsCommandRootOnlyCompleted, WindowsRootOnlyCommandCopy, WindowsRootOnlyCommandCopyCleanupError } from "../../app/main/agent/windows-command-copy";
 import { requireWindowsCommandOutputClosed, requireWindowsCommandOutputLaunch, WindowsCommandOutputCleanupError } from "../../app/main/agent/windows-command-output";
@@ -7,9 +8,9 @@ import { closeWindowsCommandCreatorProfile, windowsCommandCreatorProfile, Window
 import { createWindowsCommandRootOnlyStopOwner, requireWindowsCommandRootOnlyStopped, requireWindowsCommandRootOnlyAttestingCurrent, windowsCommandRootOnlyFailure, WindowsCommandRootOnlyCleanupError, type WindowsCommandRootOnlyStopOwner } from "../../app/main/agent/windows-command-stop";
 import { WindowsCommandCopyCleanupError } from "../../app/main/agent/windows-command-copy-native";
 import { WindowsNodeToolchainCleanupError } from "../../app/main/agent/windows-node-toolchain-native";
-import { WindowsCommandCopyProofCleanupError } from "../fixtures/windows-command-copy-proof-native";
+import { bindWindowsCommandCopyProofNative, WindowsCommandCopyProofCleanupError } from "../fixtures/windows-command-copy-proof-native";
 import { WindowsNodeAssetEnforcementNativeCleanupError } from "../fixtures/windows-node-asset-enforcement-native";
-import { bindWindowsNodeAssetEnforcement, observeWindowsNodeAssetStop, observeWindowsNodeAssetNodeCall, windowsNodeAssetLaunchObservation, requireWindowsNodeAssetOutputFacts,
+import { bindWindowsNodeAssetEnforcement, observeWindowsNodeAssetStop, observeWindowsNodeAssetNodeCall, observeWindowsNodeAssetPreparation, windowsNodeAssetPreparationNativeFailure, windowsNodeAssetLaunchObservation, requireWindowsNodeAssetOutputFacts,
   windowsNodeAssetCreationSecurity, windowsNodeAssetPreludeExit, windowsNodeAssetPreludeProbe, windowsNodeAssetErrorClass, requireWindowsNodeAssetHeldToken, requireWindowsNodeAssetTokenFacts, NODE_ASSET_READY, NODE_ASSET_ERROR_READY, WindowsNodeAssetEnforcementObservationError } from "../fixtures/windows-node-asset-enforcement-proof";
 import type { WindowsLpacApi } from "../../app/main/agent/experimental-windows-lpac-api";
 
@@ -282,6 +283,85 @@ it("diagnostic storage cannot change the original return or throw", () => {
   expect(observeWindowsNodeAssetNodeCall(diagnosticClasses, state, 2, 3, () => result)).toBe(result);
   let caught: unknown; try { observeWindowsNodeAssetNodeCall(diagnosticClasses, state, 2, 3, () => { throw original; }); } catch (error) { caught = error; }
   expect(caught).toBe(original); expect(state).toEqual({ checkpoint: 0, innerClass: 0 });
+});
+it.each(Object.values(diagnosticClasses).map((type, index) => ({ type, kind: index + 1 })))("preparation observes original class$kind before the existing proof guard wraps it", ({ type, kind }) => {
+  const proof = bindWindowsCommandCopyProofNative(() => ({ func: () => () => undefined }));
+  const state = { operation: 0, object: 0, innerClass: 0, nativeFailure: 0 }, original = new type(), action = vi.fn(() => { throw original; });
+  let inner: unknown;
+  expect(() => proof.guard(() => {
+    try { return observeWindowsNodeAssetPreparation(diagnosticClasses, state, 5, 1, action); }
+    catch (error) { inner = error; throw error; }
+  })).toThrow(WindowsCommandCopyProofCleanupError);
+  expect(inner).toBe(original); expect(action).toHaveBeenCalledOnce(); expect(state).toEqual({ operation: 5, object: 1, innerClass: kind, nativeFailure: 0 });
+  expect(proof.unsafe).toBe(true); const later = vi.fn(); expect(() => proof.guard(later)).toThrow(WindowsCommandCopyProofCleanupError); expect(later).not.toHaveBeenCalled();
+});
+it("preparation returns the exact value with one original guard/callback and preserves the callback's receiver", () => {
+  const proof = bindWindowsCommandCopyProofNative(() => ({ func: () => () => undefined })), guard = vi.spyOn(proof, "guard");
+  const state = { operation: 0, object: 0, innerClass: 8, nativeFailure: 4 }, expected = Object.freeze({}), target = { call: vi.fn(() => expected) };
+  expect(proof.guard(() => observeWindowsNodeAssetPreparation(diagnosticClasses, state, 6, 7, () => target.call()))).toBe(expected);
+  expect(guard).toHaveBeenCalledOnce(); expect(target.call).toHaveBeenCalledOnce(); expect(target.call.mock.contexts[0]).toBe(target);
+  expect(state).toEqual({ operation: 6, object: 7, innerClass: 0, nativeFailure: 0 }); expect(proof.unsafe).toBe(false);
+});
+it.each([
+  ["CreateDirectoryW failed (Windows error 1314).", 1], ["CreateDirectoryW failed (Windows error 5).", 2],
+  ["ConvertStringSecurityDescriptorToSecurityDescriptorW failed (Windows error 87).", 3],
+  ["ConvertStringSecurityDescriptorToSecurityDescriptorW failed (Windows error 4294967295).", 3],
+  ["CreateDirectoryW failed (Windows error 0).", 4], ["CreateDirectoryW failed (Windows error 183).", 4],
+  ["CreateDirectoryW failed (Windows error 4294967295).", 4], ["CreateDirectoryW failed (Windows error 4294967296).", 0],
+  ["ConvertStringSecurityDescriptorToSecurityDescriptorW failed (Windows error -1).", 0],
+  ["CreateDirectoryW failed (Windows error 05).", 0], ["CreateDirectoryW failed (Windows error 5). PRIVATE", 0],
+  ["PRIVATE path failed", 0], ["CreateDirectoryW failed (Windows error 5)\n.", 0],
+] as const)("preparation native message shape maps only to closed enum %#", (message, kind) => {
+  const error = new Error(message), state = { operation: 0, object: 0, innerClass: 0, nativeFailure: 0 }; let caught: unknown;
+  expect(windowsNodeAssetPreparationNativeFailure(error)).toBe(kind);
+  try { observeWindowsNodeAssetPreparation(diagnosticClasses, state, 5, 1, () => { throw error; }); } catch (value) { caught = value; }
+  expect(caught).toBe(error); expect(state.nativeFailure).toBe(kind); expect(state.innerClass).toBe(0);
+});
+it("preparation diagnostic never invokes forged error getters or coerces message values", () => {
+  const read = vi.fn(() => { throw Error("PRIVATE message getter"); }), value = { toString: read };
+  const trap = vi.fn(() => { throw Error("PRIVATE prototype trap"); });
+  const getter = Object.defineProperty(new Error(), "message", { get: read });
+  const claimed = Object.defineProperties({}, { message: { value: "CreateDirectoryW failed (Windows error 1314)." }, name: { get: read } });
+  const coercion = Object.defineProperty(new Error(), "message", { value });
+  const proxy = new Proxy(new Error("CreateDirectoryW failed (Windows error 1314)."), { getPrototypeOf: trap, getOwnPropertyDescriptor: trap });
+  expect(windowsNodeAssetPreparationNativeFailure(proxy)).toBe(0); expect(trap).not.toHaveBeenCalled();
+  for (const original of [getter, claimed, coercion, proxy]) {
+    const state = { operation: 0, object: 0, innerClass: 0, nativeFailure: 0 }; let caught: unknown;
+    try { observeWindowsNodeAssetPreparation(diagnosticClasses, state, 5, 1, () => { throw original; }); } catch (error) { caught = error; }
+    expect(caught).toBe(original); expect(state.nativeFailure).toBe(0);
+  }
+  expect(read).not.toHaveBeenCalled(); expect(trap).toHaveBeenCalledTimes(1); // Only the unchanged exact-loaded-class check reaches the guarded prototype trap.
+});
+it("preparation message classification authenticates native errors across realms before inspecting own message data", () => {
+  const actual: unknown = runInNewContext('new Error("CreateDirectoryW failed (Windows error 1314).")');
+  expect(windowsNodeAssetPreparationNativeFailure(actual)).toBe(1);
+  const impostor: unknown = Object.defineProperty(Object.create(Error.prototype), "message", { value: "CreateDirectoryW failed (Windows error 1314)." });
+  expect(windowsNodeAssetPreparationNativeFailure(impostor)).toBe(0);
+});
+it("failed preparation projection/storage cannot change the original return or exception", () => {
+  const state = Object.freeze({ operation: 0, object: 0, innerClass: 0, nativeFailure: 0 }), expected = Object.freeze({});
+  const classes = Object.defineProperty({ ...diagnosticClasses }, "WindowsRootOnlyCommandCopyCleanupError", { get: () => { throw Error("PRIVATE classifier failure"); } });
+  const original = new Error("CreateDirectoryW failed (Windows error 1314)."); let caught: unknown;
+  expect(observeWindowsNodeAssetPreparation(classes, state, 5, 1, () => expected)).toBe(expected);
+  try { observeWindowsNodeAssetPreparation(classes, state, 5, 1, () => { throw original; }); } catch (error) { caught = error; }
+  expect(caught).toBe(original); expect(state).toEqual({ operation: 0, object: 0, innerClass: 0, nativeFailure: 0 });
+});
+it("preparation metadata is bounded own data and has no admission or disposal authority", () => {
+  const value = { operation: 13, object: 10, innerClass: 8, nativeFailure: 4 };
+  const project = (state: typeof value) => new WindowsNodeAssetEnforcementObservationError("natural-default", 2, 0, 0, 6, 0, 0, 0, [], 0, 0, 0, 0, 0, 0, undefined, state);
+  expect(project(value)).toMatchObject({ preparationOperation: 13, preparationObject: 10, preparationInnerClass: 8, preparationNativeFailure: 4 });
+  expect(project({ operation: 14, object: 11, innerClass: 9, nativeFailure: 5 })).toMatchObject({ preparationOperation: 0, preparationObject: 0, preparationInnerClass: 0, preparationNativeFailure: 0 });
+  const read = vi.fn(() => { throw Error("PRIVATE preparation field"); });
+  expect(project(Object.defineProperty({ ...value }, "operation", { get: read }))).toMatchObject({ preparationOperation: 0 }); expect(read).not.toHaveBeenCalled();
+});
+it("preparation observations stay inside original guards and reset before the asset factory", () => {
+  const source = fs.readFileSync(new URL("../fixtures/windows-node-asset-enforcement-proof.ts", import.meta.url), "utf8");
+  expect(source).toContain("=> native(() => observeWindowsNodeAssetPreparation(loaded, preparationObservation, operation, object, fn));");
+  const phase = source.slice(source.indexOf("phase = 2; api ="), source.indexOf("phase = 3; node ="));
+  expect(phase.indexOf("preparation(1, 0")).toBeLessThan(phase.indexOf("preparation(2, 0"));
+  expect(phase.indexOf("preparation(5, index + 1")).toBeLessThan(phase.indexOf("preparation(6, index + 1"));
+  expect(phase.indexOf("preparation(13, 0")).toBeLessThan(phase.indexOf("preparationObservation = { operation: 0, object: 0, innerClass: 0, nativeFailure: 0 };"));
+  expect(phase).not.toMatch(/GetLastError|AdjustTokenPrivileges|SetSecurity|await|\.catch\(/);
 });
 it("Node checkpoints follow an actual Copy context, output launch and held attester before its genuine run resolves", async () => {
   const s = outputFake(), copy = await s.prepare(), io = s.owner(), state = { checkpoint: 1, innerClass: 0 };
