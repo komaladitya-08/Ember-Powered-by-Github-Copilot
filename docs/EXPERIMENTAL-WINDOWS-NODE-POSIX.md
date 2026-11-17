@@ -265,3 +265,26 @@ The next diagnostic-only ABI outcome remains pending. All 351 composed contracts
 (233 new producer and 118 unchanged producer cases), scoped lint, syntax and
 Root/independent review pass. Normal full `npm run typecheck` passed (session
 `15554`).
+
+The sole exact-site ABI-only run `43982542556` at
+`0a192d0b3c4d70c6416be5a767e2cfcf3c244980` refused target 2 at phase 2, child
+exit 1 and C2220/C5287. Both numeric site facts identify copied-fixture class 1,
+line 26, with siteOverflow 0 and unknown lines 7. An independent numbered read of
+that exact commit confirms the already-both-int enum comparison at line 26.
+Target 1 again compiled and passed fresh COFF checks by control flow; target 2
+and a Node build remain unaccepted. This is now an actual compiler location,
+rather than the earlier source-only candidate.
+
+That single comparison is replaced by two real compile-time assertions:
+private adapter class == 22, and SDK FileRenameInfoEx == 22. Under the immutable
+private enum/API-class-22 contract these preserve exact equality by transitivity;
+they also refuse if both constants drift together. The assertions compare each
+separate enum with the fixed numeric ABI value, removing the enum-to-enum
+comparison without disabling its warning. Real SDK headers, C11, all size/offset/
+flag guards, both targets and `/W4 /WX` stay unchanged. No source adapter or
+production compiler setting changes. The portable contract compiles both actual
+assertion lines: 22/22 succeeds, while SDK 23 and private-adapter 23 each fail,
+with the same 2,500 ms natural-child bound. This proves assertion logic only;
+the next actual MSVC/SDK outcome remains pending. All 352 composed contracts
+(234 new producer and 118 unchanged producer cases), scoped lint, Root/independent
+review and normal full `npm run typecheck` pass (session `22619`).

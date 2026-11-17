@@ -152,13 +152,13 @@ it("leaves the three prior patches and Windows header target untouched", () => {
 });
 
 describe.skipIf(process.platform !== "linux")("Actual SDK enum assertion logic only", () => {
-  it.each([[22, true], [23, false]] as const)("checks SDK numeric value %i without comparing different enum types", (sdkValue, accepted) => {
+  it.each([[22, 22, true], [22, 23, false], [23, 22, false]] as const)("checks adapter %i and SDK %i without comparing different enum types", (adapterValue, sdkValue, accepted) => {
     const directory = mkdtempSync(path.join(realpathSync(os.tmpdir()), "ember-node-enum-assertion-"));
     try {
-      const lines = readFileSync(new URL("../fixtures/windows-node-posix-rename-abi.c", import.meta.url), "utf8").split("\n").filter(line => line.startsWith("STATIC_ASSERT(") && line.includes("UV__FS_RENAME_INFO_EX"));
-      expect(lines).toHaveLength(1);
+      const lines = readFileSync(new URL("../fixtures/windows-node-posix-rename-abi.c", import.meta.url), "utf8").split("\n").filter(line => line.startsWith("STATIC_ASSERT(") && (line.includes("UV__FS_RENAME_INFO_EX") || line.includes("FileRenameInfoEx")));
+      expect(lines).toHaveLength(2);
       const source = path.join(directory, "assertion.c"), object = path.join(directory, "assertion.o");
-      writeFileSync(source, `#include <assert.h>\nenum { UV__FS_RENAME_INFO_EX = 22 };\ntypedef enum { FileRenameInfoEx = ${sdkValue} } sdk_class;\n#define STATIC_ASSERT(value) static_assert(value, #value)\n${lines[0]}\n`);
+      writeFileSync(source, `#include <assert.h>\nenum { UV__FS_RENAME_INFO_EX = ${adapterValue} };\ntypedef enum { FileRenameInfoEx = ${sdkValue} } sdk_class;\n#define STATIC_ASSERT(value) static_assert(value, #value)\n${lines.join("\n")}\n`);
       const result = spawnSync("cc", ["-std=c11", "-Wall", "-Wextra", "-Wenum-compare", "-Werror", "-c", source, "-o", object], { stdio: ["ignore", "pipe", "pipe"], timeout: 2500, maxBuffer: 4096 });
       expect(result.error, "The fixed compiler must return a natural outcome; its text remains private.").toBeUndefined();
       expect(result.signal).toBeNull(); expect(Number.isInteger(result.status)).toBe(true);
