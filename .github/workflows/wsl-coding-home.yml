@@ -309,6 +309,58 @@ jobs:
             { env, stdio: ["ignore", "pipe", "pipe"], encoding: "buffer", maxBuffer: 2 * 1024 * 1024, windowsHide: true, timeout: 20 * 60_000 });
           if (outcome.error || outcome.status !== 0 || outcome.signal) {
             console.info("WSL product child refused", JSON.stringify({ schema: 1, child: outcome.error ? 3 : outcome.signal ? 2 : 1, timeout: outcome.error?.code === "ETIMEDOUT" ? 1 : 0 }));
+            // Failure-only observations are bounded numeric data, never successful qualification or raw child output.
+            const names = { resources: ["repair-and-custody", "writer-stop"], source: ["repair", "denied", "stop", "source", "selection", "revocation", "account", "public-repair", "public-denied"], packaged: ["normal-wsl-home"] }[journey];
+            const unavailable = () => ({ schema: 1, journey: ["resources", "source", "packaged"].indexOf(journey) + 1, report: 0, passed: 0, failed: 0, pending: 0, todo: 0, cases: [] });
+            let observation = unavailable(), fd;
+            try {
+              const ordinary = value => value.isFile() && !value.isSymbolicLink() && value.nlink === 1;
+              const same = (a, b) => ordinary(a) && ordinary(b) && a.dev === b.dev && a.ino === b.ino && a.size === b.size;
+              const clock = (a, b) => same(a, b) && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
+              const before = fs.lstatSync(report);
+              if (!ordinary(before) || !Number.isSafeInteger(before.size) || before.size < 1 || before.size > 16 * 1024 * 1024) throw new Error();
+              fd = fs.openSync(report, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
+              const opened = fs.fstatSync(fd); if (!same(before, opened)) throw new Error();
+              const bytes = Buffer.alloc(before.size + 1); let count = 0;
+              while (count < bytes.length) { const read = fs.readSync(fd, bytes, count, bytes.length - count, count); if (!read) break; count += read; }
+              const after = fs.fstatSync(fd), named = fs.lstatSync(report);
+              if (count !== before.size || !clock(opened, after) || !clock(before, named) || !same(after, named)) throw new Error();
+              const finished = fd; fd = undefined; fs.closeSync(finished);
+              const value = JSON.parse(bytes.subarray(0, count).toString("utf8")), suites = value.testResults;
+              if (!Array.isArray(suites) || suites.length !== 1 || typeof suites[0].name !== "string" || path.resolve(suites[0].name).toLowerCase() !== path.resolve(file).toLowerCase() ||
+                  !Array.isArray(suites[0].assertionResults) || suites[0].assertionResults.length !== names.length || value.numTotalTests !== names.length || typeof value.success !== "boolean") throw new Error();
+              const cases = [], seen = new Set(), counts = { passed: 0, failed: 0, pending: 0, todo: 0 };
+              for (const assertion of suites[0].assertionResults) {
+                const index = names.findIndex(name => assertion.fullName === "Windows WSL " + journey + ": " + name), status = { passed: 1, failed: 2, pending: 3, skipped: 3, todo: 4 }[assertion.status];
+                if (index < 0 || seen.has(index) || !Number.isInteger(status)) throw new Error();
+                seen.add(index); counts[["", "passed", "failed", "pending", "todo"][status]]++;
+                let phase = 0;
+                if (status === 2 && Array.isArray(assertion.failureMessages) && assertion.failureMessages.length === 1 && typeof assertion.failureMessages[0] === "string") {
+                  for (let candidate = 1; candidate <= 40; candidate++) {
+                    const message = journey === "source" ? "Windows WSL source journey refused (case " + (index + 1) + ", phase " + candidate + ")." : "Windows WSL product journey refused (phase " + candidate + ").";
+                    if (assertion.failureMessages[0] === "Error: " + message) phase = candidate;
+                  }
+                }
+                cases.push({ case: index + 1, status, phase });
+              }
+              if (["Passed", "Failed", "Pending", "Todo"].some(key => value["num" + key + "Tests"] !== counts[key.toLowerCase()])) throw new Error();
+              observation = { ...observation, report: 1, ...counts, cases: cases.sort((a, b) => a.case - b.case) };
+            } catch { observation = unavailable(); }
+            finally { if (fd !== undefined) { try { fs.closeSync(fd); } catch { observation = unavailable(); } } }
+            console.info("WSL product failure inventory", JSON.stringify(observation));
+            if (journey === "packaged") {
+              let cached = { schema: 1, available: 0, phase: 0, operation: 0, bridgeStage: 0 };
+              try {
+                if (!Buffer.isBuffer(outcome.stdout) || outcome.stdout.length > 2 * 1024 * 1024) throw new Error();
+                const output = outcome.stdout.toString("utf8").replace(/\x1b\[[0-9;]*m/g, ""), tail = output.slice(output.lastIndexOf("\n") + 1);
+                const lines = output.split("\n").filter(line => line.includes("Windows WSL packaged cached observation"));
+                if (lines.length !== 1 || tail.includes("Windows WSL packaged cached observation")) throw new Error();
+                const match = /^Windows WSL packaged cached observation \{"phase":(0|[1-9]|[1-3][0-9]|40),"operation":([0-9]),"bridgeStage":(0|[1-9]|[12][0-9]|30)\}\r?$/.exec(lines[0]);
+                if (!match || match[0].length !== lines[0].length) throw new Error();
+                cached = { schema: 1, available: 1, phase: Number(match[1]), operation: Number(match[2]), bridgeStage: Number(match[3]) };
+              } catch { /* Unknown, partial or private child data stays unavailable. */ }
+              console.info("WSL product failure cached stage", JSON.stringify(cached));
+            }
             throw new Error("The required WSL product child failed; private output is withheld.");
           }
           fs.appendFileSync(process.env.GITHUB_OUTPUT, "report=" + report + "\n");

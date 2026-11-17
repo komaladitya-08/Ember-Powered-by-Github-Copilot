@@ -51,9 +51,11 @@ async function runCase(mode: typeof WSL_PRODUCT_CASES.resources[number]): Promis
     body = (async () => {
       phase = 2; if (!service) throw failure(phase);
       const facts = await known(service.facts({ refresh: true })), selected = facts.distros.find(value => value.name === input.distro);
-      expect(facts.wslExe).toBeTruthy(); expect(selected).toMatchObject({ version: 2, needsSetup: false, tool: false });
-      expect(Number.isSafeInteger(selected?.defaultUid) && selected!.defaultUid! > 0).toBe(true);
-      const distro = Object.freeze({ ...selected! }), current = () => !task.signal.aborted;
+      expect(facts.wslExe).toBeTruthy(); expect(selected).toMatchObject({ version: 2, needsSetup: false });
+      expect(selected?.tool).toBeUndefined();
+      const uid = await known(service.defaultUid(input.distro));
+      expect(Number.isSafeInteger(uid) && uid !== null && uid > 0).toBe(true);
+      const distro = Object.freeze({ ...selected!, defaultUid: uid }), current = () => !task.signal.aborted;
       const transport = { wslExe: facts.wslExe!, distro, jobHost, env: process.env, current };
       const scriptLinuxPath = await known(resolveWslCodingHelperPath({ ...transport, scriptWindowsPath: path.join(input.repository, "dist/app/wsl-coding.cjs") }));
       phase = 3;

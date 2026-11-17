@@ -10,6 +10,10 @@ source graph is qualified; complete current-source Windows product journeys rema
 
 ## Current software work on 17 November 2026
 
+Published product checkpoint `8d828cfb` completed all fourteen required product leaves: six succeeded and eight failed, with zero skipped leaves. Strict acceptance passed 20 of 46 cases: Node native two and source Home seven on each image, plus the encrypted-draft restart case on each image. Both packaged Node cases failed at the second Allow button, observed present, disabled and onscreen; each proof step lasted 84 seconds, below the five-minute journey bound. All six WSL leaves refused with child exit 1 and no outer timeout, but their inner phases and partial case counts were withheld. Those 24 WSL cases remain unqualified. Called workflow contracts passed 104 cases without skips; the draft aggregate passed while Node and WSL aggregates blocked release. All twelve preservation workflows and all seven ordinary CI jobs passed. A separate native-qualification registration job timed out its unchanged 2.5-second C compiler setup before any C model case executed; the ordinary Linux C step passed. Nine source/setup inputs matched successful P1 exactly; no cause or code repair is established for the registration timeout.
+
+Source review separately found two resource-test setup errors: personal distros omit the optional `tool` field, and a fresh WSL service needs an explicit authoritative default-UID query. This test-only follow-up batch corrects those assumptions and projects bounded numeric failed-case phases; it does not attribute the hosted refusals to those source findings. All 146 qualified pins and the complete verifier remain unchanged. The separate native focus experiment at `c1b7099a` refused at startup on both images before any focus condition executed, so it supplied no activation-order finding. Passive startup diagnostics and a native comparison of Commands renderer state with UI Automation state are in preparation.
+
 Earlier checkpoint `a0a7c707` added only bounded cached diagnostics for the two packaged failures. Its exact source passed
 342 targeted cases, lint and the full 1,517-file TypeScript check. Its six Windows product leaves completed at
 18 of 20: Server 2022 stopped at the second command decision's answer-button path, and Server 2025 at a project-flow
@@ -32,8 +36,8 @@ Published `aa5345a9` qualified that exact graph in
 zero skips. Root and an independent reviewer checked all fourteen exact-source frames, including the 32 C49
 controls in each natural mode (13 positive, 19 denied, two DACL pairs), genuine Node exit 17, mode-specific Stop/output,
 snapshot, unchanged seed and asset/private-tree/profile cleanup. This closes the fixed native asset proof, not Home
-or arbitrary-workload acceptance. The local P2 candidate sets all four product-proof tuples true for that
-qualification. This enables the required current-source product cases; it does not record their execution.
+or arbitrary-workload acceptance. Published P2 binds all four product-proof tuples to that
+qualification; its separate required product results are recorded above.
 
 The earlier [WSL native run 44093857380](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44093857380)
 at `b7e8e54b` passed its one real Windows-to-WSL case on each image, zero skips: non-root helper provisioning,
@@ -62,7 +66,7 @@ cause remain. No load or CPU explanation is established.
 New acceptance requires two resource, nine source Home and one shipped Home WSL case per image, plus a separate
 one-case saved-draft source Home journey per image that restarts the real app and OS keyring. With the unchanged
 Node two/seven/one inventory, the required total is 46 current-source cases across both images. P2 enables these
-cases through the required CI caller and release dependencies; all 46 remain pending on this candidate.
+cases through the required CI caller and release dependencies; 20 passed and 26 remain unqualified at P2.
 The earlier integrated source passed its full 1,568-file TypeScript check and 458 targeted cases with no skips, plus full
 lint. The final readiness/pin batch passed a new full 1,568-file TypeScript check, 1,094 targeted cases with no skips,
 a fresh app build and normal-sandbox launcher/Ask smoke; the temporary helper was restored exactly. Its portable
@@ -79,10 +83,10 @@ button diagnostics and an observed runtime-focus departure after Tab. Its 383 po
 full 1,517-file TypeScript check passed. Actual Windows native/source leaves again passed 18 of 20 cases, but both
 packaged cases failed at strict focus checks (focus flags 11, identity flags 59) in different paths. The queued-Tab
 change has not established a hosted cause or repair. A separate nine-file native Chromium focus/activation probe
-is frozen but has not run on Windows; its `only=focus` route is auxiliary only and does not relax the identity guard
-or qualify required product cases.
+was subsequently frozen; its `only=focus` route is auxiliary only and does not relax the identity guard or qualify
+required product cases. Its later startup refusal is recorded above.
 
-The local P2 composition is independently peer-closed across 17 paths, with all 146 qualified source pins and
+The published P2 code/test composition is independently peer-closed across 17 paths, with all 146 qualified source pins and
 verifier `9674e7b0…` unchanged. Its full TypeScript check passed over an unchanged 1,570-file catalog
 (`1cd9d6c2…`); 553 targeted cases across 13 files passed, zero skips, and all 13 TypeScript files passed lint.
 Consent expectations were updated: the focused two-case and whole 60-case views passed. The combined Root
