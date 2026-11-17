@@ -73,7 +73,7 @@ async function run(file: string, args: readonly string[], env: NodeJS.ProcessEnv
 
 interface PackagedObservation {
   operation: number; iteration: number; welcomeStep: number; nextLabel: number; target: number;
-  bridgeError: number; snapshotFlags: number; focusFlags: number; inputResult: number;
+  bridgeError: number; snapshotFlags: number; focusFlags: number; inputResult: number; bridgeStage: number;
 }
 /**
  * Pure cached observations, never action/cleanup authority. Operation is the last marked existing operation, not proof it failed.
@@ -84,10 +84,11 @@ interface PackagedObservation {
  * from an existing input call or its existing state predicate. No raw identity, coordinate, text or error is retained.
  * For operation2 ONLY, bridgeError is: unknown0/outer-ready-timeout1/PowerShell-fatal2/CSharp-fatal3/pre-ready-exit4/other-first-JSON5.
  * For operations3/4 its existing UIA codes remain busy1/gone2/denied3/bad-request4/failed5.
+ * Bridge stage0 is unknown;1..17 are optional PowerShell bootstrap milestones and18..25 are C# startup milestones.
  */
 function packagedObservation() {
-  const limits: PackagedObservation = { operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2 };
-  const current: PackagedObservation = { operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0 };
+  const limits: PackagedObservation = { operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 25 };
+  const current: PackagedObservation = { operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0 };
   let captured = false, first: Readonly<PackagedObservation> | undefined;
   const own = (value: unknown, key: string): unknown => {
     if (!value || typeof value !== "object" || types.isProxy(value)) return undefined;
@@ -340,10 +341,11 @@ class Journey {
     void this.appClosed.catch(() => undefined);
     if (!this.app.pid) throw refusal(2);
     this.watchdog = setTimeout(() => { this.forced = true; this.stopped = true; this.app?.kill(); }, 305_000);
-    this.bridge = new UiaBridge(script, bridgeEnv(this.env, { EMBER_UIA_CACHE: path.join(this.root, "bridge-cache") }));
+    this.bridge = new UiaBridge(script, bridgeEnv(this.env, { EMBER_UIA_CACHE: path.join(this.root, "bridge-cache"), EMBER_UIA_STARTUP_OBSERVE: "1" }));
     this.observe({ operation: 2, bridgeError: 0 });
     try { await bounded(this.bridge.ready, 30_000); }
     catch (error) {
+      try { this.observe({ bridgeStage: this.bridge.startupStage }); } catch { /* Only cached stderr is inspected; keep the original ready failure. */ }
       try { this.observation.readyError(error); } catch { /* Classification never replaces the same ready failure. */ }
       this.captureFailure(); throw error;
     }

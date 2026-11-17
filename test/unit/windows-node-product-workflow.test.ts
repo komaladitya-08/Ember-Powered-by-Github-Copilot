@@ -220,7 +220,7 @@ it("unchanged successful source reporting accepts only its complete seven-case i
 });
 
 const packagedFrame = (phase: number) => `Error: Windows Node packaged journey refused (phase ${phase}).`;
-const emptyObservation = () => ({ operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0 });
+const emptyObservation = () => ({ operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0 });
 type Observation = ReturnType<typeof emptyObservation>;
 const packagedDiagnostic = (fixture: ReturnType<typeof proofFixture>) => {
   const rows = fixture.printed.mock.calls.filter(call => call[0] === "Windows Node packaged proof failure facts"); expect(rows).toHaveLength(1);
@@ -323,22 +323,33 @@ it("operations3/4 retain the original UIA fault codes after a startup classifica
   const o = observationHelper(); o.update({ operation: 2 }); o.readyError(new Error("Windows Node packaged journey refused (phase 12)."));
   o.update({ operation: 4 }); o.answer({ error: { code: "gone" } }); o.capture(); expect(o.value()?.operation).toBe(4); expect(o.value()?.bridgeError).toBe(2);
 });
-it.each([false, true])("the actual ready catch preserves Promise,30000ms and original rejection with observer faults=%s", async faults => {
+it.each([false, true, "stage"] as const)("the actual ready catch preserves Promise,30000ms and original rejection with observer faults=%s", async faults => {
   const source = read(cases.packaged), start = source.indexOf("    this.observe({ operation: 2, bridgeError: 0 });"), end = source.indexOf("    await this.until(", start);
   const methods = source.slice(source.indexOf("  private observe(values:"), source.indexOf("  constructor(")); expect(start > 0 && end > start).toBe(true);
   const code = transformSync(`module.exports = class {
-    constructor(observation, ready) { this.observation = observation; this.bridge = { ready }; }
+    constructor(observation, ready) { this.observation = observation; this.bridge = { ready, get startupStage() { return readStage(); } }; }
     ${methods}
     async run() { ${source.slice(start, end)} }
   };`, { loader: "ts", format: "cjs", target: "node22" }).code;
   const module = { exports: undefined as unknown as new (o: ObservationHelper, ready: Promise<object>) => { run(): Promise<void> } }, calls: unknown[][] = [];
-  runInNewContext(code, { module, bounded: (promise: Promise<object>, ms: number) => { calls.push([promise, ms]); return promise; } });
+  let stageReads = 0;
+  runInNewContext(code, { module, readStage: () => { stageReads++; if (faults === "stage") throw new Error("PRIVATE stage fault"); return 9; },
+    bounded: (promise: Promise<object>, ms: number) => { calls.push([promise, ms]); return promise; } });
   const original = new Error("Windows Node packaged journey refused (phase 12)."), o = observationHelper();
-  const observer = faults ? new Proxy(o, { get() { throw new Error("PRIVATE observation fault"); } }) : o;
+  const observer = faults === true ? new Proxy(o, { get() { throw new Error("PRIVATE observation fault"); } }) : o;
   const failed = Promise.reject(original); await expect(new module.exports(observer, failed).run()).rejects.toBe(original);
-  expect(calls).toEqual([[failed, 30_000]]); if (!faults) expect(o.value()).toEqual({ ...emptyObservation(), operation: 2, bridgeError: 1 });
-  const success = observationHelper(), successfulObserver = faults ? new Proxy(success, { get() { throw new Error("PRIVATE observation fault"); } }) : success;
-  const ready = Promise.resolve({ ready: true }); await expect(new module.exports(successfulObserver, ready).run()).resolves.toBeUndefined(); expect(calls[1]).toEqual([ready, 30_000]); expect(success.value()).toBeUndefined();
+  expect(calls).toEqual([[failed, 30_000]]); if (faults !== true) expect(o.value()).toEqual({ ...emptyObservation(), operation: 2, bridgeError: 1, bridgeStage: faults === "stage" ? 0 : 9 });
+  expect(stageReads).toBe(1);
+  const success = observationHelper(), successfulObserver = faults === true ? new Proxy(success, { get() { throw new Error("PRIVATE observation fault"); } }) : success;
+  const ready = Promise.resolve({ ready: true }); await expect(new module.exports(successfulObserver, ready).run()).resolves.toBeUndefined(); expect(calls[1]).toEqual([ready, 30_000]); expect(success.value()).toBeUndefined(); expect(stageReads).toBe(1);
+});
+
+it("opts in only the external UIA harness while leaving the packaged app environment and readiness limit unchanged", () => {
+  const source = read(cases.packaged), environment = source.slice(source.indexOf("function environment("), source.indexOf("class Journey"));
+  expect(environment).not.toContain("EMBER_UIA_STARTUP_OBSERVE");
+  expect(source).toContain('new UiaBridge(script, bridgeEnv(this.env, { EMBER_UIA_CACHE: path.join(this.root, "bridge-cache"), EMBER_UIA_STARTUP_OBSERVE: "1" }))');
+  expect(source).toContain('spawn(this.executable, ["--show-settings"], { cwd: path.dirname(this.executable), env: this.env, stdio: "ignore", windowsHide: false })');
+  expect(source).toContain("try { await bounded(this.bridge.ready, 30_000); }");
 });
 const observationFrame = (value: unknown) => "Windows Node packaged cached observation " + JSON.stringify(value);
 it("the actual pure fixture helper freezes only bounded cached fields before cleanup, without retaining private node data", () => {
@@ -347,7 +358,7 @@ it("the actual pure fixture helper freezes only bounded cached fields before cle
   o.node({ ...node, name: "Agree and continue", value: "PRIVATE field" }); o.step("Step 2 of 6");
   o.focused({ hwnd: 99, element: node }, node, 99); o.fresh({ isOffscreen: false, bounds: { x: 100, y: 100, width: 36, height: 21 } });
   expect(o.input(false)).toBe(false); o.capture(); const first = o.value();
-  expect(first).toEqual({ operation: 14, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 1, snapshotFlags: 15, focusFlags: 31, inputResult: 2 });
+  expect(first).toEqual({ operation: 14, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 1, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 0 });
   expect(Object.isFrozen(first)).toBe(true); expect(JSON.stringify(first)).not.toContain("PRIVATE");
   o.update({ operation: 0, iteration: 12 }); o.capture(); expect(o.value()).toBe(first);
 });
@@ -435,13 +446,13 @@ it("the actual outer failure catch captures before close and does not replace th
   expect(await module.exports(fixture, { async close() { trace.push("model"); } })).toEqual({ failed: true, phase: 3 });
   expect(trace).toEqual(["capture", "close", "model"]); expect(o.value()?.operation).toBe(7);
 });
-it.each(Object.entries({ operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2 }))("the pure helper refuses out-of-domain %s metadata", (field, maximum) => {
+it.each(Object.entries({ operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 25 }))("the pure helper refuses out-of-domain %s metadata", (field, maximum) => {
   for (const invalid of [-1, maximum + 1, 0.5, Infinity, "PRIVATE"]) {
     const o = observationHelper(); o.update({ [field]: invalid }); o.capture(); expect(o.value()).toEqual(emptyObservation());
   }
 });
 it("the strict workflow projects one agreeing cached tuple while preserving phase and the original fatal guard", () => {
-  const tuple = { operation: 7, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 0, snapshotFlags: 0, focusFlags: 15, inputResult: 1 };
+  const tuple = { operation: 7, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 0, snapshotFlags: 0, focusFlags: 15, inputResult: 1, bridgeStage: 25 };
   const f = proofFixture("packaged", passing("packaged"), { attempt: sourceAttempt(packagedFrame(3) + "\n" + observationFrame(tuple), observationFrame(tuple)) });
   expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase: 3, observation: tuple });
   expect(f.queries).toEqual(["exists", "read", "lstat", "exists"]); expect(f.outputs).toEqual([]);

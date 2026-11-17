@@ -223,7 +223,7 @@ describe.skipIf(!available && !required)("the UI Automation bridge on a real Win
 
   it("starts with a ready line and Per-Monitor-V2 DPI awareness, compiling into the cache the first time", async () => {
     const start = Date.now();
-    const first = new UiaBridge(SCRIPT, bridgeEnv(process.env, { EMBER_UIA_CACHE: cache }));
+    const first = new UiaBridge(SCRIPT, bridgeEnv(process.env, { EMBER_UIA_CACHE: cache, EMBER_UIA_STARTUP_OBSERVE: "1" }));
     try {
       const ready = await first.ready;
       coldMs = Date.now() - start;
@@ -249,14 +249,18 @@ describe.skipIf(!available && !required)("the UI Automation bridge on a real Win
     expect(firstExit.code).toBe(0);
     expect(firstExit.lineMs, "the exit line").not.toBeNull();
     expect(firstExit.ms).toBeLessThan(2000);
+    expect(first.startupStage).toBe(25);
     expect(first.strayLines).toEqual([]);
   });
 
   it("starts again quickly from its cached build", async () => {
     const start = Date.now();
-    bridge = new UiaBridge(SCRIPT, bridgeEnv(process.env, { EMBER_UIA_CACHE: cache }));
+    const env = bridgeEnv(process.env, { EMBER_UIA_CACHE: cache });
+    delete env.EMBER_UIA_STARTUP_OBSERVE;
+    bridge = new UiaBridge(SCRIPT, env);
     await bridge.ready;
     const warmMs = Date.now() - start;
+    expect(bridge.startupStage).toBe(0);
     expect(warmMs, `cold ${coldMs} ms, warm ${warmMs} ms`).toBeLessThan(Math.max(coldMs, 1));
     expect(warmMs).toBeLessThan(10_000);
   });

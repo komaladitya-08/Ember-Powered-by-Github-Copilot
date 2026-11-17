@@ -8,12 +8,43 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 const dir = path.resolve("sidecar/uia");
 const read = (name: string) => fs.readFileSync(path.join(dir, name));
 const ps1 = read("ember_uia.ps1").toString("latin1");
 const cs = read("ember_uia.cs").toString("latin1");
 const protocol = read("PROTOCOL.md").toString("utf8");
+
+/** Remove only the exact optional observer; the original bootstrap remains subject to its existing size bound. */
+const startupObserver = "# Optional external-harness startup milestones only; never screen data or stdout.\nfunction Observe-Startup([int]$Stage) {\n  try {\n    if ($env:EMBER_UIA_STARTUP_OBSERVE -ceq '1' -and $Stage -ge 1 -and $Stage -le 17) {\n      $bytes = [Text.Encoding]::ASCII.GetBytes('EMBER_UIA_STARTUP_V1:' + $Stage.ToString([Globalization.CultureInfo]::InvariantCulture) + \"`n\")\n      $err = [Console]::OpenStandardError(); $err.Write($bytes, 0, $bytes.Length); $err.Flush()\n    }\n  } catch { <# Observation must not replace a bootstrap operation or its error. #> }\n}\n\n";
+const startupCalls = [
+  "  Observe-Startup 1\n",
+  "  Observe-Startup 2\n",
+  "  Observe-Startup 3\n",
+  "  Observe-Startup 4\n",
+  "  Observe-Startup 5\n",
+  "        Observe-Startup 6\n",
+  "        Observe-Startup 8\n",
+  "        Observe-Startup 9\n",
+  "        Observe-Startup 10\n",
+  "        Observe-Startup 11\n",
+  "        Observe-Startup 12\n",
+  "    Observe-Startup 13\n",
+  "    Observe-Startup 14\n",
+  "  Observe-Startup 15\n",
+  "  Observe-Startup 16\n",
+  "  Observe-Startup 17\n"
+];
+function removeOnce(source: string, fragment: string): string {
+  expect(source.indexOf(fragment)).toBeGreaterThanOrEqual(0);
+  expect(source.lastIndexOf(fragment)).toBe(source.indexOf(fragment));
+  return source.replace(fragment, "");
+}
+let bootstrap = removeOnce(ps1, startupObserver);
+for (const call of startupCalls) bootstrap = removeOnce(bootstrap, call);
+bootstrap = removeOnce(bootstrap, "; Observe-Startup 7");
+
 
 /** The C# with comments, string and character literals blanked out, so prose can mention any feature. */
 function code(source: string): string {
@@ -73,8 +104,47 @@ describe("the UI Automation bridge's files", () => {
   });
 });
 
+describe("optional UIA startup observations", () => {
+  it("leaves the original bootstrap byte-for-byte intact outside the exact optional observer", () => {
+    expect(createHash("sha256").update(bootstrap).digest("hex")).toBe("8b05f55c3c9d6f4e7aae239b0e73ce49c1175e54a09e04f459a512973a359c75");
+    expect(startupObserver.split("\n").filter(line => line.trim()).length).toBeLessThanOrEqual(10);
+    expect(startupObserver).toContain("$env:EMBER_UIA_STARTUP_OBSERVE -ceq '1'");
+    expect(startupObserver).toContain("$Stage -ge 1 -and $Stage -le 17");
+    expect(startupObserver).toContain("[Console]::OpenStandardError()");
+    expect(startupObserver).toContain("'EMBER_UIA_STARTUP_V1:'");
+    expect(startupObserver).toContain("} catch {");
+    expect(startupObserver).not.toMatch(/Write-Output|OpenStandardOutput|Write-Host|\$input|OpenStandardInput/);
+    expect([...ps1.matchAll(/Observe-Startup ([0-9]+)\b/g)].map(match => Number(match[1]))).toEqual(Array.from({ length: 17 }, (_, i) => i + 1));
+  });
+
+  it("keeps default core transport bytes and its ready Write before the optional best-effort callback and stdin read", () => {
+    const begins = cs.indexOf("  // ---- core begins"), ends = cs.indexOf("  // ---- core ends");
+    let core = cs.slice(begins, ends);
+    core = removeOnce(core, "Action readyWritten = null").replace("Run(TextReader input, JObj ready, )", "Run(TextReader input, JObj ready)");
+    core = removeOnce(core, "      if (readyWritten != null) { try { readyWritten(); } catch (Exception) { /* Optional observation never changes transport. */ } }\n");
+    expect(createHash("sha256").update(core).digest("hex")).toBe("3233f3c0797ab6f34123c20d91675967aae3f47fc810693d0d9c51a80f8236ac");
+    const observed = cs.slice(cs.indexOf("internal int Run(TextReader"), cs.indexOf("    private void Handle("));
+    expect(observed.indexOf("Write(Json.Write(ready));")).toBeLessThan(observed.indexOf("readyWritten();"));
+    expect(observed.indexOf("readyWritten();")).toBeLessThan(observed.indexOf("input.ReadLine()"));
+    const write = cs.slice(cs.indexOf("    private void Write(string line)"), cs.indexOf("    private void ExitProcess("));
+    expect(write.indexOf("output.Write(bytes, 0, bytes.Length);")).toBeLessThan(write.indexOf("output.Flush();"));
+  });
+
+  it("opts into closed C# stderr milestones only, without changing the ready payload or stdin operation", () => {
+    const observer = cs.slice(cs.indexOf("  internal static class StartupObservation"), cs.indexOf("  public static class Bridge"));
+    expect(observer).toContain('Environment.GetEnvironmentVariable("EMBER_UIA_STARTUP_OBSERVE") == "1"');
+    expect(observer).toContain("!Enabled() || stage < 18 || stage > 25");
+    expect(observer).toContain("Console.OpenStandardError()");
+    expect(observer).toContain("catch (Exception)");
+    expect(observer).not.toMatch(/OpenStandardOutput|Console\.Write|OpenStandardInput|Process\.|Native\.|AutomationElement/);
+    expect(cs).toContain("if (StartupObservation.Enabled()) readyWritten = delegate () { StartupObservation.Mark(25); };");
+    expect([...cs.matchAll(/StartupObservation\.Mark\(([0-9]+)\)/g)].map(match => Number(match[1])).sort((a, b) => a - b)).toEqual([18, 19, 20, 21, 22, 23, 24, 25]);
+    expect(cs).toContain("new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false, false), false, 1 << 16)");
+  });
+});
+
 describe("the bridge's bootstrap (ember_uia.ps1)", () => {
-  const lines = ps1.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith("#"));
+  const lines = bootstrap.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith("#"));
 
   it("is only a bootstrap: it compiles or loads the bridge and hands over to Run()", () => {
     expect(lines[0]).toBe("Set-StrictMode -Version Latest");
