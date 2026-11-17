@@ -2,11 +2,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { Script } from "node:vm";
 import { transformSync } from "esbuild";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS } from "../fixtures/windows-node-asset-enforcement-run";
 import {
   WINDOWS_NODE_PRODUCT_NATIVE_ARGV,
   WINDOWS_NODE_PRODUCT_NATIVE_CASES,
@@ -23,11 +25,36 @@ type Admission = Parameters<typeof requireWindowsNodeProductNativeAdmission>[0];
 const admitted: Admission = { required: true, platform: "win32", arch: "x64", image: "windows-2022", commit };
 
 // Re-export only the private metadata reader in memory. This does not issue resource/native references or launch code.
-const metadataModule = { exports: {} as { fixedInstalledElectronResources(repository: string, graph: { metadataFiles: Set<number>; buffers: Buffer[] }): string } };
-const metadataSource = transformSync(fixture + "\nexport { fixedInstalledElectronResources };", { loader: "ts", format: "cjs", target: "node24",
+type SourcePrerequisite = typeof WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE;
+type MetadataGraph = { metadataFiles: Set<number>; buffers: Buffer[]; sourceVerifier?: object };
+const proofTransforms = vi.fn(transformSync), requireCjs = createRequire(import.meta.url);
+const nativeFs: typeof fs = Object.create(fs);
+const vmPort: { Script: typeof Script } = { Script };
+const metadataModule = { exports: {} as { fixedInstalledElectronResources(repository: string, graph: MetadataGraph): string;
+  requireReviewedAssetProof(repository: string, image: string, prerequisite: SourcePrerequisite, graph: MetadataGraph): void } };
+const metadataSource = transformSync(fixture + "\nexport { fixedInstalledElectronResources, requireReviewedAssetProof };", { loader: "ts", format: "cjs", target: "node24",
   define: { "import.meta.url": JSON.stringify(pathToFileURL(path.join(process.cwd(), "test/fixtures/windows-node-product-native.ts")).href) }, logLevel: "silent" }).code;
 new Script(metadataSource, { filename: "fixed-installed-electron-metadata.cjs" }).runInNewContext({ module: metadataModule, exports: metadataModule.exports,
-  require: createRequire(import.meta.url), Buffer, URL, process, setTimeout, clearTimeout });
+  require: (name: string) => name === "esbuild" ? { transformSync: proofTransforms } : name === "node:fs" ? nativeFs : name === "node:vm" ? vmPort : requireCjs(name),
+  Buffer, URL, process, setTimeout, clearTimeout });
+
+function proofSourceFixture() {
+  const repository = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "native-product-source-binding-")));
+  const root = path.resolve(".");
+  for (const pin of WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS) {
+    const destination = path.join(repository, pin.path); fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(path.join(root, pin.path), destination);
+  }
+  const relative = "test/fixtures/windows-node-asset-enforcement-run.ts", verifier = path.join(repository, relative);
+  fs.copyFileSync(path.join(root, relative), verifier);
+  const hash = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
+  // Synthetic review metadata exercises only the pure source check, never proof success or native authority.
+  const prerequisite = { ready: true, manifestSha256: hash(fs.readFileSync(path.join(root, "app/shared/windows-node-toolchain.json"))),
+    assetProofCommit: "1".repeat(40), assetProofManifestSha256: hash(JSON.stringify(WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS)), verifierFileSha256: hash(fs.readFileSync(verifier)) };
+  const graph: MetadataGraph = { metadataFiles: new Set(), buffers: [] }; proofTransforms.mockClear();
+  return { repository, verifier, prerequisite, graph, run: () => metadataModule.exports.requireReviewedAssetProof(repository, "windows-2022", prerequisite, graph),
+    close: () => { expect(graph.metadataFiles.size).toBe(0); for (const bytes of graph.buffers) bytes.fill(0); fs.rmSync(repository, { recursive: true, force: false }); } };
+}
 
 function metadataFixture() {
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "fixed-electron-metadata-"))), repository = path.join(root, "repository");
@@ -47,6 +74,99 @@ function metadataFixture() {
     read: () => metadataModule.exports.fixedInstalledElectronResources(repository, graph),
     close: () => { expect(graph.metadataFiles.size).toBe(0); for (const bytes of graph.buffers) bytes.fill(0); fs.rmSync(root, { recursive: true, force: false }); } };
 }
+
+describe("reviewed native source binding", () => {
+  it("authenticates the captured verifier and every current source pin without issuing native authority", () => {
+    const f = proofSourceFixture();
+    try {
+      expect(WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS).toHaveLength(125);
+      expect(f.run).not.toThrow(); expect(proofTransforms).toHaveBeenCalledTimes(1);
+      expect(f.graph.metadataFiles.size).toBe(0);
+      expect(f.graph.sourceVerifier).toBeUndefined();
+    } finally { f.close(); }
+  });
+
+  it("refuses an explicitly closed prerequisite clone before reading or compiling source", () => {
+    const f = proofSourceFixture();
+    try {
+      const closed = Object.freeze({ ...WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE, ready: false,
+        manifestSha256: null, assetProofCommit: null, assetProofManifestSha256: null, verifierFileSha256: null });
+      expect(() => metadataModule.exports.requireReviewedAssetProof(f.repository, "windows-2022", closed, f.graph)).toThrow("refused its prerequisite phase");
+      expect(proofTransforms).not.toHaveBeenCalled(); expect(f.graph.buffers).toEqual([]);
+    } finally { f.close(); }
+  });
+
+  it.each(["assetProofCommit", "assetProofManifestSha256", "verifierFileSha256"])("refuses missing proof metadata at %s before source capture", field => {
+    const f = proofSourceFixture();
+    try {
+      Object.assign(f.prerequisite, { [field]: null });
+      expect(f.run).toThrow("refused its prerequisite phase");
+      expect(proofTransforms).not.toHaveBeenCalled(); expect(f.graph.buffers).toEqual([]);
+    } finally { f.close(); }
+  });
+
+  it.each(["changed-runtime", "changed-helper", "changed-cjs", "missing-pin", "truncated-pin", "foreign-catalog", "foreign-verifier", "changed-verifier"])("refuses %s with fixed private errors and known metadata closure", mode => {
+    const f = proofSourceFixture();
+    try {
+      const runtime = path.join(f.repository, "app/main/agent/windows-node-toolchain-native.ts");
+      if (mode === "changed-runtime") fs.appendFileSync(runtime, "\n// PRIVATE changed runtime\n");
+      if (mode === "changed-helper") fs.appendFileSync(path.join(f.repository, "app/main/agent/windows-command-creator-token.ts"), "\n// PRIVATE changed helper\n");
+      if (mode === "changed-cjs") fs.appendFileSync(path.join(f.repository, "test/fixtures/windows-node-asset-enforcement-program.cjs"), "\n// PRIVATE changed CJS\n");
+      if (mode === "missing-pin") fs.unlinkSync(runtime);
+      if (mode === "truncated-pin") fs.truncateSync(runtime, 1);
+      if (mode === "foreign-catalog") f.prerequisite.assetProofManifestSha256 = "f".repeat(64);
+      if (mode === "foreign-verifier") f.prerequisite.verifierFileSha256 = "f".repeat(64);
+      if (mode === "changed-verifier") fs.appendFileSync(f.verifier, "\nthrow Error('PRIVATE unreviewed verifier');\n");
+      let failure: unknown; try { f.run(); } catch (error) { failure = error; }
+      expect(String(failure)).toBe("Error: The native Windows Node product proof refused its prerequisite phase; private state was retained.");
+      expect(String((failure as Error).stack)).not.toContain("PRIVATE");
+      if (mode.includes("verifier")) expect(proofTransforms).not.toHaveBeenCalled();
+    } finally { f.close(); }
+  });
+
+  it("retains the VM owner after inner close uncertainty and makes no later source queries or close retry", () => {
+    const f = proofSourceFixture(); let closes = 0, unknown = false, laterQueries = 0;
+    const observed = ["lstatSync", "fstatSync", "openSync", "readSync"] as const;
+    try {
+      for (const key of observed) Object.defineProperty(nativeFs, key, { configurable: true, value: new Proxy(fs[key], {
+        apply: (target, receiver, args) => { if (unknown) laterQueries++; return Reflect.apply(target, receiver, args); },
+      }) });
+      nativeFs.closeSync = fd => {
+        fs.closeSync(fd);
+        // The first close is the captured verifier; the second belongs to its actual private pin reader.
+        if (++closes === 2) { unknown = true; throw new Error("PRIVATE inner close uncertainty"); }
+      };
+      expect(f.run).toThrow("refused its prerequisite phase");
+      expect(closes).toBe(2); expect(laterQueries).toBe(0); expect(proofTransforms).toHaveBeenCalledTimes(1);
+      const owner = f.graph.sourceVerifier as { module?: { exports?: { verifyWindowsNodeAssetEnforcementRun?: unknown } }; context?: unknown };
+      expect(owner.context).toBeDefined(); expect(typeof owner.module?.exports?.verifyWindowsNodeAssetEnforcementRun).toBe("function");
+    } finally {
+      for (const key of observed) Reflect.deleteProperty(nativeFs, key);
+      nativeFs.closeSync = fs.closeSync;
+      // This test's wrapper already positively closed the synthetic descriptor before reporting uncertainty.
+      f.close();
+    }
+  });
+
+  it("retains the VM when the exported reader exceeds its execution limit", () => {
+    class ShortScript extends Script {
+      override runInNewContext(context: Parameters<Script["runInNewContext"]>[0], options?: Parameters<Script["runInNewContext"]>[1]) {
+        return super.runInNewContext(context, { ...options, timeout: 10 });
+      }
+    }
+    const f = proofSourceFixture();
+    try {
+      fs.writeFileSync(f.verifier, `export function verifyWindowsNodeAssetEnforcementRun(_root, input) {
+        const until = Date.now() + 100; while (Date.now() < until) {}
+        return { compileCommit: input.commit, sourceManifestSha256: ${JSON.stringify(f.prerequisite.assetProofManifestSha256)} };
+      }`);
+      f.prerequisite.verifierFileSha256 = createHash("sha256").update(fs.readFileSync(f.verifier)).digest("hex");
+      vmPort.Script = ShortScript;
+      expect(f.run).toThrow("refused its prerequisite phase");
+      expect(f.graph.sourceVerifier).toBeDefined(); expect(proofTransforms).toHaveBeenCalledTimes(1);
+    } finally { vmPort.Script = Script; f.close(); }
+  });
+});
 
 describe("fixed installed Electron metadata", () => {
   it("uses the exact installed package metadata without executing its poison index or honoring an executable override", () => {
@@ -148,9 +268,12 @@ describe("native Windows Node product admission", () => {
     expect(Object.keys(facts).sort()).toEqual(["commit", "image"]);
   });
 
-  it("keeps the authenticated producer and seven-case asset prerequisite closed", () => {
-    expect(WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE).toEqual({ ready: false,
-      manifestSha256: null, assetProofCommit: null, assetProofManifestSha256: null });
+  it("pins the reviewed producer and successful seven-case asset prerequisite exactly", () => {
+    expect(WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE).toEqual({ ready: true,
+      manifestSha256: "d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f",
+      assetProofCommit: "546793a3f94d89ae2ed2593727d9c35aa5571831",
+      assetProofManifestSha256: "bcf191c0fba3518f5c67d043da1b2a3abf2fbbaec0c750a21940326e611abf43",
+      verifierFileSha256: "a581968c3d8a354ccdabfb764d4dc89ac4e261e24e4bbf8c1ad70da4413f1c66" });
     expect(Object.isFrozen(WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE)).toBe(true);
   });
 
@@ -162,7 +285,7 @@ describe("native Windows Node product admission", () => {
     expect(Object.isFrozen(WINDOWS_NODE_PRODUCT_NATIVE_ARGV)).toBe(true);
   });
 
-  it("checks the actual process and closed prerequisite before filesystem setup or native imports", () => {
+  it("checks the actual process and reviewed prerequisite before filesystem setup or native imports", () => {
     const body = fixture.slice(fixture.indexOf("export async function runWindowsNodeProductNativeCase"));
     const admission = body.indexOf("requireWindowsNodeProductNativeAdmission({ required: process.env.EMBER_WINDOWS_NODE_PRODUCT_TEST");
     const prerequisite = body.indexOf("requireFact(prerequisite.ready");
@@ -173,6 +296,8 @@ describe("native Windows Node product admission", () => {
     expect(body.indexOf("fs.realpathSync.native(")).toBeGreaterThan(prerequisite);
     expect(scratch).toBeGreaterThan(prerequisite);
     expect(nativeImport).toBeGreaterThan(prerequisite);
+    expect(body.indexOf("requireReviewedAssetProof(")).toBeGreaterThan(prerequisite);
+    expect(body.indexOf("requireReviewedAssetProof(")).toBeLessThan(nativeImport);
     expect(body).toContain("platform: process.platform");
     expect(body).toContain("arch: process.arch");
     expect(body).toContain("image: process.env.EMBER_WINDOWS_NODE_PRODUCT_IMAGE");
@@ -256,7 +381,7 @@ it("uses real resource issuers and retains uncertain owners without recursive te
   expect(fixture).toContain("terminal = true; retained.add(graph); throw refusal(graph.phase);");
   expect(fixture).toContain('path.join(path.dirname(os.tmpdir()), "ember-node-product-native-")');
   expect(fixture).toContain("requireFact(sameSnapshot(snapshot, captureTree(root)));");
-  expect(fixture).not.toMatch(/rmSync\(|recursive:\s*true|afterEach\s*\(/);
+  expect(fixture).not.toMatch(/\brmSync\(|recursive:\s*true|afterEach\s*\(/);
 });
 
 it("latches the active graph on a fixed global deadline and rejects late or foreign output", () => {

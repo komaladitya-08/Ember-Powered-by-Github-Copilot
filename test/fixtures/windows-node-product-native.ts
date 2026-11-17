@@ -6,6 +6,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { Script } from "node:vm";
+import { transformSync } from "esbuild";
 import type { WindowsProjectCodingResources } from "../../app/main/agent/windows-coding-resources";
 import type { CodingCommandWorkspace, CodingFileBroker, CodingWorkspaceReview } from "../../app/main/agent/coding-platform";
 import type { CodingExportTree } from "../../app/main/agent/coding-result-export";
@@ -16,9 +18,12 @@ export const WINDOWS_NODE_PRODUCT_NATIVE_CASES = Object.freeze(["natural-repair"
 export type WindowsNodeProductNativeCase = typeof WINDOWS_NODE_PRODUCT_NATIVE_CASES[number];
 export const WINDOWS_NODE_PRODUCT_NATIVE_ARGV = Object.freeze(["--preserve-symlinks", "--preserve-symlinks-main", "product-native.cjs", "exercise"]);
 export const WINDOWS_NODE_PRODUCT_NATIVE_CWD = "\\work";
-/** Deliberately closed until the new POSIX producer and exact seven-case asset proof have reviewed receipts. */
-export const WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE = Object.freeze({ ready: false as boolean,
-  manifestSha256: null as string | null, assetProofCommit: null as string | null, assetProofManifestSha256: null as string | null });
+/** First literal reviewed producer/asset-proof tuple; callers cannot override these prerequisite identities. */
+export const WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE = Object.freeze({ ready: true as boolean,
+  manifestSha256: "d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f" as string | null,
+  assetProofCommit: "546793a3f94d89ae2ed2593727d9c35aa5571831" as string | null,
+  assetProofManifestSha256: "bcf191c0fba3518f5c67d043da1b2a3abf2fbbaec0c750a21940326e611abf43" as string | null,
+  verifierFileSha256: "a581968c3d8a354ccdabfb764d4dc89ac4e261e24e4bbf8c1ad70da4413f1c66" as string | null });
 const OWNER = "b".repeat(64), PROJECT = "22222222-2222-4222-8222-222222222222";
 const PROGRAM = fileURLToPath(new URL("./windows-node-product-native-program.cjs", import.meta.url));
 const stdout = Buffer.concat([Buffer.from("PRODUCT-OUT\n"), Buffer.alloc(72 * 1024, 79), Buffer.from("\nPRODUCT-EOF\n")]);
@@ -42,6 +47,7 @@ interface PrivateCase {
   phase: Phase; root?: string; source?: string; destination?: string; common?: string; userData?: string; protectedFile?: string;
   resource?: WindowsProjectCodingResources; workspace?: CodingCommandWorkspace; broker?: CodingFileBroker; output?: CodingWorkspaceReview;
   run?: Promise<ObservedCodingCommand>; pending: Set<Promise<unknown>>; metadataFiles: Set<number>; buffers: Buffer[]; snapshots: Snapshot[][];
+  sourceVerifier?: object;
 }
 // Outside Vitest's auto-removed temp tree, with exact native owners/IRPs retained after the first failure.
 const retained = new Set<PrivateCase>();
@@ -124,6 +130,54 @@ function fixedInstalledElectronResources(repository: string, graph: PrivateCase)
     header.readUInt16LE(pe + 24) === 0x20b && header.readUInt16LE(pe + 24 + 68) === 2);
   const resourcesPath = path.join(path.dirname(binary), "resources"); directory(resourcesPath); return resourcesPath;
 }
+/** Pure reviewed-source binding only. A matching catalog grants no process, native reference or cleanup authority. */
+function requireReviewedAssetProof(repository: string, image: string, prerequisite: typeof WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE,
+  graph: Pick<PrivateCase, "metadataFiles" | "buffers" | "sourceVerifier">): void {
+  try {
+    requireFact(prerequisite.ready && /^[0-9a-f]{40}$/.test(prerequisite.assetProofCommit ?? "") &&
+      /^[0-9a-f]{64}$/.test(prerequisite.assetProofManifestSha256 ?? "") && /^[0-9a-f]{64}$/.test(prerequisite.verifierFileSha256 ?? "") &&
+      (image === "windows-2022" || image === "windows-2025"));
+    const file = path.join(repository, "test/fixtures/windows-node-asset-enforcement-run.ts");
+    const same = (a: fs.BigIntStats, b: fs.BigIntStats) => a.isFile() && b.isFile() && !a.isSymbolicLink() && !b.isSymbolicLink() &&
+      a.nlink === 1n && b.nlink === 1n && a.dev === b.dev && a.ino === b.ino && a.size === b.size;
+    const clock = (a: fs.BigIntStats, b: fs.BigIntStats) => same(a, b) && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
+    const before = fs.lstatSync(file, { bigint: true });
+    requireFact(before.isFile() && !before.isSymbolicLink() && before.nlink === 1n && before.size > 0n && before.size <= 1024n * 1024n &&
+      fs.realpathSync.native(file).toLowerCase() === file.toLowerCase());
+    const bytes = Buffer.alloc(Number(before.size) + 1); graph.buffers.push(bytes);
+    let fd: number | undefined, count = 0;
+    try {
+      fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0)); graph.metadataFiles.add(fd);
+      const opened = fs.fstatSync(fd, { bigint: true }); requireFact(same(before, opened));
+      while (count < bytes.length) {
+        const read = fs.readSync(fd, bytes, count, bytes.length - count, count);
+        requireFact(Number.isInteger(read) && read >= 0 && read <= bytes.length - count);
+        if (!read) break; count += read;
+      }
+      const after = fs.fstatSync(fd, { bigint: true }), named = fs.lstatSync(file, { bigint: true });
+      requireFact(count === Number(before.size) && clock(opened, after) && clock(before, named) && same(after, named));
+    } finally {
+      if (fd !== undefined) { requireFact(fs.closeSync(fd) === undefined); graph.metadataFiles.delete(fd); }
+    }
+    const captured = bytes.subarray(0, count);
+    requireFact(digest(captured) === prerequisite.verifierFileSha256);
+    const source = captured.toString("utf8"); requireFact(Buffer.from(source, "utf8").equals(captured));
+    const compiled = transformSync(source, { loader: "ts", format: "cjs", target: "node22", sourcemap: false, logLevel: "silent" }).code;
+    const module = { exports: {} as { verifyWindowsNodeAssetEnforcementRun(root: string, input: { commit: string; image: string }): {
+      compileCommit: string; sourceManifestSha256: string } } };
+    const allowed: Record<string, unknown> = { "node:fs": fs, "node:path": path, "node:crypto": { createHash } };
+    const context = { module, exports: module.exports, Buffer, repository, input: { commit: prerequisite.assetProofCommit, image },
+      require: (name: string) => { if (!Object.hasOwn(allowed, name)) throw new Error(); return allowed[name]; } };
+    // The curated reader retains exact FD/buffer records privately on uncertainty. Keep its VM and export closures
+    // in the case graph before initialization or verification; a failed reader must never lose those owners.
+    graph.sourceVerifier = { module, context };
+    const facts = new Script(compiled + "\nmodule.exports.verifyWindowsNodeAssetEnforcementRun(repository, input);",
+      { filename: "reviewed-native-source-catalog.cjs" }).runInNewContext(context,
+        { timeout: 10_000, contextCodeGeneration: { strings: false, wasm: false } }) as { compileCommit: string; sourceManifestSha256: string };
+    requireFact(facts.compileCommit === prerequisite.assetProofCommit && facts.sourceManifestSha256 === prerequisite.assetProofManifestSha256);
+    graph.sourceVerifier = undefined;
+  } catch { throw refusal("prerequisite"); }
+}
 function treeMatches(tree: CodingExportTree | undefined, expected: ReadonlyMap<string, string | null>): boolean {
   return !!tree && tree.entries.length === expected.size && tree.entries.every(entry => expected.has(entry.path) &&
     (entry.kind === "directory" ? expected.get(entry.path) === null : expected.get(entry.path) === entry.bytes.toString("utf8")));
@@ -169,13 +223,14 @@ export async function runWindowsNodeProductNativeCase(mode: WindowsNodeProductNa
     graph.phase = "prerequisite";
     const prerequisite = WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE;
     requireFact(prerequisite.ready && /^[0-9a-f]{64}$/.test(prerequisite.manifestSha256 ?? "") && /^[0-9a-f]{40}$/.test(prerequisite.assetProofCommit ?? "") &&
-      /^[0-9a-f]{64}$/.test(prerequisite.assetProofManifestSha256 ?? ""));
+      /^[0-9a-f]{64}$/.test(prerequisite.assetProofManifestSha256 ?? "") && /^[0-9a-f]{64}$/.test(prerequisite.verifierFileSha256 ?? ""));
     const repository = fs.realpathSync.native(fileURLToPath(new URL("../..", import.meta.url)));
     requireFact(execFileSync("git", ["rev-parse", "HEAD"], { cwd: repository, encoding: "utf8", timeout: 10_000, maxBuffer: 128, stdio: ["ignore", "pipe", "pipe"] }).trim() === admission.commit);
     requireFact(execFileSync("git", ["status", "--porcelain", "--untracked-files=normal"], { cwd: repository, encoding: "utf8", timeout: 10_000,
       maxBuffer: 65_536, stdio: ["ignore", "pipe", "pipe"] }).trim() === "");
     const manifest = fs.readFileSync(path.join(repository, "app", "shared", "windows-node-toolchain.json"));
     requireFact(digest(manifest) === prerequisite.manifestSha256);
+    requireReviewedAssetProof(repository, admission.image === 2022 ? "windows-2022" : "windows-2025", prerequisite, graph);
     graph.phase = "installed-toolchain";
     const resourcesPath = fixedInstalledElectronResources(repository, graph);
     const packaging = await known(import("../../scripts/package/windows-node-toolchain.mjs"));
@@ -277,7 +332,7 @@ export async function runWindowsNodeProductNativeCase(mode: WindowsNodeProductNa
     graph.phase = "canaries";
     requireFact(sameSnapshot(sourceBefore, captureTree(source)) && sameSnapshot(userBefore, captureTree(userData)) && sameSnapshot(protectedBefore, captureTree(protectedFile)));
     graph.phase = "known-cleanup";
-    requireFact(graph.pending.size === 0 && graph.metadataFiles.size === 0 && JSON.stringify(fs.readdirSync(destination)) === JSON.stringify([path.basename(exportDirectory)]) &&
+    requireFact(graph.pending.size === 0 && graph.metadataFiles.size === 0 && graph.sourceVerifier === undefined && JSON.stringify(fs.readdirSync(destination)) === JSON.stringify([path.basename(exportDirectory)]) &&
       JSON.stringify(fs.readdirSync(root).sort()) === JSON.stringify(["application.bin", "destination", "source", "userdata"]));
     removeKnownTree(exportDirectory, exportSnapshot); fs.rmdirSync(destination); removeKnownTree(source, sourceBefore); removeKnownTree(userData, userBefore);
     removeKnownTree(protectedFile, protectedBefore); fs.rmdirSync(root);
