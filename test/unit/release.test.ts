@@ -1,7 +1,7 @@
 /**
  * Publishing a release (docs/DEVELOPING.md §15, scripts/package/release.mjs and ci.yml's release job): the files the
  * README downloads and nothing else, the version's notes from CHANGELOG.md with links that work on a release page,
- * and a job that runs only on v* tags, after every other job, with the only write permission in the workflow.
+ * and a job that runs only on v* tags, after every normal job, with the only write permission in the workflow.
  */
 
 import { spawnSync } from "node:child_process";
@@ -248,10 +248,20 @@ describe("ci.yml's release job", () => {
   const ci = read(".github/workflows/ci.yml");
   const job = ci.slice(ci.indexOf("\n  release:\n"));
 
-  it("runs only on v* tags, after every other job, and is the only job that can write", () => {
+  it("runs only on v* tags, after every normal job, and is the only job that can write", () => {
     expect(job).toMatch(/\n {4}if: startsWith\(github\.ref, 'refs\/tags\/v'\)\n/);
-    const others = [...ci.matchAll(/^ {2}([\w-]+):\n {4}name:/gm)].map(m => m[1]).filter(n => n !== "release");
+    // This one explicit manual experiment cannot run on a tag push, so making it a prerequisite would skip release.
+    // Exempt no other job; even this exact name is allowed only with its complete fixed read-only caller block.
+    const diagnostic = ci.match(/\n {2}windows-uia-focus-order:\n(?: {4}[^\n]*\n|\n)*/)?.[0];
+    if (diagnostic !== undefined) expect(diagnostic).toBe([
+      "", "  windows-uia-focus-order:", "    name: Windows UIA focus diagnostic",
+      "    if: github.event_name == 'workflow_dispatch' && inputs.only == 'focus'",
+      "    permissions:", "      contents: read", "    uses: ./.github/workflows/windows-uia-focus-order.yml", "", "",
+    ].join("\n"));
+    expect(ci.match(/^ {2}windows-uia-focus-order:/gm) ?? []).toHaveLength(diagnostic === undefined ? 0 : 1);
+    const others = [...ci.matchAll(/^ {2}([\w-]+):\n {4}name:/gm)].map(m => m[1]).filter(n => n !== "release" && n !== "windows-uia-focus-order");
     const needs = /\n {4}needs: \[([^\]]+)\]/.exec(job)?.[1].split(/,\s*/) ?? [];
+    expect(needs).not.toContain("windows-uia-focus-order");
     expect(needs.sort()).toEqual(others.sort());
     expect(ci.match(/contents: write/g)).toHaveLength(1);
     expect(job).toMatch(/permissions:\n {6}contents: write/);

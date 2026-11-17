@@ -1,0 +1,144 @@
+# Manual source-only Electron/UIA observation, directly or through CI's focus selector; no product admission.
+name: Windows UIA focus ordering
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  focus:
+    name: Native UIA focus (${{ matrix.image }})
+    if: github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.image }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22.23.5"
+      - run: npm ci
+      - name: Install the pinned development Electron binary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          node node_modules/electron/install.js
+          if ($LASTEXITCODE -ne 0) { throw "The pinned development Electron installation failed." }
+      - name: Require the actual six-condition UIA primitive without skipped cases
+        shell: node {0}
+        env:
+          EMBER_UIA_FOCUS_NATIVE_TEST: "1"
+        run: |
+          // Keep child streams private; only complete fixed numeric frames cross this boundary.
+          const fs = require("node:fs"), path = require("node:path"), { types } = require("node:util");
+          const { spawnSync } = require("node:child_process");
+          const relative = "test/integration/uia-electron-focus-native.test.ts";
+          const conditions = new Map(), conflicts = new Set();
+          let summary, summaryConflict = false, malformed = false, executed, reportPath, suite;
+          const own = (value, key) => {
+            if (!value || typeof value !== "object" || types.isProxy(value)) return undefined;
+            const descriptor = Object.getOwnPropertyDescriptor(value, key);
+            return descriptor && Object.hasOwn(descriptor, "value") ? descriptor.value : undefined;
+          };
+          const frame = (text, limits) => {
+            if (text.length > 256) throw new Error("Unsupported frame.");
+            const value = JSON.parse(text);
+            if (!value || typeof value !== "object" || types.isProxy(value) || Array.isArray(value) || Object.keys(value).length !== Object.keys(limits).length) throw new Error("Unsupported frame.");
+            const result = {};
+            for (const [key, [minimum, maximum]] of Object.entries(limits)) {
+              const number = own(value, key);
+              if (!Number.isInteger(number) || number < minimum || number > maximum) throw new Error("Unsupported frame.");
+              result[key] = number;
+            }
+            return result;
+          };
+          const conditionLimits = { schema: [1, 1], mode: [1, 3], target: [1, 2], matched: [0, 1],
+            focus: [0, 15], identity: [0, 255], foreground: [0, 1], performed: [0, 1] };
+          const summaryLimits = { schema: [1, 1], completed: [0, 6], matchedMask: [0, 63], negative: [0, 1], phase: [1, 8] };
+          const readFrames = attempt => {
+            let total = 0;
+            for (const key of ["stdout", "stderr"]) {
+              const bytes = own(attempt, key);
+              if (!bytes || types.isProxy(bytes) || !Buffer.isBuffer(bytes) || Object.getPrototypeOf(bytes) !== Buffer.prototype ||
+                  ["length", "byteLength", "byteOffset", "buffer", "toString", "utf8Slice"].some(name => Object.getOwnPropertyDescriptor(bytes, name)) ||
+                  bytes.length > 1024 * 1024 || (total += bytes.length) > 2 * 1024 * 1024) { malformed = true; continue; }
+              const text = Buffer.prototype.toString.call(bytes, "utf8");
+              if (!Buffer.prototype.equals.call(Buffer.from(text, "utf8"), bytes)) { malformed = true; continue; }
+              for (const line of text.replace(/\x1b\[[0-9;]*m/g, "").replace(/\r\n/g, "\n").split("\n")) {
+                const condition = /^[ \t]*Windows UIA focus condition (\{[^\r\n]*\})$/.exec(line);
+                const final = /^[ \t]*Windows UIA focus summary (\{[^\r\n]*\})$/.exec(line);
+                if (!condition && !final) {
+                  if (/^[ \t]*Windows UIA focus (?:condition|summary) /.test(line)) malformed = true;
+                  continue;
+                }
+                try {
+                  if (condition) {
+                    const next = frame(condition[1], conditionLimits), id = next.mode + ":" + next.target;
+                    if (next.matched === 1 && (next.focus !== 15 || next.identity !== 255 || next.foreground !== 1 || next.performed !== 1)) throw new Error("Unsupported match.");
+                    if (conditions.has(id) && JSON.stringify(conditions.get(id)) !== JSON.stringify(next)) conflicts.add(id);
+                    else conditions.set(id, next);
+                  } else {
+                    const next = frame(final[1], summaryLimits);
+                    if (summary && JSON.stringify(summary) !== JSON.stringify(next)) summaryConflict = true;
+                    else summary = next;
+                  }
+                } catch { malformed = true; }
+              }
+            }
+          };
+          const ordinary = file => {
+            const info = fs.lstatSync(file);
+            return info.isFile() && !info.isSymbolicLink() && info.nlink === 1;
+          };
+          let passed = false;
+          try {
+            const selected = path.resolve(relative);
+            if (!ordinary(selected)) throw new Error("Missing native suite.");
+            suite = fs.realpathSync.native(selected);
+            reportPath = path.join(process.env.RUNNER_TEMP, "windows-uia-focus-report.json");
+            if (fs.existsSync(reportPath)) throw new Error("The report must be fresh.");
+            executed = spawnSync(process.execPath, ["scripts/run-integration.mjs", relative, "--maxWorkers=1",
+              "--reporter=default", "--reporter=json", "--outputFile=" + reportPath],
+              { env: { ...process.env, EMBER_UIA_FOCUS_NATIVE_TEST: "1" }, stdio: ["ignore", "pipe", "pipe"],
+                encoding: "buffer", maxBuffer: 1024 * 1024, timeout: 5 * 60_000, windowsHide: true });
+            readFrames(executed);
+            if (executed.error || executed.status !== 0 || executed.signal || malformed || conflicts.size || summaryConflict ||
+                conditions.size !== 6 || !summary || summary.completed !== 6 || summary.matchedMask !== 63 ||
+                summary.negative !== 1 || summary.phase !== 8) throw new Error("The native conditions did not pass.");
+            let matchedMask = 0;
+            for (let mode = 1; mode <= 3; mode++) for (let target = 1; target <= 2; target++) {
+              const result = conditions.get(mode + ":" + target);
+              if (!result || result.matched !== 1) throw new Error("A native focus condition did not match.");
+              matchedMask |= 1 << ((mode - 1) * 2 + target - 1);
+            }
+            if (matchedMask !== summary.matchedMask || !ordinary(reportPath)) throw new Error("Unsupported native report.");
+            const info = fs.lstatSync(reportPath);
+            if (info.size < 1 || info.size > 2 * 1024 * 1024) throw new Error("Unsupported native report.");
+            const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+            if (report.success !== true || report.numTotalTests !== 1 || report.numPassedTests !== 1 ||
+                report.numFailedTests !== 0 || report.numPendingTests !== 0 || report.numTodoTests !== 0 ||
+                report.numTotalTestSuites !== 1 || report.numPassedTestSuites !== 1 ||
+                report.numFailedTestSuites !== 0 || report.numPendingTestSuites !== 0 ||
+                !Array.isArray(report.testResults) || report.testResults.length !== 1) throw new Error("Every native test must pass.");
+            const leaf = report.testResults[0];
+            if (leaf.status !== "passed" || typeof leaf.name !== "string" || !path.isAbsolute(leaf.name) ||
+                path.resolve(leaf.name) !== suite || fs.realpathSync.native(leaf.name) !== suite ||
+                !Array.isArray(leaf.assertionResults) || leaf.assertionResults.length !== 1 ||
+                leaf.assertionResults[0].status !== "passed") throw new Error("Unsupported native leaf inventory.");
+            passed = true;
+          } catch { /* The fixed fatal below replaces every raw child, parser and filesystem error. */ }
+          for (let mode = 1; mode <= 3; mode++) for (let target = 1; target <= 2; target++) {
+            const id = mode + ":" + target, value = conditions.get(id);
+            if (value && !conflicts.has(id)) console.info("Windows UIA focus condition", JSON.stringify(value));
+          }
+          if (summary && !summaryConflict) console.info("Windows UIA focus summary", JSON.stringify(summary));
+          if (!passed) throw new Error("The required Windows UIA focus primitive could not be verified.");
+          console.info("Required Windows UIA focus primitive passed", JSON.stringify({ schema: 1, passed: 1, skipped: 0 }));

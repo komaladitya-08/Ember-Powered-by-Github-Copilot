@@ -1,0 +1,143 @@
+/**
+ * Real Electron + native UIA focus-order experiment, one strict case per Windows image. No product build required.
+ * usage: EMBER_UIA_FOCUS_NATIVE_TEST=1 node scripts/run-integration.mjs test/integration/uia-electron-focus-native.test.ts
+ * A passing six-condition experiment is negative evidence for an activation-order cause, never a product repair.
+ */
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createRequire } from "node:module";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { expect, it } from "vitest";
+import { openWin32Input } from "../../app/main/platform/win32/input";
+import { bridgeEnv, UiaBridge, type RawNode, type UiaWindow } from "./uia-client";
+import { nativeFocusEnvironment, nativeFocusObservation, sameNativeFocusTarget } from "../fixtures/uia-focus-contract";
+
+const required = process.env.EMBER_UIA_FOCUS_NATIVE_TEST === "1";
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+function refusal(phase: number): Error { const error = new Error("Windows UIA focus primitive refused (phase " + phase + ")."); error.stack = "Error: " + error.message; return error; }
+function ordinary(file: string): boolean { const stat = fs.lstatSync(file); return stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1; }
+interface OwnedChild { process: ChildProcessWithoutNullStreams; closed: Promise<{ code: number | null; signal: NodeJS.Signals | null }>; ready: Promise<boolean> }
+function startOwned(executable: string, app: string, env: NodeJS.ProcessEnv): OwnedChild {
+  const process = spawn(executable, [app], { env, stdio: ["pipe", "pipe", "pipe"], windowsHide: false });
+  // Capture the owned process and close observation synchronously, before startup can fail or any await occurs.
+  const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(resolve => process.once("close", (code, signal) => resolve({ code, signal })));
+  process.stdin.on("error", () => undefined); process.stderr.on("data", () => undefined);
+  const ready = new Promise<boolean>(resolve => {
+    let buffer = "", bytes = 0, settled = false;
+    const finish = (value: boolean) => { if (!settled) { settled = true; buffer = ""; resolve(value); } };
+    process.once("error", () => finish(false)); process.once("exit", () => finish(false));
+    process.stdout.on("data", (chunk: Buffer) => {
+      bytes += chunk.length; if (bytes > 64 * 1024) { finish(false); return; }
+      if (settled) return; buffer += chunk.toString("utf8");
+      const lines = buffer.split("\n"); buffer = lines.pop() ?? "";
+      for (const line of lines) if (line === "EMBER_UIA_FOCUS_READY_V1:1") finish(true); else if (line.startsWith("EMBER_UIA_FOCUS_READY_V1:")) finish(false);
+      if (buffer.length > 512) finish(false);
+    });
+  });
+  return { process, closed, ready };
+}
+
+it.skipIf(!required)("compares one native focus per fixed Electron target and activation condition without relaxing identity", async () => {
+  let phase = 1, failed = false, firstFailure = 0, retired = false, bridgeBroken = false, root: string | undefined;
+  let owned: OwnedChild | undefined, bridge: UiaBridge | undefined, input: ReturnType<typeof openWin32Input> = null, work: Promise<void> | undefined;
+  let completed = 0, matchedMask = 0, cleanup: boolean;
+  const fail = () => { if (!failed) firstFailure = phase; failed = true; };
+  const current = () => { if (retired || bridgeBroken) throw refusal(phase); };
+  const bounded = async <T>(promise: Promise<T>, ms: number): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try { return await Promise.race([promise, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(refusal(phase)), ms); })]); }
+    finally { clearTimeout(timer); }
+  };
+  try {
+    expect(process.platform).toBe("win32"); expect(process.arch).toBe("x64");
+    const repository = fs.realpathSync.native(process.cwd()), load = createRequire(import.meta.url), pkg = load.resolve("electron/package.json");
+    expect(path.resolve(pkg).toLowerCase()).toBe(path.join(repository, "node_modules/electron/package.json").toLowerCase());
+    const installed = JSON.parse(fs.readFileSync(pkg, "utf8")), declared = JSON.parse(fs.readFileSync(path.join(repository, "package.json"), "utf8"));
+    expect(installed.version).toBe(declared.devDependencies.electron); expect(fs.readFileSync(path.join(path.dirname(pkg), "path.txt"), "utf8")).toBe("electron.exe");
+    const executable = path.join(path.dirname(pkg), "dist/electron.exe"); expect(ordinary(executable)).toBe(true);
+    const temporary = fs.realpathSync.native(os.tmpdir()), parent = path.basename(temporary).startsWith("ember-run-") ? path.dirname(temporary) : temporary;
+    root = fs.realpathSync.native(fs.mkdtempSync(path.join(parent, "ember-native-focus-order-")));
+    const profile = path.join(root, "profile"), scratch = path.join(root, "temporary"); fs.mkdirSync(profile); fs.mkdirSync(scratch);
+    const env = nativeFocusEnvironment(process.env, profile, scratch);
+    input = openWin32Input(); expect(input).not.toBeNull();
+    phase = 2; owned = startOwned(executable, path.join(repository, "test/fixtures/uia-focus-app"), env);
+    expect(owned.process.spawnargs.some(arg => arg === "--no-sandbox" || arg === "--disable-sandbox" || arg.startsWith("--inspect"))).toBe(false);
+    bridge = new UiaBridge(path.join(repository, "sidecar/uia/ember_uia.ps1"), bridgeEnv(env, { EMBER_UIA_CACHE: path.join(root, "bridge-cache") }));
+    const application = owned, ui = bridge, native = input!;
+    const bridgeError = new Promise<never>((_resolve, reject) => { ui.child.once("error", () => { bridgeBroken = true; reject(refusal(phase)); }); });
+    void bridgeError.catch(() => undefined);
+    const poll = async <T>(read: () => Promise<T>, accept: (value: T) => boolean, ms: number): Promise<T> => {
+      const end = Date.now() + ms;
+      while (Date.now() < end) { current(); const value = await read(); current(); if (accept(value)) return value; await sleep(150); }
+      throw refusal(phase);
+    };
+    const guard = (hwnd: number) => { current(); if (native.blockedReason?.(hwnd)) throw refusal(phase); };
+    const foreground = async (hwnd: number) => { await poll(async () => { guard(hwnd); return native.activeWindow(); }, value => value === hwnd, 5000); };
+    const snapshot = async (hwnd: number) => {
+      guard(hwnd); const result = await ui.call<{ nodes: RawNode[]; busy: boolean; truncated: boolean; cut: string[] }>("snapshot", { hwnd, values: false, maxNodes: 2000, maxChildren: 500, deadlineMs: 3000 }, 5000); current();
+      if (result.busy || result.truncated || result.cut.length || !result.nodes.length) throw refusal(phase); return result.nodes;
+    };
+    const select = (nodes: RawNode[], id: string) => {
+      const node = nodes.find(value => value.automationId === id);
+      if (!node || !node.runtimeId || typeof node.runtimeId !== "string" || !Number.isSafeInteger(node.pid) || node.pid! <= 0 || !node.controlType || node.isKeyboardFocusable !== true || node.isOffscreen !== false || !node.bounds || node.bounds.width <= 0 || node.bounds.height <= 0) throw refusal(phase);
+      return node;
+    };
+    const focusOnce = async (hwnd: number, node: RawNode) => { guard(hwnd); expect(await ui.call("perform", { handle: node.h, op: "focus", deadlineMs: 2500 }, 5000)).toEqual({ ok: true }); current(); };
+    const focusSample = async (hwnd: number, target: RawNode) => {
+      guard(hwnd); const result = await ui.call("focused", { values: false, deadlineMs: 2500 }, 5000); guard(hwnd);
+      return { ...nativeFocusObservation(result, target, hwnd), foreground: native.activeWindow() === hwnd ? 1 : 0 };
+    };
+    const prime = async (hwnd: number) => {
+      guard(hwnd); native.activate(hwnd); await foreground(hwnd);
+      const old = select(await snapshot(hwnd), "prior-input"); await focusOnce(hwnd, old);
+      await poll(() => focusSample(hwnd, old), sample => sample.matched && sample.foreground === 1, 10_000);
+    };
+    const body = async () => {
+      await bounded(Promise.all([Promise.race([ui.ready, bridgeError]), application.ready]), 30_000).then(([, sandboxed]) => { current(); if (!sandboxed) throw refusal(phase); });
+      phase = 3;
+      const windows = await poll(() => ui.call<{ windows: UiaWindow[] }>("topWindows", { pid: application.process.pid, deadlineMs: 3000 }, 5000),
+        result => ["A", "B"].every(letter => result.windows.some(window => window.pid === application.process.pid && !window.busy && !window.skipped && window.name === "Ember native focus " + letter)), 20_000);
+      const first = windows.windows.find(window => window.name === "Ember native focus A")!, other = windows.windows.find(window => window.name === "Ember native focus B")!;
+      // Predetermined conditions, never a retry of a failed focus. Each target receives exactly one SetFocus per mode.
+      for (const mode of [1, 2, 3]) for (const target of [1, 2]) {
+        phase = 4; await prime(first.hwnd); if (mode !== 3) await prime(other.hwnd);
+        const node = select(await snapshot(first.hwnd), target === 1 ? "focus-link" : "ask-cmd");
+        phase = 5; if (mode !== 3) { guard(first.hwnd); if (native.activeWindow() !== other.hwnd) throw refusal(phase); native.activate(first.hwnd); if (mode === 2) await foreground(first.hwnd); }
+        else if (native.activeWindow() !== first.hwnd) throw refusal(phase);
+        phase = 6; await focusOnce(first.hwnd, node);
+        phase = 7; let sample = { focus: 0, identity: 0, matched: false, foreground: 0 };
+        const end = Date.now() + 10_000;
+        while (Date.now() < end) { sample = await focusSample(first.hwnd, node); if (sample.matched && sample.foreground === 1) break; current(); await sleep(150); }
+        let matched = sample.matched && sample.foreground === 1;
+        if (matched) {
+          const fresh = (await snapshot(first.hwnd)).find(value => sameNativeFocusTarget(value, node));
+          matched = !!fresh && fresh.isOffscreen === false && !!fresh.bounds && fresh.bounds.width > 0 && fresh.bounds.height > 0 && native.activeWindow() === first.hwnd;
+        }
+        const index = completed++; if (matched) matchedMask |= 1 << index; else fail();
+        console.info("Windows UIA focus condition", JSON.stringify({ schema: 1, mode, target, matched: matched ? 1 : 0, focus: sample.focus, identity: sample.identity, foreground: sample.foreground, performed: 1 }));
+      }
+    };
+    work = body(); await bounded(work, 180_000);
+  } catch { fail(); }
+  finally {
+    retired = true;
+    phase = 8;
+    try { if (work) await bounded(work.catch(() => undefined), 10_000); } catch { fail(); }
+    let appClean = false, bridgeClean = false;
+    if (owned) {
+      try { owned.process.stdin.end("quit\n"); const exit = await bounded(owned.closed, 10_000); appClean = exit.code === 0 && exit.signal === null; } catch { /* Retain uncertain owner/profile. */ }
+      if (!appClean && owned.process.exitCode === null && owned.process.signalCode === null) { try { owned.process.kill(); } catch { fail(); } }
+    }
+    if (bridge) {
+      try { const exit = await bounded(bridge.close(), 10_000); await bounded(bridge.closed, 5000); bridgeClean = exit.code === 0; } catch { try { bridge.kill(); } catch { fail(); } }
+    }
+    try { input?.releaseAll(); input?.close(); } catch { fail(); }
+    cleanup = appClean && bridgeClean && !bridgeBroken;
+    if (!cleanup) fail();
+    if (!failed && cleanup && root) { try { fs.rmSync(root, { recursive: true, force: false }); } catch { fail(); } }
+  }
+  phase = failed ? firstFailure : 8;
+  console.info("Windows UIA focus summary", JSON.stringify({ schema: 1, completed, matchedMask, negative: !failed && completed === 6 && matchedMask === 63 && cleanup ? 1 : 0, phase }));
+  if (failed || completed !== 6 || matchedMask !== 63) throw refusal(phase);
+}, 240_000);

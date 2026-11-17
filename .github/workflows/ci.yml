@@ -17,16 +17,16 @@ on:
         type: boolean
         default: false
       only:
-        description: "Run only one platform's jobs (pushes and pull requests always run them all; macOS minutes cost ten times Linux's)"
+        description: "Run one platform's jobs or the focus diagnostic (pushes and pull requests always run all normal jobs; macOS minutes cost ten times Linux's)"
         type: choice
-        options: [all, linux, windows, macos]
+        options: [all, linux, windows, macos, focus]
         default: all
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.only == 'focus' && 'ci-focus-' || 'ci-' }}${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -501,6 +501,13 @@ jobs:
           name: ember-eval
           path: dist/eval/
           retention-days: 30
+
+  windows-uia-focus-order:
+    name: Windows UIA focus diagnostic
+    if: github.event_name == 'workflow_dispatch' && inputs.only == 'focus'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/windows-uia-focus-order.yml
 
   windows-node-product:
     name: Windows Node product
