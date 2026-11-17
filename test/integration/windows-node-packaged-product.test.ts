@@ -85,10 +85,11 @@ interface PackagedObservation {
  * For operation2 ONLY, bridgeError is: unknown0/outer-ready-timeout1/PowerShell-fatal2/CSharp-fatal3/pre-ready-exit4/other-first-JSON5.
  * For operations3/4 its existing UIA codes remain busy1/gone2/denied3/bad-request4/failed5.
  * Bridge stage0 is unknown;1..17 are PowerShell bootstrap milestones,18..25 are C# startup,26 is after source path construction,
- * and27/28 bracket only the initial source SHA chain. These are observed boundaries, not proof a later operation failed.
+ * and27/28 bracket only the initial source SHA chain;29 is after explicit system utility import,30 after assembly loading.
+ * These are observed boundaries, not proof a later operation failed.
  */
 function packagedObservation() {
-  const limits: PackagedObservation = { operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 28 };
+  const limits: PackagedObservation = { operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30 };
   const current: PackagedObservation = { operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0 };
   let captured = false, first: Readonly<PackagedObservation> | undefined;
   const own = (value: unknown, key: string): unknown => {

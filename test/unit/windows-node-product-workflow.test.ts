@@ -446,13 +446,13 @@ it("the actual outer failure catch captures before close and does not replace th
   expect(await module.exports(fixture, { async close() { trace.push("model"); } })).toEqual({ failed: true, phase: 3 });
   expect(trace).toEqual(["capture", "close", "model"]); expect(o.value()?.operation).toBe(7);
 });
-it.each(Object.entries({ operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 28 }))("the pure helper refuses out-of-domain %s metadata", (field, maximum) => {
+it.each(Object.entries({ operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30 }))("the pure helper refuses out-of-domain %s metadata", (field, maximum) => {
   for (const invalid of [-1, maximum + 1, 0.5, Infinity, "PRIVATE"]) {
     const o = observationHelper(); o.update({ [field]: invalid }); o.capture(); expect(o.value()).toEqual(emptyObservation());
   }
 });
 it("the strict workflow projects one agreeing cached tuple while preserving phase and the original fatal guard", () => {
-  const tuple = { operation: 7, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 0, snapshotFlags: 0, focusFlags: 15, inputResult: 1, bridgeStage: 28 };
+  const tuple = { operation: 7, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 0, snapshotFlags: 0, focusFlags: 15, inputResult: 1, bridgeStage: 30 };
   const f = proofFixture("packaged", passing("packaged"), { attempt: sourceAttempt(packagedFrame(3) + "\n" + observationFrame(tuple), observationFrame(tuple)) });
   expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase: 3, observation: tuple });
   expect(f.queries).toEqual(["exists", "read", "lstat", "exists"]); expect(f.outputs).toEqual([]);

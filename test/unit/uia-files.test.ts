@@ -46,7 +46,11 @@ const filesystemPaths = [
   ["$dll = [IO.Path]::Combine($cache, ('ember_uia-' + $hash + '.dll'))", "$dll = Join-Path $cache ('ember_uia-' + $hash + '.dll')"],
   ["$tmp = [IO.Path]::Combine($cache, ('ember_uia-' + $hash + '.' + $PID + '.tmp'))", "$tmp = Join-Path $cache ('ember_uia-' + $hash + '.' + $PID + '.tmp')"],
 ] as const;
-let filesystemBaseline = ps1;
+const utilityInitialization = "  $utilityModule = [IO.Path]::Combine($PSHOME, 'Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1')\n  Import-Module -Name $utilityModule -ErrorAction Stop\n  Observe-Startup 29\n";
+let utilityBaseline = removeOnce(ps1, utilityInitialization);
+utilityBaseline = removeOnce(utilityBaseline, "  Observe-Startup 30\n");
+utilityBaseline = utilityBaseline.replace("$Stage -ge 1 -and $Stage -le 30", "$Stage -ge 1 -and $Stage -le 28");
+let filesystemBaseline = utilityBaseline;
 for (const [literal, previous] of filesystemPaths) {
   expect(filesystemBaseline.indexOf(literal)).toBeGreaterThanOrEqual(0);
   expect(filesystemBaseline.lastIndexOf(literal)).toBe(filesystemBaseline.indexOf(literal));
@@ -122,6 +126,15 @@ describe("the UI Automation bridge's files", () => {
 });
 
 describe("optional UIA startup observations", () => {
+  it("loads only the exact system utility manifest before the unchanged Add-Type operations", () => {
+    expect(createHash("sha256").update(utilityBaseline).digest("hex")).toBe("e766d3750e179bd90014b53aa419dc448d0760dd58ec26b4d1feef9334294279");
+    expect(ps1).toContain(utilityInitialization);
+    expect(ps1.indexOf(utilityInitialization)).toBeLessThan(ps1.indexOf("  Add-Type -AssemblyName"));
+    expect([...ps1.matchAll(/Import-Module[^\r\n]*/g)].map(match => match[0])).toEqual(["Import-Module -Name $utilityModule -ErrorAction Stop"]);
+    expect(ps1).toContain("  Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase\n  Observe-Startup 30\n");
+    expect(ps1).toContain("$Stage -ge 1 -and $Stage -le 30");
+  });
+
   it("constructs only literal filesystem paths without asking a PowerShell provider to join them", () => {
     expect(createHash("sha256").update(filesystemBaseline).digest("hex")).toBe("b58237c47d148591cf9e098c079ed95dc8b1a6e98f68aa4a2e1c008ac2a48ece");
     expect(ps1).not.toMatch(/\bJoin-Path\b/);
@@ -137,7 +150,7 @@ describe("optional UIA startup observations", () => {
     const calls = [...ps1.matchAll(/Get-Sha256 ([^\r\n]+)/g)].map(match => match[1]);
     expect(calls).toHaveLength(3);
     expect(calls.filter(call => call.includes("-ObserveSource"))).toEqual(["([IO.File]::ReadAllBytes($source)) -ObserveSource"]);
-    expect(ps1).toContain("$Stage -ge 1 -and $Stage -le 28");
+    expect(ps1).toContain("$Stage -ge 1 -and $Stage -le 30");
   });
 
   it("conserves the original bootstrap outside the exact observer and filesystem path replacements", () => {
@@ -149,7 +162,7 @@ describe("optional UIA startup observations", () => {
     expect(startupObserver).toContain("'EMBER_UIA_STARTUP_V1:'");
     expect(startupObserver).toContain("} catch {");
     expect(startupObserver).not.toMatch(/Write-Output|OpenStandardOutput|Write-Host|\$input|OpenStandardInput/);
-    expect([...ps1.matchAll(/Observe-Startup ([0-9]+)\b/g)].map(match => Number(match[1])).sort((a, b) => a - b)).toEqual([...Array.from({ length: 17 }, (_, i) => i + 1), 26, 27, 28]);
+    expect([...ps1.matchAll(/Observe-Startup ([0-9]+)\b/g)].map(match => Number(match[1])).sort((a, b) => a - b)).toEqual([...Array.from({ length: 17 }, (_, i) => i + 1), 26, 27, 28, 29, 30]);
   });
 
   it("keeps default core transport bytes and its ready Write before the optional best-effort callback and stdin read", () => {

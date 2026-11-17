@@ -17,6 +17,7 @@ import { expect, it } from "vitest";
 import { CONSENT_VERSION } from "../../app/shared/consent";
 import { locateRuntime, runtimeFor } from "../../app/main/agent/runtime";
 import { closeTestElectron } from "./close-electron";
+import { WINDOWS_HOME_OFF_SUMMARY_PHRASES, observeWindowsHomeOffStatus, observeWindowsHomeOffFailure } from "../fixtures/windows-home-off-continuation-observer";
 // @ts-expect-error -- offline JavaScript model fixture
 import { startMockLlm } from "../mock-llm/server.mjs";
 
@@ -141,8 +142,20 @@ it.skipIf(!available && !required)("edits and continues copied Windows projects 
     expect(foreign).toEqual({ allowed: false, message: expect.stringContaining("untrusted IPC sender") });
 
     const awaitResult = async (index: number) => {
-      await expect.poll(() => home!.evaluate(({ id, index }) => window.ember.projectSessionsState().then(state => state.projects.find(project => project.id === id)?.sessions[index]?.status),
-        { id: projectId, index }), { timeout: 45_000 }).toBe("done");
+      let observed = { status: 0, summaryCategory: 0 };
+      try {
+        await expect.poll(() => home!.evaluate(({ id, index, summaryPhrases }) => window.ember.projectSessionsState().then(state => {
+          const row = state.projects.find(project => project.id === id)?.sessions[index], status = row?.status;
+          let summaryCategory = 0;
+          try { summaryCategory = summaryPhrases.indexOf(row?.summary ?? "") + 1; }
+          catch { /* A failure-only summary observation must not change the original status value. */ }
+          return { status, summaryCategory };
+        }), { id: projectId, index, summaryPhrases: WINDOWS_HOME_OFF_SUMMARY_PHRASES }).then(value =>
+          observeWindowsHomeOffStatus(value.status, value.summaryCategory, value => { observed = value; })), { timeout: 45_000 }).toBe("done");
+      } catch (error) {
+        observeWindowsHomeOffFailure(error, () => ({ index, status: observed.status, summaryCategory: observed.summaryCategory, actions, dispatched: dispatched.size,
+          steps: scenarios.map(scenario => steps.get(scenario.goal) ?? 0), firstReads: scenarios.map(scenario => firstReads.get(scenario.goal)) }), line => console.error(line));
+      }
       await expect.poll(() => home!.getByRole("button", { name: /^Review result:/ }).count(), { timeout: 15_000 }).toBe(index + 1);
       await expect.poll(() => home!.evaluate(() => window.ember.conversationTurn()), { timeout: 15_000 }).toBe("idle");
       const sessions = (await home!.evaluate(() => window.ember.projectSessionsState())).projects.find(project => project.id === projectId)!.sessions;

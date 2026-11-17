@@ -33,6 +33,8 @@ on:
       - "app/main/platform/win32/system/ffi.ts"
       - "test/integration/windows-controller-private-native.test.ts"
       - "test/integration/project-coding-windows-electron.test.ts"
+      - "test/fixtures/windows-home-off-continuation-observer.ts"
+      - "test/unit/windows-home-off-continuation-observer.test.ts"
       - "test/integration/windows-packaged-coding-native.test.ts"
       - "test/fixtures/windows-packaged-coding-probe.ts"
       - "test/smoke/launch.mjs"

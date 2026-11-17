@@ -14,7 +14,7 @@ $ProgressPreference = 'SilentlyContinue'
 # Optional external-harness startup milestones only; never screen data or stdout.
 function Observe-Startup([int]$Stage) {
   try {
-    if ($env:EMBER_UIA_STARTUP_OBSERVE -ceq '1' -and $Stage -ge 1 -and $Stage -le 28) {
+    if ($env:EMBER_UIA_STARTUP_OBSERVE -ceq '1' -and $Stage -ge 1 -and $Stage -le 30) {
       $bytes = [Text.Encoding]::ASCII.GetBytes('EMBER_UIA_STARTUP_V1:' + $Stage.ToString([Globalization.CultureInfo]::InvariantCulture) + "`n")
       $err = [Console]::OpenStandardError(); $err.Write($bytes, 0, $bytes.Length); $err.Flush()
     }
@@ -57,7 +57,11 @@ try {
   $hash = Get-Sha256 ([IO.File]::ReadAllBytes($source)) -ObserveSource
   Observe-Startup 2
   Observe-Startup 3
+  $utilityModule = [IO.Path]::Combine($PSHOME, 'Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1')
+  Import-Module -Name $utilityModule -ErrorAction Stop
+  Observe-Startup 29
   Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase
+  Observe-Startup 30
   $refs = @(
     [System.Windows.Automation.AutomationElement].Assembly.Location,
     [System.Windows.Automation.ControlType].Assembly.Location,
