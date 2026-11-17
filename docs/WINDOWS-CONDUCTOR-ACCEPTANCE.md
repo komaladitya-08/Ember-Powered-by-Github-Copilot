@@ -51,19 +51,25 @@ cleanup correction is published at `46fed893` with 1,142 affected cases, full ty
 The unregistered Node workspace `68860d55` passed 1,248 local cases and full types; its six existing hosted
 controller/ZIP/files-only Electron jobs passed. Local product resource, atomic intake, protected-parent allocation,
 import-cycle and SDK/model work is reviewed and passing its scoped gates. The build and existing normal-sandbox
-Linux Electron journey pass; full types passed before the newly added packaged test. Windows source Home and
-packaged normal-UI tests are implemented and source-reviewed, but remain unrun on Windows; final integrated types
-and harness corrections are still in progress. These results do not establish native canonical transfer.
+Linux Electron journey pass. Final integrated types passed across 1,469 sources/declarations after the packaged-test
+naming fix, native installed-Electron provenance correction and old file-only ZIP workflow correction. Windows source
+Home and packaged normal-UI tests are source-reviewed but remain unrun on Windows. These results do not establish
+native canonical transfer.
 
-Four-patch Node producer `20af8be2` again failed its second mandatory ABI target with C2220/C5287 in
-[43979412098](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43979412098).
-No complete dual-target preflight or full Node build has passed. A reviewed, bounded diagnostic-only classifier
-will identify only an exact public source class and numeric location before a further correction is considered.
-Asset witness `1998bead` failed its first C prelude on both images in
-[43979739808](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43979739808).
-Its authenticated matrix disproved two original positive-control assumptions; production asset writes remained
-denied. A separately issued V2 witness with causal Medium/Low paired controls is being implemented; all four V1
-failures remain failures. No new Node artifact or complete Windows Node product proof exists yet.
+Four-patch producer `e56aa8c9` passed 352 local contracts, full types and 234 registration cases. Diagnostic
+[43982542556](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43982542556)
+identified the exact failed enum-comparison line despite both casts. Separate real assertions now require adapter
+and SDK values each equal ABI class 22, with unchanged headers/flags/warning policy. One
+[ABI-only run 43984400533](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43984400533)
+is pending; no complete dual-target preflight, full Node build or new artifact has passed.
+
+Asset V2 `bcce66ad` passed 562 local/registration cases and full types, then failed its first C prelude on both
+images in [43983628743](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43983628743).
+The added Medium full-package controls allowed all three security rights. Production parent/root/image denied
+write-security rights, but V2 established no causal MIC differential. The C probe has no current integrity-level
+or mandatory-policy attestation, unlike the actual Node owner; its executable is explicitly Medium. Actual held-C
+token observation is being prepared before revising the proof. All four V1 failures and this V2 failure remain
+failures. No complete Windows Node product proof exists yet.
 Worker startup fix `bec2e6ad` passed all six existing Windows controller/ZIP/files-only Electron jobs. None of these
 results enables Windows commands in the published product or closes live-account and physical-laptop acceptance.
 
