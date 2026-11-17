@@ -7,6 +7,7 @@ import { transformSync } from "esbuild";
 import { expect, it } from "vitest";
 import { createFreshWindowsCommandTree, WindowsCommandCopyCleanupError, windowsCommandCopyNativeFailure, type FreshWindowsCommandTreeInput } from "../../app/main/agent/windows-command-copy-native";
 import { ScopedCodingFileError } from "../../app/main/agent/coding-platform";
+import * as windowsCodingCopy from "../../app/main/agent/windows-coding-copy";
 import type { CodingExportEntry } from "../../app/main/agent/coding-result-export";
 import { WindowsRootOnlyCommandCopy } from "../../app/main/agent/windows-command-copy";
 import { createWindowsCommandRootOnlyStopOwner, type WindowsCommandRootOnlyStopNative } from "../../app/main/agent/windows-command-stop";
@@ -590,6 +591,7 @@ it("the emitted CommonJS default factory roots its trusted Koffi require at __fi
     if (name === "node:module") return { createRequire(location: unknown) { requires.push(location); return (requested: string) => { expect(requested).toBe("koffi"); return native; }; } };
     if (name === "../platform/os") return { HOST_PLATFORM: "win32", HOST_ARCH: "x64" };
     if (name === "./coding-platform") return { ScopedCodingFileError };
+    if (name === "./windows-coding-copy") return windowsCodingCopy;
     if (["./windows-coding-native", "./windows-coding-policy", "./windows-command-stop", "./windows-command-creator-token", "./windows-command-creator-profile"].includes(name)) return {};
     throw new Error("The fixed CJS module requested an unexpected import.");
   };

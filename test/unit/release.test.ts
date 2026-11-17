@@ -258,12 +258,26 @@ describe("ci.yml's release job", () => {
     expect(ci).toMatch(/^permissions:\n {2}contents: read/m);
   });
 
-  it("gets the four package artifacts, which each platform uploads on tags", () => {
-    for (const name of ["ember-packages", "ember-windows", "ember-macos", "ember-macos-x64"]) {
+  it("gets the tested Windows product ZIP and the other three platform artifacts", () => {
+    for (const name of ["ember-packages", "ember-macos", "ember-macos-x64"]) {
       expect(job, name).toContain(`name: ${name}\n          path: dist/release`);
       const upload = ci.slice(0, ci.indexOf("\n  release:\n")).split("- uses: actions/upload-artifact").find(s => s.includes(`name: ${name}\n`)) ?? "";
       expect(upload, name).toMatch(/if: \(github\.event_name == 'workflow_dispatch' && inputs\.packages\) \|\| startsWith\(github\.ref, 'refs\/tags\/v'\)/);
     }
+    expect(job).toContain("name: ember-windows-node-product-windows-2022\n          path: dist/release");
+    expect(job).not.toContain("name: ember-windows\n");
+    expect(job).toMatch(/needs: \[[^\]\n]*\bwindows-node-product\b/);
+    expect(ci).toContain("uses: ./.github/workflows/windows-node-product.yml");
+    const product = read(".github/workflows/windows-node-product.yml");
+    const upload = product.split("- name: Retain only the exact ZIP which passed the packaged product journey")[1].split("\n  required:\n")[0];
+    expect(upload).toContain("if: matrix.journey == 'packaged'");
+    expect(upload).toContain("name: ember-windows-node-product-${{ matrix.image }}");
+    expect(upload).toContain("path: ${{ steps.proof.outputs.zip }}");
+    expect(upload).toContain("if-no-files-found: error");
+    const required = product.split("\n  required:\n")[1];
+    expect(required).toContain("if: always()");
+    expect(required).toContain("needs: [product]");
+    expect(required).toContain('results.product?.result !== "success"');
   });
 
   it("checks the files and writes SHA256SUMS with §15's command before publishing them", () => {
