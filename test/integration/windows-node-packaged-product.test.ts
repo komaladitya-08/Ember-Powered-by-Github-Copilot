@@ -82,6 +82,8 @@ interface PackagedObservation {
  * Snapshot bits: busy1/truncated2/cut4/empty8. Focus bits: HWND1/element2/identity4/focused8 during a focus reply;
  * present1/onscreen2/bounds4/width8/height16 during the existing fresh guard. Input result is true1/false2/unknown0
  * from an existing input call or its existing state predicate. No raw identity, coordinate, text or error is retained.
+ * For operation2 ONLY, bridgeError is: unknown0/outer-ready-timeout1/PowerShell-fatal2/CSharp-fatal3/pre-ready-exit4/other-first-JSON5.
+ * For operations3/4 its existing UIA codes remain busy1/gone2/denied3/bad-request4/failed5.
  */
 function packagedObservation() {
   const limits: PackagedObservation = { operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 7, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2 };
@@ -103,6 +105,31 @@ function packagedObservation() {
       update({ bridgeError: ["busy", "gone", "denied", "bad_request", "failed"].indexOf(error as string) + 1,
         snapshotFlags: (own(result, "busy") === true ? 1 : 0) | (own(result, "truncated") === true ? 2 : 0) | (typeof cut === "number" && cut > 0 ? 4 : 0) | (count === 0 ? 8 : 0) });
     } catch { /* Cached malformed data remains unclassified. */ } },
+    readyError(error: unknown) {
+      let category = 0;
+      try {
+        if (error && typeof error === "object" && !types.isProxy(error) && types.isNativeError(error)) {
+          const message = own(error, "message"), prefix = "the bridge did not start: ";
+          if (message === "Windows Node packaged journey refused (phase 12).") category = 1;
+          else if (typeof message === "string" && /^the bridge exited \((?:-?[0-9]{1,10}|null)\) before it was ready; stdout: /.test(message)) category = 4;
+          else if (typeof message === "string" && message.startsWith(prefix) && message.length - prefix.length <= 8192) {
+            const value: unknown = JSON.parse(message.slice(prefix.length));
+            if (!types.isProxy(value)) {
+              category = 5;
+              if (value && typeof value === "object" && !Array.isArray(value)) {
+                const dataOnly = ["fatal", "languageMode"].every(key => { const field = Object.getOwnPropertyDescriptor(value, key); return !field || Object.hasOwn(field, "value"); });
+                if (!dataOnly) category = 0;
+                else if (typeof own(value, "fatal") === "string") {
+                  if (["FullLanguage", "ConstrainedLanguage", "RestrictedLanguage", "NoLanguage"].includes(own(value, "languageMode") as string)) category = 2;
+                  else if (!Object.hasOwn(value, "languageMode")) category = 3;
+                }
+              }
+            }
+          }
+        }
+      } catch { category = 0; }
+      update({ bridgeError: category });
+    },
     windows(value: unknown) { try { update({ snapshotFlags: own(value, "length") === 0 ? 8 : 0 }); } catch { /* Never change the returned window list. */ } },
     node(value: unknown) { try {
       const selected = own(value, "automationId");
@@ -314,7 +341,12 @@ class Journey {
     if (!this.app.pid) throw refusal(2);
     this.watchdog = setTimeout(() => { this.forced = true; this.stopped = true; this.app?.kill(); }, 305_000);
     this.bridge = new UiaBridge(script, bridgeEnv(this.env, { EMBER_UIA_CACHE: path.join(this.root, "bridge-cache") }));
-    this.observe({ operation: 2 }); await bounded(this.bridge.ready, 30_000);
+    this.observe({ operation: 2, bridgeError: 0 });
+    try { await bounded(this.bridge.ready, 30_000); }
+    catch (error) {
+      try { this.observation.readyError(error); } catch { /* Classification never replaces the same ready failure. */ }
+      this.captureFailure(); throw error;
+    }
     await this.until(async () => {
       for (const window of await this.windows()) if (window.name === "Ember") {
         const nodes = await this.nodes(window.hwnd);

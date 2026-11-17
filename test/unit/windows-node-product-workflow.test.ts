@@ -266,6 +266,7 @@ it("unchanged successful packaged inventory emits only its passing marker and on
 
 interface ObservationHelper {
   update(value: unknown): void; answer(value: unknown): void; windows(value: unknown): void; node(value: unknown): void; step(value: unknown): void;
+  readyError(error: unknown): void;
   focused(value: unknown, target: unknown, hwnd: number): void; fresh(value: unknown): void; input<T>(value: T, rejection?: boolean): T;
   capture(): void; value(): Readonly<Observation> | undefined;
 }
@@ -276,6 +277,69 @@ function observationHelper(globals: Record<string, unknown> = {}): ObservationHe
   const module = { exports: undefined as unknown as () => ObservationHelper };
   runInNewContext(code, { module, types, ...globals }); return module.exports();
 }
+it.each([
+  ["Windows Node packaged journey refused (phase 12).", 1],
+  ['the bridge did not start: {"fatal":"PRIVATE","languageMode":"FullLanguage"}', 2],
+  ['the bridge did not start: {"fatal":"PRIVATE","languageMode":"ConstrainedLanguage"}', 2],
+  ['the bridge did not start: {"fatal":"PRIVATE","languageMode":"RestrictedLanguage"}', 2],
+  ['the bridge did not start: {"fatal":"PRIVATE","languageMode":"NoLanguage"}', 2],
+  ['the bridge did not start: {"fatal":"PRIVATE"}', 3],
+  ["the bridge exited (0) before it was ready; stdout: PRIVATE; stderr: PRIVATE", 4],
+  ["the bridge exited (1) before it was ready; stdout: PRIVATE; stderr: PRIVATE", 4],
+  ["the bridge exited (-1) before it was ready; stdout: PRIVATE; stderr: PRIVATE", 4],
+  ["the bridge exited (null) before it was ready; stdout: PRIVATE; stderr: PRIVATE", 4],
+  ['the bridge did not start: {"exit":0}', 5],
+  ['the bridge did not start: {"fatal":"PRIVATE","languageMode":"unrecognized"}', 5],
+  ["the bridge did not start: {PRIVATE}", 0],
+  ["PRIVATE unknown error", 0],
+] as const)("operation2 classifies only the fixed ready failure boundary %#", (message, expected) => {
+  const o = observationHelper(); o.update({ operation: 2 }); o.readyError(new Error(message)); o.capture();
+  expect(o.value()).toEqual({ ...emptyObservation(), operation: 2, bridgeError: expected }); expect(JSON.stringify(o.value())).not.toContain("PRIVATE");
+});
+it("the first-JSON classifier respects the exact8192-character limit without retaining its text", () => {
+  const prefix = "the bridge did not start: ", overhead = JSON.stringify({ fatal: "" }).length;
+  for (const size of [8192, 8193]) {
+    const body = JSON.stringify({ fatal: "X".repeat(size - overhead) }); expect(body.length).toBe(size);
+    const o = observationHelper(); o.update({ operation: 2 }); o.readyError(new Error(prefix + body)); o.capture(); expect(o.value()?.bridgeError).toBe(size === 8192 ? 3 : 0);
+  }
+});
+it.each(["getter", "proxy", "impostor", "string", "cross-realm"] as const)("ready classification handles %s without reading hostile error properties", kind => {
+  let reads = 0; const message = "Windows Node packaged journey refused (phase 12).";
+  let error: unknown = new Error(message);
+  if (kind === "getter") Object.defineProperty(error, "message", { get() { reads++; throw new Error("PRIVATE accessor"); } });
+  if (kind === "proxy") error = new Proxy(error as object, { get() { reads++; throw new Error("PRIVATE proxy"); }, getOwnPropertyDescriptor() { reads++; throw new Error("PRIVATE descriptor"); } });
+  if (kind === "impostor") error = Object.create(Error.prototype, { message: { get() { reads++; throw new Error("PRIVATE impostor"); } } });
+  if (kind === "string") error = message;
+  if (kind === "cross-realm") error = runInNewContext('new Error("Windows Node packaged journey refused (phase 12).")');
+  const o = observationHelper(); o.update({ operation: 2 }); o.readyError(error); o.capture(); expect(reads).toBe(0); expect(o.value()?.bridgeError).toBe(kind === "cross-realm" ? 1 : 0);
+});
+it.each(["proxy", "getter", "throws"] as const)("first-line JSON %s faults remain unknown without property effects", kind => {
+  let reads = 0; const secret = () => { reads++; throw new Error("PRIVATE JSON getter"); };
+  const value = kind === "proxy" ? new Proxy({}, { get: secret, getOwnPropertyDescriptor: secret }) : { get fatal() { return secret(); } };
+  const o = observationHelper({ JSON: { parse() { if (kind === "throws") throw new Error("PRIVATE parser"); return value; } } });
+  o.update({ operation: 2 }); o.readyError(new Error('the bridge did not start: {"fatal":"PRIVATE"}')); o.capture(); expect(o.value()?.bridgeError).toBe(0); expect(reads).toBe(0);
+});
+it("operations3/4 retain the original UIA fault codes after a startup classification", () => {
+  const o = observationHelper(); o.update({ operation: 2 }); o.readyError(new Error("Windows Node packaged journey refused (phase 12)."));
+  o.update({ operation: 4 }); o.answer({ error: { code: "gone" } }); o.capture(); expect(o.value()?.operation).toBe(4); expect(o.value()?.bridgeError).toBe(2);
+});
+it.each([false, true])("the actual ready catch preserves Promise,30000ms and original rejection with observer faults=%s", async faults => {
+  const source = read(cases.packaged), start = source.indexOf("    this.observe({ operation: 2, bridgeError: 0 });"), end = source.indexOf("    await this.until(", start);
+  const methods = source.slice(source.indexOf("  private observe(values:"), source.indexOf("  constructor(")); expect(start > 0 && end > start).toBe(true);
+  const code = transformSync(`module.exports = class {
+    constructor(observation, ready) { this.observation = observation; this.bridge = { ready }; }
+    ${methods}
+    async run() { ${source.slice(start, end)} }
+  };`, { loader: "ts", format: "cjs", target: "node22" }).code;
+  const module = { exports: undefined as unknown as new (o: ObservationHelper, ready: Promise<object>) => { run(): Promise<void> } }, calls: unknown[][] = [];
+  runInNewContext(code, { module, bounded: (promise: Promise<object>, ms: number) => { calls.push([promise, ms]); return promise; } });
+  const original = new Error("Windows Node packaged journey refused (phase 12)."), o = observationHelper();
+  const observer = faults ? new Proxy(o, { get() { throw new Error("PRIVATE observation fault"); } }) : o;
+  const failed = Promise.reject(original); await expect(new module.exports(observer, failed).run()).rejects.toBe(original);
+  expect(calls).toEqual([[failed, 30_000]]); if (!faults) expect(o.value()).toEqual({ ...emptyObservation(), operation: 2, bridgeError: 1 });
+  const success = observationHelper(), successfulObserver = faults ? new Proxy(success, { get() { throw new Error("PRIVATE observation fault"); } }) : success;
+  const ready = Promise.resolve({ ready: true }); await expect(new module.exports(successfulObserver, ready).run()).resolves.toBeUndefined(); expect(calls[1]).toEqual([ready, 30_000]); expect(success.value()).toBeUndefined();
+});
 const observationFrame = (value: unknown) => "Windows Node packaged cached observation " + JSON.stringify(value);
 it("the actual pure fixture helper freezes only bounded cached fields before cleanup, without retaining private node data", () => {
   const o = observationHelper(), node = { pid: 42, runtimeId: "PRIVATE runtime", automationId: "w-next", controlType: "Button", hasKeyboardFocus: true };
