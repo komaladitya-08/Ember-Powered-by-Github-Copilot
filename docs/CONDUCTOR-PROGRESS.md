@@ -3,37 +3,41 @@
 Reviewed 17 November 2026. The original submitted baseline was `audit/beta-readiness` at `76d0a2c9`;
 main was `85b5bd56` at that audit. The current published product is
 [draft #262](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/262) at
-`0553e412060a89513d3191c02cb8bd36a959413f`. It includes the conductor/project/session work and the Windows
+`d68bbdea5cf0216dff92fdebf4bf5124b2984c18`. It includes the conductor/project/session work and the Windows
 Node-only resource/coordinator implementation. Complete Windows Node product verification is still outstanding;
 the candidate is not merge-ready. The legacy native-SDK `codingAvailable()` gate remains false.
 
 ## Current status
 
-[CI 44001406593](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44001406593)
-is still running at the published head. At 02:24 UTC, packaging, evaluation and voice jobs passed. Linux and Windows
-remaining-unit steps passed; real-runtime integration and Windows desktop integration continue. The macOS
-remaining-unit step failed while its job remains active; the cause is unclassified pending the completed log.
-EL8 remains active. The eligible remote preservation jobs, six controller jobs, two file jobs, two artifact jobs and toolchain
-job are green. At preceding `5f1cf389`, ordinary Linux, Windows and macOS jobs failed only the
-stale `docs.test` expectation; the other four ordinary jobs and all separate preservation matrices passed. `0553e412`
-fixes that expectation, with 87 focused cases passing. The latest pending CI is not a pass. Six Windows Node product
-leaves and their aggregate remain blocked by `ready: false` prerequisites; no merge, tag or release is ready.
+[CI 44007596118](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44007596118)
+is running at the published head. At 03:20 UTC, the Windows job passed, including its build, desktop, UIA, smoke and
+ZIP checks. The macOS remaining-unit step passed; its exact counts and completed job result are still pending.
+Packaging, evaluation and voice passed; Linux, macOS and EL8 remain active. This is not a completed CI pass.
+At `0553e412`, six ordinary jobs passed and macOS failed only the
+key-value redaction step budget: 243.570209 ms against the unchanged 150 ms limit. No CPU cause is established.
+The current bounded-candidate redactor preserves that limit, the regex and the MySQL guard. All separate
+preservation matrices are green. Six Windows Node product leaves and their aggregate remain blocked by
+`ready: false` prerequisites; no merge, tag or release is ready.
 
-Both normal full Type checks passed with unchanged before/after catalogs of 1,479 files (latest `13139`, exit 0).
-Scoped validation also passed 828 contracts in separate 256/572-case gates and 159 Node-diagnostic focused cases.
-These scopes are not a single non-overlapping total. Directory-rename disclosure `89768751` is now published in
-`5f1cf389`: only regular files can be renamed; directory renames are unavailable.
+Normal full Type checking passed with an unchanged 1,479-file catalog and exit 0. Local validation passed 844
+contracts in separate 256/588-case gates, plus focused 142-case group, 539-case redaction and 175-case Stop scopes.
+These scopes overlap and must not be summed. Directory-rename disclosure `89768751` is published in `5f1cf389`:
+only regular files can be renamed; directory renames are unavailable.
 
-Artifact `14289217635` is statically authenticated and has hosted staging evidence. Authentication did not execute
-the image; whether the consumer executed Node within the later phase-5 failure is unknown. Both the first V4 pair
-and the bounded diagnostic passed their C controls but failed phase 5 on both servers, closed zero full cases and
-retained the private graphs.
-The evidence-only [Node diagnostic 44001782995](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44001782995)
-failed on both images at Node checkpoint 6/inner class 0. The factory returned genuine suspended Node process
-information (PI), and the ordinary image/pin attester completed. Resume, execution, full cleanup and cause remain unknown.
-Details and earlier failures are retained below.
+Artifact `14289217635`, built by producer `b75c944d`, is statically authenticated and has hosted staging evidence.
+Authentication itself did not execute the image. In the new
+[asset proof 44007986934](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44007986934)
+at `d68bbdea`, the first natural case fully passed on both Windows Server images: C49, genuine Node exit 17,
+stdout/stderr and stdin EOF, 13 positive/19 denial checks and two DACL control pairs. Stop, output closure,
+snapshot, unchanged seed, and asset/private-tree/profile cleanup and emitted-CJS proof all passed for that case.
 
-The remaining order is: identify the actual diagnostic cause, pass the reviewed seven-case asset enforcement proof
+The suite still failed on each image: the second natural-default case failed at phase 2/class 6 before C or Node,
+and five later cases stayed blocked. Each image therefore has one pass and six failures, with private graphs
+retained. The setup failure's cause is unknown; passive setup diagnostics are being implemented and have no result
+yet. Earlier failures remain recorded below; this first complete case does not establish all seven cases or the
+Windows product journeys.
+
+The remaining order is: identify the actual setup failure, pass the reviewed seven-case asset enforcement proof
 on both Windows images, promote the exact prerequisites to ready, pass all three product journeys on both images
 and all platform CI, verify the chosen live account, then complete physical acceptance. No accepted live credential
 was supplied and no live model request was made. Account verification is not Windows-only; the native and product
@@ -448,6 +452,11 @@ remain explicit in the product and acceptance results.
 ## Historical verification
 
 Current readiness is summarized above. The following receipts retain each named head's results and failures.
+
+At `5f1cf389`, ordinary Linux, Windows and macOS jobs failed only a stale `docs.test` expectation; the other four
+ordinary jobs and all separate preservation matrices passed. `0553e412` corrected that expectation with 87 focused
+cases passing. Its completed [CI 44001406593](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44001406593)
+passed six ordinary jobs; macOS alone failed the unchanged 150 ms key-value redaction assertion at 243.570209 ms.
 
 At `4de1889be1829f1c07c88ba0ffbbbc2902959ca8`, all seven ordinary jobs in
 [CI 43988264446](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43988264446)

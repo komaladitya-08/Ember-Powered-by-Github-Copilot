@@ -14,7 +14,7 @@ is still blocked. Dependency installation remains unavailable, and the legacy na
 Do not change execution or reviewed-producer gates to perform acceptance. Continuation was enabled at `7eabd077`
 after the separate real Home continuation proof. Automatic crash checkpointing is not implemented.
 
-The current published product candidate is `0553e412060a89513d3191c02cb8bd36a959413f`
+The current published product candidate is `d68bbdea5cf0216dff92fdebf4bf5124b2984c18`
 ([draft #262](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/262)), including literal direct-Node
 execution on the isolated Linux backend, Windows resource/coordinator integration, the preceding coordination work
 and the exact-session
@@ -23,23 +23,27 @@ and bounded `wait_for_tasks`. The read-only join observes up to eight tasks from
 20 seconds; it starts no work, consumes no reports and does not schedule a later wakeup. Ordinary desktop cleanup
 remains best effort: a completed card alone leaves the wait's cleanup observation unknown and dependent success false.
 
-[CI 44001406593](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44001406593)
-is running. At 02:24 UTC, packaging, evaluation and voice jobs passed. Linux and Windows remaining-unit steps
-passed; real-runtime and Windows desktop integration continue. The macOS remaining-unit step failed, but its job
-is still active and the cause is unclassified pending the completed log. EL8 remains active. Separate preservation matrices are green.
-At preceding `5f1cf389`, Linux, Windows and macOS ordinary jobs failed only a stale `docs.test`
-expectation; the other four ordinary jobs and all separate preservation matrices passed. `0553e412` fixes that
-expectation with 87 focused cases passing. Both full Type checks passed unchanged before/after 1,479-file catalogs; scoped
-828-contract and 159-case diagnostic gates passed. These do not make the pending CI green or close the six
-`ready: false` product leaves. Rename disclosure `89768751` is published in `5f1cf389`.
+[CI 44007596118](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44007596118)
+is running. At 03:20 UTC, the Windows job passed its build, desktop, UIA, smoke and ZIP checks. The macOS
+remaining-unit step passed; exact counts and the completed job result are pending. Packaging, evaluation and voice
+passed; Linux, macOS and EL8 remain active. All separate preservation
+matrices are green. At `0553e412`, six ordinary jobs passed and macOS alone failed the key-value redaction assertion
+at 243.570209 ms against its unchanged 150 ms limit. The current redactor retains that limit and the original regex
+and MySQL guard; no CPU cause is established. Full Type checking passed an unchanged 1,479-file catalog with exit 0.
+Local 844-contract (256/588), 142-case group, 539-case redaction and 175-case Stop scopes passed; they overlap.
+These results do not make the pending CI green or close the six `ready: false` product leaves. Rename disclosure
+`89768751` is published in `5f1cf389`: only regular files can be renamed; directory renames are unavailable.
 
-The authenticated artifact has staging evidence, but the first V4 pair and bounded diagnostic failed phase 5 on
-both images after passing their C controls. Zero full cases closed; graphs remain retained and Node execution
-within phase 5 is unknown.
-The evidence-only [diagnostic 44001782995](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44001782995)
-failed at checkpoint 6/inner class 0 on both images, after a genuine suspended Node PI and completed ordinary
-image/pin attester. Resume, execution, cleanup and cause remain unknown. Before final acceptance, establish the
-actual cause, pass the reviewed
+The authenticated producer-`b75c944d` artifact `14289217635` has staging evidence. In
+[asset proof 44007986934](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44007986934)
+at `d68bbdea`, the first natural case fully passed on both images: C49, genuine Node exit 17, stdout/stderr and stdin
+EOF, 13 positive/19 denial checks, two DACL control pairs, genuine Stop/output closure/snapshot, unchanged seed
+and known asset/private-tree/profile cleanup, including the emitted-CJS proof. The second natural-default case failed
+at phase 2/class 6 before C or Node; five later cases stayed blocked. Each image has one pass and six failures, so
+the suites failed and retained private graphs. The cause is unknown; passive setup diagnostics are being
+implemented, with no completed result. This does not establish the full seven-case asset proof or a product journey.
+
+Before final acceptance, establish the setup failure's cause, pass the reviewed
 seven-case asset proof on both images, promote exact prerequisites to ready, and pass native resources, source
 Home and packaged Home on both images plus all platform CI. Then verify the chosen live account and physical device.
 No accepted live credential was supplied and no live model request was made. Account verification is not Windows-only.
@@ -48,6 +52,8 @@ This is no merge, tag or release authorization. See [current progress](CONDUCTOR
 At earlier `4de1889b`, all seven ordinary jobs in
 [43988264446](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43988264446)
 and its preservation matrices passed. That dated result does not make the latest CI green.
+The stale `docs.test` expectation at `5f1cf389` was corrected in `0553e412` with 87 focused cases passing;
+its later macOS redaction failure remains a failure at that named head.
 
 The following hosted Server 2022/2025 rows retain the results and limits at their named historical heads. Record
 them separately from current Node-product and laptop results:
