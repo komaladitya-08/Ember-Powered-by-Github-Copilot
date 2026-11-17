@@ -1,11 +1,35 @@
 # Conductor progress and remaining work
 
 Reviewed 17 November 2026. The original submitted baseline was `audit/beta-readiness` at `76d0a2c9`;
-main was `85b5bd56`. The follow-up now includes a Windows files-only product candidate and native continuation
-implementation. Its completed native/product proofs are distinguished below; ordinary CI retains the known
-Windows LPAC child-launch failure. A prior saved-workspace failure has not recurred in subsequent RHEL runs;
-its cause remains unknown. The legacy native-SDK coding
-gate remains false. This is not a merge or release certification.
+main was `85b5bd56` at that audit. The current published product is
+[draft #262](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/262) at
+`4de1889be1829f1c07c88ba0ffbbbc2902959ca8`. It includes the conductor/project/session work and the Windows
+Node-only resource/coordinator implementation. Complete Windows Node product verification is still outstanding;
+the candidate is not merge-ready. The legacy native-SDK `codingAvailable()` gate remains false.
+
+## Current status
+
+All seven ordinary jobs in [CI 43988264446](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43988264446)
+succeeded at that product head. Linux passed 21,184 units (38 skipped), 319 integrations (769 skipped) and 314
+renderer cases; Windows passed 20,785 units (433 skipped), and macOS 20,835 (387 skipped). RPM/package, RHEL,
+voice and evaluation jobs also succeeded. Separate preservation matrices are green. Skipped cases remain unverified.
+The overall CI result is red only because the six required Windows Node product leaves and their aggregate refuse
+the intentionally closed `ready: false` reviewed-producer prerequisites. Old LPAC/PowerShell failures remain in
+their separate diagnostic history; they are not the current ordinary-job failure. The earlier RHEL Save-button
+failure has not recurred, and its cause remains unknown.
+
+The four-patch source build and independent static artifact authentication succeeded; image execution and product
+readiness are unproved. The first V3 native asset pair failed on both servers, as recorded below, and establishes
+no causal MIC proof. The local manifest/tuple has been updated, while the product prerequisites remain `ready: false`.
+Local disclosure commit `89768751` states that only regular files can be renamed and directory renames are unavailable.
+Its 131 focused cases, three actual SDK/model cases over DLL models and normal full types (`40030`) pass; it is reviewed
+but unpushed at this snapshot.
+
+The remaining order is: pass the reviewed asset enforcement proof against the authenticated new image, finalize
+the reviewed manifest/artifact tuple promotion, pass native resources, source Home and packaged Home journeys on both
+Windows images, verify the chosen live account, then complete physical-device acceptance. No live credential was
+supplied and no live model request was made. The native and product gates are cloud/software work;
+they are not intrinsically dependent on the user's laptop. Dated receipts below retain the outcomes at their named heads.
 
 ## What was already implemented
 
@@ -146,9 +170,9 @@ and denies Linux key-management syscalls in project commands. The latter closes 
 surface; it does not report an observed credential leak. Settings search prioritizes the names and aliases of settings
 before explanatory project text, preserving Conversation as the first result for history.
 
-## Windows files-only product candidate
+## Earlier Windows files-only product evidence
 
-The development candidate now selects an explicit Windows copied-file backend through
+The earlier development candidate introduced an explicit Windows copied-file backend through
 `project-coding-backend.ts`. It does not require a local command service and never substitutes for a failed command
 backend. Project/account/source grants, task disposal, private controller storage, native file tools, sealed review,
 explicit export and Forget are connected. The controller exposes seven file tools, completion and the existing
@@ -177,7 +201,7 @@ skips or failures. Electron completed in 16.393/15.970 seconds. Continue first r
 it to `44`, and retained cumulative baseline/current `41`. Predecessor Forget preserved the independent `44` copy;
 global erasure retained only completed `42`/`44` user exports. The normal OS sandbox, sender guards and unforced
 exit `0` remained verified. Public PR #223 advanced to `7eabd077` with the same production source and
-`canContinue: true`. The exact-head native matrix above is green; ordinary CI is blocked by the known Windows LPAC child-launch case.
+`canContinue: true`. That exact-head native matrix was green; its ordinary CI was blocked by the known Windows LPAC child-launch case.
 Commands, live-provider and physical Windows acceptance remain separate; the candidate is not ready to merge.
 
 The actual ZIP now has separate packaged evidence at `4db67491` in
@@ -191,12 +215,13 @@ Home-to-Host coding session or physical client acceptance; see [development chec
 
 ## What still needs implementation or verification
 
-1. **Production coding isolation and toolchains.** Finish the custom-tool product path and its enforced command backend
-   on each supported platform. Linux currently supplies a small offline bash/Node environment; npm, arbitrary compilers
+1. **Production coding isolation and toolchains.** Complete the actual Windows Node asset enforcement and product
+   gates above against the authenticated build. Its resource/coordinator, stopped output and canonical transfer implementations
+   are present; their complete Windows product proof is not. Linux supplies a small offline bash/Node environment; npm, arbitrary compilers
    and external or cyclic dependency links remain unsupported; validated internal links can be materialized. Packaged
-   Electron is not a substitute for a real Node binary. Windows/macOS need their own stopped-writer and filesystem
-   command implementations and canary tests. Windows files-only work has the separate candidate above. Windows CI still exposes child-process creation and PowerShell runtime failures
-   in the native prototype; see [the current proof](ISOLATED-WINDOWS-COMMAND-PROOF.md). Do not enable coding by changing
+   Electron is not a substitute for a real Node binary. The earlier Windows child-process and PowerShell failures remain
+   in the separate [native prototype proof](ISOLATED-WINDOWS-COMMAND-PROOF.md). macOS coding remains a separate extension.
+   Do not enable coding by changing
    `codingAvailable()` or interpret a small native fixture as the production backend.
 2. **Coding product integration.** Complete packaged/native-provider verification of per-project grants, real
    policy-controlled workers, stopped capture, review/export and lifecycle erasure. The deterministic composed flow
@@ -231,10 +256,10 @@ and speaker interruption, lock/recovery and account changes. Record exact commit
 The laptop can validate desktop sessions now. The Windows milestone combines the implemented project/session
 board, bounded coordination, explicit checkpoints and review/continuation with a usable isolated command/test
 backend for a declared supported toolchain, live-provider verification and the relevant native acceptance checks.
-Hosted Windows can advance the command backend before laptop access. Main should remain unmerged while that
-backend, the existing failing CI case and the live/native acceptance checks remain unresolved.
+Hosted Windows can advance the command backend before laptop access. Main should remain unmerged while the
+reviewed build/asset prerequisites, six Windows product leaves and live/native acceptance checks remain unresolved.
 
-The latest software investigations still have reproducible blockers. The creator-owner
+Earlier software diagnostics retain their failed outcomes. The creator-owner
 [fifth matrix](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43927686126) passed the
 fresh staging-metadata correction on both Server images, then failed replacement with exit 212/error 5 after
 temporary-file preparation. First Stop/revoke/private readback and the four in-run ACL denials passed; full useful
@@ -262,8 +287,9 @@ root-only Stop and known cleanup passed. The original failing LPAC proof is unch
 on both images. Each passed 405 portable cases (32 Linux-only logic skips) and the native case requiring all eight
 operations, twelve protected and three revoked-work denials, four host ACL controls, four in-run ACL denials,
 genuine Stop/revoke, stable snapshot, unchanged source and complete tree/profile cleanup. Both receipts match the
-reviewed source manifest; no retry or assertion change occurred. A separate regular-file Node adaptation is now
-being implemented, with an SDK ABI preflight required before a new source build. No new Node runtime is verified yet.
+reviewed source manifest; no retry or assertion change occurred. The regular-file Node adaptation is implemented
+and its actual SDK ABI preflight passes; the source build below supplies an authenticated artifact, with native
+execution/product validation still required.
 
 The corrected bounded-output foundation [#249](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/249)
 at `e9deced4` passed 1,801 focused cases and full types. Its separate fixed C witness
@@ -284,16 +310,16 @@ and macOS was cancelled rather than passed. Actual native transfer remains to be
 [#253](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/253) at `f934068f` passed 113 portable
 and six real pinned-artifact checks plus full types. Its dedicated [asset workflow 43948837888](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43948837888)
 also passed; ordinary CI passed Linux/RHEL/package/evaluation/voice and macOS (19,456 units), with only the old Windows
-LPAC failure. Packaging supplies no native execution authority. The dedicated native asset owner and Windows
-Node-only workspace are being implemented and reviewed separately; authentic cancellation, composition and native
-product verification remain unfinished. The disabled native owner [#257](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/257)
+LPAC failure. Packaging supplies no native execution authority. Those results preceded the dedicated native asset
+owner and Node-only workspace below; authentic cancellation and composition are implemented, while native product
+verification remains unfinished. The disabled native owner [#257](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/257)
 at `5ef8b2fc` passed 1,104 affected cases, 90 final focused cases, full types and source review. Ordinary CI passed
 20,547 macOS and 20,497 Windows units; the Windows job still fails the old LPAC fixture. Full default-factory
 coordinator composition exposed shared-task cancellation before output matching. Its correction is now published
 at `46fed893`: exact returned-child authority permits only authenticated Stop, output drain and prepared-grant
 revocation, with no Resume or execution claim. It passed 1,142 affected cases, full types and independent source
-review. The current head also passed 20,585 macOS and 20,535 Windows units; the Windows job still fails the old
-LPAC fixture. Actual native asset/parent enforcement remains under review. The existing
+review. That correction's head also passed 20,585 macOS and 20,535 Windows units; its Windows job failed the old
+LPAC fixture. Actual native asset/parent enforcement remains a separate proof gate. The existing
 five-second timeout and initial typing failures remain disclosed in that foundation's validation document.
 
 The unregistered Node coordinator [#259](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/259)
@@ -317,10 +343,11 @@ Full Linux CI at `8f12ec82` passed 21,181 units and found two stale release/impo
 correction passed 281 affected cases and is published at `fbbac1f4`. Completed Windows logs also showed 51 resource
 model failures from a test spy calling itself when node:path and win32 alias. A same-object control reproduced the
 RangeError; the new regression was red before the module-initial predicate capture and passed with that fix.
-Its 249 affected cases passed; test-only correction `4de1889b` is published and awaiting hosted verification.
-The full remote matrix and six existing controller/ZIP/files-only Electron jobs passed on the earlier head.
-Cancelled or unfinished platform jobs are not passes. Current Node-product leaves refuse reviewed-producer
-metadata as designed; these regression successes do not certify Windows Node execution.
+Its 249 affected cases passed; test-only correction `4de1889b` is published, and its seven ordinary jobs and separate
+preservation matrices are green as recorded in Current status. The earlier full remote matrix and six existing
+controller/ZIP/files-only Electron jobs also passed. Cancelled or unfinished jobs are not passes. The six required
+Node-product leaves still refuse the closed reviewed-producer prerequisites; regression successes do not certify
+Windows Node execution.
 
 The additive four-patch Node producer [#260](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/260)
 preserves the three reviewed startup patches and adds the fixed POSIX regular-file rename operation. Six distinct
@@ -328,17 +355,21 @@ exact-head hosted attempts have failed their mandatory ABI preflight; none reach
 artifact. The launch correction established compiler entry, and C11 probe correction passed the first SDK target.
 Diagnostic [43982542556](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43982542556)
 at `0a192d0b` identified target 2 C2220/C5287 at exact public copied-fixture line 26, even with both enum casts.
-Current `e56aa8c9` replaces that comparison with separate real compile-time assertions that adapter and SDK values
+At `e56aa8c9`, that comparison was replaced with separate real compile-time assertions that adapter and SDK values
 each equal literal ABI class 22. Both equality and fixed numeric value remain required; SDK/private 23 negatives
 fail. Headers, source adapter, flags and warning policy are unchanged. Its 352 local contracts, full types and 234
 registration cases passed. One [ABI-only run 43984400533](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43984400533)
 passed both actual SDK targets, fresh x64 COFF and source/tool/recipe checks under C11. The separately issued
 ABI-only route produced no artifact. One subsequent same-head
 [full source attempt 43985674098](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43985674098)
-failed at identify-tools, before ABI or vcbuild in that fresh attempt. The prior SDK pass remains valid. A fixed
-checkpoint/outcome observer around the existing calls is reviewed and locally passing; its full types and next
-ABI-only prefix observation are pending. No reader, tool pin, timeout or production source has been changed to
-infer a cause. A complete source build, authenticated artifact and native runtime validation remain required.
+failed at identify-tools, before ABI or vcbuild in that fresh attempt. The prior SDK pass remains valid, and the
+identify-tools failure's cause remains unexplained. The fixed checkpoint observation and both actual SDK/C11/fresh-COFF
+preflights then passed at `b75c944dec58973d157542e2d4d2db3720667982` in
+[43989502028](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43989502028).
+The one observed [full source build 43991252195](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43991252195)
+succeeded at that exact head, with 232 Windows portable cases passing and 32 skipped. Artifact `14289217635`
+is independently statically authenticated: archive/API provenance, four members, exact receipt/recipe/patch inputs,
+two fresh COFF objects, x64 PE and license checks agree. The image has not been executed; this is no native/product claim.
 
 The native asset proof [#261](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/261)
 retains all four failed V1 native pairs. A separately issued V2 at `bcce66ad` added identical-owner/DACL Low/Medium
@@ -348,11 +379,28 @@ It passed 562 local/registration cases, full types and source reviews. Its one
 failed on both images: each passed 363 eligible portable cases, then first natural C305 at prelude 11/probe 7/2/1;
 later cases remained blocked. Actual production parent/root/image security-right outcomes remain denied/read-only.
 The new Medium full-package controls allowed all three security rights, so V2 did not establish its MIC claim.
-Read-only source inspection found that the C prelude checked package identity/capabilities but had not attested its
-own integrity level or token mandatory policy; the Node owner separately enforces both. The C executable has an
-explicit Medium label. That is a source-backed lead, not an observed token cause. A bounded read-only observation
-of the actual held C token is being prepared before changing any expectations. No V1/V2 native success or complete
-Windows Node product proof exists. Software work remains before laptop acceptance.
+Read-only inspection found missing C-token integrity/policy attestation and an explicit Medium executable label.
+The subsequent actual held-C-token observation (C49) measured Low integrity, exact attributes `0x60` and mandatory
+`NO_WRITE_UP` on both servers. It disproves the earlier Medium/OFF-token lead; the V2 failure remains a failure.
+
+V3 `e13766e22d8181cee83b8cc6612dc533f08acb99` replaces the incorrect control expectation with direct
+`FILE_WRITE_DATA`/`FILE_ADD_FILE` (`2`) controls: Low positive, Medium denied. Production security-right denials and
+rights remain unchanged. [Registration 43994410142](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43994410142)
+passed all 783 cases in separate 264/519-case gates, with the original 2,500 ms compiler bound unchanged. The earlier
+`e65` compiler `ETIMEDOUT` remains recorded; no CPU cause is established. The one first
+[V3 native pair 43995186426](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43995186426)
+failed on both servers against the earlier pinned Node artifact. Each passed 519 portable cases but closed zero
+of seven native cases: the first natural case failed with genuine C405 at phase 4/prelude 11/probe `[7,4,1]`.
+All four direct data opens returned positive (`1111`), including Medium full-directory `FILE_ADD_FILE`; the required
+Medium denials were absent despite the authenticated held primary token being Low with exact `0x60` attributes and
+`NO_WRITE_UP`. The original 24 security-right assertions, failure retention and later-case blocking remain unchanged.
+No causal MIC differential, V3 native pass or complete Windows Node product proof is established; the failed
+assertions remain failed. Microsoft's [AppContainer guidance](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer)
+permits access to Medium-or-lower objects when both user/group and package ACEs grant it. V3's expected Medium
+denials were therefore invalid for this AppContainer case. V4's reviewed design is approved for implementation
+on the final product source graph: fresh all-Low controls compare package RX with FA DACL grants, retaining the
+original production denials and making no MIC-defense claim. No V4 run has occurred.
+The reviewed asset enforcement proof must pass against the authenticated new image before product tuple promotion.
 
 The separate worker startup correction [#258](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/258)
 at `bec2e6ad` preserves genuine native/artifact/seed cleanup uncertainty when a factory rejects before returning a
@@ -371,12 +419,14 @@ Automatic checkpoints, general dependency graphs, future wakeups, automatic sour
 are separate extensions. They do not add requirements to this Windows milestone; the implemented limits must
 remain explicit in the product and acceptance results.
 
-## Verification
+## Historical verification
 
-The current integrated product candidate is [draft #247](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/247)
-at `a970a98388d8f8df3e805a518c498571cb37335b`. It adds literal `run_node` arguments to the existing guarded command
+Current readiness is summarized above. The following receipts retain each named head's results and failures.
+
+The earlier integrated product candidate [draft #247](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/247)
+at `a970a98388d8f8df3e805a518c498571cb37335b` added literal `run_node` arguments to the existing guarded command
 flow, including a genuine Node-only tool inventory; Linux isolation, approvals, output, Stop and repair are shared.
-Windows remains files-only. Local verification passed full types/build/lint, 21 real isolated-workspace cases,
+Windows remained files-only at that head. Local verification passed full types/build/lint, 21 real isolated-workspace cases,
 eight pinned-SDK cases and one normal-sandbox Electron journey. The 1,200-case unit aggregate used a disclosed
 15-second CLI override; 13 selected corpus/direct-Node cases separately passed the original five-second default.
 

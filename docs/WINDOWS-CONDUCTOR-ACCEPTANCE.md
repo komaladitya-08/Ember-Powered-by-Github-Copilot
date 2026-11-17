@@ -8,27 +8,43 @@ The Projects & sessions board groups desktop tasks. Explicit Save projects keeps
 saved projects restores inert records, ordered goals and observed outcomes and marks interrupted work stopped.
 Review remaining steps prepares a fresh editable request without replaying actions. Save again to retain later progress.
 It never resumes model sessions. Current consent version 14 covers saved records and copied-folder reviews. The
-Windows development candidate now offers explicit files-only copied edits, sealed review, export and Forget through
-the ordinary Host. Commands, tests and dependency installation remain unavailable, and the legacy native-SDK gate
-stays false. Do not change those execution gates to perform acceptance. Continuation was enabled at `7eabd077`
+published Windows draft preserves commands-OFF files-only copied edits, sealed review, export and Forget through
+the ordinary Host. It also implements a captured commands-ON Node-only path, whose complete native/product proof
+is still blocked. Dependency installation remains unavailable, and the legacy native-SDK gate stays false.
+Do not change execution or reviewed-producer gates to perform acceptance. Continuation was enabled at `7eabd077`
 after the separate real Home continuation proof. Automatic crash checkpointing is not implemented.
 
-The current integrated product candidate is `a970a98388d8f8df3e805a518c498571cb37335b`
-([draft #247](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/247)), including literal direct-Node
-execution on the isolated Linux backend, the preceding #236 coordination work, and the exact-session
+The current published product candidate is `4de1889be1829f1c07c88ba0ffbbbc2902959ca8`
+([draft #262](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/262)), including literal direct-Node
+execution on the isolated Linux backend, Windows resource/coordinator integration, the preceding coordination work
+and the exact-session
 Review changes control from [draft #235](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/235)
 and bounded `wait_for_tasks`. The read-only join observes up to eight tasks from the current request for at most
 20 seconds; it starts no work, consumes no reports and does not schedule a later wakeup. Ordinary desktop cleanup
 remains best effort: a completed card alone leaves the wait's cleanup observation unknown and dependent success false.
 
-Hosted Server 2022/2025 evidence now includes the following exact heads; record it separately from laptop results:
+All seven ordinary jobs in [43988264446](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43988264446)
+and the separate preservation matrices are green. The overall CI result remains red only at the six intentionally
+closed `ready: false` Windows Node product leaves and their aggregate; it is not merge-ready. The old LPAC/RHEL
+failures below are historical outcomes, not the current ordinary-job status. Local rename disclosure `89768751`
+has 131 focused cases, three actual SDK/model cases over DLL models and normal Type `40030` passing, but remains unpushed.
+
+The new build artifact is independently statically authenticated. A local manifest/tuple update exists, but product
+prerequisites remain `ready: false`. Before final laptop acceptance, pass the reviewed asset enforcement proof against
+that exact new Node image, finalize the reviewed manifest/tuple promotion and pass native resources,
+source Home and packaged Home on both Windows images. Then verify the chosen live account and physical device.
+No live credential was supplied and no live model request was made; account verification needs sign-in, not
+intrinsically a laptop. See [current progress](CONDUCTOR-PROGRESS.md#current-status) for exact CI counts and gates.
+
+The following hosted Server 2022/2025 rows retain the results and limits at their named historical heads. Record
+them separately from current Node-product and laptop results:
 
 | Candidate proof | Completed evidence | Remaining limit |
 |---|---|---|
 | Full LPAC regular-file workflow `8c893a52`, [run 43956921968](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43956921968) | Per server: 405 portable cases, 32 Linux-only logic skips and one required native case. All eight operations, twelve protected/three revoked denials, four host/four in-run ACL controls, genuine Stop/revoke, stable snapshot and known source/tree/profile cleanup passed against the reviewed manifest. | Fixed C proof; Node adaptation, asset enforcement, canonical product transfer and packaged acceptance remain unfinished. Original MoveFileEx proof is unchanged. |
 | C output lifecycle `0c9bd07d`, [run 43948135820](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43948135820) | Per server: 201 portable and three actual native cases. Complete natural nonzero output, automatic overflow/cancellation Stop, drained pipes, stable snapshot and known tree/profile cleanup passed. | Fixed C proof; Windows Node/product execution and native canonical transfer remain unproved. |
 | Ordinary-host POSIX replacement `dc8b4cc4`, [run 43949773571](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43949773571) | Both unpinned and metadata-pinned targets replaced on each server; the old pinned object had links 0 and DeletePending 1. Identity/security/streams/source matching, root-only Stop and known cleanup passed. | Regular-file compatibility control only. Full LPAC workload and Node rename support remain separate software gates. |
-| Current integrated product `a970a983`, [controller run 43935924838](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43935924838) | All six Windows jobs passed, including both files-only Electron journeys. The remote matrix passed all 11 eligible jobs. Ordinary CI43935924802 completed with five successful jobs, two failures and two gated skips. | The existing Windows LPAC stage-18 refusal and a RHEL saved-workspace Save-button timeout keep CI red. The latter's test and renderer/IPC implementation are unchanged from #236 and are being investigated. Windows commands, live account and physical acceptance remain unfinished. |
+| Earlier integrated product `a970a983`, [controller run 43935924838](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43935924838) | All six Windows jobs passed, including both files-only Electron journeys. The remote matrix passed all 11 eligible jobs. Ordinary CI43935924802 completed with five successful jobs, two failures and two gated skips. | The existing Windows LPAC stage-18 refusal and a RHEL saved-workspace Save-button timeout keep CI red. The latter's test and renderer/IPC implementation are unchanged from #236 and are being investigated. Windows commands, live account and physical acceptance remain unfinished. |
 | Preceding integrated product `88106606`, [controller run 43877755446](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43877755446) | All six jobs passed. Per server: 97 portable cases, three native controller cases, one ZIP case and one genuine files-only Electron journey; zero skips. [Ordinary CI 43877755675](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43877755675) completed with all non-Windows jobs successful. | Ordinary CI remains red solely at the existing Windows LPAC stage-18 child denial (error 5, NT status `0xc0000022`). Mock providers and picker fixtures do not establish live sign-in, physical pickers or packaged Home-to-Host coding. Windows commands remain unavailable; this is not merge-ready. |
 | Controller/product `0f70a7f7`, [run 43812314219](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43812314219) | Per server: 97 portable cases, three native controller cases including the actual SDK contract, and one genuine Electron journey with two fresh sessions. Zero skips; Electron 13.267/14.744 seconds, normal exit, normal OS sandbox verified by process metrics, absent Node globals and no bypass. | Mock provider and supplied picker answers; no live authentication or native picker UI proof. |
 | Native continuation `7eabd077`, [run 43813240393](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43813240393) | Per server: 147 portable, 30 artifact, 23 sealed-copy/review and five resource cases; 410 total, zero skips. | Establishes native fresh-file continuation, not the public Home control. |
@@ -54,9 +70,10 @@ import-cycle and SDK/model work is reviewed and passing its scoped gates. The bu
 Linux Electron journey pass. At `8f12ec82`, final integrated types passed across 1,469 sources/declarations after the packaged-test
 naming fix, native installed-Electron provenance correction and old file-only ZIP workflow correction. Windows source
 Home and packaged normal-UI tests are source-reviewed but remain unrun on Windows. These results do not establish
-native canonical transfer. The integration is now blocked draft #262; its required Windows prerequisites remain
-closed. Later test-only corrections `fbbac1f4` and `4de1889b` fix stale release/import assertions and a reproduced
-Windows path-spy alias recursion. Their affected 281/249-case gates pass; full hosted verification is pending.
+native canonical transfer. Draft #262's required Windows prerequisites remain closed. Later test-only corrections
+`fbbac1f4` and `4de1889b` fix stale release/import assertions and a reproduced Windows path-spy alias recursion.
+Their affected 281/249-case gates and the current seven ordinary hosted jobs pass; the six new product leaves
+remain separate required evidence.
 
 Four-patch producer `e56aa8c9` passed 352 local contracts, full types and 234 registration cases. Diagnostic
 [43982542556](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43982542556)
@@ -65,18 +82,39 @@ and SDK values each equal ABI class 22, with unchanged headers/flags/warning pol
 [ABI-only run 43984400533](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43984400533)
 passed both actual SDK targets and fresh COFF/source/tool/recipe checks, with no artifact. The subsequent
 [full source attempt 43985674098](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43985674098)
-failed at identify-tools before ABI/vcbuild in that fresh attempt. A bounded checkpoint observation is being
-prepared; no full Node build or new artifact has passed.
+failed at identify-tools before ABI/vcbuild in that fresh attempt; its cause remains unexplained. The instrumented
+prefix and both actual SDK/C11/fresh-COFF preflights passed at `b75c944dec58973d157542e2d4d2db3720667982` in
+[43989502028](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43989502028).
+The one observed full build [43991252195](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43991252195)
+succeeded at that head with 232 Windows portable passes and 32 skips. Artifact `14289217635` passed independent
+static archive/API, member, receipt/recipe, COFF, PE and license authentication. The image remains unexecuted;
+build/authentication success is not Windows native or product execution evidence.
 
 Asset V2 `bcce66ad` passed 562 local/registration cases and full types, then failed its first C prelude on both
 images in [43983628743](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43983628743).
 The added Medium full-package controls allowed all three security rights. Production parent/root/image denied
-write-security rights, but V2 established no causal MIC differential. The C probe has no current integrity-level
-or mandatory-policy attestation, unlike the actual Node owner; its executable is explicitly Medium. Actual held-C
-token observation is being prepared before revising the proof. All four V1 failures and this V2 failure remain
-failures. No complete Windows Node product proof exists yet.
-Worker startup fix `bec2e6ad` passed all six existing Windows controller/ZIP/files-only Electron jobs. None of these
-results enables Windows commands in the published product or closes live-account and physical-laptop acceptance.
+write-security rights, but V2 established no causal MIC differential. Its missing C-token attestation and explicit
+Medium executable label were investigated: actual held-C-token observation C49 measured Low/exact `0x60`/`NO_WRITE_UP`
+on both servers, disproving the earlier Medium/OFF-token lead. All four V1 failures and this V2 failure remain failures.
+
+V3 `e13766e22d8181cee83b8cc6612dc533f08acb99` instead uses direct `FILE_WRITE_DATA`/`FILE_ADD_FILE` (`2`) controls
+requiring Low positive/Medium denied, with production rights and denials unchanged. Registration
+[43994410142](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43994410142)
+passed 783 cases (264 and 519 separately) at the unchanged 2,500 ms compiler bound; the prior `e65` compiler
+`ETIMEDOUT` has no established CPU cause. The first native pair
+[43995186426](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43995186426)
+failed on both servers using the earlier pinned Node artifact: 519 portable passes per image, zero of seven native
+cases closed. Genuine C405 at phase 4/prelude 11/probe `[7,4,1]` recorded all four direct data opens positive (`1111`),
+including the Medium full-directory `FILE_ADD_FILE` control; expected Medium denials were absent despite the
+authenticated held primary Low/`0x60`/`NO_WRITE_UP` token. The original 24 security-right assertions, retention and
+later-case blocking are unchanged. No causal MIC proof, V3 native pass or complete Windows Node product proof exists.
+Microsoft's [AppContainer guidance](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer)
+permits Medium-or-lower access when both user/group and package ACEs grant it, so V3's Medium-denial expectation
+was invalid. V4's reviewed design is approved for implementation on the final product source graph: fresh all-Low
+package RX-versus-FA DACL controls with the original production denials and no MIC-defense claim. No V4 run has
+occurred. A reviewed asset enforcement proof is still required for the authenticated new image.
+Worker startup fix `bec2e6ad` passed all six existing Windows controller/ZIP/files-only Electron jobs. These
+preservation results do not establish Windows Node product readiness or close live-account and physical-laptop acceptance.
 
 ## Prepare a fresh acceptance profile
 
@@ -93,7 +131,7 @@ Keep `HOME`, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` unchanged. Redirecting 
 shell integration and does not model an ordinary installation. Keep the acceptance profile until results and any
 cleanup failures have been reviewed; do not recursively remove retained uncertain native work.
 
-## Prepare the checkout
+## Prepare the checkout for desktop and files-only preservation
 
 Use a disposable test folder and ordinary test documents. Keep a copy of any document used in a test. Install
 Node.js 22.12 or newer and the pinned npm dependencies, then run these from PowerShell in the checkout:
@@ -116,7 +154,7 @@ Remove-Item Env:EMBER_WINDOWS_CODING_RESOURCES_TEST, Env:EMBER_ELECTRON_WINDOWS_
 npm start
 ```
 
-These suites exercise the current Windows file-only backend, actual SDK denial contract and genuine Electron
+These suites preserve the commands-OFF Windows file-only backend, actual SDK denial contract and genuine Electron
 Home journey using a local mock provider and disposable files. They require x64 Windows and fixed local NTFS.
 The required resource/Electron flags turn a missing prerequisite into a failure; the native controller and artifact
 suites must actually execute on Windows. Report every skip as unverified; a skip is not evidence of isolation.
@@ -125,18 +163,26 @@ do not substitute for these checks. The automated fixtures choose their own fres
 Use the real connected provider for the interactive product checks below. Do not put account credentials in a test
 prompt, fixture or screenshot.
 
-## Repeat with the packaged candidate
+## Select the correct packaged acceptance scope
 
 Quit the checkout instance completely. Repeat the fresh-profile block above to give the packaged candidate a second
 unused profile, so its first-run consent and sign-in do not inherit the development run's state.
 
-Download the original ZIP from a completed `experimental-windows-controller` run for the exact candidate commit,
+For earlier files-only preservation, use the original ZIP from a completed `experimental-windows-controller` run for its exact commit,
 using artifact `windows-file-only-zip-windows-2022` or `windows-file-only-zip-windows-2025`. For example, public
 `60ec77d1` has [run 43818240426](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43818240426).
-Artifacts expire after three days. If expired, build the selected checkout with `npm run package:win` on Windows,
-or dispatch `experimental-windows-controller.yml` at the selected branch and use its newly completed artifact.
+Artifacts expire after three days. If expired, rebuild that exact historical checkout with its original files-only
+recipe or dispatch its matching preservation workflow and use the newly completed artifact. Current #262
+`npm run package:win` requires the fixed Node asset cache; it is not an interchangeable historical files-only recipe.
 Record that run's full checkout SHA; a newer branch name alone does not identify the tested build. These are review
-artifacts, not a published release.
+artifacts, not a published release, and they cannot satisfy the Node-product gate.
+
+For the Node candidate, use the authenticated build only after the reviewed asset enforcement and manifest/tuple gates above close.
+Then use the exact tested Windows Server 2022 ZIP from a successful required `windows-node-product` workflow;
+Server 2025 must independently pass its native, source Home and packaged Home journeys too. That recipe includes
+the complete required assets/runtimes/voice payload and unchanged fuses. No such complete product result is
+established at this snapshot. A generic desktop or old files-only ZIP cannot replace it. If an accepted artifact
+expires, rebuild and rerun the required product proof for the exact source and tuple before using its replacement.
 
 Extract the downloaded artifact wrapper, then the contained `Ember-*-win-x64.zip` into a new folder. Record the run,
 artifact name, full commit, inner ZIP SHA-256 and `Ember.exe` SHA-256 (`Get-FileHash -Algorithm SHA256`). Follow
@@ -145,12 +191,12 @@ helper's execution policy; record the observed policy and result. Do not change 
 the acceptance pass. Run `ember-doctor.cmd` from that extracted folder, then start its `Ember.exe` from the same
 PowerShell window with the fresh `EMBER_USER_DATA`. Leave the normal OS profile and Electron sandbox enabled.
 
-Repeat the desktop and copied-file stories below through the normal packaged Home, real provider sign-in and
+Repeat the applicable desktop, copied-file and gated Node stories below through the normal packaged Home, real provider sign-in and
 native source/export folder pickers. The existing ZIP smoke and injected fixed dependency fixture do not establish
 this complete packaged Home-to-Host/live-account path. Include a clean standard-user installation as described in
 [PLAN.md](../PLAN.md); keep its results separate from development and hosted Server results.
 
-## Run the complete desktop story
+## Run the desktop and commands-OFF story
 
 Before the coding rows, turn **Run commands on this computer** off in Settings → Commands. Create a fresh small folder on fixed local NTFS,
 outside the checkout, Ember profile and any protected folder; do not use a network drive, junction or cloud alias.
@@ -182,6 +228,25 @@ Forget. Exports contain `changes.patch` and `review.json`; inspect those, withou
 | Session review | Complete a named coding session, open its Review changes control and close the review. Repeat after switching projects or forgetting the result, and while moving focus during review loading. | Only the exact session's retained matching result opens; no model request or new work starts. Opening from the still-focused control reveals the heading; navigation during loading keeps the user's focus. Close returns focus to the current matching session control. A forgotten or stale result does not open under another session. |
 | Execution limits | Ask the files-only session to run a test, install dependencies or use a native SDK shell/edit tool. | No execution capability appears and no command/test success is claimed. The legacy native-SDK gate remains false. |
 | Reviewed continuation | Open a completed review, choose Continue and send a new request that first reads the reviewed value. Forget the predecessor after the new copy is admitted. | The fresh session starts from the complete reviewed proposal and retains the cumulative original baseline. Earlier task permissions/conversation are not resumed. Predecessor Forget preserves the admitted copy; global Forget still erases its private work. |
+
+## Run the separately gated Node-only story
+
+Start this only after the exact new artifact, reviewed asset enforcement proof, reviewed tuple and both-image product gates have passed.
+Use a fresh project/profile and explicitly enable commands before accepting its request. The accepted capability
+is fixed: an OFF request stays files-only after later enablement, and failed Node startup never falls back to files-only.
+
+Use a disposable ordinary local project with a deliberately failing test. Explicitly request `run_node` with literal
+argv and `\work` cwd, including `--preserve-symlinks`, `--preserve-symlinks-main` and, for `--test`,
+`--experimental-test-isolation=none`. Observe the real approval card, the failed check, a private-copy repair and
+the identical approved arguments passing. File tools retain their logical `/work` spelling. A different check cannot clear the failure. Verify the failed/passed
+counts, unchanged source, review/export and a fresh cumulative continuation. The reviewed local disclosure limits rename to regular files;
+directory rename, shells, npm, installation, network access and child processes are unavailable.
+
+Repeat with Not now, a running writer stopped by its own session control, a mode change and ordinary provider-key
+rotation. No stopped work may report late success or resume; retained or uncertain cleanup must remain a barrier.
+Live folder/project Forget stays disabled: Stop first, then use the ordinary post-stop Forget controls. Fresh BYOK
+does not expose GitHub Sign out or memory's Forget everything, so provider-key rotation is provider revocation,
+not a claim of GitHub-account acceptance. Complete chosen-account sign-in and its identity checks separately.
 
 ## Check native laptop behaviour
 
