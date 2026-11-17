@@ -219,6 +219,9 @@ describe("desk", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "ember-exit-"));
     const handOff = path.join(root, "Ember");
     const before = process.listenerCount("exit");
+    // These synthetic desks have no processes; keep their marker lookup independent of the host process table.
+    const readDirectory = fs.readdirSync;
+    const processTable = vi.spyOn(fs, "readdirSync").mockImplementation((...args) => args[0] === "/proc" ? [] : readDirectory(...args));
     vi.useFakeTimers();
     try {
       // Made and never started (as most tests make them): nothing to clean up as Ember exits.
@@ -240,6 +243,7 @@ describe("desk", () => {
       }
     } finally {
       vi.useRealTimers();
+      processTable.mockRestore();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
