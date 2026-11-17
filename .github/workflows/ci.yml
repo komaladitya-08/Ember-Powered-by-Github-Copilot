@@ -633,6 +633,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/voice/prepare.mjs --voice ryan
       - name: "Speech on sherpa-onnx's native addon: the real recognizers on the voice clips, then the voice and speech processes in Electron (native Kitten picked, WebAssembly ASR and neural-unavailable fallback compared; latency printed)"
+        id: speech
         if: ${{ !cancelled() }}
         run: |
           node scripts/run-integration.mjs test/integration/voice.test.ts
@@ -640,6 +641,22 @@ jobs:
         env:
           EMBER_VOICE_TEST: "1"
           EMBER_KITTEN_TEST: "1"
+          EMBER_SYNTHETIC_NO_CAPTURE: "1"
+      # Only the fixed public Ryan "No." fixture and its existing recognizer inputs, never microphone audio or text.
+      - name: Preserve fixed synthetic No polarity failure evidence
+        if: ${{ failure() && !cancelled() && steps.speech.outcome == 'failure' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: synthetic-no-polarity-${{ runner.os }}-${{ runner.arch }}
+          if-no-files-found: ignore
+          retention-days: 3
+          path: |
+            ${{ runner.temp }}/ember-synthetic-no-polarity/facts.json
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-mic.f32le
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-asr-1.f32le
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-asr-2.f32le
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-asr-3.f32le
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-asr-4.f32le
       - name: Node runtimes for computers reached over SSH (cached; verified by SHA-256), carried in the package
         if: ${{ !cancelled() }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -848,6 +865,7 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: node scripts/voice/prepare.mjs --voice ryan
       - name: "Speech on sherpa-onnx's native addon: the real recognizers on the voice clips, then the voice and speech processes in Electron (native picked, CoreML timed against the CPU, WebAssembly compared; latency printed)"
+        id: speech
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           node scripts/run-integration.mjs test/integration/voice.test.ts
@@ -855,6 +873,22 @@ jobs:
         env:
           EMBER_VOICE_TEST: "1"
           EMBER_KITTEN_TEST: "1"
+          EMBER_SYNTHETIC_NO_CAPTURE: "1"
+      # Only the fixed public Ryan "No." fixture and its existing recognizer inputs, never microphone audio or text.
+      - name: Preserve fixed synthetic No polarity failure evidence
+        if: ${{ failure() && !cancelled() && steps.speech.outcome == 'failure' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: synthetic-no-polarity-${{ runner.os }}-${{ runner.arch }}
+          if-no-files-found: ignore
+          retention-days: 3
+          path: |
+            ${{ runner.temp }}/ember-synthetic-no-polarity/facts.json
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-mic.f32le
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-asr-1.f32le
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-asr-2.f32le
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-asr-3.f32le
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-asr-4.f32le
       - name: Node runtimes for computers reached over SSH (cached; verified by SHA-256), carried in the package
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

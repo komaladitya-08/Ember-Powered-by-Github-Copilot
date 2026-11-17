@@ -41,7 +41,13 @@ function removeOnce(source: string, fragment: string): string {
   expect(source.lastIndexOf(fragment)).toBe(source.indexOf(fragment));
   return source.replace(fragment, "");
 }
-let bootstrap = removeOnce(ps1, startupObserver);
+let initialHashBaseline = removeOnce(ps1, "  Observe-Startup 26\n");
+initialHashBaseline = removeOnce(initialHashBaseline, "  if ($ObserveSource) { Observe-Startup 27 }\n");
+initialHashBaseline = removeOnce(initialHashBaseline, "  if ($ObserveSource) { Observe-Startup 28 }\n");
+initialHashBaseline = removeOnce(initialHashBaseline, ", [switch]$ObserveSource");
+initialHashBaseline = removeOnce(initialHashBaseline, " -ObserveSource");
+initialHashBaseline = initialHashBaseline.replace("$Stage -ge 1 -and $Stage -le 28", "$Stage -ge 1 -and $Stage -le 17");
+let bootstrap = removeOnce(initialHashBaseline, startupObserver);
 for (const call of startupCalls) bootstrap = removeOnce(bootstrap, call);
 bootstrap = removeOnce(bootstrap, "; Observe-Startup 7");
 
@@ -105,6 +111,16 @@ describe("the UI Automation bridge's files", () => {
 });
 
 describe("optional UIA startup observations", () => {
+  it("splits only initial source boundaries without changing the existing path, read, SHA chain or formatting expressions", () => {
+    expect(createHash("sha256").update(initialHashBaseline).digest("hex")).toBe("40e52fdc822d76e94882b95d2d13321735e012ab5e3236e2676cf3c7ceb2c607");
+    expect(ps1).toContain("$source = Join-Path $PSScriptRoot 'ember_uia.cs'\n  Observe-Startup 26\n  $hash = Get-Sha256 ([IO.File]::ReadAllBytes($source)) -ObserveSource");
+    expect(ps1).toContain("function Get-Sha256([byte[]]$Bytes, [switch]$ObserveSource) {\n  if ($ObserveSource) { Observe-Startup 27 }\n  $digest = [Security.Cryptography.SHA256]::Create().ComputeHash($Bytes)\n  if ($ObserveSource) { Observe-Startup 28 }\n  ([BitConverter]::ToString($digest) -replace '-', '').ToLowerInvariant()");
+    const calls = [...ps1.matchAll(/Get-Sha256 ([^\r\n]+)/g)].map(match => match[1]);
+    expect(calls).toHaveLength(3);
+    expect(calls.filter(call => call.includes("-ObserveSource"))).toEqual(["([IO.File]::ReadAllBytes($source)) -ObserveSource"]);
+    expect(ps1).toContain("$Stage -ge 1 -and $Stage -le 28");
+  });
+
   it("leaves the original bootstrap byte-for-byte intact outside the exact optional observer", () => {
     expect(createHash("sha256").update(bootstrap).digest("hex")).toBe("8b05f55c3c9d6f4e7aae239b0e73ce49c1175e54a09e04f459a512973a359c75");
     expect(startupObserver.split("\n").filter(line => line.trim()).length).toBeLessThanOrEqual(10);
@@ -114,7 +130,7 @@ describe("optional UIA startup observations", () => {
     expect(startupObserver).toContain("'EMBER_UIA_STARTUP_V1:'");
     expect(startupObserver).toContain("} catch {");
     expect(startupObserver).not.toMatch(/Write-Output|OpenStandardOutput|Write-Host|\$input|OpenStandardInput/);
-    expect([...ps1.matchAll(/Observe-Startup ([0-9]+)\b/g)].map(match => Number(match[1]))).toEqual(Array.from({ length: 17 }, (_, i) => i + 1));
+    expect([...ps1.matchAll(/Observe-Startup ([0-9]+)\b/g)].map(match => Number(match[1])).sort((a, b) => a - b)).toEqual([...Array.from({ length: 17 }, (_, i) => i + 1), 26, 27, 28]);
   });
 
   it("keeps default core transport bytes and its ready Write before the optional best-effort callback and stdin read", () => {

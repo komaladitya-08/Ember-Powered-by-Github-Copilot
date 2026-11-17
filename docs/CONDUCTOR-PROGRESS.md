@@ -294,8 +294,11 @@ Home-to-Host coding session or physical client acceptance; see [development chec
    reconciliation need their own owner/revision/consent design. Checkpoints do not restore worker conversations.
 4. **Richer coordination.** Independent tasks, bounded current-request joins and ordered desktop sequences are
    supported. A join can return settled observations within the current turn; an accepted sequence can continue
-   without another turn. Unobserved ordinary background reports still arrive with the next user message. General
-   branching dependency graphs, automatic future wakeups, dynamic replanning and persistent cross-session artefacts
+   without another turn. Two to eight current-request delegated tasks can now receive one automatic tool-free combined
+   completion after their terminal outcomes and cleanup attempts settle, without another user message. A settled
+   foreground join suppresses a duplicate summary; individual reports remain available for follow-up. The accepted
+   run is retired by newer intake, Stop, Forget or a captured owner/context change. General
+   branching dependency graphs, effectful future wakeups, dynamic replanning and persistent cross-session artefacts
    remain future work. Windows Node coding/desktop sequencing remains behind its product gates.
 5. **Real-provider verification.** Offline mock-provider tests establish deterministic behavior, not successful live
    authentication, provider tool compatibility or useful task completion. Verify those on the chosen account/provider.

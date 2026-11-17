@@ -34,12 +34,12 @@ afterEach(() => {
 describe("cached UIA startup observations", () => {
   it("accepts every known complete ASCII stage, CRLF and unrelated stderr without exposing text", () => {
     const { bridge, child } = create();
-    for (let stage = 1; stage <= 25; stage++) {
+    for (let stage = 1; stage <= 28; stage++) {
       child.stderr.write(`private unrelated diagnostic\nEMBER_UIA_STARTUP_V1:${stage}\r\n`);
       expect(bridge.startupStage).toBe(stage);
     }
     child.stderr.write("private unfinished unrelated diagnostic");
-    expect(bridge.startupStage).toBe(25);
+    expect(bridge.startupStage).toBe(28);
     expect(bridge.strayLines).toEqual([]);
   });
 
@@ -51,7 +51,7 @@ describe("cached UIA startup observations", () => {
   });
 
   it.each([
-    "0", "26", "01", "+1", "1.0", "", "NaN", "Infinity", "１", "25 private", "25\r\r", "25\u2028", "25\0",
+    "0", "29", "01", "+1", "1.0", "", "NaN", "Infinity", "１", "25 private", "25\r\r", "25\u2028", "25\0",
   ])("refuses a malformed or out-of-range stage %j even after a valid marker", stage => {
     const { bridge, child } = create();
     child.stderr.write(marker(1) + `EMBER_UIA_STARTUP_V1:${stage}\n`);

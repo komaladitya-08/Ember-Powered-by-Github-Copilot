@@ -14,7 +14,7 @@ $ProgressPreference = 'SilentlyContinue'
 # Optional external-harness startup milestones only; never screen data or stdout.
 function Observe-Startup([int]$Stage) {
   try {
-    if ($env:EMBER_UIA_STARTUP_OBSERVE -ceq '1' -and $Stage -ge 1 -and $Stage -le 17) {
+    if ($env:EMBER_UIA_STARTUP_OBSERVE -ceq '1' -and $Stage -ge 1 -and $Stage -le 28) {
       $bytes = [Text.Encoding]::ASCII.GetBytes('EMBER_UIA_STARTUP_V1:' + $Stage.ToString([Globalization.CultureInfo]::InvariantCulture) + "`n")
       $err = [Console]::OpenStandardError(); $err.Write($bytes, 0, $bytes.Length); $err.Flush()
     }
@@ -36,8 +36,10 @@ function Write-Fatal([string]$Message) {
   }
 }
 
-function Get-Sha256([byte[]]$Bytes) {
+function Get-Sha256([byte[]]$Bytes, [switch]$ObserveSource) {
+  if ($ObserveSource) { Observe-Startup 27 }
   $digest = [Security.Cryptography.SHA256]::Create().ComputeHash($Bytes)
+  if ($ObserveSource) { Observe-Startup 28 }
   ([BitConverter]::ToString($digest) -replace '-', '').ToLowerInvariant()
 }
 
@@ -51,7 +53,8 @@ try {
   Observe-Startup 1
   # Compiled with -LiteralPath below: Add-Type's -Path takes [ and ] in the install folder for wildcards.
   $source = Join-Path $PSScriptRoot 'ember_uia.cs'
-  $hash = Get-Sha256 ([IO.File]::ReadAllBytes($source))
+  Observe-Startup 26
+  $hash = Get-Sha256 ([IO.File]::ReadAllBytes($source)) -ObserveSource
   Observe-Startup 2
   Observe-Startup 3
   Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase

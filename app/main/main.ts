@@ -4226,6 +4226,9 @@ function start(): void {
         const notice = taskNotice(t);
         if (userAway() && notice) notify(notice.title, notice.body);
       },
+      onTaskCompletion: text => {
+        if (maySpeak() && settings.get().speakResults && !agent?.answerOpen && !manualCall && voice?.micState !== "active") voice?.speak(spokenText(text), { append: true });
+      },
       isOnline: () => net.isOnline(),
       // "Not authenticated" while GitHub can't be reached is a network problem, not a bad sign-in.
       reachable: gitHubReachable((url, init) => net.fetch(url, init)),

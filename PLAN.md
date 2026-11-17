@@ -4910,3 +4910,14 @@ terminal success plus explicit post-disposal positive cleanup and handoff witnes
 Timeout, missing tasks and unknown cleanup do not grant success. Portable lifecycle tests and a real pinned-SDK flow
 with two inert workers and held disposal cover this bounded join. Live-provider, native execution and physical Windows
 acceptance remain separate; this addition does not enable a coding backend or authorise a merge.
+
+### Automatic combined task completion (17 November 2026)
+
+For two to eight tasks delegated during one accepted request's initial turn, the host can summarise their settled outcomes after the
+initial conductor turn ends, including after the unchanged 20-second join expires. The separate hardened session
+has no tools and the existing 30-second one-shot limit. It cannot dispatch or continue work. It waits for actual
+terminal/cleanup observations, states unknown cleanup explicitly, suppresses a duplicate settled foreground join and
+leaves individual reports available. New intake, Stop, Forget and captured owner/context changes retire pending
+work and late answers. The result is one assistant entry, with no fake user intake, memory learning or new task.
+Portable Host/lifecycle tests and a pinned-SDK local-provider journey cover the long parallel case with held disposal.
+This does not implement general dependency graphs, persistent worker conversations or broader coding toolchains.

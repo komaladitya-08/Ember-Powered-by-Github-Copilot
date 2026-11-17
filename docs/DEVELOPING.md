@@ -467,6 +467,17 @@ races. `node scripts/run-integration.mjs test/integration/conductor-wait-runtime
 with a local scripted model and inert workers whose disposal is held until both cards finish. It verifies the same
 request receives both observations and a combined answer; it does not establish live-provider or desktop acceptance.
 
+When two to eight tasks delegated during the same request's initial conductor turn outlive that turn, the host can deliver one
+automatic combined completion after every task is terminal and its cleanup attempt settles. The separate hardened
+model session has no tools and uses the existing 30-second one-shot limit; it cannot start, retry or replan work.
+Unknown cleanup is stated explicitly. A settled foreground join suppresses a duplicate combined completion, and
+individual task reports remain available. New intake, Stop, Forget or a captured account, provider, model, approval,
+project, target or coding-source change retires pending synthesis and publication. The response adds an assistant
+entry without inventing a user message. Its bubble waits behind existing answers, guides and notices; result speech
+appends behind existing speech when allowed.
+`task-completion*.test.ts` and `test/integration/conductor-completion-runtime.test.ts` cover the accepted-run lifecycle,
+including a genuine 20-second join timeout, held disposal and a tool-free real-SDK completion without another request.
+
 The bubble beside your cursor stays for your conversation, for guides, and for a task while it uses your mouse; a
 task in the background doesn't speak there, but its questions still do. It works through the app's accessibility interface, so
 your mouse and keyboard stay yours. Before its first action in an app it asks **Allow / Always in this app / Not now**;

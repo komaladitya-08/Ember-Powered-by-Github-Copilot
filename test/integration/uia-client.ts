@@ -142,7 +142,7 @@ function startupStage(stderr: unknown): number {
     const end = stderr.indexOf("\n", at);
     const line = stderr.slice(at, end < 0 ? undefined : end);
     if (line.includes("EMBER_UIA_STARTUP") || (end < 0 && prefix.startsWith(line))) {
-      const match = /^EMBER_UIA_STARTUP_V1:([1-9]|1[0-9]|2[0-5])\r?$/.exec(line);
+      const match = /^EMBER_UIA_STARTUP_V1:([1-9]|1[0-9]|2[0-8])\r?$/.exec(line);
       if (end < 0 || !match || match[0].length !== line.length) return 0;
       stage = Number(match[1]);
     }

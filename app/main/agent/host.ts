@@ -26,6 +26,7 @@ import type { BubbleState, EmberState } from "../../shared/overlay";
 import type { ConversationContext } from "../../shared/ipc";
 import { TaskManager, handedElsewhere, taskOutcome, titleOf, type KeptCard, type RetriedWords, type StopCause, type Task, type WorkerLike } from "./tasks";
 import { waitForTaskSettlement, type TaskWaitResult } from "./task-wait";
+import { TaskCompletion } from "./task-completion";
 import { redactingClient, type ModelRedactor } from "./redacting-client";
 import { CHECKING_STEP, LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerResult, type WorkerSystem, type WorkerVault } from "./worker";
 import { CodingWorker } from "./coding-worker";
@@ -398,6 +399,8 @@ export interface HostOptions {
   onConversationTurn?: (turn: ConversationTurn, ended?: ConversationTurnEnd) => void;
   /** A task finished (for a notification when the user isn't looking). `text`: one line saying how it went. */
   onTaskFinished?: (task: { title: string; status: string; endedBy?: StopCause; summary: string; text: string }) => void;
+  /** A tool-free combined result after parallel tasks settle; append speech without opening another user turn. */
+  onTaskCompletion?: (text: string) => void;
   /** Main's kill switch (KillSwitch.pull with source "typed"): a typed "stop" while a task is at work (stopsNow). */
   stopEverything?: () => void;
   /** The conversation changed (the settings window shows it). */
@@ -1230,6 +1233,76 @@ export class AgentHost {
   private turnTasks = new WeakMap<UserRequest, Set<string>>();
   private taskWaitAbort = new AbortController();
   private readonly taskWaitProjects = new WeakMap<Task, { projectId: string | null; association?: string; metadataFree?: true }>();
+  private taskCompletion: { request: UserRequest; observer: TaskCompletion } | null = null;
+  private taskCompletionQuestion: Promise<void> | null = null;
+
+  /** Observe one existing question's settlement without opening, answering or replacing it. */
+  private taskCompletionIdle(): boolean {
+    if (this.confirmer?.waiting) {
+      if (!this.taskCompletionQuestion) {
+        const waiting = this.confirmer.settled();
+        this.taskCompletionQuestion = waiting;
+        void waiting.then(() => {
+          if (this.taskCompletionQuestion !== waiting) return;
+          this.taskCompletionQuestion = null;
+          this.taskCompletion?.observer.changed();
+        }, () => { this.taskCompletionQuestion = null; this.taskCompletion?.observer.retire(); });
+      }
+      return false;
+    }
+    return !this.answerOpen && !this.presenter.atWork && !this.waitingAsks && !this.held.length && !this.pinned && !this.mainHold;
+  }
+
+  /** Capture only tasks this request delegates, never tasks it merely lists, steers or cancels. */
+  private trackTaskCompletion(request: UserRequest, manager: TaskManager, generation: number, task: Task): void {
+    if (task.mode === "guide" || this.fromElsewhere.has(task) || request.waitSignal !== this.taskWaitAbort.signal) return;
+    if (!this.taskCompletion || this.taskCompletion.request !== request) {
+      this.taskCompletion?.observer.retire();
+      const client = this.client, abort = this.taskWaitAbort, epoch = this.stopEpoch, conversation = this.conversationEpoch;
+      if (!client || abort.signal.aborted || this.tasks !== manager) return;
+      const projectId = request.projectId ?? null, model = this.status.conductorModel, workerModel = this.status.workerModel;
+      const modelSettings = JSON.stringify(this.o.settings.get().models);
+      const login = this.status.login, mode = modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null);
+      const current = () => !this.quitting && !abort.signal.aborted && this.taskWaitAbort === abort && this.tasks === manager && this.gen === generation &&
+        this.stopEpoch === epoch && this.conversationEpoch === conversation && this.status.phase === "ready" && this.status.login === login &&
+        this.status.conductorModel === model && this.status.workerModel === workerModel && JSON.stringify(this.o.settings.get().models) === modelSettings && !this.providerMoved() && this.handing === null &&
+        !this.vaultFillHolds && !this.o.redact?.active && hasConsent(this.o.settings.get()) && !this.o.screenLocked?.() &&
+        modeInForce(this.o.settings.get().approvals, this.o.admin?.() ?? null) === mode && (request.projectId ?? null) === projectId;
+      const idle = () => this.taskCompletionIdle();
+      const observer = new TaskCompletion({ request: request.words, signal: abort.signal, current, idle,
+        subscribe: listener => manager.subscribeSettlement(listener),
+        model: copilotOneShot({ client, model, provider: this.active?.config, workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
+          log: this.o.log.child("coordination"), purpose: "coordination" }),
+        publish: answer => {
+          if (!current() || !idle()) return false;
+          const text = plainText(answer);
+          if (!text.trim()) return true;
+          this.completionBoard.post({ title: "Task results", thought: text, actions: [], mood: "idle" }, { claim: "reply", ms: Math.min(30_000, 6000 + text.length * 50) });
+          if (!current()) return true;
+          this.remember("ember", text);
+          if (current()) this.o.onTaskCompletion?.(text);
+          return true;
+        },
+      });
+      this.taskCompletion = { request, observer };
+    }
+    const projectId = request.projectId ?? null, receipt = this.taskWaitProjects.get(task);
+    const source = this.codingWaitScopes.get(task);
+    const original = this.taskBindings.get(task.id) ?? this.finishedTaskBindings.get(task), binding = original ? { ...original } : undefined;
+    const bindingKey = binding ? JSON.stringify(binding) : "", target = task.targetId;
+    this.taskCompletion.observer.add({ id: task.id, title: task.title, observe: () => manager.observeSettlement(task), current: () => {
+      if (manager.get(task.id) !== task || task.targetId !== target || this.fromElsewhere.has(task) || source && !source()) return false;
+      if (!receipt || receipt.projectId !== projectId) return false;
+      if (projectId !== null) this.sessionProjects.destination(projectId);
+      const association = this.taskProjectAssociations().get(task.id);
+      if (receipt.metadataFree ? association !== undefined : association !== receipt.association || projectId !== null && !receipt.association) return false;
+      if (source) return target === undefined || target === "local";
+      if (!this.o.targets) return true;
+      if (!binding) return false;
+      const got = this.o.targets.handsFor(binding.id);
+      return got.ok && JSON.stringify(got.hands.binding) === bindingKey;
+    } });
+  }
 
   private taskProjectAssociations(): Map<string, string> {
     const values = new Map<string, string>();
@@ -1246,6 +1319,9 @@ export class AgentHost {
 
   /** A new user request or retired conversation cannot receive an earlier join's task summaries. */
   private retireTaskWaits(): void {
+    this.completionBoard.clear();
+    this.taskCompletion?.observer.retire();
+    this.taskCompletion = null;
     const previous = this.taskWaitAbort;
     this.taskWaitAbort = new AbortController();
     previous.abort();
@@ -1299,6 +1375,9 @@ export class AgentHost {
       subscribe: listener => manager.subscribeSettlement(listener),
       snapshot: () => captured.map(item => item.task ? manager.observeSettlement(item.task)
         : { id: item.id, status: "missing", cleanup: "unknown", handoffSafe: false, summary: "" }),
+    }).then(result => {
+      if (current() && this.taskCompletion?.request === request) this.taskCompletion.observer.saw(result);
+      return result;
     });
   }
   /** The next stop is the waiting switch's own reconnect (switchWhenQuiet, releaseHeld): its cards are kept. */
@@ -1460,6 +1539,8 @@ export class AgentHost {
   private readonly noticeBoard: Presenter;
   /** The targets runtime's offers, on a board of their own (cross-review X3: see offers). */
   private readonly offerBoard: Presenter;
+  /** Automatic summaries wait behind existing answers, guides and notices, and never claim foreground priority. */
+  private readonly completionBoard: Presenter;
   /** Each running task's presenter (the kill switch silences them). */
   private readonly taskPresenters = new Map<string, Presenter>();
   /** Tasks the kill switch stopped: they finish without a bubble of their own (the kill switch said it). */
@@ -1559,12 +1640,13 @@ export class AgentHost {
     if (o.history && !o.history.enabled()) o.history.store.clear();
     // A question with buttons holds the bubble; what it held off shows once it's answered.
     const c = this.confirmer;
-    this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
+    this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => { this.dropAnnouncement(); this.taskCompletion?.observer.changed(); }) } : undefined);
     // Every change of the conversation's bubble may change what Home says of its turn (its stall: home-c1-1).
     this.presenter = new Presenter(patch => { o.setState(patch); this.turnChanged(); }, undefined, () => "Ember", this.owner, text => this.rememberAnswer(text), () => this.serviceKind(),
       { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), ...this.bubbleOptions });
     this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
     this.offerBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
+    this.completionBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, () => this.serviceKind(), this.bubbleOptions);
     // Reminders kept from the last run come back now, not once Copilot connects: one due while Ember was offline or
     // signed out is still told on time (a reminder never needs Copilot). Not before the user has agreed to Ember at
     // all: nothing is read or told until then (they come back with the conversation, once it starts).
@@ -1572,7 +1654,7 @@ export class AgentHost {
     try { agreed = hasConsent(o.settings.get()); } catch { /* settings unread: nothing comes back yet */ }
     if (agreed && this.routinesWanted()) this.keepRoutines();
     // Source grants, provider authority and approval mode are checked synchronously on each settings event.
-    o.settings.onChange(() => this.retireStaleCoding());
+    o.settings.onChange(() => { this.retireStaleCoding(); this.taskCompletion?.observer.recheck(); });
   }
 
   /**
@@ -1798,6 +1880,7 @@ export class AgentHost {
    * will hide it: one of main's own, or something put back that is over): main hides it itself.
    */
   releaseBubble(showing: BubbleState | null = null): boolean {
+    this.taskCompletion?.observer.changed();
     if (this.mainHold) { clearTimeout(this.mainHold); this.mainHold = null; }
     this.pinned = false;
     if (this.owner.holder !== this.mainBubble) return true;
@@ -2768,6 +2851,7 @@ export class AgentHost {
       this.conductorChat = chatOf;
       this.conductor = new Conductor({
         client, settings: this.o.settings, presenter: this.presenter, log: this.o.log.child("conductor"),
+        completionSummaries: true,
         reminders: this.reminders,
         ...(routines ? { routines } : {}),
         ...(extensions ? { extensions } : {}),
@@ -2797,6 +2881,7 @@ export class AgentHost {
         onAnswerEnd: text => this.underGen(hg, () => { this.endStream("done", chatOf.chat); this.o.onAnswerEnd?.(text); }),
         onAnswerInterrupted: () => this.underGen(hg, () => { this.endStream("interrupted", chatOf.chat); this.o.onAnswerInterrupted?.(); }),
         onTurnEnd: aborted => {
+          if (this.taskCompletion?.request === this.turn) this.taskCompletion.observer.end(aborted);
           this.underGen(hg, () => this.endStream(aborted ? "interrupted" : "done", chatOf.chat));
           // The hint a request asked for waits behind that turn's answer now (none for a turn that was stopped).
           if (this.hintOwed) { this.hintOwed = false; if (!aborted) this.hintCommands(); }
@@ -2893,6 +2978,7 @@ export class AgentHost {
           this.attachTaskProject(r.projectId ?? null, t, "coding", sessionName ?? titleOf(goal));
           if (r.verifiedAt !== undefined) this.o.voiceTrust?.grant(t.id, r.verifiedAt);
           touch(r, t.id);
+          this.trackTaskCompletion(r, tasks, gen, t);
           if (t.status !== "running" && t.status !== "queued") return `Coding task ${t.id} could not start: ${t.result?.summary ?? "an error occurred"}. Tell the user.`;
           return t.status === "queued" ? `Coding task ${t.id} is queued in the selected workspace. Tell the user it hasn't started yet.` : `Coding task ${t.id} started in the selected workspace. It has a task card and Stop. Tell the user you're on it.`;
         } : undefined,
@@ -2939,6 +3025,7 @@ export class AgentHost {
             if (kind === "desktop" && binding) this.taskBindings.set(t.id, binding);
             if (r.verifiedAt !== undefined) this.o.voiceTrust?.grant(t.id, r.verifiedAt);
             touch(r, t.id);
+            this.trackTaskCompletion(r, tasks, gen, t);
             return t;
           };
           const t = start(first, firstGoal, undefined, true);
@@ -3021,6 +3108,7 @@ export class AgentHost {
             this.sessionProjects.linkSequenceStep(projectId, sequenceId, index, t.id);
             touch(r, t.id);
             if (binding) this.taskBindings.set(t.id, binding);
+            this.trackTaskCompletion(r, tasks, gen, t);
             if (mark !== undefined) this.taskMarks.set(t.id, mark);
             if (r.verifiedAt !== undefined) this.o.voiceTrust?.grant(t.id, r.verifiedAt);
             this.announced.add(t.id);
@@ -3100,6 +3188,7 @@ export class AgentHost {
           // That task's card goes, as its Try again's does: a press of it can't start a second attempt (tasks-approvals-r2).
           if (said.retried) tasks.dismiss(said.retried.task);
           if (binding) this.taskBindings.set(t.id, binding);
+          this.trackTaskCompletion(r, tasks, gen, t);
           if (mark !== undefined) this.taskMarks.set(t.id, mark);
           // Asked for in the owner's verified voice: its own questions may take a short spoken yes (owner decision of
           // 2026-11-03; voice-answer.ts TaskVoiceTrust).
@@ -3416,6 +3505,7 @@ export class AgentHost {
 
   /** A different model chosen in settings: the conversation switches now, tasks use it from their next start. No restart. */
   async setModels(prefer: { conductor?: string | null; worker?: string | null }): Promise<void> {
+    this.taskCompletion?.observer.retire();
     const conductor = this.conductor;
     const gen = this.gen;
     if (this.status.phase !== "ready" || !conductor) return;
@@ -3811,6 +3901,7 @@ export class AgentHost {
    * between two waits) is never told.
    */
   private turnChanged(ended?: ConversationTurnEnd): void {
+    this.taskCompletion?.observer.changed();
     if (ended && this.turnTold !== "idle") this.turnEnd = ended;
     const now = this.conversationTurn;
     if (now === this.turnTold) return;
@@ -4407,11 +4498,14 @@ export class AgentHost {
   /** Project metadata never changes consent, folders, task permissions or original request words. */
   projectSessionsAction(raw: unknown): ProjectSessionsState {
     this.sessionProjects.refresh(this.taskActivities());
-    return this.sessionProjects.apply(raw);
+    const state = this.sessionProjects.apply(raw);
+    this.taskCompletion?.observer.recheck();
+    return state;
   }
 
   /** An explicit encrypted checkpoint opens as history, never as resumed task authority. */
   projectSessionsRestore(snapshot: ProjectSessionsState, expected?: ProjectSessionsState): ProjectSessionsState {
+    this.taskCompletion?.observer.retire();
     this.sessionProjects.refresh(this.taskActivities());
     return this.sessionProjects.restore(snapshot, expected);
   }

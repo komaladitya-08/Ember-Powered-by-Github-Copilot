@@ -80,7 +80,7 @@ describe("a one-shot model call", () => {
     sendAndWait: vi.fn().mockResolvedValue({ data: { content: "Done." } }),
     abort: vi.fn().mockResolvedValue(undefined),
   });
-  const call = (client: unknown, purpose?: "project") =>
+  const call = (client: unknown, purpose?: "project" | "coordination") =>
     copilotOneShot({ client: client as never, model: "m", workDir: os.tmpdir(), log, ...(purpose ? { purpose } : {}) });
 
   it("gives up when making the session hangs, so Project's controls come back (review 2026-11-04)", async () => {
@@ -111,6 +111,68 @@ describe("a one-shot model call", () => {
     expect(s.sendAndWait.mock.calls[0][1]).toBe(PROJECT_SHOT_MS);
     await call(client)("system", "prompt", new AbortController().signal);
     expect(s.sendAndWait.mock.calls[1][1]).toBe(ONE_SHOT_MS);
+  });
+
+  it("summarises settled work in a separate tool-free coordination session at the original short limit", async () => {
+    const s = session();
+    const client = { createSession: vi.fn().mockResolvedValue(s), deleteSession: vi.fn().mockResolvedValue(undefined) };
+    expect(await call(client, "coordination")("Summarise only.", "Private task results.", new AbortController().signal)).toBe("Done.");
+    const config = client.createSession.mock.calls[0][0];
+    expect(config).toMatchObject({ tools: [], availableTools: [], workingDirectory: os.tmpdir(), infiniteSessions: { enabled: false } });
+    expect(config.sessionId).toMatch(/^ember-coordination-[0-9a-f-]{36}$/);
+    expect(config.systemMessage).toEqual({ mode: "replace", content: "Summarise only." });
+    expect(await config.onPermissionRequest({ kind: "shell" }, {})).toEqual({ kind: "reject", feedback: "This session has no tools." });
+    expect(await config.hooks.onPreToolUse({ toolName: "start_task" }, {})).toMatchObject({ permissionDecision: "deny" });
+    expect(s.rpc.tools.getCurrentMetadata).toHaveBeenCalledOnce();
+    expect(s.sendAndWait).toHaveBeenCalledWith({ prompt: "Private task results." }, ONE_SHOT_MS);
+    expect(client.deleteSession).toHaveBeenCalledWith(config.sessionId);
+  });
+
+  it("refuses coordination when the runtime exposes a tool, without sending task results", async () => {
+    const s = session(); s.rpc.tools.getCurrentMetadata.mockResolvedValue({ tools: [{ name: "shell" }] } as never);
+    const client = { createSession: vi.fn().mockResolvedValue(s), deleteSession: vi.fn().mockResolvedValue(undefined) };
+    expect(await call(client, "coordination")("Summarise only.", "Private task results.", new AbortController().signal)).toBeNull();
+    expect(s.sendAndWait).not.toHaveBeenCalled();
+    expect(client.deleteSession).toHaveBeenCalledOnce();
+  });
+
+  it("ends and deletes an aborted coordination call without accepting its later answer", async () => {
+    const s = session(), stop = new AbortController(); let answer!: (value: { data: { content: string } }) => void;
+    s.sendAndWait.mockImplementation(() => new Promise(resolve => { answer = resolve; }));
+    const client = { createSession: vi.fn().mockResolvedValue(s), deleteSession: vi.fn().mockResolvedValue(undefined) };
+    const result = call(client, "coordination")("Summarise only.", "Private task results.", stop.signal);
+    await vi.waitFor(() => expect(s.sendAndWait).toHaveBeenCalledOnce()); stop.abort();
+    expect(await result).toBeNull(); expect(s.abort).toHaveBeenCalledOnce(); expect(client.deleteSession).toHaveBeenCalledOnce();
+    answer({ data: { content: "Stale answer." } }); await Promise.resolve();
+    expect(client.deleteSession).toHaveBeenCalledOnce();
+  });
+
+  it("times out coordination at thirty seconds without borrowing the project's two-minute limit", async () => {
+    vi.useFakeTimers();
+    const s = session(); s.sendAndWait.mockImplementation(() => new Promise(() => undefined));
+    const client = { createSession: vi.fn().mockResolvedValue(s), deleteSession: vi.fn().mockResolvedValue(undefined) };
+    const result = call(client, "coordination")("Summarise only.", "Private task results.", new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(0); expect(s.sendAndWait).toHaveBeenCalledWith({ prompt: "Private task results." }, ONE_SHOT_MS);
+    await vi.advanceTimersByTimeAsync(ONE_SHOT_MS - 1); expect(client.deleteSession).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1); expect(await result).toBeNull(); expect(client.deleteSession).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { errorType: "authentication", statusCode: 401, kind: "authentication", code: 401 },
+    { errorType: "PRIVATE task result", statusCode: 999_999, kind: undefined, code: undefined },
+    { errorType: "PRIVATE task result", statusCode: 200.5, kind: undefined, code: undefined },
+  ])("keeps coordination failure logs to closed kinds and bounded HTTP status ($statusCode)", async ({ errorType, statusCode, kind, code }) => {
+    const s = session(), warn = vi.fn(), listeners: ((event: unknown) => void)[] = [];
+    const on = (listener: (event: unknown) => void) => { listeners.push(listener); return () => undefined; };
+    s.sendAndWait.mockImplementation(async () => {
+      for (const listener of listeners) listener({ type: "session.error", data: { errorType, statusCode } });
+      throw new Error("PRIVATE token and task result");
+    });
+    const client = { createSession: vi.fn().mockResolvedValue({ ...s, on }), deleteSession: vi.fn().mockResolvedValue(undefined) };
+    const summarise = copilotOneShot({ client: client as never, model: "m", workDir: os.tmpdir(), log: { warn } as unknown as Logger, purpose: "coordination" });
+    expect(await summarise("Summarise only.", "PRIVATE task result", new AbortController().signal)).toBeNull();
+    expect(warn).toHaveBeenCalledExactlyOnceWith("coordination.model_failed", { errorType: kind, statusCode: code, timedOut: false });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("PRIVATE"); expect(client.deleteSession).toHaveBeenCalledOnce();
   });
 });
 
