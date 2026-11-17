@@ -17,7 +17,11 @@ export const WINDOWS_SDK_ARGV = ["--preserve-symlinks", "--preserve-symlinks-mai
 export const WINDOWS_SDK_ORIGINAL = "const {test}=require('node:test');const assert=require('node:assert/strict');test('sum',()=>assert.equal(1 + 1, 3));\n";
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 
-export async function setupWindowsNodeSdkWorker(model: { baseUrl: string }) {
+export async function setupWindowsNodeSdkWorker(model: { baseUrl: string }, scenario: {
+  readonly argv?: readonly string[]; readonly goal?: string; readonly request?: string; readonly decision?: "once" | "deny";
+} = {}) {
+  const argv = [...(scenario.argv ?? WINDOWS_SDK_ARGV)], goal = scenario.goal ?? "Repair test.cjs in the private copy and verify its exact Node check";
+  const request = scenario.request ?? `Run node ${argv.join(" ")}, repair its copied assertion and rerun that exact check.`, decision = scenario.decision ?? "once";
   const dll = await setupWindowsNodeWorkspace();
   dll.canonical.put("C:\\project\\test.cjs", WINDOWS_SDK_ORIGINAL);
   // Already-loaded Windows modules retain their fixed inventory/DLL bindings. New controller/SDK imports
@@ -40,10 +44,10 @@ export async function setupWindowsNodeSdkWorker(model: { baseUrl: string }) {
   const confirmer = new Confirmer(() => undefined, { panelReady: () => true, gapMs: 0, onChange(pending) {
     if (!pending) return; questions.push(pending.question);
     const panel = pending.question.panel;
-    if (panel?.kind !== "command" || panel.card.kind !== "node" || JSON.stringify(panel.card.argv) !== JSON.stringify(WINDOWS_SDK_ARGV)) {
+    if (panel?.kind !== "command" || panel.card.kind !== "node" || JSON.stringify(panel.card.argv) !== JSON.stringify(argv)) {
       errors.push("Unexpected approval request"); confirmer.answer(`q${pending.n}:deny`); return;
     }
-    setTimeout(() => { if (!confirmer.answer(`q${pending.n}:once`, "panel", { sha256: panel.card.sha256 })) errors.push("The exact Node approval was refused"); }, (pending.question.armMs ?? 500) + 25);
+    setTimeout(() => { if (!confirmer.answer(`q${pending.n}:${decision}`, "panel", { sha256: panel.card.sha256 })) errors.push("The exact Node approval was refused"); }, (pending.question.armMs ?? 500) + 25);
   } });
   const service: CommandService = {
     binding: { id: "local", kind: "local", label: "This computer", screenOs: "win32", shellOs: "win32", desktop: "screen" },
@@ -56,7 +60,7 @@ export async function setupWindowsNodeSdkWorker(model: { baseUrl: string }) {
   let workspace: import("../../app/main/agent/windows-node-workspace").WindowsNodeWorkspace | undefined;
   const published: { output: CodingWorkspaceReview; status: string; checks: ScopedCodingChecks }[] = [];
   const contexts = vi.fn<ScopedCodingWorkerOptions["commandContext"]>((isolated, signal) => ({
-    task: { id: "windows-sdk-worker", title: "Repair the copied Node check", commandWords: () => `Run node ${WINDOWS_SDK_ARGV.join(" ")}, repair its copied assertion and rerun that exact check.`,
+    task: { id: "windows-sdk-worker", title: "Repair the copied Node check", commandWords: () => request,
       agreed: () => [], tainted: () => false, taint() {}, readFrom: () => [] },
     service: isolated, confirmer, presenter: { announce() {}, endAnnouncement() {}, progress() {} } as unknown as CommandFlowContext["presenter"],
     audit: entry => audit.push(entry), log: quiet, signal, isOver: () => signal.aborted,
@@ -74,7 +78,7 @@ export async function setupWindowsNodeSdkWorker(model: { baseUrl: string }) {
       return { id: "33333333-3333-4333-8333-333333333333" } as CodingResultSummary;
     },
   };
-  const worker = new ScopedCodingWorker({ id: "windows-sdk-worker", goal: "Repair test.cjs in the private copy and verify its exact Node check", target: {} } as TaskSpec, options);
+  const worker = new ScopedCodingWorker({ id: "windows-sdk-worker", goal, target: {} } as TaskSpec, options);
   dll.control.onResume = () => {
     const row = dll.io.source.objects.get(win32.join(dll.commandRoot().name, "test.cjs"));
     if (!row) throw Error("The fixed copied check is missing."); dll.io.state.code = row.bytes.toString() === WINDOWS_SDK_ORIGINAL ? 17 : 0;

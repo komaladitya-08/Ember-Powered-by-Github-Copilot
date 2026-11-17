@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { setupWindowsNodeSdkWorker, WINDOWS_SDK_ARGV, WINDOWS_SDK_ORIGINAL } from "../fixtures/windows-node-sdk-worker-fake";
+import { createWindowsNodeProductModel, windowsNodeSourceScenarios, WINDOWS_NODE_TEST_ARGV } from "../fixtures/windows-node-product-model";
 // @ts-expect-error -- deterministic local JavaScript provider, no real account or provider credential
 import { startMockLlm } from "../mock-llm/server.mjs";
 
@@ -39,6 +40,33 @@ it.skipIf(!supported)("uses Node-only SDK tools for failure, file repair and the
     expect(f.profileState.deleted).toHaveLength(1); expect(f.profileState.freed).toHaveLength(1);
     expect(fs.readdirSync(path.join(f.userData, "coding-controllers"))).toEqual([]);
   } finally { try { await f.close(); } finally { await model.close(); } }
+}, 60_000);
+
+it.skipIf(!supported)("publishes a failed unchanged review after the shared denied scenario without executing or retrying its Node command", async () => {
+  const scenario = windowsNodeSourceScenarios("denied")[0], model = await createWindowsNodeProductModel([scenario]);
+  const f = await setupWindowsNodeSdkWorker(model, { argv: WINDOWS_NODE_TEST_ARGV, goal: scenario.goal, request: scenario.request, decision: "deny" });
+  const clarify = vi.fn(async () => null); f.options.clarify = clarify;
+  try {
+    const result = await f.worker.run(new AbortController().signal);
+    expect(result.success).toBe(false); expect(result).not.toHaveProperty("stopped");
+    expect(await f.worker.disposed).toBe(true); expect(f.worker.handoffSafe()).toBe(false);
+    expect(f.questions).toHaveLength(1);
+    expect(f.questions[0]).toMatchObject({ panel: { kind: "command", card: { kind: "node", cwd: "\\work", argv: [...WINDOWS_NODE_TEST_ARGV] } } });
+    expect(model.steps.get("denied")).toBe(1); expect(model.failures).toEqual([]); expect(clarify).not.toHaveBeenCalled();
+    expect(f.nativeStart).not.toHaveBeenCalled(); expect(f.io.state.creates).toBe(0); expect(f.cards).toEqual([]); expect(f.exits).toEqual([]);
+    expect(f.contexts).toHaveBeenCalledTimes(1); expect(f.errors).toEqual([]);
+    expect(f.published).toHaveLength(1);
+    expect(f.published[0]).toMatchObject({ status: "failed", checks: { ran: 0, passed: 0, failed: 0 } });
+    const review = f.published[0].output.review;
+    expect(review.changes).toEqual([]); expect(review.current).toEqual(review.baseline); expect(review.proposed).toEqual(review.baseline);
+    expect(review.textPatch ?? "").toBe("");
+    expect(f.canonical.nodes.get(f.canonical.location("C:\\project\\test.cjs").toLowerCase())!.bytes.toString()).toBe(WINDOWS_SDK_ORIGINAL);
+    expect(f.profileState.created).toHaveLength(1); expect(f.profileState.deleted).toHaveLength(1); expect(f.profileState.freed).toHaveLength(1);
+    expect(fs.readdirSync(path.join(f.userData, "coding-controllers"))).toEqual([]);
+  } finally {
+    try { expect(await f.close()).toBe(true); expect(f.canonical.handles.size).toBe(0); expect(fs.existsSync(f.root)).toBe(false); }
+    finally { await model.close(); }
+  }
 }, 60_000);
 
 it.skipIf(!supported)("Stop closes the modeled live root and real SDK before publishing only a stopped private review", async () => {
