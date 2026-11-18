@@ -76,6 +76,25 @@ it("preserves the entire native WSL test after reversing only the new observatio
 });
 it("preserves the entire packaged test after reversing only the new project/folder stage field and markers", () => {
   let source = fs.readFileSync("test/integration/windows-node-packaged-product.test.ts", "utf8");
+  // Reverse only the foreground-before-focus ordering change before reviewing historical observation bytes.
+  const focusStart = source.indexOf("    // Activation may return before Windows raises the HWND.");
+  const focusEnd = source.indexOf("    const nodes = await this.nodes(hwnd);", focusStart);
+  expect(focusStart > 0 && focusEnd > focusStart).toBe(true);
+  expect(digest(source.slice(focusStart, focusEnd))).toBe("1a195a81c686270105cb2c589838dc336dc7ba416cabf4d3f420052cb77a1a6b");
+  source = source.slice(0, focusStart) + [
+    "    await this.bridge!.call(\"perform\", { handle: node.h, op: \"focus\", deadlineMs: 2500 }, 5000);",
+    "    this.observe({ operation: 11, focusFlags: 0 });",
+    "    await this.until(() => this.bridge!.call<{ element: RawNode | null; hwnd: number | null }>(\"focused\", { values: false, deadlineMs: 2500 }, 5000),",
+    "      result => { try { this.observation.focused(result, node, hwnd); } catch { /* Preserve the original predicate. */ }",
+    "        return result.hwnd === hwnd && !!result.element && sameNode(result.element, node) && result.element.hasKeyboardFocus === true; }, 10_000);",
+    "",
+  ].join("\n") + source.slice(focusEnd);
+  const activation = "    this.current();\n    this.observeInput(this.input.activate(hwnd));";
+  expect(source.split(activation)).toHaveLength(2);
+  source = source.replace(activation, "    this.observeInput(this.input.activate(hwnd));");
+  const freshFocus = "    const nodes = await this.nodes(hwnd);\n    this.current();\n    const fresh = !guard || guard(nodes)";
+  expect(source.split(freshFocus)).toHaveLength(2);
+  source = source.replace(freshFocus, "    const nodes = await this.nodes(hwnd);\n    const fresh = !guard || guard(nodes)");
   // Reverse the separately covered native card selector correction before checking the historic observer change.
   source = source.replace("type SnapshotGuard = (nodes: readonly RawNode[]) => boolean;\n", "");
   source = source.replace("  private async node(hwnd: number, select: Selector, enabled = true, guard?: SnapshotGuard): Promise<RawNode> {\n    const found = await this.until(async () => {\n      const nodes = await this.nodes(hwnd);\n      return !guard || guard(nodes) ? nodes.find(node => select(node) && (!enabled || node.isEnabled === true)) : undefined;\n    }, value => !!value);\n    return found!;\n  }\n", "  private async node(hwnd: number, select: Selector, enabled = true): Promise<RawNode> {\n    const found = await this.until(async () => (await this.nodes(hwnd)).find(node => select(node) && (!enabled || node.isEnabled === true)), value => !!value);\n    return found!;\n  }\n");
@@ -275,11 +294,12 @@ it("refuses an already focused Allow if the fresh snapshot loses the selected ca
     bounds: { x: 1, y: 1, width: 10, height: 10 } };
   const replacement = { automationId: "ask-cmd", runtimeId: "replacement" };
   const receiver = {
-    phase: 6, input: { activate: vi.fn(), activeWindow: () => 1 },
+    phase: 6, current() {}, input: { activate: vi.fn(), activeWindow: () => 1 },
     bridge: { call: vi.fn(async (method: string) => method === "focused" ? { hwnd: 1, element: { ...allow, hasKeyboardFocus: true } } : { ok: true }) },
     observe: vi.fn(), observation: { node: vi.fn(), focused: vi.fn(), fresh: vi.fn() }, observeInput: (value: unknown) => value,
     async until<T>(read: () => Promise<T>, accepts: (value: T) => boolean, deadline: number) {
-      expect(deadline).toBe(10_000);
+      expect(deadline).toBeGreaterThan(0);
+      expect(deadline).toBeLessThanOrEqual(10_000);
       const value = await read();
       expect(accepts(value)).toBe(true);
       return value;
@@ -291,3 +311,110 @@ it("refuses an already focused Allow if the fresh snapshot loses the selected ca
   expect(guard).toHaveBeenCalledExactlyOnceWith([replacement, allow]);
   expect(receiver.observation.fresh).toHaveBeenCalledExactlyOnceWith(undefined);
 });
+
+type FocusProbe = (hwnd: number, target: CardNode) => Promise<unknown>;
+
+function focusProbe(journey: "node" | "wsl", ports: Record<string, unknown>, clock: { now: number }): FocusProbe {
+  const module = { exports: {} as { WslPackagedUi: new (ports: object) => { focus: FocusProbe }; Journey: new () => { focus: FocusProbe } } };
+  const refusal = () => new Error("Bounded focus refusal.");
+  let code: string;
+  if (journey === "wsl") {
+    code = fs.readFileSync("test/fixtures/wsl-coding-packaged-uia.ts", "utf8").replace(/^import type .*\n/gm, "").replace(/^const pause = .*;$/m, "");
+  } else {
+    const source = fs.readFileSync("test/integration/windows-node-packaged-product.test.ts", "utf8");
+    const extract = (begin: string, end: string) => {
+      const first = source.indexOf(begin), last = source.indexOf(end, first + begin.length);
+      expect(first >= 0 && last > first).toBe(true);
+      return source.slice(first, last);
+    };
+    code = extract("function sameNode(", "function subtree(") + "\nexport class Journey {\n"
+      + extract("  private current()", "  private async windows(")
+      + extract("  private async focus(", "  private pressKey(") + "\n}";
+  }
+  runInNewContext(transformSync(code, { loader: "ts", format: "cjs", target: "node22" }).code, {
+    module, refusal, Date: { now: () => clock.now }, pause: async (ms: number) => { clock.now += ms; },
+  });
+  if (journey === "wsl") {
+    const driver = new module.exports.WslPackagedUi({ ...ports, refuse: refusal });
+    return driver.focus.bind(driver);
+  }
+  const { current: _current, ...driverPorts } = ports;
+  const driver = Object.assign(new module.exports.Journey(), {
+    ...driverPorts, phase: 4, observation: { node() {}, focused() {}, fresh() {} }, observe() {}, observeInput: (value: unknown) => value,
+  });
+  return driver.focus.bind(driver);
+}
+
+const orderingCases = [
+  { name: "immediate", foregroundAt: 0, unavailable: 0, targetFocus: true, performMs: 0, readMs: 0, performed: 0, reads: 1, passes: true },
+  { name: "delayed", foregroundAt: 450, unavailable: 2, targetFocus: true, performMs: 0, readMs: 0, performed: 450, reads: 1, passes: true },
+  { name: "never", foregroundAt: Infinity, unavailable: 0, targetFocus: true, performMs: 0, readMs: 0, performed: null, reads: 0, passes: false },
+  { name: "wrong foreground", foregroundAt: Infinity, unavailable: 2, targetFocus: true, performMs: 0, readMs: 0, performed: null, reads: 0, passes: false },
+  { name: "misdirected focus", foregroundAt: 450, unavailable: 2, targetFocus: false, performMs: 0, readMs: 0, performed: 450, reads: 64, passes: false },
+  { name: "late foreground", foregroundAt: 10_000, unavailable: 2, targetFocus: true, performMs: 0, readMs: 0, performed: null, reads: 0, passes: false },
+  { name: "perform drains budget", foregroundAt: 9_900, unavailable: 2, targetFocus: true, performMs: 100, readMs: 0, performed: 9_900, reads: 0, passes: false },
+  { name: "late correct focus", foregroundAt: 9_900, unavailable: 2, targetFocus: true, performMs: 0, readMs: 100, performed: 9_900, reads: 1, passes: false },
+];
+it.each((["node", "wsl"] as const).flatMap(journey => orderingCases.map(condition => ({ journey, ...condition }))))(
+  "keeps the $journey fixture's single bounded focus attempt with $name", async condition => {
+    const clock = { now: 0 }, attempts: number[] = [];
+    const target = { h: 17, pid: 7, runtimeId: "target", controlType: "Button", hasKeyboardFocus: true, isEnabled: true, isOffscreen: false,
+      bounds: { width: 30, height: 40 } };
+    const input = {
+      activate: vi.fn(), activeWindow: () => clock.now >= condition.foregroundAt ? 1 : condition.unavailable,
+    };
+    let reads = 0;
+    const bridge = {
+      async call(method: string, args: { handle?: number; op?: string; deadlineMs: number }, timeout: number) {
+        expect(args.deadlineMs).toBe(2500);
+        expect(timeout).toBe(5000);
+        if (method === "perform") {
+          expect(args).toMatchObject({ handle: target.h, op: "focus" });
+          expect(input.activeWindow()).toBe(1);
+          attempts.push(clock.now);
+          clock.now += condition.performMs;
+          return { ok: true };
+        }
+        expect(method).toBe("focused");
+        reads++;
+        clock.now += condition.readMs;
+        return { hwnd: 1, element: condition.targetFocus ? target : { ...target, runtimeId: "prior" } };
+      },
+      async request() { return { result: { nodes: [target], cut: [] } }; },
+    };
+    const snapshots = vi.fn(async () => [target]);
+    const run = focusProbe(condition.journey, { input, bridge, async nodes() { return snapshots(); }, deadline: 30_000, current() {} }, clock);
+    if (condition.passes) await expect(run(1, target)).resolves.toBe(target);
+    else {
+      await expect(run(1, target)).rejects.toThrow("Bounded focus refusal.");
+      expect(snapshots).not.toHaveBeenCalled();
+    }
+    expect(input.activate).toHaveBeenCalledExactlyOnceWith(1);
+    expect(attempts).toEqual(condition.performed === null ? [] : [condition.performed]);
+    expect(reads).toBe(condition.reads);
+    expect(clock.now).toBeLessThanOrEqual(10_050);
+  },
+);
+
+it.each(["still current", "already stopped", "deadline during snapshot", "stop during snapshot", "forced during snapshot"] as const)(
+  "keeps the Node fixture's current ownership with %s", async scenario => {
+    const clock = { now: 0 }, target = {
+      h: 17, pid: 7, runtimeId: "target", controlType: "Button", hasKeyboardFocus: true, isEnabled: true, isOffscreen: false, bounds: { width: 30, height: 40 },
+    };
+    const activate = vi.fn(), call = vi.fn(async (method: string) => method === "focused" ? { hwnd: 1, element: target } : { ok: true });
+    const nodes = vi.fn(async function (this: { stopped: boolean; forced: boolean }) {
+      if (scenario === "stop during snapshot") this.stopped = true;
+      if (scenario === "forced during snapshot") this.forced = true;
+      if (scenario === "deadline during snapshot") clock.now = 500;
+      return [target];
+    });
+    const run = focusProbe("node", {
+      stopped: scenario === "already stopped", forced: false, deadline: 500, input: { activate, activeWindow: () => 1 }, bridge: { call }, nodes,
+    }, clock);
+    if (scenario === "still current") await expect(run(1, target)).resolves.toBe(target);
+    else await expect(run(1, target)).rejects.toThrow("Bounded focus refusal.");
+    expect(activate).toHaveBeenCalledTimes(scenario === "already stopped" ? 0 : 1);
+    expect(call.mock.calls.map(([method]) => method)).toEqual(scenario === "already stopped" ? [] : ["perform", "focused"]);
+    expect(nodes).toHaveBeenCalledTimes(scenario === "already stopped" ? 0 : 1);
+  },
+);

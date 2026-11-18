@@ -40,7 +40,11 @@ function expectedPublicSummary(changed: boolean) {
   return { registry: "https://registry.npmjs.org", packageJsonSha256: digest(files["package.json"]), lockSha256: digest(files["package-lock.json"]),
     setSha256: digest(JSON.stringify(packages)), packages: packages.map(value => ({ name: value.name, version: value.version })), packageCount: packages.length, compressedByteLimit: 64 * 1024 * 1024 };
 }
+const sourceTerminalStage = Object.freeze({ session: 1, idle: 2, results: 3 } as const);
+type SourceTerminalObservation = { episode: number; stage: number; session: number; turn: number };
+
 class Journey {
+  terminalObservation?: SourceTerminalObservation;
   phase = 1;
   app?: ElectronApplication;
   process?: ChildProcess;
@@ -186,12 +190,22 @@ class Journey {
   }
   async terminal(index: number, status?: "done" | "failed" | "stopped"): Promise<void> {
     this.phase = 6;
+    const observation = this.kind === "repair" && (index === 0 || index === 1)
+      ? { episode: index + 1, stage: sourceTerminalStage.session, session: 0, turn: 0 } as SourceTerminalObservation : undefined;
+    this.terminalObservation = observation;
     await expect.poll(async () => {
       const item = (await this.sessions())[index];
+      if (observation) observation.session = ["queued", "running", "waiting", "done", "failed", "stopped"].indexOf(item?.status ?? "") + 1;
       return status ? item?.status === status : !!item && ["done", "failed", "stopped"].includes(item.status);
     }, { timeout: 45_000 }).toBe(true);
     if (this.kind === "denied") this.phase = 17;
-    await expect.poll(() => this.home!.evaluate(() => window.ember.conversationTurn()), { timeout: 20_000 }).toBe("idle");
+    if (observation) observation.stage = sourceTerminalStage.idle;
+    await expect.poll(async () => {
+      const turn = await this.home!.evaluate(() => window.ember.conversationTurn());
+      if (observation) observation.turn = ["idle", "thinking", "slow", "held"].indexOf(turn) + 1;
+      return turn;
+    }, { timeout: 20_000 }).toBe("idle");
+    if (observation) observation.stage = sourceTerminalStage.results;
   }
   async results(): Promise<CodingResultSummary[]> { return this.home!.evaluate(id => window.ember.codingResultsState(id), this.projectId); }
   assertUnchanged(): void {
@@ -229,6 +243,7 @@ class Journey {
 async function journey(kind: WslSourceCase, run: (fixture: Journey) => Promise<void>): Promise<void> {
   if (quarantined) throw refusal(kind, 1);
   let fixture: Journey | undefined, model: Model | undefined, root: string | undefined, failed = false, phase = 1;
+  let refusedTerminal: Readonly<SourceTerminalObservation> | undefined;
   let owned: Promise<void> | undefined, timer: ReturnType<typeof setTimeout> | undefined;
   const owner: { root?: string; model?: Model; fixture?: Journey; owned?: Promise<void> } = {};
   retainedOwners.add(owner);
@@ -243,7 +258,10 @@ async function journey(kind: WslSourceCase, run: (fixture: Journey) => Promise<v
     await Promise.race([owned, new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => reject(refusal(kind, current.phase)), kind === "public-repair" ? 240_000 : kind === "repair" ? 150_000 : kind === "denied" || kind === "public-denied" ? 90_000 : 120_000);
     })]);
-  } catch { quarantined = true; failed = true; phase = fixture?.phase ?? phase; }
+  } catch {
+    quarantined = true; failed = true; phase = fixture?.phase ?? phase;
+    if (phase === 6 && fixture?.terminalObservation) refusedTerminal = Object.freeze({ ...fixture.terminalObservation });
+  }
   finally {
     quarantined = true;
     clearTimeout(timer);
@@ -261,7 +279,10 @@ async function journey(kind: WslSourceCase, run: (fixture: Journey) => Promise<v
     } else if (root) { failed = true; }
     if (!clean && fixture?.app) { failed = true; phase = 10; }
   }
-  if (failed) { quarantined = true; throw refusal(kind, phase); }
+  if (failed) {
+    if (refusedTerminal) console.info("Windows WSL source terminal observation", JSON.stringify(refusedTerminal));
+    quarantined = true; throw refusal(kind, phase);
+  }
   retainedOwners.delete(owner); quarantined = false;
   console.info("Windows WSL source journey passed", JSON.stringify({ schema: 1, case: WSL_PRODUCT_CASES.source.indexOf(kind) + 1, phase: 10 }));
 }

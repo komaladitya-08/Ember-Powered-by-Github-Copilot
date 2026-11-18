@@ -11,13 +11,15 @@ import type { Logger } from "../../app/main/logger";
 function hostWith(disposed: Promise<boolean>) {
   const host = Object.create(AgentHost.prototype) as AgentHost;
   const state = host as unknown as { codingTasks: Set<string>; codingRetirement: CodingRetirement;
-    vaultFillHolds: number; mixedHandoffs: { clear(): void }; tasks: { cancel(id: string): void } };
+    vaultFillHolds: number; mixedHandoffs: { clear(): void }; mixedCompletionPlans: Map<string, { close(): void; revoke(): void }>;
+    tasks: { cancel(id: string): void } };
   const cancel = vi.fn(), clear = vi.fn();
   state.codingTasks = new Set(["coding-1"]);
   state.codingRetirement = new CodingRetirement();
   state.codingRetirement.track(disposed);
   state.vaultFillHolds = 0;
   state.mixedHandoffs = { clear };
+  state.mixedCompletionPlans = new Map();
   state.tasks = { cancel };
   return { host, state, cancel, clear };
 }

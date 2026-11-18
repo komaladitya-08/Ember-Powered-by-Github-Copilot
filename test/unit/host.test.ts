@@ -1760,6 +1760,7 @@ describe("Conductor: Stop", () => {
   it("Stop with nothing running doesn't refuse the next task", async () => {
     const { c, started, startTask } = await conductor();
     await c.abort();
+    await c.ask("turn on night light");
     expect(await startTask("turn on night light")).toBe("started");
     expect(started).toEqual(["turn on night light"]);
   });
@@ -1770,7 +1771,7 @@ describe("Conductor: Stop", () => {
     await c.abort();
     expect(await startTask("tidy up")).toMatch(/just stopped everything/);
     session.emit("session.idle", { aborted: true });
-    expect(await startTask("tidy up")).toBe("started");
+    expect(await startTask("tidy up")).toMatch(/No user request/);
     await c.ask("tidy up again");
     await c.abort();
     await c.ask("no, do it");

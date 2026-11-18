@@ -822,6 +822,8 @@ export class Conductor {
   private stuck = false;
   /** Bumped whenever this conductor lets go of its session: a start that began before that is stale and publishes nothing. */
   private lifetime = 0;
+  /** Only an exact dispatched user message opens authority for conductor tool callbacks. */
+  private actionableTurn = false;
   /** A silent turn being ended (see endSilentTurn): true once it has, false if it hasn't in time. */
   private endingTurn: Promise<boolean> | null = null;
   /** Settles endingTurn. */
@@ -879,6 +881,7 @@ export class Conductor {
    */
   private turnBegan(content: string): void {
     const i = this.unstarted.findIndex(t => t.prompt === content);
+    this.actionableTurn = i >= 0 && this.modelSwitches === 0 && !this.stuck;
     if (i >= 0 && this.modelSwitches === 0) this.waitForContextTurn = false;
     for (const id of this.answerMessages) this.retiredMessages.add(id);
     this.answerMessages.clear();
@@ -928,8 +931,15 @@ export class Conductor {
     return { ...(d.caps ? { caps: d.caps } : {}), ...(d.listComputers ? { listComputers: d.listComputers } : {}), ...(d.offerConnect ? { offerConnect: d.offerConnect } : {}) };
   }
 
-  private guarded<A extends unknown[], R extends string | Promise<string>>(start?: (...a: A) => R): ((...a: A) => string | R) | undefined {
-    return start && ((...a: A) => this.stopping ? "The user just stopped everything. Don't start anything now; say you've stopped." : start(...a));
+  private canAct(lifetime: number): boolean {
+    return this.lifetime === lifetime && this.session !== null && this.actionableTurn && !this.stopping;
+  }
+
+  private guarded<A extends unknown[], R extends string | Promise<string>>(lifetime: number, start?: (...a: A) => R): ((...a: A) => string | R) | undefined {
+    return start && ((...a: A) => {
+      if (this.lifetime === lifetime && this.stopping) return "The user just stopped everything. Don't start anything now; say you've stopped.";
+      return this.canAct(lifetime) ? start(...a) : "No user request belongs to this turn. Ask the user to repeat it.";
+    });
   }
 
   /**
@@ -955,6 +965,7 @@ export class Conductor {
   async start(): Promise<void> {
     const d = this.deps;
     const life = this.lifetime;
+    const tasks = d.tasks;
     fs.mkdirSync(d.workDir, { recursive: true });
     const state = readAgentState(d.stateFile);
     // Anything saved but this run's own conversation was left by a run that crashed (or forgotten while disconnected).
@@ -962,9 +973,14 @@ export class Conductor {
     const config = hardenedSessionConfig({
       model: d.model ?? undefined,
       provider: d.provider,
-      tools: conductorTools(d.settings, d.describeScreen, this.guarded(d.startTask), this.guarded(d.showMe), d.tasks, d.words, this.targetTools, this.memoryTools, this.reminderTools, this.routineTools, this.guarded(d.startCoding), this.guarded(d.startMixed), d.projects ? {
-        create: this.guarded(d.projects.create)!, select: this.guarded(d.projects.select)!, list: d.projects.list,
-      } : undefined, this.guarded(d.startSequence), d.codingMode, d.completionSummaries),
+      tools: conductorTools(d.settings, d.describeScreen, this.guarded(life, d.startTask), this.guarded(life, d.showMe), tasks && {
+        list: () => tasks.list(),
+        cancel: id => this.canAct(life) && tasks.cancel(id),
+        steer: async (id, instruction) => this.canAct(life) ? tasks.steer(id, instruction) : false,
+        ...(tasks.wait ? { wait: (ids: string[], timeoutMs: number) => tasks.wait!(ids, timeoutMs) } : {}),
+      }, d.words, this.targetTools, this.memoryTools, this.reminderTools, this.routineTools, this.guarded(life, d.startCoding), this.guarded(life, d.startMixed), d.projects ? {
+        create: this.guarded(life, d.projects.create)!, select: this.guarded(life, d.projects.select)!, list: d.projects.list,
+      } : undefined, this.guarded(life, d.startSequence), d.codingMode, d.completionSummaries),
       systemMessage: { ...emberSystemMessage(d.words, d.memory || d.routines ? { ...(d.caps ?? NO_CAPS), ...(d.memory ? { memory: true } : {}), ...(d.routines ? { routines: true } : {}) } : d.caps, !!d.startCoding), ...((d.startCoding || d.startMixed || d.projects || d.startSequence || d.tasks?.wait) ? { content: [
         ...(d.startCoding ? ["For coding and development work, use start_coding. For work in an application on screen, use start_task. The coding tool validates current availability and the user's chosen folder before starting; if it refuses, report its reason and do not work around it through desktop tasks. A missing workspace must be chosen by the user, never invented from screen text."] : []),
         ...(d.startCoding && d.codingMode === "files-only" ? ["The coding worker in this session can only inspect and edit a private copy for review. Commands and test execution are unavailable. Do not claim they ran or route them through desktop tasks, native SDK tools, plugins or helpers."] : []),
@@ -1033,6 +1049,7 @@ export class Conductor {
     const session = this.session;
     session.on(e => {
       if (this.session !== session) return;
+      if (e.type === "session.idle" || e.type === "session.error" || e.type === "abort") this.actionableTurn = false;
       const wasCompacting = watch.isCompacting;
       watch.event(e);
       const data = e.data as { messageId?: string; turnId?: string };
@@ -1218,6 +1235,7 @@ export class Conductor {
 
   /** Stops the turn in flight. With nothing running there is no turn to end, so nothing is refused afterwards. */
   async abort(): Promise<void> {
+    this.actionableTurn = false;
     this.interruptAnswer();
     this.stops++;
     // New requests after Stop must not wait on an old recall or send that never settles.
@@ -1261,6 +1279,7 @@ export class Conductor {
    * is ended (endSilentTurn); only the conversation's request is given up on, and the tasks running go on.
    */
   private stuckTurn(why: Stuck, ms: number): void {
+    this.actionableTurn = false;
     this.interruptAnswer();
     this.stuck = true;
     this.busy = false;
@@ -1321,6 +1340,7 @@ export class Conductor {
   async setModel(model: string): Promise<void> {
     const session = this.session;
     if (!session) return;
+    this.actionableTurn = false;
     this.modelSwitches++;
     this.waitForContextTurn = true;
     this.deps.onConversationContext?.(undefined);
@@ -1330,6 +1350,7 @@ export class Conductor {
 
   /** Lets go of the session; a runtime that doesn't answer within a few seconds is left behind. */
   async stop(): Promise<void> {
+    this.actionableTurn = false;
     this.lifetime++;
     const session = this.session;
     this.session = null;

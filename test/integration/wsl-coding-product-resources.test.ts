@@ -21,6 +21,8 @@ const required = process.env.EMBER_WSL_CODING_RESOURCES_TEST === "1";
 const OWNER = "b".repeat(64), PROJECT = "22222222-2222-4222-8222-222222222222";
 let quarantined = false;
 const retained = new Set<object>();
+const workspaceStage = Object.freeze({ nativeSeed: 1, connect: 2, archive: 3, create: 4, readiness: 5 } as const);
+type WorkspaceStage = typeof workspaceStage[keyof typeof workspaceStage];
 const failures = new WeakMap<Error, number>();
 function failure(phase: number): Error { const error = wslProductRefusal(phase); failures.set(error, phase); return error; }
 
@@ -42,6 +44,7 @@ async function runCase(mode: typeof WSL_PRODUCT_CASES.resources[number]): Promis
   const service = createWsl({ env: process.env, jobHost, os: "win32", log: createLogger({ dir: path.join(root, "logs") }), ember: { winPaths: [] } });
   let completed = false, expired = false, failed: Error | undefined, timer: ReturnType<typeof setTimeout> | undefined, body: Promise<void> | undefined;
   const known = async <T>(work: Promise<T>): Promise<T> => { graph.pending.add(work); const value = await work; graph.pending.delete(work); if (expired) throw failure(phase); return value; };
+  let assembling: WorkspaceStage | undefined, refusedStage: WorkspaceStage | undefined;
   const unchanged = () => {
     for (const [name, text] of Object.entries(originals)) expect(fs.readFileSync(path.join(source, name), "utf8")).toBe(userChangedSource && name === "src/result.ts" ? userSource : text);
     for (const name of ["parent-counter", "child-counter", "hook-ran"]) expect(fs.existsSync(path.join(source, name))).toBe(false);
@@ -67,11 +70,19 @@ async function runCase(mode: typeof WSL_PRODUCT_CASES.resources[number]): Promis
       phase = 4; const folder = await known(resource.validateSource({ path: source, current })); resource.folders.bind(PROJECT, folder, resource.folders.ownerCurrent(PROJECT));
       const grant = resource.workspace(PROJECT); expect(grant).not.toBeNull();
       const spec: TaskSpec = { id: randomUUID(), goal: "Run the copied WSL fixture and return only a source-bound host review", target: {}, codingWorkspace: grant! };
-      phase = 5; workspace = await known(resource.createWslWorkspace(spec, task.signal, current, { current, async open() {
+      phase = 5; assembling = workspaceStage.nativeSeed;
+      workspace = await known(resource.createWslWorkspace(spec, task.signal, current, { current, async open() {
+        assembling = workspaceStage.connect;
         const connection = await connectWslCodingHelper({ ...transport, scriptLinuxPath });
-        try { return { connection, typescriptArchive: readWslCodingTypeScriptArchive(path.join(input.repository, "dist/wsl-coding-tools/typescript-5.9.3.tgz")) }; }
+        assembling = workspaceStage.archive;
+        try {
+          const typescriptArchive = readWslCodingTypeScriptArchive(path.join(input.repository, "dist/wsl-coding-tools/typescript-5.9.3.tgz"));
+          assembling = workspaceStage.create;
+          return { connection, typescriptArchive };
+        }
         catch (error) { await connection.close(); throw error; }
       } })); graph.workspace = workspace;
+      assembling = workspaceStage.readiness;
       expect(workspace.executionRoot).toBe("/work"); expect(workspace.nodeAvailable).toBe(true);
       const observations: ObservedCodingCommand[] = []; let bytes = 0;
       const output = (chunk: Uint8Array) => { bytes += chunk.length; if (bytes > 256 * 1024) task.abort(); };
@@ -124,7 +135,10 @@ async function runCase(mode: typeof WSL_PRODUCT_CASES.resources[number]): Promis
       completed = true;
     })();
     await Promise.race([body, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => { expired = true; task.abort(); reject(failure(phase)); }, 180_000); })]);
-  } catch { task.abort(); try { await resource?.invalidate(); } catch { /* Retain the native owner on uncertainty. */ } try { await body; } catch { /* Keep the original bounded failure. */ } failed = failure(phase); }
+  } catch {
+    if (phase === 5) refusedStage = assembling;
+    task.abort(); try { await resource?.invalidate(); } catch { /* Retain the native owner on uncertainty. */ } try { await body; } catch { /* Keep the original bounded failure. */ } failed = failure(phase);
+  }
   finally {
     clearTimeout(timer);
     try { service?.dispose(); } catch { failed ??= failure(16); }
@@ -133,7 +147,10 @@ async function runCase(mode: typeof WSL_PRODUCT_CASES.resources[number]): Promis
       catch { failed = failure(16); }
     }
   }
-  if (failed || !completed || expired) throw failed ?? failure(phase);
+  if (failed || !completed || expired) {
+    if (refusedStage !== undefined) console.info("Windows WSL resource workspace observation", JSON.stringify({ case: WSL_PRODUCT_CASES.resources.indexOf(mode) + 1, stage: refusedStage }));
+    throw failed ?? failure(phase);
+  }
 }
 for (const mode of WSL_PRODUCT_CASES.resources) it.skipIf(!required)(wslProductTitle("resources", mode), async () => {
   try { await runCase(mode); } catch (error) {

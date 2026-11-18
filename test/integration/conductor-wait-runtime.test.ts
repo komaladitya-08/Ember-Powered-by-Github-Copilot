@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { AgentHost } from "../../app/main/agent/host";
 import { SettingsStore } from "../../app/main/settings";
 import { CONSENT_VERSION } from "../../app/shared/consent";
@@ -48,16 +48,28 @@ it("delegates two independent workers, awaits their positive disposal and summar
     host.projectSessionsAction({ action: "create", name: "Parallel inspection" });
     // The actual manager/Host tool callbacks run; only application work is inert and disposal is controlled here.
     /* eslint-disable @typescript-eslint/no-explicit-any -- same SDK/worker injection boundary as project-session-host.test.ts */
-    (host.tasks as any).d.makeWorker = (spec: TaskSpec) => {
+    const manager = host.tasks!;
+    (manager as any).d.makeWorker = (spec: TaskSpec) => {
       specs.push(spec); const index = specs.length;
       return { run: async () => ({ success: true, summary: index === 1 ? "first observed result" : "second observed result" }),
         dispose: () => new Promise<void>(resolve => { const release = () => { disposed.add(spec.id); resolve(); }; gates.set(spec.id, release); if (closing) release(); }),
         cleanupComplete: () => disposed.has(spec.id), handoffSafe: () => disposed.has(spec.id), steer: async () => false, sessionId: null };
     };
+    // The same manager also tracks disposal witnesses. Identify the listener registered by the real foreground wait.
+    const listeners = (manager as any).waitListeners as Set<() => void>;
+    const waitForCurrentTasks = (host as any).waitForCurrentTasks.bind(host);
+    let registered: (() => void)[] = [];
+    const foregroundWait = vi.spyOn(host as any, "waitForCurrentTasks").mockImplementation((...args) => {
+      const previous = new Set(listeners);
+      const result = waitForCurrentTasks(...args);
+      registered = [...listeners].filter(listener => !previous.has(listener));
+      return result;
+    });
     expect(await host.ask(userWords)).toBe(true);
-    await expect.poll(() => (host.tasks as any).waitListeners.size, { timeout: 20_000 }).toBe(1);
+    await expect.poll(() => registered.length === 1 && listeners.has(registered[0]), { timeout: 20_000 }).toBe(true);
     /* eslint-enable @typescript-eslint/no-explicit-any */
     expect(specs).toHaveLength(2); expect(specs.map(spec => spec.userWords)).toEqual([userWords, userWords]);
+    expect(foregroundWait).toHaveBeenCalledExactlyOnceWith(manager, expect.any(Number), specs.map(spec => spec.id), 10_000);
     expect(host.tasks!.list().map(task => host.tasks!.observeSettlement(task))).toMatchObject([{ status: "done", cleanup: "pending" }, { status: "done", cleanup: "pending" }]);
     expect(turns).toBe(0);
     for (const release of gates.values()) release();

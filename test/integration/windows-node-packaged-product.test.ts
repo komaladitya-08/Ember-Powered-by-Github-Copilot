@@ -318,13 +318,32 @@ class Journey {
   private async focus(hwnd: number, node: RawNode, guard?: SnapshotGuard): Promise<RawNode> {
     this.observe({ operation: 10, focusFlags: 0, inputResult: 0, focusIdentity: 0 }); try { this.observation.node(node); } catch { /* Cached target only. */ }
     if (!this.input || this.input.blockedReason?.(hwnd)) throw refusal(this.phase);
+    this.current();
     this.observeInput(this.input.activate(hwnd));
-    await this.bridge!.call("perform", { handle: node.h, op: "focus", deadlineMs: 2500 }, 5000);
-    this.observe({ operation: 11, focusFlags: 0 });
-    await this.until(() => this.bridge!.call<{ element: RawNode | null; hwnd: number | null }>("focused", { values: false, deadlineMs: 2500 }, 5000),
-      result => { try { this.observation.focused(result, node, hwnd); } catch { /* Preserve the original predicate. */ }
-        return result.hwnd === hwnd && !!result.element && sameNode(result.element, node) && result.element.hasKeyboardFocus === true; }, 10_000);
+    // Activation may return before Windows raises the HWND. Verify foreground and exact focus in one budget.
+    const focusDeadline = Date.now() + 10_000;
+    let performed = false;
+    await this.until(async () => {
+      if (!performed) {
+        if (this.input!.blockedReason?.(hwnd)) throw refusal(this.phase);
+        if (this.input!.activeWindow() !== hwnd) return null;
+        if (Date.now() >= focusDeadline) throw refusal(this.phase);
+        performed = true;
+        await this.bridge!.call("perform", { handle: node.h, op: "focus", deadlineMs: 2500 }, 5000);
+        this.current();
+        this.observe({ operation: 11, focusFlags: 0 });
+      }
+      if (Date.now() >= focusDeadline) throw refusal(this.phase);
+      const result = await this.bridge!.call<{ element: RawNode | null; hwnd: number | null }>("focused", { values: false, deadlineMs: 2500 }, 5000);
+      if (Date.now() >= focusDeadline) throw refusal(this.phase);
+      return result;
+    }, result => {
+      if (result === null) return false;
+      try { this.observation.focused(result, node, hwnd); } catch { /* Preserve the original predicate. */ }
+      return result.hwnd === hwnd && !!result.element && sameNode(result.element, node) && result.element.hasKeyboardFocus === true;
+    }, focusDeadline - Date.now());
     const nodes = await this.nodes(hwnd);
+    this.current();
     const fresh = !guard || guard(nodes) ? nodes.find(value => sameNode(value, node)) : undefined;
     this.observe({ operation: 12 }); try { this.observation.fresh(fresh); } catch { /* Cached guard fields only. */ }
     if (!fresh || fresh.isOffscreen || !fresh.bounds || fresh.bounds.width <= 0 || fresh.bounds.height <= 0 || this.observeInput(this.input.activeWindow() !== hwnd, true)) throw refusal(this.phase);

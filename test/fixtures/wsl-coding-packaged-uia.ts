@@ -76,9 +76,22 @@ export class WslPackagedUi {
   }
   async focus(hwnd: number, node: RawNode): Promise<RawNode> {
     this.operation = 4; this.current(); if (this.p.input.blockedReason?.(hwnd)) this.fail(); this.p.input.activate(hwnd);
-    await this.p.bridge.call("perform", { handle: node.h, op: "focus", deadlineMs: 2500 }, 5000); this.current();
-    await this.until(() => this.p.bridge.call<{ element: RawNode | null; hwnd: number | null }>("focused", { values: false, deadlineMs: 2500 }, 5000),
-      result => result.hwnd === hwnd && !!result.element && sameWslUiNode(result.element, node) && result.element.hasKeyboardFocus === true, 10_000);
+    // Activation may return before Windows raises the HWND. Verify foreground and exact focus in one budget.
+    const focusDeadline = Date.now() + 10_000;
+    let performed = false;
+    await this.until(async () => {
+      if (!performed) {
+        if (this.p.input.blockedReason?.(hwnd)) this.fail();
+        if (this.p.input.activeWindow() !== hwnd) return null;
+        if (Date.now() >= focusDeadline) this.fail();
+        performed = true;
+        await this.p.bridge.call("perform", { handle: node.h, op: "focus", deadlineMs: 2500 }, 5000); this.current();
+      }
+      if (Date.now() >= focusDeadline) this.fail();
+      const result = await this.p.bridge.call<{ element: RawNode | null; hwnd: number | null }>("focused", { values: false, deadlineMs: 2500 }, 5000);
+      if (Date.now() >= focusDeadline) this.fail();
+      return result;
+    }, result => result !== null && result.hwnd === hwnd && !!result.element && sameWslUiNode(result.element, node) && result.element.hasKeyboardFocus === true, focusDeadline - Date.now());
     const fresh = (await this.nodes(hwnd)).find(value => sameWslUiNode(value, node)); this.foreground(hwnd);
     if (!fresh || fresh.isEnabled !== true || fresh.isOffscreen || !fresh.bounds || fresh.bounds.width <= 0 || fresh.bounds.height <= 0) this.fail();
     return fresh;

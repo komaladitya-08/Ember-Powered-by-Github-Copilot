@@ -228,16 +228,16 @@ it.each(["held", "startup-failure", "early-close", "proof-failure", "pipe-error"
     return child;
   });
   runInNewContext(source, { module, process, setTimeout: fixtureTimer, clearTimeout, require: () => ({ spawn: open }) }, { timeout: 1000 });
-  const appendFileSync = vi.fn(), spawnSync = vi.fn(() => {
+  const info = vi.fn(), appendFileSync = vi.fn(), spawnSync = vi.fn(() => {
     expect(closeObserved).not.toHaveBeenCalled();
     const child = open.mock.results[0].value;
     if (mode === "pipe-error") child.stdout.emit("error", new Error("PRIVATE fixture error"));
     if (mode === "foreign-byte") child.stdout.emit("data", Buffer.from("PRIVATE fixture bytes"));
     if (mode === "proof-failure") throw new Error("controlled proof failure");
-    return { status: 0, signal: null };
+    return { status: 0, signal: null, stdout: Buffer.from(resourceStageFrame(1) + "\n") };
   });
   const proof = runInNewContext(script("Run exactly the configured WSL product cases"), {
-    process: { execPath: process.execPath, cwd: () => process.cwd(), env: { EMBER_WSL_CODING_PRODUCT_JOURNEY: "resources", RUNNER_TEMP: "/fixed-report-parent", GITHUB_OUTPUT: "/fixed-output" } },
+    console: { info }, process: { execPath: process.execPath, cwd: () => process.cwd(), env: { EMBER_WSL_CODING_PRODUCT_JOURNEY: "resources", RUNNER_TEMP: "/fixed-report-parent", GITHUB_OUTPUT: "/fixed-output" } },
     require: (name: string) => name === "node:fs" ? { existsSync: (file: string) => file === WSL_PRODUCT_FILES.resources, appendFileSync }
       : name === "node:child_process" ? { spawnSync }
       : name.endsWith("wsl-coding-product-fixture.cjs") ? module.exports : nativeRequire(name),
@@ -251,5 +251,160 @@ it.each(["held", "startup-failure", "early-close", "proof-failure", "pipe-error"
   expect(closeObserved).toHaveBeenCalledOnce();
   expect(fixtureTimer.mock.calls.map(([, ms]) => ms)).toEqual(mode === "startup-failure" ? [15_000] : [15_000, 5_000]);
   if (mode === "held" || mode === "proof-failure") expect(observed.outputAtEof).toBe("RC");
+  expect(info).not.toHaveBeenCalled();
   expect(appendFileSync).toHaveBeenCalledTimes(mode === "held" ? 1 : 0);
+});
+
+function resourceStageFrame(stage: number, caseIndex = 1) {
+  return 'Windows WSL resource workspace observation {"case":' + caseIndex + ',"stage":' + stage + '}';
+}
+
+function resourceStageReport(phase = 5, caseIndex = 1) {
+  const value = failedReport("resources", phase), [first, second] = value.testResults[0].assertionResults;
+  second.status = "failed";
+  Object.assign(second, { failureMessages: ["Error: Windows WSL product journey refused (phase " + (caseIndex === 1 ? 1 : phase) + ")."] });
+  if (caseIndex === 1) {
+    value.numPassedTests = 0;
+    value.numFailedTests = 2;
+  } else {
+    first.status = "passed";
+    Object.assign(first, { failureMessages: undefined });
+  }
+  return value;
+}
+
+it.each([1, 2, 3, 4, 5])("projects resource stage %i only with its verified failed phase-five case", async stage => {
+  const { frames } = await failedChild("resources", resourceStageReport(), {
+    stdout: "PRIVATE unrelated\n\x1b[22m" + resourceStageFrame(stage) + "\x1b[39m\r\nPRIVATE tail\n",
+  });
+  expect(frames[2]).toEqual(["WSL product failure resource workspace stage", { schema: 1, available: 1, case: 1, stage }]);
+});
+
+it("projects a second-case stage only when the first resource case passed", async () => {
+  const { frames } = await failedChild("resources", resourceStageReport(5, 2), { stdout: resourceStageFrame(3, 2) + "\n" });
+  expect(frames[2]).toEqual(["WSL product failure resource workspace stage", { schema: 1, available: 1, case: 2, stage: 3 }]);
+});
+
+it.each(["absent", "partial", "duplicate", "partial-duplicate", "prefix", "extra-key", "out-of-range", "other-case", "other-phase", "untrusted-report", "contradictory-report", "wrong-quarantine", "signal", "oversize"] as const)("keeps %s resource stage unknown", async kind => {
+  const value = kind === "wrong-quarantine" ? failedReport("resources", 5)
+    : resourceStageReport(kind === "other-phase" ? 4 : 5), line = resourceStageFrame(4);
+  const stdout = kind === "absent" ? "" : kind === "partial" ? line : kind === "duplicate" ? line + "\n" + line + "\n"
+    : kind === "partial-duplicate" ? line + "\n" + line : kind === "prefix" ? "PRIVATE " + line + "\n"
+      : kind === "extra-key" ? line.replace("}", ',"PRIVATE":1}') + "\n" : kind === "out-of-range" ? resourceStageFrame(6) + "\n"
+        : kind === "other-case" ? resourceStageFrame(4, 2) + "\n" : kind === "oversize" ? "PRIVATE".repeat(400_000) + "\n" + line + "\n" : line + "\n";
+  if (kind === "contradictory-report") {
+    const [first, second] = value.testResults[0].assertionResults;
+    Object.assign(second, { failureMessages: Reflect.get(first, "failureMessages") });
+  }
+  const { frames } = await failedChild("resources", value, {
+    stdout, malformed: kind === "untrusted-report", outcome: kind === "signal" ? { status: null, signal: "SIGTERM" } : undefined,
+  });
+  expect(frames[2]).toEqual(["WSL product failure resource workspace stage", { schema: 1, available: 0, case: 0, stage: 0 }]);
+});
+
+it.each([1, 2, 3, 4, 5])("records resource assembly stage %i in the actual binding callback before cleanup", async stage => {
+  const source = fs.readFileSync("test/integration/wsl-coding-product-resources.test.ts", "utf8");
+  const enumSource = source.slice(source.indexOf("const workspaceStage"), source.indexOf("type WorkspaceStage"));
+  const assembly = source.slice(source.indexOf("      phase = 5;"), source.indexOf("      const observations:"));
+  const freeze = source.slice(source.indexOf("    if (phase === 5) refusedStage"), source.indexOf("    task.abort(); try { await resource?.invalidate()"));
+  const graph = {}, task = new AbortController(), close = vi.fn(), connection = { close };
+  const unavailable = () => { throw new Error("PRIVATE original refusal"); };
+  const observed = await runInNewContext(enumSource.replace(" as const", "") + `
+    (async () => {
+      let phase = 4, assembling, refusedStage, workspace;
+      try { ${assembly} }
+      catch {
+        ${freeze}
+        assembling = workspaceStage.readiness;
+        return refusedStage;
+      }
+      return 0;
+    })();`, {
+    graph, task, spec: {}, current: () => true, transport: {}, scriptLinuxPath: "/fixed",
+    path, input: { repository: "/repository" }, expect, known: (work: Promise<unknown>) => work,
+    connectWslCodingHelper: async () => stage === 2 ? unavailable() : connection,
+    readWslCodingTypeScriptArchive: () => stage === 3 ? unavailable() : Buffer.alloc(1),
+    resource: { async createWslWorkspace(_spec: unknown, _signal: AbortSignal, _current: () => boolean, binding: { open(): Promise<unknown> }) {
+      if (stage === 1) unavailable();
+      await binding.open();
+      if (stage === 4) unavailable();
+      return { executionRoot: "/work", nodeAvailable: false };
+    } },
+  }, { timeout: 1000 });
+  expect(observed).toBe(stage);
+  expect(close).toHaveBeenCalledTimes(stage === 3 ? 1 : 0);
+});
+
+function sourceTerminalReport(phase = 6) {
+  const value = failedReport("source", phase);
+  for (const [index, assertion] of value.testResults[0].assertionResults.entries()) {
+    if (index === 0) continue;
+    assertion.status = "failed";
+    Object.assign(assertion, { failureMessages: ["Error: Windows WSL source journey refused (case " + (index + 1) + ", phase 1)."] });
+  }
+  value.numPassedTests = 0;
+  value.numFailedTests = WSL_PRODUCT_CASES.source.length;
+  return value;
+}
+
+function sourceTerminalFrame(episode: number, stage: number, session: number, turn: number) {
+  return "Windows WSL source terminal observation " + JSON.stringify({ episode, stage, session, turn });
+}
+
+it.each([[1, 1, 5, 0], [2, 2, 4, 3], [1, 3, 4, 1]])("projects source repair episode %i stage %i with closed observations", async (episode, stage, session, turn) => {
+  const { frames } = await failedChild("source", sourceTerminalReport(), { stdout: "\x1b[22m" + sourceTerminalFrame(episode, stage, session, turn) + "\x1b[39m\r\n" });
+  expect(frames[2]).toEqual(["WSL product failure source terminal stage", { schema: 1, available: 1, episode, stage, session, turn }]);
+});
+
+it.each(["partial", "duplicate", "episode", "stage", "session", "turn", "invalid-session-stage", "invalid-idle-stage", "invalid-results-stage", "other-phase", "not-quarantined", "untrusted-report"] as const)("keeps %s source terminal observations unknown", async kind => {
+  const value = kind === "not-quarantined" ? failedReport("source", 6) : sourceTerminalReport(kind === "other-phase" ? 5 : 6);
+  const valid = sourceTerminalFrame(1, 3, 4, 1);
+  const line = kind === "episode" ? sourceTerminalFrame(3, 3, 4, 1) : kind === "stage" ? sourceTerminalFrame(1, 4, 4, 1)
+    : kind === "session" ? sourceTerminalFrame(1, 1, 7, 0) : kind === "turn" ? sourceTerminalFrame(2, 2, 4, 5)
+      : kind === "invalid-session-stage" ? sourceTerminalFrame(1, 1, 4, 0) : kind === "invalid-idle-stage" ? sourceTerminalFrame(1, 2, 3, 2)
+        : kind === "invalid-results-stage" ? sourceTerminalFrame(1, 3, 4, 4) : valid;
+  const stdout = kind === "partial" ? line : kind === "duplicate" ? line + "\n" + line + "\n" : line + "\n";
+  const { frames } = await failedChild("source", value, { stdout, malformed: kind === "untrusted-report" });
+  expect(frames[2]).toEqual(["WSL product failure source terminal stage", { schema: 1, available: 0, episode: 0, stage: 0, session: 0, turn: 0 }]);
+});
+
+it.each([[0, "failed", "idle", 1, 5, 0], [1, "done", "held", 2, 4, 4], [1, "done", "idle", 3, 4, 1]] as const)(
+  "caches the existing source terminal polls for episode index %i with session %s and turn %s",
+  async (index, status, turn, stage, sessionId, turnId) => {
+    const source = fs.readFileSync("test/integration/wsl-coding-product-electron.test.ts", "utf8");
+    const definitions = source.slice(source.indexOf("const sourceTerminalStage"), source.indexOf("class Journey"));
+    const method = source.slice(source.indexOf("  async terminal(index"), source.indexOf("  async results()"));
+    const freeze = source.slice(source.indexOf("    if (phase === 6 && fixture?.terminalObservation)"), source.indexOf("  finally {\n    quarantined = true;"));
+    const { transformSync } = nativeRequire("esbuild");
+    const extracted = transformSync(definitions + `
+      (async () => {
+        const fixture = { kind: "repair", sessions, home: { evaluate }, ${method} };
+        try { await fixture.terminal(index, "done"); } catch {}
+        let refusedTerminal;
+        const phase = fixture.phase;
+        ${freeze.slice(0, freeze.lastIndexOf("  }"))}
+        fixture.terminalObservation.stage = 0;
+        return refusedTerminal;
+      })();`, { loader: "ts", target: "node22" }).code;
+    const sessions = vi.fn(async () => Array.from({ length: index + 1 }, () => ({ status })));
+    const evaluate = vi.fn(async () => turn);
+    const poll = (read: () => Promise<unknown>) => ({ async toBe(expected: unknown) { expect(await read()).toBe(expected); } });
+    const observed = await runInNewContext(extracted, { expect: { poll }, sessions, evaluate, index }, { timeout: 1000 });
+    expect(observed).toEqual({ episode: index + 1, stage, session: sessionId, turn: turnId });
+    expect(Object.isFrozen(observed)).toBe(true);
+    expect(sessions).toHaveBeenCalledOnce();
+    expect(evaluate).toHaveBeenCalledTimes(stage === 1 ? 0 : 1);
+  },
+);
+
+it.each(["resources", "source"] as const)("withholds contradictory %s stages without changing the failed-case inventory", async journey => {
+  const value = journey === "resources" ? resourceStageReport() : sourceTerminalReport();
+  const stdout = (journey === "resources" ? resourceStageFrame(3) : sourceTerminalFrame(1, 3, 4, 1)) + "\n";
+  const valid = await failedChild(journey, value, { stdout });
+  value.success = true;
+  const contradictory = await failedChild(journey, value, { stdout });
+  expect(contradictory.frames.slice(0, 2)).toEqual(valid.frames.slice(0, 2));
+  expect(contradictory.frames[1][1]).toMatchObject({ report: 1, failed: WSL_PRODUCT_CASES[journey].length });
+  expect(valid.frames[2][1]).toMatchObject({ available: 1, stage: 3 });
+  expect(contradictory.frames[2][1]).toMatchObject({ available: 0, stage: 0 });
 });

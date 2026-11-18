@@ -670,6 +670,7 @@ it.each([false, true])("actual focus keeps its queries and fresh-guard short cir
   const identity = source.slice(source.indexOf("function sameNode("), source.indexOf("function subtree("));
   const code = transformSync(identity + `\nmodule.exports = class {
     constructor(observation, input, bridge, node, trace) { this.observation = observation; this.input = input; this.bridge = bridge; this.target = node; this.trace = trace; this.phase = 3; }
+    current() {}
     async until(read, accepts) { const result = await read(); if (!accepts(result)) throw refusal(3); return result; }
     async nodes() { this.trace.push("snapshot"); return [this.target]; }
     ${methods} ${source.slice(begin, end)}
@@ -683,7 +684,7 @@ it.each([false, true])("actual focus keeps its queries and fresh-guard short cir
     const bridge = { async call(operation: string) { trace.push(operation); return { hwnd: 99, element: node }; } };
     const result = new module.exports(o, input, bridge, node, trace).focus(99, node);
     if (width) await expect(result).resolves.toBe(node); else await expect(result).rejects.toBe(failure);
-    expect(trace).toEqual(width ? ["blocked", "activate", "perform", "focused", "snapshot", "foreground"] : ["blocked", "activate", "perform", "focused", "snapshot"]);
+    expect(trace).toEqual(width ? ["blocked", "activate", "blocked", "foreground", "perform", "focused", "snapshot", "foreground"] : ["blocked", "activate", "blocked", "foreground", "perform", "focused", "snapshot"]);
   }
 });
 it("the actual outer failure catch captures before close and does not replace the snapshot with cleanup state", async () => {

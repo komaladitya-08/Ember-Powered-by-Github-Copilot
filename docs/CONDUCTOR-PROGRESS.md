@@ -1,6 +1,6 @@
 # Conductor progress and remaining work
 
-Software progress updated on 17 November 2026, following published product checkpoint `656dd12b` and its local software follow-up. The original submitted
+Software progress updated on 17 November 2026, following published product checkpoint `1507dc70` and its local software follow-up. The original submitted
 baseline was `audit/beta-readiness` at `76d0a2c9`; main was `85b5bd56` at that audit.
 [draft #262](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/262) targets main and records
 the latest head and its exact checks. The integration adds reviewed WSL/public-dependency and saved-draft
@@ -9,6 +9,16 @@ source graph is qualified; complete current-source Windows product journeys rema
 `codingAvailable()` gate remains false. This is not merge readiness.
 
 ## Current software work on 17 November 2026
+
+Published P5 `1507dc70` again completed **22 of 46** required product cases (Node 18/20, WSL 2/24, draft restart 2/2), with all twelve preservation workflows and all 876 registration contracts passed. Windows 2025 resources advanced from phase 2 to workspace assembly at phase 5; Windows 2022 resources passed both cases. Both source suites advanced from phase 2 to the first repair's phase-6 terminal/idle/result boundary and quarantined their remaining cases. Packaged Node stopped in native focus: the Models & connections link on Server 2025 and the fresh second command readout on Server 2022. Packaged WSL stopped earlier at navigation/settings stages. These remain distinct unqualified product outcomes.
+
+The local P6 follow-up corrects the packaged fixtures' activation order: it observes the exact foreground HWND before one SetFocus and verifies exact focus within the same existing ten-second budget. Current-run checks also precede activation and follow the fresh native snapshot. Portable controls reproduce the prior permitted asynchronous ordering and reject Stop/deadline changes; no Windows cause is attributed to them. The stale vault-barrier fake Host now initializes the same completion-plan Map as the real constructor.
+
+A targeted independent source review found that new conductor callbacks could remain admissible after normal session idle. A conductor-local fence now requires an exact matched live user request and session lifetime at action admission, with synchronous retirement on idle, error, abort, Stop and model/session transitions. Inert fake-runtime controls distinguish the original and corrected boundary. Healthy-runtime reachability is unverified; already-admitted asynchronous work keeps its existing lifetime checks, and the SDK provides no per-tool turn identity. The review covered selected integration boundaries rather than the whole large diff. GitHub's automated code/security review could not complete because its payer reached review usage limits; those notices are not published failing check contexts.
+
+The real offline SDK wait fixture also needed a more precise oracle: it previously confused completion settlement observers with its foreground waiter. The corrected fixture identifies the callback registered by the actual Host wait, retains both-worker/wire/disposal assertions and original deadlines, and passed on exact P5. Root will verify the combined final source. A separately attempted unbounded/default-worker full test run was terminated; it earns no pass or causal claim.
+
+Failure-only numeric observations now distinguish WSL workspace assembly from the first repair's already-read session/turn/result milestones. Optional data requires an explicitly failed consistent report; malformed, contradictory, partial or missing evidence remains unknown. No new content, browser/native reads, authority, deadlines or success proof is introduced. All 146 qualified source pins and the complete verifier remain unchanged. The user has authorized merge after current-source CI/CD is green and review findings are addressed; no merge, release or physical laptop acceptance has occurred.
 
 Published P4 `656dd12b` completed the full required product inventory at **22 of 46**: Node 18/20, WSL 2/24 and encrypted-draft restart 2/2, across seven successful and seven failed strict leaves. All twelve preservation workflows passed. Ordinary CI finished four successful jobs and three failures (Ubuntu, macOS and Windows), each first failing the same obsolete IPC test call: a generic string no longer exercises the validated command-card API. Windows nevertheless passed the full 198-case worker-tools file, including the pointer-fixture repair; its later build/native-app steps skipped. Registration failed during its unchanged 2.5-second C compiler setup; the ordinary Ubuntu C model separately passed all 256 cases. Source/setup bytes match successful preceding checkpoints, and the cause of the registration timeout remains unknown.
 
