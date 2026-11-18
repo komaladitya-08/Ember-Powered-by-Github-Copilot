@@ -729,7 +729,10 @@ class Journey {
     const systemRoot = Object.entries(this.env).find(([key]) => key.toLowerCase() === "systemroot")?.[1]; if (!systemRoot) throw refusal(this.phase);
     const script = mode === "clear" ? "Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.Clipboard]::SetText('PACKAGED_NODE_CLIPBOARD_FRESH');[Console]::Write('1')"
       : "Add-Type -AssemblyName System.Windows.Forms;$s=[System.Windows.Forms.Clipboard]::GetText();if($s.Contains('" + WINDOWS_NODE_WRITER_READY + "')){[Console]::Write('1')}else{[Console]::Write('0')}";
-    return await run(path.join(systemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe"), ["-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-Command", script], bridgeEnv(this.env), 10_000, 4096) === "1";
+    // Failure only, as the `nextLabel` fact: 5 the helper ran out its 10 s, 6 it ended sooner with an error of its own.
+    const began = Date.now();
+    try { return await run(path.join(systemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe"), ["-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-Command", script], bridgeEnv(this.env), 10_000, 4096) === "1"; }
+    catch (error) { this.observe({ nextLabel: Date.now() - began >= 10_000 ? 5 : 6 }); throw error; }
   }
   private async writerReady(): Promise<void> {
     // The welcome's unused `nextLabel` fact counts the steps while phase 6 lasts: 1 the command window, 2 clearing the
