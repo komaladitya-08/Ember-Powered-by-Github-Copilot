@@ -347,10 +347,19 @@ export interface ShownWindow { visible: boolean; minimized: boolean; focused: bo
  */
 export function keepClearOf(o: { home: ShownWindow | null; prompt: ShownWindow | null; command: ShownWindow | null; commandCard: boolean; vault?: ShownWindow | null }):
   { aside: ShownWindow["bounds"] | null; avoid: ShownWindow["bounds"][] } {
-  const up = (w: ShownWindow | null | undefined): w is ShownWindow => !!w && w.visible && !w.minimized;
-  const approvals = [o.prompt, o.vault, o.commandCard ? o.command : null].filter(up).map(w => w.bounds);
-  const home = up(o.home) && o.home.focused ? o.home.bounds : null;
+  const approvals = askingWindows(o);
+  const home = shownUp(o.home) && o.home.focused ? o.home.bounds : null;
   return { aside: approvals[0] ?? home, avoid: [...approvals, ...(home ? [home] : [])] };
+}
+const shownUp = (w: ShownWindow | null | undefined): w is ShownWindow => !!w && w.visible && !w.minimized;
+
+/**
+ * Ember's own approval windows that ask now, in DIP: each holds the buttons that answer it. Where there is no room
+ * beside one, Ember asks by the cursor, and its bubble's own buttons can land over those: a press inside such a window
+ * is that window's, never the overlay's (measured on Windows: the second Allow of a task was never taken).
+ */
+export function askingWindows(o: { prompt: ShownWindow | null; command: ShownWindow | null; commandCard: boolean; vault?: ShownWindow | null }): ShownWindow["bounds"][] {
+  return [o.prompt, o.vault, o.commandCard ? o.command : null].filter(shownUp).map(w => w.bounds);
 }
 
 /** What the application menu's own items do: main's closures. */

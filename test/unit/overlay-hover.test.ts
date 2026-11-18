@@ -83,6 +83,35 @@ describe("the overlay without an input region", () => {
     expect(ignore).toEqual([[false], [true, { forward: true }]]);
   });
 
+  it("leaves a press inside an approval window that asks to that window, even over the bubble's own button", async () => {
+    const { shaper } = fakeShaper(false);
+    const { m, sender, ignore, moveTo } = await overlay(shaper);
+    m.setInteractive(sender, [button]);
+    moveTo(120, 110);
+    expect(ignore).toEqual([[false]]);
+    // The command window comes to ask where the pointer rests: its Allow is under the bubble's button.
+    m.stepAside({ x: 80, y: 80, width: 400, height: 300 }, [{ x: 80, y: 80, width: 400, height: 300 }]);
+    moveTo(121, 110);
+    expect(ignore).toEqual([[false], [true]]);
+    // Outside that window the bubble's buttons work as before, and again once it stops asking.
+    m.setInteractive(sender, [{ x: 600, y: 600, width: 60, height: 24 }]);
+    moveTo(620, 610);
+    expect(ignore).toEqual([[false], [true], [false]]);
+    m.setInteractive(sender, [button]);
+    m.stepAside(null, []);
+    moveTo(120, 110);
+    expect(ignore.at(-1)).toEqual([false]);
+  });
+  it("keeps a press that began on the bubble when an approval window comes up under it", async () => {
+    const { shaper } = fakeShaper(false);
+    const { m, sender, ignore, moveTo } = await overlay(shaper);
+    m.setInteractive(sender, [button]);
+    moveTo(120, 110);
+    m.stepAside({ x: 80, y: 80, width: 400, height: 300 }, [{ x: 80, y: 80, width: 400, height: 300 }]);
+    moveTo(120, 110, 1);
+    expect(ignore).toEqual([[false]]);
+  });
+
   it("lets clicks through with no options where moves aren't forwarded (Windows, as Linux always did)", async () => {
     const { shaper } = fakeShaper(false);
     const { m, sender, ignore, moveTo } = await overlay(shaper);

@@ -26,7 +26,7 @@ import { ANSWER_CLOSED_STATUS, TaskVoiceTrust, VoiceRefusals, answerStatusOnQues
 import { ModeRecord, modeIntents } from "./policy/mode-record";
 import { ModeSeal } from "./policy/mode-seal";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
-import { createCommandWindow, createHomeWindow, createPromptWindow, createVaultWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
+import { askingWindows, createCommandWindow, createHomeWindow, createPromptWindow, createVaultWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
 import { IPC, TASKS_PUSH_MS, type CodingWorkspaceState, type Status, type SignInProgress, type AskContext, type ListenOnceStatus, type VoiceMatchStatus, type ProjectSelection, type ProjectResult, type ProjectWorkspaceReply, type HearResult, type RetryResult } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, answerEndShown, askSuggestions, askSuggestionsComing, bubbleBoxOf, suggestOf, suggestionsShown, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
@@ -595,8 +595,10 @@ function start(): void {
     ? { visible: w.isVisible(), minimized: w.isMinimized(), focused: w.isFocused(), bounds: w.getBounds() } : null);
   const stepAside = () => {
     // Settings while the user works in it; Ember's approval windows while they ask (review #125).
-    const { aside, avoid } = keepClearOf({ home: shownWindow(home), prompt: shownWindow(approvals.prompt), command: shownWindow(approvals.command), commandCard: commandCardUp, vault: shownWindow(approvals.vault) });
-    overlay?.stepAside(aside);
+    const shown = { home: shownWindow(home), prompt: shownWindow(approvals.prompt), command: shownWindow(approvals.command), commandCard: commandCardUp, vault: shownWindow(approvals.vault) };
+    const { aside, avoid } = keepClearOf(shown);
+    // A press inside an approval window that asks is that window's, whatever part of the bubble lies over it.
+    overlay?.stepAside(aside, askingWindows(shown));
     // The bubble keeps off the windows too.
     if (JSON.stringify(lastState.avoid ?? []) !== JSON.stringify(avoid)) showState({ avoid });
   };
