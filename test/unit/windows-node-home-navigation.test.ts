@@ -89,7 +89,7 @@ it("waits for the session to end, then reveals the Coding group and the exact re
     async until<T>(read: () => Promise<T>, accept: (value: T) => boolean, timeout: number) { expect(timeout).toBe(45_000); const value = await read(); expect(accept(value)).toBe(true); return value; },
   };
   expect(await review.call(port, "Public review", "Checks: 2 run")).toBe("Checks: 2 run");
-  expect(port.phase).toBe(7); expect(calls).toEqual(["idle", "projects", "group", "listed", "result", "click", "read"]);
+  expect(port.phase).toBe(11); expect(calls).toEqual(["idle", "projects", "group", "listed", "result", "click", "read"]);
 });
 
 it("reveals the Coding group and Export again after the actual idle helper returns to Projects", async () => {
