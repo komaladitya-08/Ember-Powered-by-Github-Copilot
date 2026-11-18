@@ -25,6 +25,8 @@ export interface WslUiPorts {
 export class WslPackagedUi {
   /** Last reached operation only, never evidence that an action succeeded. */
   operation = 0;
+  /** How far the last `text` read got: 1 finding the control, 2 its text, 3 that text's own limits, 4 its children's read, 5 that read's limits, 0 done. */
+  textStage = 0;
   constructor(private readonly p: WslUiPorts) {}
   private fail(): never { throw this.p.refuse(); }
   private current(): void { this.p.current(); if (Date.now() >= this.p.deadline) this.fail(); }
@@ -60,18 +62,19 @@ export class WslPackagedUi {
     return value!;
   }
   async text(hwnd: number, select: WslUiSelector): Promise<string> {
-    this.operation = 3; const node = await this.node(hwnd, select, false); if (node.isPassword) this.fail();
+    this.operation = 3; this.textStage = 1; const node = await this.node(hwnd, select, false); if (node.isPassword) this.fail(); this.textStage = 2;
     const result = await this.p.bridge.call<{ text?: string; secret?: boolean; truncated?: boolean }>("textInfo", { handle: node.h, maxChars: 32_000, deadlineMs: 2500 }, 5000); this.current();
-    if (result.secret || result.truncated || result.text && result.text.length > 32_000) this.fail(); if (result.text) return result.text;
+    this.textStage = 3; if (result.secret || result.truncated || result.text && result.text.length > 32_000) this.fail(); if (result.text) { this.textStage = 0; return result.text; }
+    this.textStage = 4;
     const snapshot = await this.p.bridge.call<{ nodes: RawNode[]; busy: boolean; truncated: boolean; cut: string[] }>("snapshot", { handle: node.h, values: false, maxNodes: 500, maxChildren: 500, deadlineMs: 2500 }, 5000); this.current();
-    if (snapshot.busy || snapshot.truncated || snapshot.cut.length) this.fail();
+    this.textStage = 5; if (snapshot.busy || snapshot.truncated || snapshot.cut.length) this.fail();
     const blocked = new Set<number>(), text: string[] = [];
     for (const [index, child] of snapshot.nodes.entries()) {
       if (child.isPassword || blocked.has(child.parent ?? -1)) { blocked.add(index); continue; }
       if (child.controlType === "Text" && child.name) text.push(child.name);
     }
     const joined = text.join("\n"); if (joined.length > 32_000) this.fail();
-    return joined || node.name || "";
+    this.textStage = 0; return joined || node.name || "";
   }
   private foreground(hwnd: number): void {
     this.current(); if (this.p.input.blockedReason?.(hwnd) || this.p.input.activeWindow() !== hwnd) this.fail();

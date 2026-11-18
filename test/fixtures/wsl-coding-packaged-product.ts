@@ -435,9 +435,13 @@ export class WslPackagedJourney {
       this.phase = await this.windowRead(hwnd, 37, 38, 27); throw wslProductRefusal(this.phase);
     })).find(id("ask-cmd"))!;
     this.phase = 33; await this.u.focus(hwnd, node); this.phase = 34;
-    // Failure only, the same way: 45 the window listed nothing, 46 its read was cut short, 34 neither; 47 the card's
-    // text was read whole and is not the expected command.
-    const command = await this.u.text(hwnd, id("ask-cmd")).catch(async () => { this.phase = await this.windowRead(hwnd, 45, 46, 34); throw wslProductRefusal(this.phase); });
+    // Failure only: while the card was still being found, the same plain read (45 the window listed nothing, 46 its
+    // read was cut short, 34 neither); once found, how far its text's read got: 52 the text itself was refused, 53 it
+    // was secret or cut short, 54 the read of the card's children was refused, 55 that read was busy or cut short.
+    // 47 the card's text was read whole and is not the expected command.
+    const command = await this.u.text(hwnd, id("ask-cmd")).catch(async () => {
+      const stage = this.u.textStage; this.phase = stage >= 2 && stage <= 5 ? 50 + stage : await this.windowRead(hwnd, 45, 46, 34); throw wslProductRefusal(this.phase);
+    });
     if (command !== WSL_PRODUCT_CHECK) { this.phase = 47; this.fail(); }
     this.phase = 35; const words = (await this.u.nodes(hwnd)).map(node => node.name ?? "").join("\n");
     expect(words).toContain("/work"); this.phase = 36; expect(words).toContain(this.targetLabel); this.previousCard = node.runtimeId!;
