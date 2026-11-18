@@ -67,6 +67,8 @@ export class WslPackagedJourney {
   private app?: ChildProcess;
   private appClosed?: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
   private watchdog?: ReturnType<typeof setTimeout>;
+  /** Set by `pageTo`: whether its page keys moved the pane. */
+  private paged = false;
   private stopped = false;
   private forced = false;
   private home = 0;
@@ -152,15 +154,24 @@ export class WslPackagedJourney {
    * `soft`: returns false rather than refusing when the control never shows. Failure only: 32 a read was refused.
    */
   private async pageTo(select: WslUiSelector, enabled = true, up = false, soft = false): Promise<boolean> {
-    const step = this.phase;
-    for (let pages = 0; ; pages++) {
-      this.phase = 32; const nodes = await this.u.nodes(this.home); this.phase = step;
-      if (nodes.some(node => select(node) && !node.isOffscreen && (!enabled || node.isEnabled === true))) return true;
-      if (pages === 12) break;
-      this.u.key(this.home, up ? "Page_Up" : "Page_Down"); await pause(250); this.current();
+    const step = this.phase, anchor = id("project-sessions-conversation");
+    const read = async () => { this.phase = 32; const nodes = await this.u.nodes(this.home); this.phase = step; return nodes; };
+    const shows = (nodes: RawNode[]) => nodes.some(node => select(node) && !node.isOffscreen && (!enabled || node.isEnabled === true));
+    // Whether the pane scrolled at all: the Show conversation button moved or left the view after a page key.
+    const place = (nodes: RawNode[]) => { const node = nodes.find(anchor); return node && !node.isOffscreen ? node.bounds?.y ?? -1 : -1; };
+    let nodes = await read(); const first = place(nodes); this.paged = false;
+    // Twelve pages one way; then the far end of the pane (End, or Home going up) and twelve pages back, for a pane
+    // longer than twelve pages.
+    for (const [key, presses] of [[up ? "Page_Up" : "Page_Down", 12], [up ? "Home" : "End", 1], [up ? "Page_Down" : "Page_Up", 12]] as const) {
+      for (let pressed = 0; pressed < presses; pressed++) {
+        if (shows(nodes)) return true;
+        this.u.key(this.home, key); await pause(250); this.current(); nodes = await read(); this.paged ||= place(nodes) !== first;
+      }
     }
+    if (shows(nodes)) return true;
     if (soft) return false;
-    this.fail();
+    // Failure only, in place of the step's phase: 37 the page keys never moved the pane, 38 they did.
+    this.phase = this.paged ? 38 : 37; this.fail();
   }
   /** After a pane switch the keyboard is on the pane's link: moves it to the Show conversation button, inside the pane. */
   private async paneKeyboard(): Promise<void> {
@@ -427,10 +438,11 @@ export class WslPackagedJourney {
     this.phase = 12; await this.paneKeyboard();
     this.phase = 13;
     if (!await this.pageTo(result, true, false, true)) {
-      // Failure only: what shows after paging down. 33 a result's button under another title, 34 the Coding group's
-      // folder button without any result's button, 35 its Export without either, 36 none of those.
+      // Failure only: what shows after paging through the pane. 37 the page keys never moved it; else 33 a result's
+      // button under another title, 34 the Coding group's folder button without any result's button, 35 its Export
+      // without either, 36 none of those.
       const shown = (await this.u.nodes(this.home)).filter(node => !node.isOffscreen);
-      this.phase = shown.some(node => (node.name ?? "").startsWith("Review result: ")) ? 33 : shown.some(id("project-coding-choose")) ? 34 : shown.some(id("project-coding-export")) ? 35 : 36;
+      this.phase = !this.paged ? 37 : shown.some(node => (node.name ?? "").startsWith("Review result: ")) ? 33 : shown.some(id("project-coding-choose")) ? 34 : shown.some(id("project-coding-export")) ? 35 : 36;
       this.fail();
     }
     this.phase = 14; await this.u.click(this.home, result);
