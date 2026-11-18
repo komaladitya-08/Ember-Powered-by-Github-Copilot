@@ -128,11 +128,22 @@ export class WslPackagedJourney {
    * twelve Tabs did not cross it on the hosted Windows Server 2022 image, so that stretch alone allows twenty-four.
    */
   private async tabTo(select: WslUiSelector, enabled = true, backwards = false, limit = 12): Promise<void> {
+    // Failure only, in place of the step's own phase: 32 a read of Home was refused (cut short or too large), 34 every
+    // read came back empty (Home busy), 35 the keyboard never left the request box, 36 it ended on another control of
+    // Home's, 33 it ended outside Home or nowhere.
+    const step = this.phase; let read = false;
     for (let tabs = 0; ; tabs++) {
-      if ((await this.u.nodes(this.home)).some(node => select(node) && !node.isOffscreen && (!enabled || node.isEnabled === true))) return;
-      if (tabs === limit) this.fail();
+      this.phase = 32; const nodes = await this.u.nodes(this.home); this.phase = step; read ||= nodes.length > 0;
+      if (nodes.some(node => select(node) && !node.isOffscreen && (!enabled || node.isEnabled === true))) return;
+      if (tabs === limit) break;
       if (backwards) this.u.chord(this.home, "Shift_L", "Tab"); else this.u.key(this.home, "Tab");
     }
+    if (!read) this.phase = 34;
+    else {
+      const at = await this.bridge!.call<{ element: RawNode | null; hwnd: number | null }>("focused", { values: false, deadlineMs: 2500 }, 5000).catch(() => null);
+      this.phase = !at || at.hwnd !== this.home || !at.element ? 33 : at.element.automationId === "project-sessions-request" ? 35 : 36;
+    }
+    this.fail();
   }
   private async armed(hwnd: number, select: WslUiSelector): Promise<void> {
     const before = await this.u.node(hwnd, select); await pause(600); this.current();
