@@ -451,11 +451,12 @@ export class WslPackagedJourney {
       const stage = this.u.textStage, error = this.u.textError;
       if (stage === 2 && error === 6) {
         // Failure only, after a card whose text got no answer for the rest of its 90 s: what else the bridge answers
-        // then. 66 nothing at all (not even its list of windows), 67 not the card's own properties, 68 the card's
+        // then. 66 nothing at all (not even its list of windows) though its process is running, 70 nothing and its process has
+        // ended, 67 not the card's own properties, 68 the card's
         // first 16 characters (so the whole text is what goes unanswered), 69 not those either, 60 the card is gone.
         const asks = async (method: string, params: Record<string, unknown>) => !!await this.bridge!.request(method, { ...params, deadlineMs: 2500 }, 5000).catch(() => null);
         const card = await this.u.nodes(hwnd).then(nodes => nodes.find(id("ask-cmd")), () => undefined);
-        this.phase = !await asks("topWindows", { pid: this.app?.pid }) ? 66 : !card ? 60 : !await asks("element", { handle: card.h }) ? 67
+        this.phase = !await asks("topWindows", { pid: this.app?.pid }) ? (this.bridge!.child.exitCode !== null || this.bridge!.child.signalCode !== null ? 70 : 66) : !card ? 60 : !await asks("element", { handle: card.h }) ? 67
           : await asks("textInfo", { handle: card.h, maxChars: 16 }) ? 68 : 69;
         throw wslProductRefusal(this.phase);
       }
