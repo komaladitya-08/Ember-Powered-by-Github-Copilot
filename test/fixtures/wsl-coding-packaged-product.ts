@@ -551,11 +551,14 @@ export class WslPackagedJourney {
     // it into view as focus moves, which the page keys do not (the click alone did not show it either, on Windows
     // Server 2025). 49 Export shown enabled; the Tab search's own endings are 41 to 44.
     this.phase = 49; await this.tabTo(exportButton);
-    const fresh = fs.readdirSync(this.exported).filter(name => !existing.has(name)); expect(fresh).toHaveLength(1);
+    // 50 the one new folder the export made, 51 what it holds.
+    this.phase = 50; const fresh = fs.readdirSync(this.exported).filter(name => !existing.has(name)); expect(fresh).toHaveLength(1); this.phase = 51;
     this.assertExport(path.join(this.exported, fresh[0]), publicDependencies, cumulative);
   }
   private async continueWith(request: string): Promise<void> {
-    await this.u.click(this.home, id("project-coding-continue")); await this.u.fill(this.home, id("project-coding-continue-request"), request); await this.u.click(this.home, id("project-coding-continue-send"));
+    // Phases within a continuation: 63 its button, 64 the request typed, 65 Send.
+    this.phase = 63; await this.u.click(this.home, id("project-coding-continue")); this.phase = 64; await this.u.fill(this.home, id("project-coding-continue-request"), request);
+    this.phase = 65; await this.u.click(this.home, id("project-coding-continue-send"));
   }
   async offline(): Promise<void> {
     const [first, next] = wslProductScenarios("repair"); await this.project(false, "offline"); await this.send(first.request); await this.allowCommand(); await this.allowCommand();
