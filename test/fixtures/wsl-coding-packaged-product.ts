@@ -105,7 +105,10 @@ export class WslPackagedJourney {
     fs.writeFileSync(path.join(root, "outside.txt"), outside); fs.writeFileSync(path.join(this.profile, "credential-canary.txt"), privateCanary);
     this.env = environment(this.temporary, this.profile, path.join(root, "github"));
   }
-  private fail(): never { throw wslProductRefusal(this.phase); }
+  /** Whether the accessibility bridge's own process has ended: every refusal after that is its absence, reported as 70. */
+  private bridgeEnded(): boolean { const child = this.bridge?.child; return !!child && (child.exitCode !== null || child.signalCode !== null); }
+  private refusal(): Error { return wslProductRefusal(this.bridgeEnded() ? 70 : this.phase); }
+  private fail(): never { throw this.refusal(); }
   private refuseSelection(guard: number): never { this.selection = guard * 16 + this.selectionStep; this.fail(); }
   private current(): void { if (this.stopped || this.forced || Date.now() >= this.deadline) this.fail(); }
   private get u(): WslPackagedUi { if (!this.ui) this.fail(); return this.ui; }
@@ -220,7 +223,7 @@ export class WslPackagedJourney {
     this.watchdog = setTimeout(() => { this.forced = true; this.stopped = true; this.app?.kill(); }, 485_000);
     this.bridge = new UiaBridge(script, bridgeEnv(this.env, { EMBER_UIA_CACHE: path.join(this.root, "bridge-cache"), EMBER_UIA_STARTUP_OBSERVE: "1" }));
     await bounded(this.bridge.ready, 30_000);
-    this.ui = new WslPackagedUi({ bridge: this.bridge, input: this.input, pid: this.app.pid, deadline: this.deadline, current: () => this.current(), refuse: () => wslProductRefusal(this.phase) });
+    this.ui = new WslPackagedUi({ bridge: this.bridge, input: this.input, pid: this.app.pid, deadline: this.deadline, current: () => this.current(), refuse: () => this.refusal() });
     this.home = await this.u.until(async () => {
       for (const window of await this.u.windows()) if (window.name === "Ember") {
         const nodes = await this.u.nodes(window.hwnd);
