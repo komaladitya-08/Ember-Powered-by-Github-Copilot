@@ -153,8 +153,15 @@ class Journey {
     try { command = await this.command(); await expect.poll(() => command.evaluate(() => (window as Window & { emberCommands: CommandsApi }).emberCommands.pull().then(snapshot => snapshot?.state.card?.n ?? 0)), { timeout: 45_000 }).toBeGreaterThan(this.lastApproval); }
     catch (error) {
       // Failure only: no command window or no new card came. 37 the fixed model had refused a step, 38 it had not;
-      // 40 the model has had no request since the public packages were approved, so they are still being prepared.
-      this.phase = this.model.failures.length ? 37 : this.requestsAtApproval === this.model.requests.length ? 40 : 38;
+      // The model has had no request since the public packages were approved, so they are still being prepared:
+      // 34 Ember's main process answered a ping at once, 40 it did not within 5 s (it is blocked on something).
+      if (this.model.failures.length) this.phase = 37;
+      else if (this.requestsAtApproval !== this.model.requests.length) this.phase = 38;
+      else {
+        let timer: NodeJS.Timeout | undefined;
+        const answered = await Promise.race([this.app!.evaluate(() => true).catch(() => false), new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), 5000); })]);
+        clearTimeout(timer); this.phase = answered ? 34 : 40;
+      }
       throw error;
     }
     // A card that came but doesn't match, or never arms, reports as 39.
