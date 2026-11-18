@@ -97,19 +97,22 @@ it("waits for the session to end, focuses the request box and reaches the result
   expect(port.phase).toBe(11); expect(calls).toEqual(["idle", "projects", "request", "focus", "folder", "result", "click", "read"]); expect(steps).toEqual([1, 2, 3, 4, 5, 6]);
 });
 
-it("reveals the Coding group and Export again after the actual idle helper returns to Projects", async () => {
+it("reaches Export from the pane's link by way of the request box, the folder button and a result's button after the actual idle helper returns to Projects (hosted Windows Node packaged run of e94c155c)", async () => {
   const exportReview = actualMethod("  private async exportReview(", "\n  async repair", "cumulative");
-  const calls: string[] = []; let stage = 0;
+  const calls: string[] = []; let stage = 0; const steps: number[] = [];
   const port = {
     home: 73, exported: "C:\\public-review-export", model: { requests: [] },
+    observe(values: { nextLabel: number }) { steps.push(values.nextLabel); },
     async idle() { calls.push("idle"); stage = 0; },
+    // From the pane's link: the request box (focused), the folder button, the first result's button, then Export.
     async revealHomeControl(select: Selector, enabled?: boolean) {
-      expect(select({ automationId: stage ? "project-coding-export" : "project-coding" })).toBe(true);
-      if (!stage) expect(enabled).toBe(false);
-      calls.push(stage++ ? "export" : "group");
+      const expected = [{ automationId: "project-sessions-request" }, { automationId: "project-coding-choose" }, { name: "Review result: Public review" }, { automationId: "project-coding-export" }][stage];
+      expect(select(expected)).toBe(true); expect(enabled).toBe(stage === 1 ? false : undefined);
+      calls.push(["request", "folder-button", "result", "export"][stage++]); return { h: stage };
     },
+    async focus(window: number, node: { h: number }) { expect(window).toBe(73); expect(stage).toBe(1); expect(node.h).toBe(1); calls.push("focus"); },
     async click(window: number, select: Selector) {
-      if (stage !== 2) throw new Error("The Projects pane has not exposed Export.");
+      if (stage !== 4) throw new Error("The Projects pane has not exposed Export.");
       expect(window).toBe(73); expect(select({ automationId: "project-coding-export" })).toBe(true); calls.push("click");
     },
     async folder(title: string, destination: string) { expect(title).toBe("Export coding review"); expect(destination).toBe("C:\\public-review-export"); calls.push("folder"); },
@@ -117,7 +120,7 @@ it("reveals the Coding group and Export again after the actual idle helper retur
     assertExport(cumulative: boolean) { expect(cumulative).toBe(true); calls.push("files"); },
   };
   await exportReview.call(port, true);
-  expect(calls).toEqual(["idle", "group", "export", "click", "folder", "receipt", "files"]); expect(port.model.requests).toEqual([]);
+  expect(calls).toEqual(["idle", "request", "focus", "folder-button", "result", "export", "click", "folder", "receipt", "files"]); expect(steps).toEqual([1, 2, 3, 4, 5, 6]); expect(port.model.requests).toEqual([]);
 });
 
 it("reveals the newly opened Continue request before the real repair sequence fills or submits it", async () => {

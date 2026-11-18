@@ -414,6 +414,11 @@ export class WslPackagedJourney {
   }
   private async exportReview(publicDependencies: boolean, cumulative: boolean): Promise<void> {
     await this.idle(); const before = this.model.requests.length, existing = new Set(fs.readdirSync(this.exported));
+    // After the idle wait Export is scrolled out of view and so not listed: Tab navigation brings it there by way of
+    // the request box, the Coding group's folder button and the first result's button, twelve Tabs a stage.
+    const listedResult: WslUiSelector = node => (node.name ?? "").startsWith("Review result: ");
+    await this.u.reveal(this.home, id("project-sessions-request"), id("project-coding-choose"), false, false);
+    await this.u.reveal(this.home, id("project-coding-choose"), listedResult); await this.u.reveal(this.home, listedResult, id("project-coding-export"));
     await this.u.click(this.home, id("project-coding-export")); await this.folder("Export coding review", this.exported);
     await this.accessible(text => text.includes("Exported the coding review")); expect(this.model.requests.length).toBe(before);
     const fresh = fs.readdirSync(this.exported).filter(name => !existing.has(name)); expect(fresh).toHaveLength(1);

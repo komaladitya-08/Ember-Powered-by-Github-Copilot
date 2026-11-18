@@ -691,12 +691,17 @@ class Journey {
     }
   }
   private async exportReview(cumulative: boolean): Promise<void> {
-    await this.idle();
+    // The welcome's unused `nextLabel` fact counts the export's steps: 1 waiting for Home to be idle, 2 the Tab search
+    // to the Coding group, 3 the Tab search to Export, 4 the click and the folder dialog, 5 Home's sentence, 6 the files.
+    this.observe({ nextLabel: 1 }); await this.idle();
     const before = this.model.requests.length;
-    await this.revealHomeControl(id("project-coding"), false); await this.revealHomeControl(id("project-coding-export"));
-    await this.click(this.home, id("project-coding-export")); await this.folder("Export coding review", this.exported);
-    await this.accessibleText(text => text.includes("Exported the coding review"));
-    expect(this.model.requests.length).toBe(before); this.assertExport(cumulative);
+    // After the idle wait the focus is on the pane's link, further than twelve Tabs from Export: the search goes by
+    // way of the request box (focused), the Coding group's folder button and the first result's button.
+    this.observe({ nextLabel: 2 }); await this.focus(this.home, await this.revealHomeControl(id("project-sessions-request"))); await this.revealHomeControl(id("project-coding-choose"), false);
+    this.observe({ nextLabel: 3 }); await this.revealHomeControl(node => (node.name ?? "").startsWith("Review result: ")); await this.revealHomeControl(id("project-coding-export"));
+    this.observe({ nextLabel: 4 }); await this.click(this.home, id("project-coding-export")); await this.folder("Export coding review", this.exported);
+    this.observe({ nextLabel: 5 }); await this.accessibleText(text => text.includes("Exported the coding review"));
+    this.observe({ nextLabel: 6 }); expect(this.model.requests.length).toBe(before); this.assertExport(cumulative);
   }
   async repair(): Promise<void> {
     await this.project("repair"); await this.send(WINDOWS_NODE_REPAIR.request); await this.decide(WINDOWS_NODE_TEST_ARGV); await this.decide(WINDOWS_NODE_TEST_ARGV);
