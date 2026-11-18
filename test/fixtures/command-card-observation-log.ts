@@ -22,9 +22,12 @@ export interface PackagedCommandCardObservation {
    * (fx, fy, fw, fh) and the frame of the window found on top there (ox, oy, ow, oh). Ember's own windows only.
    */
   px: number; py: number; fx: number; fy: number; fw: number; fh: number; ox: number; oy: number; ow: number; oh: number;
+  /** Failure only: 32 the command window and Home both listed, 1 the command window is always on top, 2 Home is, 4 the
+   * command window is the higher, 8 it is the foreground window, 16 Home is. */
+  stack: number;
 }
 const empty = (capped = 0): Readonly<PackagedCommandCardObservation> => Object.freeze({ schema: 1, known: 0, card: 0, sample: 0, source: 0,
-  model: 0, ui: 0, geometry: 0, arm: 0, capped, host: 0, visibility: 0, under: 0, px: 0, py: 0, fx: 0, fy: 0, fw: 0, fh: 0, ox: 0, oy: 0, ow: 0, oh: 0 });
+  model: 0, ui: 0, geometry: 0, arm: 0, capped, host: 0, visibility: 0, under: 0, px: 0, py: 0, fx: 0, fy: 0, fw: 0, fh: 0, ox: 0, oy: 0, ow: 0, oh: 0, stack: 0 });
 const RANGES = { ...COMMAND_CARD_OBSERVATION_RANGES, card: [1, 40], sample: [1, 16], host: [0, 7] } as const;
 const MAX_TAIL = 256 * 1024;
 
@@ -57,7 +60,7 @@ export function parseCommandCardObservationLog(value: unknown): Readonly<Package
       }
       if (data.capped === 1 || data.sample >= 16) return empty(1);
       const next: PackagedCommandCardObservation = { schema: 1, known: 1, card: data.card, sample: data.sample, source: data.source, model: data.model,
-        ui: data.ui, geometry: data.geometry, arm: data.arm, capped: data.capped, host: data.host, visibility: 0, under: 0, px: 0, py: 0, fx: 0, fy: 0, fw: 0, fh: 0, ox: 0, oy: 0, ow: 0, oh: 0 };
+        ui: data.ui, geometry: data.geometry, arm: data.arm, capped: data.capped, host: data.host, visibility: 0, under: 0, px: 0, py: 0, fx: 0, fy: 0, fw: 0, fh: 0, ox: 0, oy: 0, ow: 0, oh: 0, stack: 0 };
       if (last && (next.card < last.card || next.card === last.card && next.sample < last.sample)) return empty();
       if (last && next.card === last.card && next.sample === last.sample && Object.keys(next).some(key => key !== "visibility" && key !== "under" && !/^[pfo][xywh]$/.test(key) && next[key as keyof typeof next] !== last![key as keyof typeof next])) return empty();
       if (!last || next.card !== last.card) { visibility = 0; wasVisible = false; }

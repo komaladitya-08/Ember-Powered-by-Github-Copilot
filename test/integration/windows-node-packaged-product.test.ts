@@ -642,6 +642,13 @@ class Journey {
           // (at most 80 high), 12 a narrow card (at most 400 wide), 9 anything larger.
           : !root.bounds ? 9 : root.bounds.height <= 80 ? 11 : root.bounds.width <= 400 ? 12 : 9;
       } catch { this.clickUnder = 0; /* The original refusal stands. */ }
+      // Failure only: how the command window and Home are stacked. 32 both listed, 1 the command window is always on top,
+      // 2 Home is, 4 the command window is the higher of the two, 8 it is the foreground window, 16 Home is.
+      try {
+        const listed = (await this.bridge!.call<{ windows: UiaWindow[] }>("topWindows", { pid: this.app!.pid, deadlineMs: 2500 }, 5000)).windows;
+        const command = listed.find(window => window.hwnd === hwnd), home = listed.find(window => window.hwnd === this.home);
+        if (command && home) this.clickGeometry = { ...this.clickGeometry, stack: 32 + (command.isTopmost ? 1 : 0) + (home.isTopmost ? 2 : 0) + (command.z < home.z ? 4 : 0) + (command.focused ? 8 : 0) + (home.focused ? 16 : 0) };
+      } catch { /* The original refusal stands. */ }
       throw error;
     }
     this.observe({ commandStage: 14 });
