@@ -278,7 +278,10 @@ class Journey {
   private previousTabs = new Set<string>();
   private stopped = false;
   private forced = false;
-  private deadline = Date.now() + 300_000;
+  // The whole journey's budget. 300 s until the owner raised it to 480 s on 18 November 2026: on the hosted Windows
+  // Server 2025 image the journey passed every step of five cases and reached the sixth as 300 s ran out. Each step's
+  // own wait is unchanged.
+  private deadline = Date.now() + 480_000;
   private watchdog?: ReturnType<typeof setTimeout>;
   private readonly observation = packagedObservation();
   private failureCaptured = false;
@@ -511,7 +514,7 @@ class Journey {
     this.appClosed = new Promise((resolve, reject) => { this.app!.once("error", () => reject(refusal(2))); this.app!.once("close", (code, signal) => resolve({ code, signal })); });
     void this.appClosed.catch(() => undefined);
     if (!this.app.pid) throw refusal(2);
-    this.watchdog = setTimeout(() => { this.forced = true; this.stopped = true; this.app?.kill(); }, 305_000);
+    this.watchdog = setTimeout(() => { this.forced = true; this.stopped = true; this.app?.kill(); }, 485_000);
     this.startClipboardHost();
     this.bridge = new UiaBridge(script, bridgeEnv(this.env, { EMBER_UIA_CACHE: path.join(this.root, "bridge-cache"), EMBER_UIA_STARTUP_OBSERVE: "1" }));
     this.observe({ operation: 2, bridgeError: 0 });
@@ -950,4 +953,4 @@ it.skipIf(!required)("uses the shipped Windows Home for normal provider setup, e
   }
   quarantined = false;
   console.info("Windows Node packaged journey passed", JSON.stringify({ schema: 1, phase: 12 }));
-}, 360_000);
+}, 540_000);
