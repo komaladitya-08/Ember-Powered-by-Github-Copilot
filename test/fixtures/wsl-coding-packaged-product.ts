@@ -444,7 +444,13 @@ export class WslPackagedJourney {
     // numbers; a reading names the step by what ran before it): 33 reading the text at all, 34 the package.json hash,
     // 35 the lock hash, 36 the set hash, 37 each package and version, 38 the WSL target's label (last, so that a
     // text read short of its beginning or its end shows as one or the other).
-    this.phase = 33; const body = await this.u.text(window.hwnd, id("body"));
+    // The text is read as the command card's is, from the names of what the window lists: the direct read of the body
+    // element refused on both hosted images. A snapshot leaves out what is scrolled out of view, so it is read where
+    // the question opens and again at its end, and the two are taken together.
+    this.phase = 33; const words = async () => (await this.u.nodes(window.hwnd)).map(node => node.name ?? "").join("\n");
+    let body = await words();
+    const scroller = (await this.u.nodes(window.hwnd)).find(node => node.automationId === "body" && node.isKeyboardFocusable === true);
+    if (scroller) { await this.u.focus(window.hwnd, scroller); this.u.key(window.hwnd, "End"); await pause(250); this.current(); body += "\n" + await words(); }
     this.phase = 34; expect(body).toContain(expected.packageJsonSha256); this.phase = 35; expect(body).toContain(expected.lockSha256);
     this.phase = 36; expect(body).toContain(expected.setSha256);
     this.phase = 37; for (const pkg of expected.packages) expect(body).toContain(pkg.name + "@" + pkg.version);

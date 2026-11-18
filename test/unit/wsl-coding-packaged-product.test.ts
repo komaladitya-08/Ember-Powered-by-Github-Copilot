@@ -72,7 +72,8 @@ it.each([false, true])("waits for fresh actual Confirmer arming after the full d
     click: async (_hwnd: number, select: (node: RawNode) => boolean) => { if (select({ name: "Allow" } as RawNode)) accepted.push(confirmer.answer("q1:once")); },
     windows: async () => [{ hwnd: 321, name: "Ember needs you" }],
     text: async (_hwnd: number, select: (node: RawNode) => boolean) => select({ automationId: "title" } as RawNode) ? "May I prepare public dependencies?" : body,
-    nodes: async () => [{ name: "Allow", isEnabled: seen }],
+    // The window lists the question's text as named elements, and Allow.
+    nodes: async () => [{ name: body }, { name: "Allow", isEnabled: seen }],
     node: async (_hwnd: number, select: (node: RawNode) => boolean) => {
       const node = [{ automationId: "body", isEnabled: true }, { name: "Allow", isEnabled: seen }].find(value => select(value as RawNode));
       expect(node).toBeDefined(); return node;
