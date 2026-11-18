@@ -153,8 +153,8 @@ export class WslPackagedJourney {
    * button inside the pane (a text box would take the keys itself): `paneKeyboard` puts it there after a pane switch.
    * `soft`: returns false rather than refusing when the control never shows. Failure only: 32 a read was refused.
    */
-  private async pageTo(select: WslUiSelector, enabled = true, up = false, soft = false): Promise<boolean> {
-    const step = this.phase, anchor = id("project-sessions-conversation");
+  private async pageTo(select: WslUiSelector, enabled = true, up = false, soft = false, anchor: WslUiSelector = id("project-sessions-conversation")): Promise<boolean> {
+    const step = this.phase;
     const read = async () => { this.phase = 32; const nodes = await this.u.nodes(this.home); this.phase = step; return nodes; };
     const shows = (nodes: RawNode[]) => nodes.some(node => select(node) && !node.isOffscreen && (!enabled || node.isEnabled === true));
     // Whether the pane scrolled at all: the Show conversation button moved or left the view after a page key.
@@ -433,7 +433,8 @@ export class WslPackagedJourney {
     // keys scroll the pane until the button does.
     const conversation = ["conversation-new", "conversation-send", "conversation-stop", "keep-conversation"];
     const held = await this.u.until(async () => (await this.u.nodes(this.home)).find(node => conversation.includes(node.automationId ?? "") && !node.isOffscreen && node.isEnabled === true), Boolean);
-    await this.u.focus(this.home, held!); await this.pageTo(id("tasks-open-approval")); await this.u.click(this.home, id("tasks-open-approval"));
+    // Failure here: 37 the page keys never moved the pane (judged by the held control), 39 they did and no button showed.
+    await this.u.focus(this.home, held!); await this.pageTo(id("tasks-open-approval"), true, false, false, id(held!.automationId!)); await this.u.click(this.home, id("tasks-open-approval"));
     this.phase = 17; const window = (await this.u.until(() => this.u.windows(), windows => windows.some(window => window.name === "Ember needs you"), 30_000)).find(window => window.name === "Ember needs you")!;
     this.phase = 18; expect(await this.u.text(window.hwnd, id("title"))).toBe("May I prepare public dependencies?");
     const data = wslProductProject(true, changed), expected = PublicNpmPlan.create({ packageJson: Buffer.from(data["package.json"]), packageLock: Buffer.from(data["package-lock.json"]) }).summary;
