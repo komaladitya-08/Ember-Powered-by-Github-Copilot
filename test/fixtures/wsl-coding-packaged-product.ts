@@ -413,6 +413,12 @@ export class WslPackagedJourney {
   }
   /** The command window comes with a session's first card, so it has the card's 90 s (the owner's decision above). */
   private async command(): Promise<number> { return (await this.u.until(() => this.u.windows(), windows => windows.some(window => window.name === "Ember commands"), 90_000)).find(window => window.name === "Ember commands")!.hwnd; }
+  /** After a failure only: what one plain read of a window showed. `empty` it listed nothing, `cut` it was cut short, else `other`. */
+  private async windowRead(hwnd: number, empty: number, cut: number, other: number): Promise<number> {
+    const answer = await this.bridge!.request("snapshot", { hwnd, values: false, maxNodes: 2000, maxChildren: 500, deadlineMs: 3000 }, 5000).catch(() => null);
+    const read = answer && !answer.error ? answer.result as { nodes?: unknown[]; busy?: boolean; truncated?: boolean; cut?: unknown[] } : null;
+    return !read || read.busy ? other : read.truncated || read.cut?.length ? cut : !read.nodes?.length ? empty : other;
+  }
   async allowCommand(): Promise<void> {
     // Phases within a command decision: 7 the command window, 27 a fresh card in it (40 is the fixture's own bounded
     // helper), 33 the keyboard on the card, 34 its command text, 35 the folder it
@@ -426,12 +432,13 @@ export class WslPackagedJourney {
     const node = (await this.u.until(() => this.u.nodes(hwnd), nodes => nodes.some(node => node.automationId === "ask-cmd" && !!node.runtimeId && node.runtimeId !== this.previousCard), 90_000).catch(async () => {
       // Failure only: one plain read of the command window says why. 37 it listed nothing, 38 its read was cut short
       // (a window full of a command's output), 27 neither, so the card did not come in its 90 s.
-      const answer = await this.bridge!.request("snapshot", { hwnd, values: false, maxNodes: 2000, maxChildren: 500, deadlineMs: 3000 }, 5000).catch(() => null);
-      const read = answer && !answer.error ? answer.result as { nodes?: unknown[]; busy?: boolean; truncated?: boolean; cut?: unknown[] } : null;
-      if (read && !read.busy) this.phase = read.truncated || read.cut?.length ? 38 : !read.nodes?.length ? 37 : 27;
-      throw wslProductRefusal(this.phase);
+      this.phase = await this.windowRead(hwnd, 37, 38, 27); throw wslProductRefusal(this.phase);
     })).find(id("ask-cmd"))!;
-    this.phase = 33; await this.u.focus(hwnd, node); this.phase = 34; expect(await this.u.text(hwnd, id("ask-cmd"))).toBe(WSL_PRODUCT_CHECK);
+    this.phase = 33; await this.u.focus(hwnd, node); this.phase = 34;
+    // Failure only, the same way: 45 the window listed nothing, 46 its read was cut short, 34 neither; 47 the card's
+    // text was read whole and is not the expected command.
+    const command = await this.u.text(hwnd, id("ask-cmd")).catch(async () => { this.phase = await this.windowRead(hwnd, 45, 46, 34); throw wslProductRefusal(this.phase); });
+    if (command !== WSL_PRODUCT_CHECK) { this.phase = 47; this.fail(); }
     this.phase = 35; const words = (await this.u.nodes(hwnd)).map(node => node.name ?? "").join("\n");
     expect(words).toContain("/work"); this.phase = 36; expect(words).toContain(this.targetLabel); this.previousCard = node.runtimeId!;
     this.phase = 7; await this.u.click(hwnd, named("Allow"));
