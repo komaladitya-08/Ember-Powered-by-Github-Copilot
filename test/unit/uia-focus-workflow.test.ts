@@ -363,7 +363,7 @@ const commandsAttempt = (over: Record<string, unknown> = {}) => ({ status: 0, si
 const commandsReport = () => ({ ...report(), testResults: [{ name: commandsSuite, status: "passed", assertionResults: [{
   title: commandsTitle, fullName: commandsTitle, ancestorTitles: [] as string[], status: "passed", failureMessages: [] as string[],
 }] }] });
-function commandsFixture(o: FixtureOptions = {}) {
+function commandsFixture(o: FixtureOptions = {}, order = "after") {
   const printed = vi.fn(), queries: string[] = [], spawn = vi.fn(() => o.child ?? commandsAttempt());
   const fakeFs = {
     lstatSync(file: string) {
@@ -376,7 +376,7 @@ function commandsFixture(o: FixtureOptions = {}) {
     existsSync(file: string) { queries.push("exists:" + file); return o.stale === true; },
     readFileSync(file: string) { queries.push("read:" + file); return o.rawReport ?? JSON.stringify(o.report ?? commandsReport()); },
   };
-  const context = { process: { execPath: "fixed-node", env: { RUNNER_TEMP: path.dirname(commandsReportPath), EMBER_COMMANDS_RENDERER_NATIVE_TEST: "0" } }, Buffer, console: { info: printed },
+  const context = { process: { execPath: "fixed-node", env: { RUNNER_TEMP: path.dirname(commandsReportPath), EMBER_COMMANDS_RENDERER_NATIVE_TEST: "0", EMBER_COMMANDS_RENDERER_LOAD_ORDER: order } }, Buffer, console: { info: printed },
     require(name: string) {
       if (name === "node:fs") return fakeFs;
       if (name === "node:path") return path;
@@ -394,9 +394,16 @@ function commandsRefused(f: ReturnType<typeof commandsFixture>) {
   expect(JSON.stringify(f.printed.mock.calls)).not.toContain("PRIVATE");
 }
 
-it("recovers the complete published Focus prefix by removing the prime observation and preserves the Commands job byte-for-byte", () => {
+it("recovers the published Focus prefix and the complete Commands job through exact inverses", () => {
   expect(createHash("sha256").update(withoutPrime).digest("hex")).toBe("d53f85ce186d7847867a637acab539f6103099cedf0248f74cc0aae77ee52cff");
-  expect(createHash("sha256").update(commandsSource).digest("hex")).toBe("37089133291c244f0c9e9b15f633ac99dbb487809fad859baba7dfc9c1541561");
+  const restoredCommands = commandsSource
+    .replace("Native Commands renderer (${{ matrix.image }}, show ${{ matrix.order }} load)", "Native Commands renderer (${{ matrix.image }})")
+    .replace("        order: [after, before]\n", "")
+    .replace("          EMBER_COMMANDS_RENDERER_LOAD_ORDER: ${{ matrix.order }}\n", "");
+  expect(restoredCommands).not.toBe(commandsSource);
+  expect(createHash("sha256").update(restoredCommands).digest("hex")).toBe("37089133291c244f0c9e9b15f633ac99dbb487809fad859baba7dfc9c1541561");
+  expect(commandsSource).toContain("        image: [windows-2022, windows-2025]\n        order: [after, before]\n");
+  expect(commandsSource).toContain("EMBER_COMMANDS_RENDERER_LOAD_ORDER: ${{ matrix.order }}");
   expect(commandsSource).toContain("    if: github.event_name == 'workflow_dispatch'");
   expect(commandsSource).toContain("image: [windows-2022, windows-2025]");
   expect(commandsSource).toContain("fail-fast: false"); expect(commandsSource).toContain("timeout-minutes: 15");
@@ -407,10 +414,18 @@ it("recovers the complete published Focus prefix by removing the prime observati
   expect(fs.readFileSync(commandsRelative, "utf8")).toContain(JSON.stringify(commandsTitle));
   expect(commandsSource).not.toContain("fixtureFlags");
 });
-it("admits one canonical titled passed Commands leaf only after both genuine cards and clean observed teardown", () => {
-  const f = commandsFixture(); f.run();
+it("recovers the entire previous native Commands leaf by reversing only its load-order transport", () => {
+  const leaf = fs.readFileSync(commandsRelative, "utf8");
+  const original = leaf
+    .replace('    const loadOrder = process.env.EMBER_COMMANDS_RENDERER_LOAD_ORDER ?? "after";\n    if (loadOrder !== "after" && loadOrder !== "before") throw refusal(phase);\n', "")
+    .replace("{ ...env, EMBER_COMMANDS_RENDERER_LOAD_ORDER: loadOrder }, control", "env, control");
+  expect(original).not.toBe(leaf);
+  expect(createHash("sha256").update(original).digest("hex")).toBe("0287e127d1c05aaef56c5a1c5c55a94dc9c3f269b01079e601444fad5eaff3a3");
+});
+it.each(["after", "before"])("admits the %s-load Commands leaf only after both genuine cards and clean observed teardown", order => {
+  const f = commandsFixture({}, order); f.run();
   expect(f.spawn).toHaveBeenCalledExactlyOnceWith("fixed-node", ["scripts/run-integration.mjs", commandsRelative, "--maxWorkers=1", "--reporter=default", "--reporter=json", "--outputFile=" + commandsReportPath],
-    { env: { RUNNER_TEMP: path.dirname(commandsReportPath), EMBER_COMMANDS_RENDERER_NATIVE_TEST: "1" }, stdio: ["ignore", "pipe", "pipe"], encoding: "buffer", maxBuffer: 1024 * 1024, timeout: 5 * 60_000, windowsHide: true });
+    { env: { RUNNER_TEMP: path.dirname(commandsReportPath), EMBER_COMMANDS_RENDERER_NATIVE_TEST: "1", EMBER_COMMANDS_RENDERER_LOAD_ORDER: order }, stdio: ["ignore", "pipe", "pipe"], encoding: "buffer", maxBuffer: 1024 * 1024, timeout: 5 * 60_000, windowsHide: true });
   expect(commandsProjected(f)).toEqual([["Windows Commands renderer observation", cardObservation(1)], ["Windows Commands renderer observation", cardObservation(2)],
     ["Windows Commands renderer summary", commandsSummary()], ["Required Windows Commands renderer passed", { schema: 1, passed: 1, skipped: 0 }]]);
 });

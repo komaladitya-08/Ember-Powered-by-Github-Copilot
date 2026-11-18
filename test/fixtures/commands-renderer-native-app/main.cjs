@@ -93,11 +93,13 @@ function ready() {
   if (!assetsVerified || !sandboxed) { refuse(); return; }
   readyWritten = true; mark(9); process.stdout.write(readyPrefix + "1\n");
 }
+const loadOrder = process.env.EMBER_COMMANDS_RENDERER_LOAD_ORDER;
 let tap;
 try {
   mark(1);
   const profile = process.env.EMBER_COMMANDS_RENDERER_PROFILE;
   if (process.env.EMBER_COMMANDS_RENDERER_NATIVE_TEST !== "1" || process.platform !== "win32" || !profile || !path.isAbsolute(profile) || fs.realpathSync.native(profile) !== profile || !fs.lstatSync(profile).isDirectory() || fs.lstatSync(profile).isSymbolicLink() || fs.readdirSync(profile).length) throw new Error();
+  if (loadOrder !== "after" && loadOrder !== "before") throw new Error();
   app.setPath("userData", profile); mark(2); tap = fixture(); mark(3);
 } catch (error) { refuse(error, true); }
 
@@ -187,6 +189,11 @@ if (!leaving) void app.whenReady().then(async () => {
   window.webContents.on("render-process-gone", refuse); window.webContents.on("unresponsive", refuse); window.webContents.on("preload-error", refuse);
   window.webContents.on("did-fail-load", (_event, code, _description, _url, mainFrame) => { if (mainFrame === true) noteLoad(code); });
   window.webContents.setZoomFactor(1); window.setContentProtection(true);
-  mark(6); await window.loadFile(path.join(__dirname, "renderer/command/index.html")); loaded = true;
-  window.setTitle("Ember commands renderer bench"); window.setAlwaysOnTop(true, "floating"); window.showInactive(); window.moveTop(); ready();
+  const reveal = () => { window.setAlwaysOnTop(true, "floating"); window.showInactive(); window.moveTop(); };
+  mark(6); const loading = window.loadFile(path.join(__dirname, "renderer/command/index.html"));
+  if (loadOrder === "before") reveal();
+  await loading; loaded = true;
+  window.setTitle("Ember commands renderer bench"); // Navigation may have replaced the constructor title.
+  if (loadOrder === "after") reveal();
+  ready();
 }).catch(error => refuse(error, true));

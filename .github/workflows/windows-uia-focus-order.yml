@@ -171,12 +171,13 @@ jobs:
           console.info("Required Windows UIA focus primitive passed", JSON.stringify({ schema: 1, passed: 1, skipped: 0 }));
 
   commands:
-    name: Native Commands renderer (${{ matrix.image }})
+    name: Native Commands renderer (${{ matrix.image }}, show ${{ matrix.order }} load)
     if: github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
         image: [windows-2022, windows-2025]
+        order: [after, before]
     runs-on: ${{ matrix.image }}
     timeout-minutes: 15
     steps:
@@ -197,6 +198,7 @@ jobs:
         shell: node {0}
         env:
           EMBER_COMMANDS_RENDERER_NATIVE_TEST: "1"
+          EMBER_COMMANDS_RENDERER_LOAD_ORDER: ${{ matrix.order }}
         run: |
           // Keep Commands child streams private; only fixed numeric frames cross this boundary.
           const fs = require("node:fs"), path = require("node:path"), { types } = require("node:util");

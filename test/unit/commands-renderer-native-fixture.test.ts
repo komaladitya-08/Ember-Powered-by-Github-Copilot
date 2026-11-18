@@ -161,7 +161,7 @@ it.each([0, 1, 2, 3, 4, 5])("independent geometry uses the actual production sla
   const flags = h.sample(1).geometry; expect(!!(flags & 1)).toBe(actual.fits); expect(!!(flags & 2)).toBe(actual.atEnd); expect(!!(flags & 4)).toBe(actual.onScreen);
 });
 
-async function mainHarness(change: "none" | "asset" | "manifest" | "sandbox" | "load-event" | "load-error" = "none") {
+async function mainHarness(change: "none" | "asset" | "manifest" | "sandbox" | "load-event" | "load-error" = "none", loadOrder = "after") {
   const staged = stageHarness(), result = await staged.build(), profile = path.join(staged.root, "profile"); fs.mkdirSync(profile);
   if (change === "asset") fs.appendFileSync(path.join(result.app, "renderer/shared/ember.css"), "PRIVATE");
   if (change === "manifest") { const file = path.join(result.app, "fixture-data.json"), value = JSON.parse(fs.readFileSync(file, "utf8")); value.files[0].path = "../PRIVATE"; fs.writeFileSync(file, JSON.stringify(value)); }
@@ -179,12 +179,14 @@ async function mainHarness(change: "none" | "asset" | "manifest" | "sandbox" | "
     webContents = contents;
     constructor(value: unknown) { options = value; app.emit("web-contents-created", {}, contents); }
     isDestroyed() { return false; } async loadFile() {
+      calls.push(["load-start"]); await Promise.resolve();
       if (change === "load-event") { contents.emit("did-fail-load", {}, -3, "PRIVATE description", "file:///PRIVATE", false); contents.emit("did-fail-load", {}, -6, "PRIVATE description", "file:///PRIVATE", true); contents.emit("did-fail-load", {}, -10, "PRIVATE", "PRIVATE", true); }
       if (change === "load-event" || change === "load-error") throw Object.assign(new Error("PRIVATE URL message"), { errno: -10, code: "ERR_ACCESS_DENIED" });
-    } setTitle() {} setContentProtection() {}
+      calls.push(["load-settled"]);
+    } setTitle() { calls.push(["title"]); } setContentProtection() {}
     setAlwaysOnTop(...args: unknown[]) { calls.push(["top", ...args]); } showInactive() { calls.push(["showInactive"]); } moveTop() { calls.push(["moveTop"]); } hide() { calls.push(["hide"]); }
   }
-  const process = { pid: 41, env: { EMBER_COMMANDS_RENDERER_PROFILE: profile, EMBER_COMMANDS_RENDERER_NATIVE_TEST: "1", EMBER_COMMANDS_RENDERER_CONTROL: "\\\\.\\pipe\\ember-native-commands-" + "a".repeat(32), EMBER_COMMANDS_RENDERER_NONCE: nonce }, platform: "win32", stdout: { write: (value: string) => { output.push(value); calls.push(["stdout", value]); } }, stderr: { write: (value: string) => stages.push(value) }, exitCode: 0 };
+  const process = { pid: 41, env: { EMBER_COMMANDS_RENDERER_PROFILE: profile, EMBER_COMMANDS_RENDERER_NATIVE_TEST: "1", EMBER_COMMANDS_RENDERER_LOAD_ORDER: loadOrder, EMBER_COMMANDS_RENDERER_CONTROL: "\\\\.\\pipe\\ember-native-commands-" + "a".repeat(32), EMBER_COMMANDS_RENDERER_NONCE: nonce }, platform: "win32", stdout: { write: (value: string) => { output.push(value); calls.push(["stdout", value]); } }, stderr: { write: (value: string) => stages.push(value) }, exitCode: 0 };
   runInNewContext(main, { require: (name: string) => name === "electron" ? { app, BrowserWindow: Window, ipcMain: ipc, Menu: { setApplicationMenu() {} }, nativeTheme: { shouldUseDarkColors: false } }
     : name === "node:fs" ? fs : name === "node:path" ? path : name === "node:url" ? { pathToFileURL } : name === "node:util" ? { types } : name === "node:net" ? { connect() { queueMicrotask(() => { control.emit("connect"); control.emit("data", Buffer.from("OK " + nonce + "\n")); }); return control; } } : { createHash }, __dirname: result.app, process, Buffer, Uint8Array,
     setTimeout: (run: () => void, ms: number) => { const timer = { run, ms }; timers.push(timer); return timer; }, clearTimeout() {} });
@@ -192,6 +194,24 @@ async function mainHarness(change: "none" | "asset" | "manifest" | "sandbox" | "
   const event = { sender: contents, senderFrame: contents.mainFrame };
   return { ipc, handlers, event, calls, timers, output, stages, process, options, control, nonce, request: (n: number) => control.emit("data", Buffer.from("SAMPLE " + nonce + " " + n + "\n")), ready: () => { ipc.emit("commands-renderer:ready", event, 1); ipc.emit("commands-renderer:seen", event, { n: 1, seen: true, inView: true }); } };
 }
+it.each(["after", "before"] as const)("shows the same sandboxed first window once, %s load settles", async order => {
+  const h = await mainHarness("none", order);
+  expect(h.output).toEqual([]);
+  expect(h.calls.filter(call => ["load-start", "load-settled", "title", "top", "showInactive", "moveTop"].includes(call[0]))).toEqual([
+    ["load-start"],
+    ...(order === "before" ? [["top", true, "floating"], ["showInactive"], ["moveTop"]] : []),
+    ["load-settled"], ["title"],
+    ...(order === "after" ? [["top", true, "floating"], ["showInactive"], ["moveTop"]] : []),
+  ]);
+  h.ready();
+  expect(h.output).toEqual([COMMANDS_RENDERER_READY_PREFIX + "1\n"]);
+});
+it("refuses unknown load order before navigation or display", async () => {
+  const h = await mainHarness("none", "PRIVATE");
+  expect(h.output).toEqual([COMMANDS_RENDERER_LOAD_PREFIX + "7:4\n" + COMMANDS_RENDERER_READY_PREFIX + "0\n"]);
+  expect(h.calls.some(call => call[0] === "showInactive" || call[0] === "load-start")).toBe(false);
+  expect(h.output.join("")).not.toContain("PRIVATE");
+});
 it("the actual main fixture preserves hide/show, flush-before-ended, retained tab and fresh-card ordering without activation", async () => {
   const h = await mainHarness(); h.ready(); expect(h.output).toEqual([COMMANDS_RENDERER_READY_PREFIX + "1\n"]);
   expect(h.stages).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9].map(stage => "EMBER_COMMANDS_RENDERER_STARTUP_V1:" + stage + "\n"));

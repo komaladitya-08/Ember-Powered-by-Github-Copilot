@@ -75,6 +75,8 @@ it.skipIf(!required)("compares the authentic Commands renderer's measured second
   };
   try {
     expect(process.platform).toBe("win32"); expect(process.arch).toBe("x64");
+    const loadOrder = process.env.EMBER_COMMANDS_RENDERER_LOAD_ORDER ?? "after";
+    if (loadOrder !== "after" && loadOrder !== "before") throw refusal(phase);
     const repository = fs.realpathSync.native(process.cwd()), load = createRequire(import.meta.url), pkg = load.resolve("electron/package.json");
     expect(path.resolve(pkg).toLowerCase()).toBe(path.join(repository, "node_modules/electron/package.json").toLowerCase());
     expect(JSON.parse(fs.readFileSync(pkg, "utf8")).version).toBe(JSON.parse(fs.readFileSync(path.join(repository, "package.json"), "utf8")).devDependencies.electron);
@@ -102,7 +104,7 @@ it.skipIf(!required)("compares the authentic Commands renderer's measured second
     native = openWin32Input(); ownership.native = native; if (!native) throw refusal(phase);
     control = createNativeCommandsControl(root); ownership.control = control;
     await bounded(control.listening, 5000);
-    application = startCommandsRenderer(executable, stage.app, env, control); ownership.application = application;
+    application = startCommandsRenderer(executable, stage.app, { ...env, EMBER_COMMANDS_RENDERER_LOAD_ORDER: loadOrder }, control); ownership.application = application;
     expect(application.process.spawnargs.some(arg => arg === "--no-sandbox" || arg === "--disable-sandbox" || arg.startsWith("--inspect"))).toBe(false);
     ui = new UiaBridge(path.join(repository, "sidecar/uia/ember_uia.ps1"), bridgeEnv(env, { EMBER_UIA_CACHE: path.join(root, "bridge-cache"), EMBER_UIA_STARTUP_OBSERVE: "1" }));
     ownership.ui = ui;
