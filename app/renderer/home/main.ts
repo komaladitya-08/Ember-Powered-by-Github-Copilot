@@ -53,7 +53,7 @@ import { checkState, fixCommand, recheckMessage } from "./welcome-copy";
 import { holdsBack } from "../../shared/setup-attention";
 import { mountNaturalVoice } from "./natural-voice";
 import { keptWords, lockdownMicWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
-import { LATEST_ANSWER, modeCardRequested, PendingSection, sectionRequest } from "./section-request";
+import { landingRequest, LATEST_ANSWER, modeCardRequested, PendingSection, sectionRequest } from "./section-request";
 import { startWelcome } from "./welcome";
 import { holdTaskNews, startTasks } from "./tasks";
 import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnLine } from "./status-copy";
@@ -2473,7 +2473,12 @@ new ResizeObserver(() => {
   if (r.top < 0 || r.bottom > innerHeight) keptInView.el.scrollIntoView({ block: keptInView.block, behavior: "auto" });
 }).observe(document.body);
 // Main asks for a section ("Read all" on a long answer, connecting after setup).
-window.ember.onFocusSection(value => showSection(value, true));
+window.ember.onFocusSection(value => {
+  // After Start, focus is on the tagline (or nowhere): a late landing moves it only while it is still there.
+  const focused = document.activeElement;
+  const at = landingRequest(value, !focused || focused === document.body || focused === $("tagline"));
+  if (at) showSection(at, true);
+});
 // A section that was hidden when main asked for it shows itself once it appears; a click, key or scroll first drops it.
 new MutationObserver(() => {
   if (!pendingSection.waiting) return;

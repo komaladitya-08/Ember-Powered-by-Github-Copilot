@@ -3553,7 +3553,8 @@ function start(): void {
         const where = settingsSection(phase, setupRows());
         if (where) {
           // Settings stays open there; Ember says hello once it closes, not over it.
-          sendToHome(IPC.focusSection, where);
+          // Marked as the landing after setup: Home leaves focus alone if the person has moved on meanwhile.
+          sendToHome(IPC.focusSection, `${where}:after-setup`);
           if (homeOpen()) { greetOnClose = true; return; }
         } else if (home && !home.isDestroyed()) {
           // Hello once the window has gone (Ember is still waiting beside it until then).

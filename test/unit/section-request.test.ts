@@ -6,7 +6,7 @@
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { LATEST_ANSWER, PendingSection, sectionRequest } from "../../app/renderer/home/section-request";
+import { AFTER_SETUP, landingRequest, LATEST_ANSWER, PendingSection, sectionRequest } from "../../app/renderer/home/section-request";
 
 describe("a section request from main", () => {
   it("names the section and, for Computers, the control to focus", () => {
@@ -58,5 +58,21 @@ describe("a section request from main", () => {
     p.hold("computers");
     p.hold("commands");
     expect(p.take(s => s === "commands")).toBe("commands");
+  });
+});
+
+describe("a landing main asks for after setup", () => {
+  it("moves focus only while it is still where Start left it (WCAG 2.4.3, 3.2.2)", () => {
+    expect(landingRequest("copilot" + AFTER_SETUP, true)).toBe("copilot");
+    expect(landingRequest("checks" + AFTER_SETUP, true)).toBe("checks");
+    expect(landingRequest("copilot" + AFTER_SETUP, false)).toBeNull();
+  });
+  it("leaves every other landing as it was, wherever focus is", () => {
+    for (const value of ["checks", "memory:memory-query", "privacy:autonomy-yes"]) {
+      expect(landingRequest(value, true)).toBe(value); expect(landingRequest(value, false)).toBe(value);
+    }
+  });
+  it("is the mark main puts on its landing once setup has finished", () => {
+    expect(readFileSync("app/main/main.ts", "utf8")).toContain("sendToHome(IPC.focusSection, `${where}" + AFTER_SETUP + "`);");
   });
 });
