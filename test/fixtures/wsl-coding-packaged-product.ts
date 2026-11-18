@@ -441,7 +441,10 @@ export class WslPackagedJourney {
     // was secret or cut short, 54 the read of the card's children was refused, 55 that read was busy or cut short.
     // 47 the card's text was read whole and is not the expected command.
     const command = await this.u.text(hwnd, id("ask-cmd")).catch(async () => {
-      const stage = this.u.textStage; this.phase = stage >= 2 && stage <= 5 ? 50 + stage : await this.windowRead(hwnd, 45, 46, 34); throw wslProductRefusal(this.phase);
+      // 52 by the bridge's own answer: 57 it failed, 58 it was denied, 59 another error; 52 stays for a control busy or
+      // gone for the whole 10 s.
+      const stage = this.u.textStage, error = this.u.textError;
+      this.phase = stage === 2 && error >= 3 ? 54 + error : stage >= 2 && stage <= 5 ? 50 + stage : await this.windowRead(hwnd, 45, 46, 34); throw wslProductRefusal(this.phase);
     });
     if (command !== WSL_PRODUCT_CHECK) { this.phase = 47; this.fail(); }
     this.phase = 35; const words = (await this.u.nodes(hwnd)).map(node => node.name ?? "").join("\n");

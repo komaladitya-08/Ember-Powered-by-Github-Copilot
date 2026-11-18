@@ -29,6 +29,8 @@ export class WslPackagedUi {
   textStage = 0;
   /** Why the last window read was refused: 1 the bridge's own error, 2 cut short, 3 a whole read that listed nothing; 0 it was not. */
   readRefusal = 0;
+  /** The bridge's last refusal of a control's text: 1 busy, 2 gone, 3 failed, 4 denied, 5 another; 0 none. */
+  textError = 0;
   constructor(private readonly p: WslUiPorts) {}
   private fail(): never { throw this.p.refuse(); }
   private current(): void { this.p.current(); if (Date.now() >= this.p.deadline) this.fail(); }
@@ -70,14 +72,15 @@ export class WslPackagedUi {
     return value!;
   }
   async text(hwnd: number, select: WslUiSelector): Promise<string> {
-    this.operation = 3; this.textStage = 1; const node = await this.node(hwnd, select, false); if (node.isPassword) this.fail(); this.textStage = 2;
-    // A control that does not answer in time is busy, as a window's read is: found again and read again, within the
-    // caller's own limit. Any other refusal of the text stands.
+    this.operation = 3; this.textError = 0; this.textStage = 1; const node = await this.node(hwnd, select, false); if (node.isPassword) this.fail(); this.textStage = 2;
+    // A control that does not answer in time is busy, and one redrawn since it was listed is gone, as a window's read
+    // allows for both: found again and read again, within the caller's own limit. Any other refusal of the text stands.
     let result: { text?: string; secret?: boolean; truncated?: boolean } | undefined, target = node;
     for (const end = Math.min(this.p.deadline, Date.now() + 10_000); ;) {
       const answer = await this.p.bridge.request("textInfo", { handle: target.h, maxChars: 32_000, deadlineMs: 2500 }, 5000); this.current();
       if (!answer.error) { result = answer.result as typeof result; break; }
-      if (answer.error.code !== "busy" || Date.now() >= end) this.fail();
+      const code = answer.error.code; this.textError = code === "busy" ? 1 : code === "gone" ? 2 : code === "failed" ? 3 : code === "denied" ? 4 : 5;
+      if (this.textError > 2 || Date.now() >= end) this.fail();
       await pause(150); target = await this.node(hwnd, select, false); if (target.isPassword) this.fail();
     }
     if (!result) this.fail();
