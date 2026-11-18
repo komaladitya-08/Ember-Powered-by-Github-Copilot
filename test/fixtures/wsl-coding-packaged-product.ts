@@ -60,7 +60,10 @@ export class WslPackagedJourney {
   readonly source: string;
   readonly publicSource: string;
   readonly env: NodeJS.ProcessEnv;
-  private readonly deadline = Date.now() + 300_000;
+  // The whole journey's budget. 300 s until the owner raised it to 480 s on 18 November 2026, as for the Node packaged
+  // journey, which passed every step and ran out of 300 s on the hosted images; this one was 180 s in midway through
+  // the second of its three cases. Each step's own wait is unchanged but the command card's, below.
+  private readonly deadline = Date.now() + 480_000;
   private input: ReturnType<typeof openWin32Input> = null;
   private bridge?: UiaBridge;
   private ui?: WslPackagedUi;
@@ -209,7 +212,7 @@ export class WslPackagedJourney {
     this.app = spawn(this.executable, ["--show-settings"], { cwd: path.dirname(this.executable), env: this.env, stdio: "ignore", windowsHide: false });
     this.appClosed = new Promise((resolve, reject) => { this.app!.once("error", () => reject(wslProductRefusal(2))); this.app!.once("close", (code, signal) => resolve({ code, signal })); }); void this.appClosed.catch(() => undefined);
     if (!this.app.pid) this.fail();
-    this.watchdog = setTimeout(() => { this.forced = true; this.stopped = true; this.app?.kill(); }, 305_000);
+    this.watchdog = setTimeout(() => { this.forced = true; this.stopped = true; this.app?.kill(); }, 485_000);
     this.bridge = new UiaBridge(script, bridgeEnv(this.env, { EMBER_UIA_CACHE: path.join(this.root, "bridge-cache"), EMBER_UIA_STARTUP_OBSERVE: "1" }));
     await bounded(this.bridge.ready, 30_000);
     this.ui = new WslPackagedUi({ bridge: this.bridge, input: this.input, pid: this.app.pid, deadline: this.deadline, current: () => this.current(), refuse: () => wslProductRefusal(this.phase) });
@@ -405,21 +408,19 @@ export class WslPackagedJourney {
     this.projectStage = 23; await this.u.fill(this.home, id("project-sessions-request"), request);
     this.projectStage = 24; await this.u.click(this.home, id("project-sessions-send"));
   }
-  private async command(): Promise<number> { return (await this.u.until(() => this.u.windows(), windows => windows.some(window => window.name === "Ember commands"), 45_000)).find(window => window.name === "Ember commands")!.hwnd; }
+  /** The command window comes with a session's first card, so it has the card's 90 s (the owner's decision above). */
+  private async command(): Promise<number> { return (await this.u.until(() => this.u.windows(), windows => windows.some(window => window.name === "Ember commands"), 90_000)).find(window => window.name === "Ember commands")!.hwnd; }
   async allowCommand(): Promise<void> {
-    // Phases within a command decision: 7 the command window, 27 a fresh card in it (38 when it came only after the
-    // 45 s; 40 is the fixture's own bounded helper), 33 the keyboard on the card, 34 its command text, 35 the folder it
+    // Phases within a command decision: 7 the command window, 27 a fresh card in it (40 is the fixture's own bounded
+    // helper), 33 the keyboard on the card, 34 its command text, 35 the folder it
     // names, 36 the target's label, 7 again the click,
     // 22 the answered card leaving the window.
     this.phase = 7; const hwnd = await this.command();
     this.phase = 27;
-    const fresh = (nodes: RawNode[]) => nodes.some(node => node.automationId === "ask-cmd" && !!node.runtimeId && node.runtimeId !== this.previousCard);
-    const node = (await this.u.until(() => this.u.nodes(hwnd), fresh, 45_000).catch(async () => {
-      // Failure only, and still a failure: one further look of up to 60 s says whether the card came late (38), as it
-      // would behind a command still running in WSL, or not at all (27 stays). Nothing is answered after the 45 s.
-      try { await this.u.until(() => this.u.nodes(hwnd), fresh, 60_000); this.phase = 38; } catch { /* It did not come: 27. */ }
-      throw wslProductRefusal(this.phase);
-    })).find(id("ask-cmd"))!;
+    // 90 s for the card, 45 s until the owner raised it on 18 November 2026: on the hosted Windows Server 2022 image a
+    // card came just after 45 s while WSL was starting cold (and a later card waits for the command before it to
+    // install, build and test inside WSL). The card must still come and hold what is checked below.
+    const node = (await this.u.until(() => this.u.nodes(hwnd), nodes => nodes.some(node => node.automationId === "ask-cmd" && !!node.runtimeId && node.runtimeId !== this.previousCard), 90_000)).find(id("ask-cmd"))!;
     this.phase = 33; await this.u.focus(hwnd, node); this.phase = 34; expect(await this.u.text(hwnd, id("ask-cmd"))).toBe(WSL_PRODUCT_CHECK);
     this.phase = 35; const words = (await this.u.nodes(hwnd)).map(node => node.name ?? "").join("\n");
     expect(words).toContain("/work"); this.phase = 36; expect(words).toContain(this.targetLabel); this.previousCard = node.runtimeId!;

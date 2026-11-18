@@ -31,4 +31,4 @@ it.skipIf(!required)(wslProductTitle("packaged", "normal-wsl-home"), async () =>
   }
   if (failed) { const observation = journey?.observation(); if (observation) console.info("Windows WSL packaged cached observation", JSON.stringify(observation)); throw wslProductRefusal(phase); }
   retained.delete(owner); quarantined = false; console.info("Windows WSL packaged journey passed", JSON.stringify({ schema: 1, phase: 11 }));
-}, 360_000);
+}, 540_000);
