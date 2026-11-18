@@ -521,7 +521,7 @@ export class WslPackagedJourney {
   }
   private async exportReview(publicDependencies: boolean, cumulative: boolean): Promise<void> {
     // Phases within the export: 16 the idle wait, 21 the keyboard into the pane, 23 paging down to Export, 24 the click
-    // and the folder dialog, 25 paging back up to Home's sentence and reading it, 26 paging down to Export again.
+    // and the folder dialog, 25 paging back up to Home's sentence and reading it, 26 paging down to Export again (48 the keys moved nothing).
     this.phase = 16; await this.idle(); const before = this.model.requests.length, existing = new Set(fs.readdirSync(this.exported));
     const exportButton = id("project-coding-export"), sentence: WslUiSelector = node => node.controlType === "Text" && (node.name ?? "").includes("Exported the coding review");
     this.phase = 21; await this.paneKeyboard(); this.phase = 23; await this.pageTo(exportButton);
@@ -530,7 +530,9 @@ export class WslPackagedJourney {
     // The folder dialog may leave the keyboard nowhere: Export, still shown, takes it before the page keys are used.
     this.phase = 25; await this.u.focus(this.home, await this.u.node(this.home, exportButton)); await this.pageTo(sentence, false, true);
     await this.accessible(text => text.includes("Exported the coding review")); expect(this.model.requests.length).toBe(before);
-    this.phase = 26; await this.pageTo(exportButton);
+    // Failure only: 48 the page keys never moved the pane (the keyboard was no longer in it), 26 it moved and Export
+    // never showed enabled.
+    this.phase = 26; if (!await this.pageTo(exportButton, true, false, true)) { if (!this.paged) this.phase = 48; this.fail(); }
     const fresh = fs.readdirSync(this.exported).filter(name => !existing.has(name)); expect(fresh).toHaveLength(1);
     this.assertExport(path.join(this.exported, fresh[0]), publicDependencies, cumulative);
   }
