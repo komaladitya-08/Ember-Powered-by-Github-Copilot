@@ -169,6 +169,9 @@ export class WslPackagedJourney {
       for (let pressed = 0; pressed < presses; pressed++) {
         if (shows(nodes)) return true;
         this.u.key(this.home, key); await pause(250); this.current(); nodes = await read(); this.paged ||= place(nodes) !== first;
+        // A scroll still moving when it is read can carry a short control past before it is seen (the sentence above
+        // the results was missed on the hosted Windows Server 2025 image and found on 2022): read once more, settled.
+        if (!shows(nodes)) { await pause(400); this.current(); nodes = await read(); }
       }
     }
     if (shows(nodes)) return true;
