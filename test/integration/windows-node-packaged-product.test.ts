@@ -615,6 +615,8 @@ class Journey {
       if (nodes.filter(answerButton).length > 1) throw refusal(this.phase);
       return true;
     });
+    // The click is input, not proof it was taken: an answered card leaves the window. Still commandStage 13 until it does.
+    await this.until(async () => { const after = await this.nodes(hwnd); return after.length > 0 && !hasDisplay(after); }, answered => answered, 10_000);
     this.observe({ commandStage: 14 });
   }
   private async review(goal: string, counts: string): Promise<string> {

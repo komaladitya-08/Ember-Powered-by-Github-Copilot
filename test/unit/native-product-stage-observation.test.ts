@@ -76,6 +76,9 @@ it("preserves the entire native WSL test after reversing only the new observatio
 });
 it("preserves the entire packaged test after reversing only the new project/folder stage field and markers", () => {
   let source = fs.readFileSync("test/integration/windows-node-packaged-product.test.ts", "utf8");
+  // Reverse the check that an answered card left the command window.
+  const answered = "      return true;\n    });\n    // The click is input, not proof it was taken: an answered card leaves the window. Still commandStage 13 until it does.\n    await this.until(async () => { const after = await this.nodes(hwnd); return after.length > 0 && !hasDisplay(after); }, answered => answered, 10_000);\n    this.observe({ commandStage: 14 });\n";
+  expect(source.split(answered)).toHaveLength(2); source = source.replace(answered, "      return true;\n    });\n    this.observe({ commandStage: 14 });\n");
   // Reverse the review step's wait for its result to be listed (a result exists only once its session has ended).
   const reviewWait = "    // A result exists only once its session has ended, so the step first waits for its button to be listed. Phase 7\n    // ends at the Projects pane; 11 is that wait and the scroll, reveal, click and read. The journey's twelve-Tab search\n    // from the pane's link never brought the Coding group into view, so UI Automation scrolls the listed button into\n    // view; the reveal and the click below still require it shown, enabled and focused.\n    this.phase = 7; await this.idle(); await this.pane(\"Projects\");\n    const result = named(\"Review result: \" + titleOf(goal));\n    this.phase = 11; const listed = (await this.until(async () => (await this.nodes(this.home)).find(result), node => !!node, 45_000))!;\n    if (listed.isOffscreen !== false) {\n      if (listed.patterns?.scrollItem !== true) throw refusal(this.phase);\n      await this.bridge!.call(\"perform\", { handle: listed.h, op: \"scrollIntoView\", deadlineMs: 2500 }, 5000);\n    }\n    await this.revealHomeControl(result);\n    await this.click(this.home, result);\n    const region: Selector = node => node.automationId === \"project-coding-review\" || ([\"Group\", \"Pane\"].includes(node.controlType ?? \"\") && node.name === titleOf(goal));\n    return this.until(() => this.homeText(region), text => text.includes(counts), 45_000);\n";
   expect(source.split(reviewWait)).toHaveLength(2); source = source.replace(reviewWait, "    this.phase = 7; await this.pane(\"Projects\");\n    await this.revealHomeControl(id(\"project-coding\"), false); await this.revealHomeControl(named(\"Review result: \" + titleOf(goal)));\n    await this.click(this.home, named(\"Review result: \" + titleOf(goal)));\n    const region: Selector = node => node.automationId === \"project-coding-review\" || ([\"Group\", \"Pane\"].includes(node.controlType ?? \"\") && node.name === titleOf(goal));\n    return this.until(() => this.homeText(region), text => text.includes(counts), 45_000);\n");
@@ -289,10 +292,12 @@ it.each(["old-first", "ambiguous-fresh", "swapped-before-allow", "disabled-allow
         if (stage === 7) return condition === "ambiguous-fresh" ? [old, fresh, { ...fresh, runtimeId: "other" }] : [old, fresh];
         if (stage === 13 && condition === "swapped-before-allow") return [old, heading, allow];
         if (stage === 13 && condition === "ambiguous-allow") return [fresh, heading, allow, { ...allow, runtimeId: "other" }];
+        // An answered card leaves the window: the read after the click no longer shows it.
+        if (clicked) return [heading];
         return [fresh, heading, allow];
       },
       async until<T>(read: () => Promise<T>, accepts: (value: T) => boolean, deadline = 30_000) {
-        expect(deadline).toBe(stage === 7 ? 45_000 : 30_000);
+        expect(deadline).toBe(stage === 7 ? 45_000 : clicked ? 10_000 : 30_000);
         const value = await read();
         if (!accepts(value)) throw new Error("Original poll would refuse.");
         return value;

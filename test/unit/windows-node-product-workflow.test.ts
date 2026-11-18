@@ -574,22 +574,23 @@ it.each([false, true])("the actual provider, Commands setup and decision operati
   const plain = observationHelper(), observedStages: number[] = [], o = faults ? new Proxy(plain, { get() { throw new Error("PRIVATE observer"); } }) : {
     ...plain, update(value: unknown) { const stage = (value as Partial<Observation>).commandStage; if (typeof stage === "number") observedStages.push(stage); plain.update(value); },
   };
-  const trace: string[] = [], argv = ["--test", "test.cjs"]; let asked = false, decision = 0;
+  const trace: string[] = [], argv = ["--test", "test.cjs"]; let asked = false, decision = 0, answered = false;
   const ports = { model: { baseUrl: "http://127.0.0.1/fixed" },
     async pane(value: string) { trace.push("pane:" + value); },
-    async click(_window: number, selected: { label?: string }) { if (selected.label === "Ask me before every command on this computer") asked = true; trace.push("click"); },
+    async click(_window: number, selected: { label?: string }) { if (selected.label === "Ask me before every command on this computer") asked = true; if (decision) answered = true; trace.push("click"); },
     async fill() { trace.push("fill"); }, async armed() { trace.push("armed"); }, async idle() { trace.push("idle"); },
     async node(_window: number, selected: { label?: string }) { trace.push("node"); return { patterns: { toggle: selected.label === "Run commands on this computer" || asked ? "On" : "Off" }, isEnabled: true }; },
-    async command() { trace.push("command"); decision++; return 99; },
-    async nodes() { trace.push("snapshot"); return [{ automationId: "ask-cmd", controlType: "Text", pid: 41, runtimeId: "PRIVATE runtime " + decision }, { name: "\\work", controlType: "Text" }, { controlType: "TabItem", runtimeId: "PRIVATE tab " + decision }]; },
-    async until(read: () => Promise<unknown>, accept: (value: unknown) => boolean, timeout: number) { expect(timeout).toBe(45_000); const value = await read(); expect(accept(value)).toBe(true); return value; },
+    async command() { trace.push("command"); decision++; answered = false; return 99; },
+    // An answered card leaves the window: the read after the click must no longer show it.
+    async nodes() { trace.push("snapshot"); if (answered) return [{ controlType: "TabItem", runtimeId: "PRIVATE tab " + decision }]; return [{ automationId: "ask-cmd", controlType: "Text", pid: 41, runtimeId: "PRIVATE runtime " + decision }, { name: "\\work", controlType: "Text" }, { controlType: "TabItem", runtimeId: "PRIVATE tab " + decision }]; },
+    async until(read: () => Promise<unknown>, accept: (value: unknown) => boolean, timeout: number) { expect(timeout).toBe(answered ? 10_000 : 45_000); const value = await read(); expect(accept(value)).toBe(true); return value; },
     async focus() { trace.push("focus"); }, async text() { trace.push("text"); return "Node arguments: " + JSON.stringify(argv); },
   };
   const actual = diagnosticOperations(o, ports, () => { trace.push("settings"); return "{}"; });
   await actual.configureProvider(); await actual.configureCommands();
   for (let index = 0; index < 8; index++) await actual.decide(argv);
   expect(trace).toEqual(["pane:Models & connections", "click", "fill", "fill", "fill", "fill", "click", "node", "armed", "click", "idle", "settings", "pane:Commands", "node", "node", "click", "node",
-    ...Array.from({ length: 8 }, () => ["command", "snapshot", "focus", "text", "snapshot", "snapshot", "click"]).flat()]);
+    ...Array.from({ length: 8 }, () => ["command", "snapshot", "focus", "text", "snapshot", "snapshot", "click", "snapshot"]).flat()]);
   if (!faults) {
     plain.capture(); expect(plain.value()).toMatchObject({ providerStage: 12, commandStage: 14, commandDecision: 8, cardFlags: 15 });
     expect(observedStages).toEqual([1, 2, 3, 4, 5, ...Array.from({ length: 8 }, () => [6, 7, 8, 9, 10, 11, 12, 13, 14]).flat()]);
