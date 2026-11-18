@@ -195,6 +195,9 @@ it.each(["selected", "wrong first", "wrong throughout", "outside combo", "duplic
   expect(input.keysymOf).toHaveBeenCalledTimes(expectedDown);
   expect(input.keysym).toHaveBeenCalledTimes(2 * expectedDown);
   expect(nodes).toHaveBeenCalledTimes(expectedDown === 12 ? 12 : expectedDown + 1);
+  // Failure-only numeric evidence: the refusing guard times 16 plus the Down count; exhaustion and success record none.
+  const guard = { duplicate: 8, unknown: 6, none: 7, disabled: 10, omitted: 5, "focus drift": 12 }[scenario as string] ?? 0;
+  expect(Reflect.get(journey, "selection")).toBe(guard * 16);
 });
 
 it.each(["stable", "selection changes", "selected option replaced", "combo replaced", "commit loses focus"] as const)("checks selection during the final commit focus snapshot: %s", async scenario => {

@@ -75,8 +75,11 @@ export class WslPackagedJourney {
   private readonly assets: { path: string; sha256: string }[] = [];
   private previousCard = "";
   private projectStage = 0;
+  /** Failure-only: which selection guard refused (1–12) times 16, plus the Down count so far (0–11); 0 when none did. */
+  private selection = 0;
+  private selectionStep = 0;
   private readonly privateFailures: unknown[] = [];
-  private captured?: Readonly<{ phase: number; operation: number; bridgeStage: number; projectStage: number }>;
+  private captured?: Readonly<{ phase: number; operation: number; bridgeStage: number; projectStage: number; selection: number }>;
   constructor(readonly root: string, readonly model: WslPackagedModel, readonly distro: string, readonly targetLabel: string) {
     this.profile = path.join(root, "profile"); this.temporary = path.join(root, "temporary"); this.exported = path.join(root, "exported");
     this.source = path.join(root, "source"); this.publicSource = path.join(root, "public-source");
@@ -90,13 +93,15 @@ export class WslPackagedJourney {
     this.env = environment(this.temporary, this.profile, path.join(root, "github"));
   }
   private fail(): never { throw wslProductRefusal(this.phase); }
+  private refuseSelection(guard: number): never { this.selection = guard * 16 + this.selectionStep; this.fail(); }
   private current(): void { if (this.stopped || this.forced || Date.now() >= this.deadline) this.fail(); }
   private get u(): WslPackagedUi { if (!this.ui) this.fail(); return this.ui; }
   capture(error?: unknown): void {
     if (this.captured) return; this.privateFailures.push(error);
-    this.captured = Object.freeze({ phase: this.phase, operation: this.ui?.operation ?? 0, bridgeStage: this.bridge?.startupStage ?? 0, projectStage: this.phase === 6 ? this.projectStage : 0 });
+    this.captured = Object.freeze({ phase: this.phase, operation: this.ui?.operation ?? 0, bridgeStage: this.bridge?.startupStage ?? 0, projectStage: this.phase === 6 ? this.projectStage : 0,
+      selection: this.phase === 6 && this.projectStage === 15 ? this.selection : 0 });
   }
-  observation(): Readonly<{ phase: number; operation: number; bridgeStage: number; projectStage: number }> | undefined { return this.captured; }
+  observation(): Readonly<{ phase: number; operation: number; bridgeStage: number; projectStage: number; selection: number }> | undefined { return this.captured; }
   private async pane(name: string): Promise<void> { await this.u.click(this.home, node => node.controlType === "Hyperlink" && node.name === name); }
   private async accessible(accepts: (value: string) => boolean, ms = 30_000): Promise<string> {
     const value = await this.u.until(async () => (await this.u.nodes(this.home)).filter(node => node.controlType === "Text" && !node.isPassword && typeof node.name === "string")
@@ -252,32 +257,36 @@ export class WslPackagedJourney {
     const incomplete = (node: RawNode & { omitted?: boolean; childrenFailed?: boolean; childrenCut?: boolean }) =>
       node.gone || node.omitted || node.childrenFailed || node.childrenCut;
     const roots = nodes.flatMap((node, at) => sameWslUiNode(node, combo) ? [at] : []);
-    if (roots.length !== 1) this.fail();
+    if (roots.length !== 1) this.refuseSelection(roots.length ? 2 : 1);
     const [root] = roots, control = nodes[root];
-    if (control.isEnabled !== true || incomplete(control)) this.fail();
+    if (control.isEnabled !== true) this.refuseSelection(3);
+    if (incomplete(control)) this.refuseSelection(4);
     const descendants = new Set([root]);
     const selected: RawNode[] = [];
     for (const [at, node] of nodes.entries()) {
       if (!descendants.has(node.parent ?? -1)) continue;
-      if (incomplete(node)) this.fail();
+      if (incomplete(node)) this.refuseSelection(5);
       descendants.add(at);
       const item = node.patterns.selectionItem;
       if (!item) continue;
-      if (typeof item.selected !== "boolean") this.fail();
+      if (typeof item.selected !== "boolean") this.refuseSelection(6);
       if (item.selected) selected.push(node);
     }
-    if (selected.length !== 1 || !selected[0].name || selected[0].isPassword) this.fail();
+    if (selected.length !== 1) this.refuseSelection(selected.length ? 8 : 7);
+    if (!selected[0].name || selected[0].isPassword) this.refuseSelection(9);
     return { control, option: selected[0] };
   }
   private async chooseWslOption(combo: RawNode): Promise<RawNode> {
     const label = this.distro + " (WSL2)";
     for (let index = 0; index < 12; index++) {
+      this.selectionStep = index;
       const { control, option } = this.selectedWslOption(await this.u.nodes(this.home), combo);
       if (option.name === label) {
-        if (option.isEnabled !== true || !option.runtimeId || option.pid !== control.pid) this.fail();
+        if (option.isEnabled !== true || !option.runtimeId || option.pid !== control.pid) this.refuseSelection(10);
         return option;
       }
-      if (control.isOffscreen !== false || control.hasKeyboardFocus !== true) this.fail();
+      if (control.isOffscreen !== false) this.refuseSelection(11);
+      if (control.hasKeyboardFocus !== true) this.refuseSelection(12);
       this.u.key(this.home, "Down");
     }
     this.fail();
@@ -301,7 +310,7 @@ export class WslPackagedJourney {
     this.projectStage = 14; const focusedCombo = await this.u.focus(this.home, await this.u.node(this.home, combo));
     if (focusedCombo.hasKeyboardFocus !== true) this.fail();
     this.u.key(this.home, "Home");
-    this.projectStage = 15; const desired = await this.chooseWslOption(focusedCombo);
+    this.projectStage = 15; this.selection = 0; this.selectionStep = 0; const desired = await this.chooseWslOption(focusedCombo);
     this.projectStage = 16; await this.u.reveal(this.home, combo, id("project-coding-execution-choose"));
     this.projectStage = 17; await this.commitWslOption(focusedCombo, desired);
     this.projectStage = 18; await this.accessible(text => text.includes("isolated copy") && text.includes("offline"));

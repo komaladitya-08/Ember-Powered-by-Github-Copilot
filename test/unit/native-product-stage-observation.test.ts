@@ -205,6 +205,9 @@ it("preserves the entire packaged test after reversing only the new project/fold
 it("preserves the whole workflow after reversing only the known diagnostic fields and exact reviewed source-proof promotion", () => {
   let source = fs.readFileSync(".github/workflows/windows-node-product.yml", "utf8");
   for (const addition of [
+    ", host: 7, visibility: 7 };", ", host: 0, visibility: 0 };",
+  ]) { expect(source.split(addition)).toHaveLength(2); source = source.replace(addition, addition.replace(/, visibility: [07]/, "")); }
+  for (const addition of [
     ", commandWindows: 2, targetType: 8, focusedType: 8, targetState: 80, focusTrajectory: 3",
     ", commandWindows: 0, targetType: 0, focusedType: 0, targetState: 0, focusTrajectory: 0",
   ]) { expect(source.split(addition)).toHaveLength(2); source = source.replace(addition, ""); }
