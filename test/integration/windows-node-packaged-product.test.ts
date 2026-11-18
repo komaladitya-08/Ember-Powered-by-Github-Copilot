@@ -633,7 +633,10 @@ class Journey {
         const outside = !!at && !!frame && (at.x < frame.x || at.y < frame.y || at.x >= frame.x + frame.width || at.y >= frame.y + frame.height);
         this.clickUnder = !at || !Array.isArray(chain) ? 0 : !leaf || !root ? 4 : chain.some(node => sameNode(node, at.node)) ? 1
           : leaf.pid !== at.node.pid ? 3 : root.hwnd === hwnd ? 2 : outside ? 10
-          : title === "Ember overlay" ? 6 : title === "Ember needs you" ? 7 : title === "Ask Ember" ? 8 : title === "Ember" ? 9 : 5;
+          : title === "Ember overlay" ? 6 : title === "Ember needs you" ? 7 : title === "Ask Ember" ? 8 : title !== "Ember" ? 5
+          // "Ember" is Home, the handle and the vault's form: told apart by size class only. 11 the handle's pill or tab
+          // (at most 80 high), 12 a narrow card (at most 400 wide), 9 anything larger.
+          : !root.bounds ? 9 : root.bounds.height <= 80 ? 11 : root.bounds.width <= 400 ? 12 : 9;
       } catch { this.clickUnder = 0; /* The original refusal stands. */ }
       throw error;
     }

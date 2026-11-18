@@ -14,7 +14,7 @@ export interface PackagedCommandCardObservation {
    * 1 the answer button or something inside it, 2 something else in the command window, 3 another program's,
    * 4 nothing it may read; another window of Ember's: 6 the overlay, 7 the prompt, 8 the Ask box, 9 Home, the handle or
    * the vault's form, 5 any other, 10 any of those where the click point lies outside the command window's frame;
-   * 0 not asked.
+   * a window titled just Ember by size class: 11 the handle's pill or tab, 12 a narrow card, 9 larger; 0 not asked.
    */
   under: number;
 }
