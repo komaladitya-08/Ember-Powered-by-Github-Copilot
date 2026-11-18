@@ -557,8 +557,14 @@ export class WslPackagedJourney {
   }
   private async continueWith(request: string): Promise<void> {
     // Phases within a continuation: 63 its button, 64 the request typed, 65 Send.
-    this.phase = 63; await this.u.click(this.home, id("project-coding-continue")); this.phase = 64; await this.u.fill(this.home, id("project-coding-continue-request"), request);
-    this.phase = 65; await this.u.click(this.home, id("project-coding-continue-send"));
+    this.phase = 63; await this.u.click(this.home, id("project-coding-continue")); this.phase = 64;
+    // Home puts the keyboard in the request box without scrolling to it (preventScroll), so below the fold it is
+    // focused and out of view, which the helper refuses to type into. Tab from the button brings it into view, and
+    // Send after it the same way.
+    await this.u.reveal(this.home, id("project-coding-continue"), id("project-coding-continue-request"));
+    await this.u.fill(this.home, id("project-coding-continue-request"), request);
+    this.phase = 65; await this.u.reveal(this.home, id("project-coding-continue-request"), id("project-coding-continue-send"));
+    await this.u.click(this.home, id("project-coding-continue-send"));
   }
   async offline(): Promise<void> {
     const [first, next] = wslProductScenarios("repair"); await this.project(false, "offline"); await this.send(first.request); await this.allowCommand(); await this.allowCommand();
