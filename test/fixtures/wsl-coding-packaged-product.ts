@@ -423,7 +423,14 @@ export class WslPackagedJourney {
     // 90 s for the card, 45 s until the owner raised it on 18 November 2026: on the hosted Windows Server 2022 image a
     // card came just after 45 s while WSL was starting cold (and a later card waits for the command before it to
     // install, build and test inside WSL). The card must still come and hold what is checked below.
-    const node = (await this.u.until(() => this.u.nodes(hwnd), nodes => nodes.some(node => node.automationId === "ask-cmd" && !!node.runtimeId && node.runtimeId !== this.previousCard), 90_000)).find(id("ask-cmd"))!;
+    const node = (await this.u.until(() => this.u.nodes(hwnd), nodes => nodes.some(node => node.automationId === "ask-cmd" && !!node.runtimeId && node.runtimeId !== this.previousCard), 90_000).catch(async () => {
+      // Failure only: one plain read of the command window says why. 37 it listed nothing, 38 its read was cut short
+      // (a window full of a command's output), 27 neither, so the card did not come in its 90 s.
+      const answer = await this.bridge!.request("snapshot", { hwnd, values: false, maxNodes: 2000, maxChildren: 500, deadlineMs: 3000 }, 5000).catch(() => null);
+      const read = answer && !answer.error ? answer.result as { nodes?: unknown[]; busy?: boolean; truncated?: boolean; cut?: unknown[] } : null;
+      if (read && !read.busy) this.phase = read.truncated || read.cut?.length ? 38 : !read.nodes?.length ? 37 : 27;
+      throw wslProductRefusal(this.phase);
+    })).find(id("ask-cmd"))!;
     this.phase = 33; await this.u.focus(hwnd, node); this.phase = 34; expect(await this.u.text(hwnd, id("ask-cmd"))).toBe(WSL_PRODUCT_CHECK);
     this.phase = 35; const words = (await this.u.nodes(hwnd)).map(node => node.name ?? "").join("\n");
     expect(words).toContain("/work"); this.phase = 36; expect(words).toContain(this.targetLabel); this.previousCard = node.runtimeId!;
