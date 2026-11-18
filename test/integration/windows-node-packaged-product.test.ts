@@ -624,8 +624,10 @@ class Journey {
       // Failure only: one hit test at the click point says what took the press. No name, bounds or identity is kept.
       try {
         const at = this.lastClick, chain = at && await this.bridge!.call<RawNode[]>("elementsAt", { x: at.x, y: at.y, values: false, deadlineMs: 2500 }, 5000);
-        const leaf = chain?.at(-1);
-        this.clickUnder = !at || !Array.isArray(chain) ? 0 : !leaf ? 4 : sameNode(leaf, at.node) ? 1 : leaf.pid === at.node.pid ? 2 : 3;
+        const leaf = chain?.at(-1), root = chain?.[0];
+        // 1 the button or something inside it, 2 something else in the command window, 5 another window of Ember's.
+        this.clickUnder = !at || !Array.isArray(chain) ? 0 : !leaf || !root ? 4 : chain.some(node => sameNode(node, at.node)) ? 1
+          : leaf.pid !== at.node.pid ? 3 : root.hwnd === hwnd ? 2 : 5;
       } catch { this.clickUnder = 0; /* The original refusal stands. */ }
       throw error;
     }

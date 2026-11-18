@@ -98,7 +98,7 @@ it("runs the actual workflow projection independently of primary child outcome a
 it.each([
   { ...frame, known: 2 }, { ...frame, known: 0 }, { ...frame, capped: 1 }, { ...frame, sample: 16 }, { ...frame, card: 0 },
   { ...frame, source: 3 }, { ...frame, model: 128 }, { ...frame, ui: 32 }, { ...frame, geometry: 512 }, { ...frame, arm: 3 },
-  { ...frame, host: 8 }, { ...frame, visibility: 8 }, { ...frame, under: 5 }, { ...frame, extra: "PRIVATE" },
+  { ...frame, host: 8 }, { ...frame, visibility: 8 }, { ...frame, under: 6 }, { ...frame, extra: "PRIVATE" },
 ])("refuses unsupported public numeric frame %#", value => { expect(facts(attempt(value))).toMatchObject({ known: 0, model: 0 }); });
 it("refuses contradictory or malformed public records without touching hostile attempt accessors", () => {
   const a = attempt(); a.stdout = Buffer.concat([a.stdout, Buffer.from("Windows Node packaged command observation " + JSON.stringify({ ...frame, ui: 15 }) + "\n")]);
