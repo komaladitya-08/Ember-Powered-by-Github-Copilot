@@ -68,9 +68,11 @@ function actualMethod(prefix: string, next: string, parameters: string, globals:
 
 it("waits for the session to end, then scrolls the listed result into view and reveals it before the actual review click and bounded read", async () => {
   const review = actualMethod("  private async review(", "\n  private assertExport", "goal, counts");
-  const calls: string[] = []; let stage = 0;
+  const calls: string[] = []; let stage = 0; const steps: number[] = [];
   const port = {
     home: 73, phase: 0,
+    // The steps within phase 11, in order, as the failure facts carry them.
+    observe(values: { target: number }) { expect(port.phase).toBe(11); steps.push(values.target); },
     // A result exists only once its session has ended: the wait for Home's Ready comes before the Tab search.
     async idle() { expect(port.phase).toBe(7); calls.push("idle"); },
     async pane(value: string) { expect(value).toBe("Projects"); calls.push("projects"); },
@@ -89,7 +91,7 @@ it("waits for the session to end, then scrolls the listed result into view and r
     async until<T>(read: () => Promise<T>, accept: (value: T) => boolean, timeout: number) { expect(timeout).toBe(45_000); const value = await read(); expect(accept(value)).toBe(true); return value; },
   };
   expect(await review.call(port, "Public review", "Checks: 2 run")).toBe("Checks: 2 run");
-  expect(port.phase).toBe(11); expect(calls).toEqual(["idle", "projects", "listed", "scroll", "result", "click", "read"]);
+  expect(port.phase).toBe(11); expect(calls).toEqual(["idle", "projects", "listed", "scroll", "result", "click", "read"]); expect(steps).toEqual([1, 2, 3, 4, 5]);
 });
 
 it("reveals the Coding group and Export again after the actual idle helper returns to Projects", async () => {

@@ -660,13 +660,16 @@ class Journey {
     // view; the reveal and the click below still require it shown, enabled and focused.
     this.phase = 7; await this.idle(); await this.pane("Projects");
     const result = named("Review result: " + titleOf(goal));
-    this.phase = 11; const listed = (await this.until(async () => (await this.nodes(this.home)).find(result), node => !!node, 45_000))!;
+    // Within phase 11 the welcome's unused `target` fact counts its steps: 1 waiting for the result to be listed, 2 its
+    // scroll into view, 3 the reveal, 4 the click, 5 reading the review.
+    this.phase = 11; this.observe({ target: 1 }); const listed = (await this.until(async () => (await this.nodes(this.home)).find(result), node => !!node, 45_000))!;
     if (listed.isOffscreen !== false) {
-      if (listed.patterns?.scrollItem !== true) throw refusal(this.phase);
+      this.observe({ target: 2 }); if (listed.patterns?.scrollItem !== true) throw refusal(this.phase);
       await this.bridge!.call("perform", { handle: listed.h, op: "scrollIntoView", deadlineMs: 2500 }, 5000);
     }
-    await this.revealHomeControl(result);
-    await this.click(this.home, result);
+    this.observe({ target: 3 }); await this.revealHomeControl(result);
+    this.observe({ target: 4 }); await this.click(this.home, result);
+    this.observe({ target: 5 });
     const region: Selector = node => node.automationId === "project-coding-review" || (["Group", "Pane"].includes(node.controlType ?? "") && node.name === titleOf(goal));
     return this.until(() => this.homeText(region), text => text.includes(counts), 45_000);
   }
