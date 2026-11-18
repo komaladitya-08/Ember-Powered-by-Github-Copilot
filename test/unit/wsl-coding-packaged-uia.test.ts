@@ -86,3 +86,12 @@ it("takes a just-opened window that lists nothing as not ready only where asked,
   request.mockResolvedValue({ result: { busy: false, truncated: true, cut: [], nodes: [f.target] } });
   await expect(f.ui.nodes(123, false, true)).rejects.toBe(f.refused); expect(f.ui.readRefusal).toBe(2);
 });
+it("takes a read the bridge cut short by time alone as a busy one, and refuses a read cut any other way (WSL packaged, Server 2022 phase 38)", async () => {
+  const f = fixture(), request = f.bridge.request as unknown as ReturnType<typeof vi.fn>;
+  request.mockResolvedValue({ result: { busy: false, truncated: true, cut: ["time"], nodes: [f.target] } });
+  await expect(f.ui.nodes(123)).resolves.toEqual([]); expect(f.ui.readRefusal).toBe(0);
+  for (const cut of [["nodes"], ["time", "nodes"], ["depth"], ["offscreen"]]) {
+    request.mockResolvedValue({ result: { busy: false, truncated: true, cut, nodes: [f.target] } });
+    await expect(f.ui.nodes(123)).rejects.toBe(f.refused); expect(f.ui.readRefusal).toBe(2);
+  }
+});

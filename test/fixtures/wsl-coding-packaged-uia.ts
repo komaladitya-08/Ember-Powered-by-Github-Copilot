@@ -56,6 +56,10 @@ export class WslPackagedUi {
     if (answer.error) { this.readRefusal = 1; this.fail(); }
     const result = answer.result as { nodes: RawNode[]; busy: boolean; truncated: boolean; cut: string[] };
     if (result.busy) return [];
+    // A read the bridge stopped just short of its deadline (cut by "time" alone) is the same slow app as a busy one,
+    // answered a moment earlier: nothing was read whole, so nothing is used. Any other cut (nodes, depth, offscreen)
+    // is refused.
+    if (result.cut.length === 1 && result.cut[0] === "time") return [];
     if (result.truncated || result.cut.length) { this.readRefusal = 2; this.fail(); }
     // `opening`: a window that has only just opened lists nothing until its page has loaded, as a busy one does.
     if (!result.nodes.length) { if (opening) return []; this.readRefusal = 3; this.fail(); }
