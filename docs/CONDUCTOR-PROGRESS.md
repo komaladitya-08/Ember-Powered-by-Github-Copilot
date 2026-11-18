@@ -22,6 +22,13 @@ The hosted run of `278049b6` then showed:
 
 On `bb4b539a` both images' packaged Node journeys reached the review step with the command page visible, which confirms the occlusion change on Server 2025 as well. Both still refused there after three model steps, and the Ready wait returned in about ten seconds, so Home's Ready did not hold the step until the approved command's result existed. The review now waits, within the same 45 s bound its read already uses, for the result's button to be listed before the bounded Tab search, and that wait reports as phase 11. Whether the second approved command finishes at all in the packaged app is not yet established.
 
+Hosted results of `d7a05118` and `e0b652e7`:
+
+- **WSL packaged, Server 2022.** Reading the closed list's choice from the combo's value worked: the journey chose and committed the WSL environment and read Home's isolated-copy text (stages 15–18). It then refused at stage 19 because it started its Tab search for the public-dependencies switch from the commit button, which Home disables once its choice is saved. The search now starts from the combo. Server 2025 again stopped at phase 4 input before project setup; unexplained.
+- **Node packaged, both images.** The review step refused before the Coding group came into view (phase 7), within seconds. Its twelve-Tab search from the pane's link does not reach that group once a session exists. The step now waits for the result's button to be listed and asks UI Automation to scroll it into view; the reveal and click still require it shown, enabled and focused.
+- **WSL source, both images.** The export refused at phase 20 without reaching the new classification, so a folder did appear. The journey read `review.json` as soon as the folder existed, though the store makes the folder before writing into it; the Node journey waits for Home's "Exported the coding review" instead. The WSL journey now waits for that sentence too, inside the same 15 s bound.
+- **Ordinary CI.** On `d7a05118` the unit job failed once in the portable C witness test: its compiler was killed at the fixed 2.5 s bound (setup 5, compiler 1/0/1/1). The test and its sources are unchanged and it passed on the four heads before; the bound is not raised.
+
 These changes touch fixtures, two workflows' failure reporting, tests and this document. The 146-file native graph, its verifier, the fixed producer and all application runtime/build inputs are unchanged. One product follow-up is recorded, not addressed: a new directory that only holds new files marks the whole text patch as limited, though such a patch could carry it; the exporter is in the qualified graph, so changing it needs requalification.
 
 The paragraphs below describe the preceding checkpoint.

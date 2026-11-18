@@ -618,12 +618,17 @@ class Journey {
     this.observe({ commandStage: 14 });
   }
   private async review(goal: string, counts: string): Promise<string> {
-    // A result exists only once its session has ended, so the bounded Tab search for its button starts only after the
-    // button is listed. Phase 7 ends once the Coding group shows; 11 is that wait and the reveal, click and read.
+    // A result exists only once its session has ended, so the step first waits for its button to be listed. Phase 7
+    // ends at the Projects pane; 11 is that wait and the scroll, reveal, click and read. The journey's twelve-Tab search
+    // from the pane's link never brought the Coding group into view, so UI Automation scrolls the listed button into
+    // view; the reveal and the click below still require it shown, enabled and focused.
     this.phase = 7; await this.idle(); await this.pane("Projects");
-    await this.revealHomeControl(id("project-coding"), false);
     const result = named("Review result: " + titleOf(goal));
-    this.phase = 11; await this.until(async () => (await this.nodes(this.home)).some(result), listed => listed, 45_000);
+    this.phase = 11; const listed = (await this.until(async () => (await this.nodes(this.home)).find(result), node => !!node, 45_000))!;
+    if (listed.isOffscreen !== false) {
+      if (listed.patterns?.scrollItem !== true) throw refusal(this.phase);
+      await this.bridge!.call("perform", { handle: listed.h, op: "scrollIntoView", deadlineMs: 2500 }, 5000);
+    }
     await this.revealHomeControl(result);
     await this.click(this.home, result);
     const region: Selector = node => node.automationId === "project-coding-review" || (["Group", "Pane"].includes(node.controlType ?? "") && node.name === titleOf(goal));

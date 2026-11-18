@@ -311,7 +311,13 @@ async function exportReview(f: Journey, publicDependencies: boolean, changed: bo
   // 26 private markers, 27 no model request; 28-36 name what Home said when nothing was written.
   const mark = (phase: number) => { if (f.phase === 20 || (f.phase >= 23 && f.phase <= 27)) f.phase = phase; };
   await f.home!.locator("#project-coding-export").click();
-  try { await expect.poll(() => fs.readdirSync(f.exported).length, { timeout: 15_000 }).toBe(before.size + 1); }
+  // The store makes the export folder before it writes into it, so the folder alone doesn't say the files are whole:
+  // Home's own sentence does, as in the Node journey. Both waits share the one existing 15 s bound.
+  const exportedBy = Date.now() + 15_000;
+  try {
+    await expect.poll(() => fs.readdirSync(f.exported).length, { timeout: 15_000 }).toBe(before.size + 1);
+    await expect.poll(() => f.home!.locator("#project-coding-status").textContent(), { timeout: Math.max(1, exportedBy - Date.now()) }).toContain("Exported the coding review");
+  }
   catch (error) {
     // Failure only: which fixed sentence Home showed instead of a written export. 28 says exported, 29-35 are the
     // store's refusals in this order, 36 is anything else. The sentence itself, which may name a folder, is never kept.

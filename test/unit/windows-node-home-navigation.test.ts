@@ -66,7 +66,7 @@ function actualMethod(prefix: string, next: string, parameters: string, globals:
   return module.exports;
 }
 
-it("waits for the session to end, then reveals the Coding group and the exact result before the actual review click and bounded read", async () => {
+it("waits for the session to end, then scrolls the listed result into view and reveals it before the actual review click and bounded read", async () => {
   const review = actualMethod("  private async review(", "\n  private assertExport", "goal, counts");
   const calls: string[] = []; let stage = 0;
   const port = {
@@ -75,9 +75,8 @@ it("waits for the session to end, then reveals the Coding group and the exact re
     async idle() { expect(port.phase).toBe(7); calls.push("idle"); },
     async pane(value: string) { expect(value).toBe("Projects"); calls.push("projects"); },
     async revealHomeControl(select: Selector, enabled?: boolean) {
-      if (!stage) { expect(select({ automationId: "project-coding" })).toBe(true); expect(enabled).toBe(false); calls.push("group"); }
-      else { expect(select({ name: "Review result: Public review" })).toBe(true); calls.push("result"); }
-      stage++;
+      expect(stage).toBe(0); expect(select({ name: "Review result: Public review" })).toBe(true); expect(enabled).toBeUndefined(); calls.push("result");
+      stage = 2;
     },
     async click(window: number, select: Selector) {
       if (stage !== 2) throw new Error("The Projects pane has not exposed the result control.");
@@ -85,11 +84,12 @@ it("waits for the session to end, then reveals the Coding group and the exact re
     },
     async homeText(select: Selector) { expect(select({ automationId: "project-coding-review" })).toBe(true); calls.push("read"); return "Checks: 2 run"; },
     // The result's button is listed only once its session has ended: the Tab search waits for that, as phase 11.
-    async nodes(window: number) { expect(window).toBe(73); expect(port.phase).toBe(11); calls.push("listed"); return [{ name: "Review result: Public review" }]; },
+    async nodes(window: number) { expect(window).toBe(73); expect(port.phase).toBe(11); calls.push("listed"); return [{ h: 9, name: "Review result: Public review", isOffscreen: true, patterns: { scrollItem: true } }]; },
+    bridge: { async call(method: string, values: { handle: number; op: string }) { expect(method).toBe("perform"); expect(values).toMatchObject({ handle: 9, op: "scrollIntoView" }); calls.push("scroll"); } },
     async until<T>(read: () => Promise<T>, accept: (value: T) => boolean, timeout: number) { expect(timeout).toBe(45_000); const value = await read(); expect(accept(value)).toBe(true); return value; },
   };
   expect(await review.call(port, "Public review", "Checks: 2 run")).toBe("Checks: 2 run");
-  expect(port.phase).toBe(11); expect(calls).toEqual(["idle", "projects", "group", "listed", "result", "click", "read"]);
+  expect(port.phase).toBe(11); expect(calls).toEqual(["idle", "projects", "listed", "scroll", "result", "click", "read"]);
 });
 
 it("reveals the Coding group and Export again after the actual idle helper returns to Projects", async () => {
