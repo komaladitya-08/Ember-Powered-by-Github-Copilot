@@ -157,6 +157,14 @@ function watchWorkArea(win: BrowserWindow, min: { minWidth: number; minHeight: n
 const forText = <T extends Record<string, number>>(size: T): T =>
   scaledSize(size, textScaleNow, screen.getPrimaryDisplay().workAreaSize);
 
+/**
+ * The always-on-top level for a window that asks. Windows: Electron puts a "floating" window behind the taskbar's
+ * window, and where that window is not itself on top the asking window leaves the always-on-top band while Electron
+ * still says it is on top (the command window on the hosted Windows Server 2022 and 2025 images: Home covered its card).
+ * "pop-up-menu" is the lowest level Electron leaves where Windows put it.
+ */
+export function onTopLevel(os: OS): "floating" | "pop-up-menu" { return os === "win32" ? "pop-up-menu" : "floating"; }
+
 /** The command window's smallest size at the default text size. */
 const COMMAND_MIN = { minWidth: 480, minHeight: 280 };
 
@@ -268,7 +276,7 @@ export function createPromptWindow(os: OS, hooks: { takeKeyboard?: (win: Browser
     webPreferences: webPreferences("prompt"),
   });
   sizeForText(win, null);
-  win.setAlwaysOnTop(true, "floating");
+  win.setAlwaysOnTop(true, onTopLevel(os));
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
   closeWhenGone(win);
   void win.loadURL(pageUrl(path.join(appDir, "renderer", "prompt", "index.html")));
@@ -319,7 +327,7 @@ export function createVaultWindow(os: OS, kind: VaultKind, hooks: { takeKeyboard
     webPreferences: webPreferences("vault"),
   });
   sizeForText(win, null);
-  win.setAlwaysOnTop(true, "floating");
+  win.setAlwaysOnTop(true, onTopLevel(os));
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
   closeWhenGone(win);
   try {
