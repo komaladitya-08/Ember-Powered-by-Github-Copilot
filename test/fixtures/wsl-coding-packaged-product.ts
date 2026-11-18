@@ -408,7 +408,8 @@ export class WslPackagedJourney {
   private async command(): Promise<number> { return (await this.u.until(() => this.u.windows(), windows => windows.some(window => window.name === "Ember commands"), 45_000)).find(window => window.name === "Ember commands")!.hwnd; }
   async allowCommand(): Promise<void> {
     // Phases within a command decision: 7 the command window, 27 a fresh card in it (38 when it came only after the
-    // 45 s; 40 is the fixture's own bounded helper), 7 again its text and the click,
+    // 45 s; 40 is the fixture's own bounded helper), 33 the keyboard on the card, 34 its command text, 35 the folder it
+    // names, 36 the target's label, 7 again the click,
     // 22 the answered card leaving the window.
     this.phase = 7; const hwnd = await this.command();
     this.phase = 27;
@@ -419,10 +420,10 @@ export class WslPackagedJourney {
       try { await this.u.until(() => this.u.nodes(hwnd), fresh, 60_000); this.phase = 38; } catch { /* It did not come: 27. */ }
       throw wslProductRefusal(this.phase);
     })).find(id("ask-cmd"))!;
-    this.phase = 7; await this.u.focus(hwnd, node); expect(await this.u.text(hwnd, id("ask-cmd"))).toBe(WSL_PRODUCT_CHECK);
-    const words = (await this.u.nodes(hwnd)).map(node => node.name ?? "").join("\n");
-    expect(words).toContain("/work"); expect(words).toContain(this.targetLabel); this.previousCard = node.runtimeId!;
-    await this.u.click(hwnd, named("Allow"));
+    this.phase = 33; await this.u.focus(hwnd, node); this.phase = 34; expect(await this.u.text(hwnd, id("ask-cmd"))).toBe(WSL_PRODUCT_CHECK);
+    this.phase = 35; const words = (await this.u.nodes(hwnd)).map(node => node.name ?? "").join("\n");
+    expect(words).toContain("/work"); this.phase = 36; expect(words).toContain(this.targetLabel); this.previousCard = node.runtimeId!;
+    this.phase = 7; await this.u.click(hwnd, named("Allow"));
     // The click is input, not proof it was taken: an answered card leaves the window (as the Node journey requires).
     this.phase = 22;
     await this.u.until(() => this.u.nodes(hwnd), nodes => nodes.length > 0 && !nodes.some(shown => shown.automationId === "ask-cmd" && shown.runtimeId === node.runtimeId), 10_000);
@@ -440,21 +441,15 @@ export class WslPackagedJourney {
     this.phase = 17; const window = (await this.u.until(() => this.u.windows(), windows => windows.some(window => window.name === "Ember needs you"), 30_000)).find(window => window.name === "Ember needs you")!;
     this.phase = 18; expect(await this.u.text(window.hwnd, id("title"))).toBe("May I prepare public dependencies?");
     const data = wslProductProject(true, changed), expected = PublicNpmPlan.create({ packageJson: Buffer.from(data["package.json"]), packageLock: Buffer.from(data["package-lock.json"]) }).summary;
-    // What the question's text must hold, each under a phase of its own (the review's failure-only split shares these
-    // numbers; a reading names the step by what ran before it): 33 reading the text at all, 34 the package.json hash,
-    // 35 the lock hash, 36 the set hash, 37 each package and version, 38 the WSL target's label (last, so that a
-    // text read short of its beginning or its end shows as one or the other).
     // The text is read as the command card's is, from the names of what the window lists: the direct read of the body
     // element refused on both hosted images. A snapshot leaves out what is scrolled out of view, so it is read where
     // the question opens and again at its end, and the two are taken together.
-    this.phase = 33; const words = async () => (await this.u.nodes(window.hwnd)).map(node => node.name ?? "").join("\n");
+    const words = async () => (await this.u.nodes(window.hwnd)).map(node => node.name ?? "").join("\n");
     let body = await words();
     const scroller = (await this.u.nodes(window.hwnd)).find(node => node.automationId === "body" && node.isKeyboardFocusable === true);
     if (scroller) { await this.u.focus(window.hwnd, scroller); this.u.key(window.hwnd, "End"); await pause(250); this.current(); body += "\n" + await words(); }
-    this.phase = 34; expect(body).toContain(expected.packageJsonSha256); this.phase = 35; expect(body).toContain(expected.lockSha256);
-    this.phase = 36; expect(body).toContain(expected.setSha256);
-    this.phase = 37; for (const pkg of expected.packages) expect(body).toContain(pkg.name + "@" + pkg.version);
-    this.phase = 38; expect(body).toContain(this.targetLabel);
+    expect(body).toContain(this.targetLabel); expect(body).toContain(expected.packageJsonSha256); expect(body).toContain(expected.lockSha256); expect(body).toContain(expected.setSha256);
+    for (const pkg of expected.packages) expect(body).toContain(pkg.name + "@" + pkg.version);
     this.phase = 19;
     if (answer === "Allow") {
       if (!(await this.u.nodes(window.hwnd)).some(node => node.name === "Allow" && node.isEnabled)) { await this.u.focus(window.hwnd, await this.u.node(window.hwnd, id("body"), false)); this.u.key(window.hwnd, "End"); }
@@ -471,15 +466,7 @@ export class WslPackagedJourney {
     // Phases within the review: 12 the keyboard into the pane, 13 paging down to the result's button, 14 the click,
     // 15 the read.
     this.phase = 12; await this.paneKeyboard();
-    this.phase = 13;
-    if (!await this.pageTo(result, true, false, true)) {
-      // Failure only: what shows after paging through the pane. 37 the page keys never moved it; else 33 a result's
-      // button under another title, 34 the Coding group's folder button without any result's button, 35 its Export
-      // without either, 36 none of those.
-      const shown = (await this.u.nodes(this.home)).filter(node => !node.isOffscreen);
-      this.phase = !this.paged ? 37 : shown.some(node => (node.name ?? "").startsWith("Review result: ")) ? 33 : shown.some(id("project-coding-choose")) ? 34 : shown.some(id("project-coding-export")) ? 35 : 36;
-      this.fail();
-    }
+    this.phase = 13; await this.pageTo(result);
     this.phase = 14; await this.u.click(this.home, result);
     this.phase = 15;
     const region: WslUiSelector = node => node.automationId === "project-coding-review" || ["Group", "Pane"].includes(node.controlType ?? "") && node.name === titleOf(goal);
