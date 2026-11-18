@@ -12,7 +12,8 @@ export interface PackagedCommandCardObservation {
   /**
    * Set by the packaged journey when an answer's click was not taken: what UI Automation finds under the click point.
    * 1 the answer button or something inside it, 2 something else in the command window, 3 another program's,
-   * 4 nothing it may read, 5 another window of Ember's; 0 not asked.
+   * 4 nothing it may read; another window of Ember's: 6 the overlay, 7 the prompt, 8 the Ask box, 9 Home, the handle or
+   * the vault's form, 5 any other; 0 not asked.
    */
   under: number;
 }
