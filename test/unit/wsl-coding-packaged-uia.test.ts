@@ -84,6 +84,12 @@ it("reads a control's text again when the control did not answer in time or was 
   request.mockImplementation(async (...args: unknown[]) => args[0] === "textInfo" ? { error: { code: "failed" } }
     : { result: { busy: false, truncated: false, cut: [], nodes: [f.target] } });
   await expect(f.ui.text(123, wslUiId("target"))).rejects.toBe(f.refused); expect(f.ui.textError).toBe(3);
+  asked = 0; request.mockImplementation(async (...args: unknown[]) => {
+    if (args[0] !== "textInfo") return { result: { busy: false, truncated: false, cut: [], nodes: [f.target] } };
+    if (++asked === 1) throw new Error("no answer to textInfo within 5000 ms");
+    return { result: { text: "npm test" } };
+  });
+  await expect(f.ui.text(123, wslUiId("target"))).resolves.toBe("npm test"); expect(asked).toBe(2);
 });
 it("takes a just-opened window that lists nothing as not ready only where asked, and never a read cut short", async () => {
   const f = fixture(), request = f.bridge.request as unknown as ReturnType<typeof vi.fn>; request.mockResolvedValue({ result: { busy: false, truncated: false, cut: [], nodes: [] } });

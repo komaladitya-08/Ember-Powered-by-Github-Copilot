@@ -443,8 +443,8 @@ export class WslPackagedJourney {
     // was secret or cut short, 54 the read of the card's children was refused, 55 that read was busy or cut short.
     // 47 the card's text was read whole and is not the expected command.
     const command = await this.u.text(hwnd, id("ask-cmd")).catch(async () => {
-      // 52 by the bridge's own answer: 57 it failed, 58 it was denied, 59 another error, 61 busy for the whole 10 s,
-      // 62 gone for the whole 10 s; 52 stays for a request that got no answer from the bridge at all.
+      // 52 by the bridge's own answer: 57 it failed, 58 it was denied, 59 another error, 60 no answer for the whole
+      // 10 s, 61 busy for it, 62 gone for it; 52 stays for the journey's own guard after an answer.
       const stage = this.u.textStage, error = this.u.textError;
       this.phase = stage === 2 && error >= 3 ? 54 + error : stage === 2 && error ? 60 + error : stage >= 2 && stage <= 5 ? 50 + stage : await this.windowRead(hwnd, 45, 46, 34); throw wslProductRefusal(this.phase);
     });
