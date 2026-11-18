@@ -415,19 +415,22 @@ export class WslPackagedJourney {
     await this.u.click(hwnd, named("Allow"));
   }
   async publicDecision(changed: boolean, answer: "Allow" | "Not now" = "Allow"): Promise<void> {
-    this.phase = 8; await this.pane("Home"); await this.u.click(this.home, id("tasks-open-approval"));
-    const window = (await this.u.until(() => this.u.windows(), windows => windows.some(window => window.name === "Ember needs you"), 30_000)).find(window => window.name === "Ember needs you")!;
-    expect(await this.u.text(window.hwnd, id("title"))).toBe("May I prepare public dependencies?");
+    // Phases within the decision: 8 the Home pane, 39 its button that opens the waiting question, 17 the question's
+    // window, 18 its title and text, 19 Allow enabled and the fresh arm waited out, 20 the answer and the pane switch.
+    this.phase = 8; await this.pane("Home"); this.phase = 39; await this.u.click(this.home, id("tasks-open-approval"));
+    this.phase = 17; const window = (await this.u.until(() => this.u.windows(), windows => windows.some(window => window.name === "Ember needs you"), 30_000)).find(window => window.name === "Ember needs you")!;
+    this.phase = 18; expect(await this.u.text(window.hwnd, id("title"))).toBe("May I prepare public dependencies?");
     const data = wslProductProject(true, changed), expected = PublicNpmPlan.create({ packageJson: Buffer.from(data["package.json"]), packageLock: Buffer.from(data["package-lock.json"]) }).summary;
     const body = await this.u.text(window.hwnd, id("body")); expect(body).toContain(this.targetLabel); expect(body).toContain(expected.packageJsonSha256); expect(body).toContain(expected.lockSha256); expect(body).toContain(expected.setSha256);
     for (const pkg of expected.packages) expect(body).toContain(pkg.name + "@" + pkg.version);
+    this.phase = 19;
     if (answer === "Allow") {
       if (!(await this.u.nodes(window.hwnd)).some(node => node.name === "Allow" && node.isEnabled)) { await this.u.focus(window.hwnd, await this.u.node(window.hwnd, id("body"), false)); this.u.key(window.hwnd, "End"); }
       await this.u.node(window.hwnd, node => node.name === "Allow" && node.isEnabled === true);
       // Whole-text completion starts a fresh Confirmer arm. The scroll that reveals it cannot also grant it.
       await pause(1600); this.current();
     }
-    await this.u.click(window.hwnd, named(answer)); await this.pane("Projects");
+    this.phase = 20; await this.u.click(window.hwnd, named(answer)); await this.pane("Projects");
   }
   private async review(goal: string, counts: string): Promise<string> {
     // A snapshot leaves out whatever is scrolled out of view, with everything under it, so the result's button is
