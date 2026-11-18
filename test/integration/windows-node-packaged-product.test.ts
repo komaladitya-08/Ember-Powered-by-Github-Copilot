@@ -727,12 +727,22 @@ class Journey {
   }
   private async clipboard(mode: "clear" | "ready"): Promise<boolean> {
     const systemRoot = Object.entries(this.env).find(([key]) => key.toLowerCase() === "systemroot")?.[1]; if (!systemRoot) throw refusal(this.phase);
-    const script = mode === "clear" ? "Add-Type -AssemblyName System.Windows.Forms;[System.Windows.Forms.Clipboard]::SetText('PACKAGED_NODE_CLIPBOARD_FRESH');[Console]::Write('1')"
-      : "Add-Type -AssemblyName System.Windows.Forms;$s=[System.Windows.Forms.Clipboard]::GetText();if($s.Contains('" + WINDOWS_NODE_WRITER_READY + "')){[Console]::Write('1')}else{[Console]::Write('0')}";
-    // Failure only, as the `nextLabel` fact: 5 the helper ran out its 10 s, 6 it ended sooner with an error of its own.
-    const began = Date.now();
-    try { return await run(path.join(systemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe"), ["-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-Command", script], bridgeEnv(this.env), 10_000, 4096) === "1"; }
-    catch (error) { this.observe({ nextLabel: Date.now() - began >= 10_000 ? 5 : 6 }); throw error; }
+    // The script writes a mark as it starts, another once Windows Forms is loaded, and its answer last.
+    const script = "[Console]::Write('a');Add-Type -AssemblyName System.Windows.Forms;[Console]::Write('b');" + (mode === "clear" ? "[System.Windows.Forms.Clipboard]::SetText('PACKAGED_NODE_CLIPBOARD_FRESH');[Console]::Write('1')"
+      : "$s=[System.Windows.Forms.Clipboard]::GetText();if($s.Contains('" + WINDOWS_NODE_WRITER_READY + "')){[Console]::Write('1')}else{[Console]::Write('0')}");
+    const child = spawn(path.join(systemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe"), ["-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-Command", script], { env: bridgeEnv(this.env), stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+    let output = ""; child.stdout.on("data", bytes => { if (output.length < 16) output += bytes; });
+    let timer: NodeJS.Timeout | undefined;
+    const ended = await new Promise<boolean>(resolve => {
+      timer = setTimeout(() => resolve(false), 10_000); child.once("error", () => resolve(false)); child.once("close", (code, signal) => resolve(code === 0 && !signal));
+    });
+    clearTimeout(timer);
+    if (!ended) {
+      // Failure only, as the `nextLabel` fact: within its 10 s the helper 5 never started its script, 6 started it and
+      // did not load Windows Forms, 7 loaded it and did not come back from the clipboard.
+      child.kill(); this.observe({ nextLabel: output.startsWith("ab") ? 7 : output.startsWith("a") ? 6 : 5 }); throw refusal(this.phase);
+    }
+    return output === "ab1";
   }
   private async writerReady(): Promise<void> {
     // The welcome's unused `nextLabel` fact counts the steps while phase 6 lasts: 1 the command window, 2 clearing the
