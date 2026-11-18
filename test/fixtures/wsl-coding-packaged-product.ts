@@ -170,8 +170,9 @@ export class WslPackagedJourney {
     }
     if (shows(nodes)) return true;
     if (soft) return false;
-    // Failure only, in place of the step's phase: 37 the page keys never moved the pane, 38 they did.
-    this.phase = this.paged ? 38 : 37; this.fail();
+    // Failure only: 37 in place of the step's phase when the page keys never moved the pane; the step's own otherwise.
+    if (!this.paged) this.phase = 37;
+    this.fail();
   }
   /** After a pane switch the keyboard is on the pane's link: moves it to the Show conversation button, inside the pane. */
   private async paneKeyboard(): Promise<void> {
