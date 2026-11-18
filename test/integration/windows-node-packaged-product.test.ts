@@ -791,12 +791,14 @@ class Journey {
     // A snapshot leaves out what is scrolled out of view, so each control is brought into view before it is read: the
     // project's Forget button beside the request box, then by Tab from the Show conversation button the folder's
     // Forget button, and back by Shift+Tab to the running session's Stop.
-    expect((await this.revealHomeControl(id("project-sessions-forget"), false)).isEnabled).toBe(false);
-    await this.focus(this.home, await this.revealHomeControl(id("project-sessions-conversation")));
-    await this.revealHomeControl(id("project-coding-choose"), false);
-    expect((await this.revealHomeControl(id("project-coding-forget"), false)).isEnabled).toBe(false);
+    // The welcome's unused `nextLabel` fact counts the steps while phase 8 lasts: 1 the project's Forget, 2 the keyboard
+    // on Show conversation, 3 the folder button, 5 the folder's Forget, 6 the session's Stop shown, 7 Stop clicked.
+    this.observe({ nextLabel: 1 }); expect((await this.revealHomeControl(id("project-sessions-forget"), false)).isEnabled).toBe(false);
+    this.observe({ nextLabel: 2 }); await this.focus(this.home, await this.revealHomeControl(id("project-sessions-conversation")));
+    this.observe({ nextLabel: 3 }); await this.revealHomeControl(id("project-coding-choose"), false);
+    this.observe({ nextLabel: 5 }); expect((await this.revealHomeControl(id("project-coding-forget"), false)).isEnabled).toBe(false);
     const stops: Selector = node => (node.name ?? "").startsWith("Stop session:");
-    if (kind === "stop") { await this.revealHomeControl(stops, true, true); await this.click(this.home, stops); }
+    if (kind === "stop") { this.observe({ nextLabel: 6 }); await this.revealHomeControl(stops, true, true); this.observe({ nextLabel: 7 }); await this.click(this.home, stops); }
     else if (kind === "mode") {
       await this.pane("Apps & privacy"); await this.click(this.home, id("mode-assisted")); await this.armed(this.home, id("approvals-yes")); await this.pane("Projects");
     } else {
