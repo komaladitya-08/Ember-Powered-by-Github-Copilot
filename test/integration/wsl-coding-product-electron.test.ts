@@ -47,8 +47,6 @@ type SourceTerminalObservation = { episode: number; stage: number; session: numb
 
 class Journey {
   terminalSummaryKind = 0;
-  /** Set while the first repair's continuation waits for its command cards: failure reports only. */
-  continuing = false;
   terminalObservation?: SourceTerminalObservation;
   phase = 1;
   app?: ElectronApplication;
@@ -152,17 +150,17 @@ class Journey {
     this.phase = 4; const command = await this.command();
     try { await expect.poll(() => command.evaluate(() => (window as Window & { emberCommands: CommandsApi }).emberCommands.pull().then(snapshot => snapshot?.state.card?.n ?? 0)), { timeout: 45_000 }).toBeGreaterThan(this.lastApproval); }
     catch (error) {
-      // Failure only, in the first repair's continuation: no new card came. 37 the fixed model had refused a step, 38 it had not.
-      if (this.continuing) this.phase = this.model.failures.length ? 37 : 38;
+      // Failure only: no new card came. 37 the fixed model had refused a step, 38 it had not.
+      this.phase = this.model.failures.length ? 37 : 38;
       throw error;
     }
-    // A card that came but doesn't match, or never arms, reports as 39 there.
-    if (this.continuing) this.phase = 39;
+    // A card that came but doesn't match, or never arms, reports as 39.
+    this.phase = 39;
     const card = await command.evaluate(() => (window as Window & { emberCommands: CommandsApi }).emberCommands.pull().then(snapshot => snapshot!.state.card!)); this.lastApproval = card.n;
     expect(card.kind).not.toBe("node"); expect({ target: card.target, command: card.command, shell: card.shell, cwd: card.cwd }).toEqual({ target: this.input.target, command: commandText, shell: "bash", cwd: "/work" });
     expect(card.sha256).toBe(cardSha256(card)); await expect.poll(() => command.locator("#ask-cmd").textContent()).toBe(commandText);
     const button = command.getByRole("button", { name: answer, exact: true }); await expect.poll(() => button.isEnabled(), { timeout: 15_000 }).toBe(true);
-    if (answer === "Allow") this.approved.push({ n: card.n, sha256: card.sha256, command: commandText }); await button.click(); return command;
+    if (answer === "Allow") this.approved.push({ n: card.n, sha256: card.sha256, command: commandText }); await button.click(); this.phase = 4; return command;
   }
   async dependencies(changed: boolean, kind: "baseline" | "changed", answer: "Allow" | "Not now" | null = "Allow"): Promise<void> {
     this.phase = 18; const summary = expectedPublicSummary(changed);
@@ -382,7 +380,7 @@ async function repair(f: Journey, publicDependencies: boolean): Promise<void> {
   f.phase = 22; await f.home!.locator("#project-coding-continue").click(); await f.home!.locator("#project-coding-continue-request").fill(scenarios[1].request);
   await f.home!.locator("#project-coding-continue-send").click();
   if (publicDependencies) await f.dependencies(true, "baseline");
-  f.continuing = true; await f.decide(); if (!publicDependencies) await f.decide(); f.continuing = false;
+  await f.decide(); if (!publicDependencies) await f.decide();
   await f.terminal(1, "done"); const all = await f.results(); expect(all).toHaveLength(2);
   const continued = all.find(result => result.id !== first.id)!;
   expect(continued.taskId).not.toBe(first.taskId); expect(continued).toMatchObject({ status: "done", checks: { ran: publicDependencies ? 1 : 2, passed: publicDependencies ? 1 : 2, failed: 0 } });
