@@ -337,7 +337,8 @@ export class WslPackagedJourney {
     this.projectStage = 17; await this.commitWslOption(focusedCombo, desired);
     this.projectStage = 18; await this.accessible(text => text.includes("isolated copy") && text.includes("offline"));
     const preference = id("project-coding-public-dependencies-on");
-    this.projectStage = 19; await this.u.reveal(this.home, id("project-coding-execution-choose"), preference);
+    // Home disables the commit button once its choice is the saved one, so the Tab search starts from the combo.
+    this.projectStage = 19; await this.u.reveal(this.home, combo, preference);
     this.projectStage = 20; await this.u.toggle(this.home, preference, publicDependencies ? "On" : "Off");
     this.projectStage = 21; expect(await this.u.text(this.home, id("project-coding-public-dependencies-detail"))).toContain("registry.npmjs.org"); expect(this.model.requests).toBeDefined();
   }
