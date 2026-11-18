@@ -547,7 +547,10 @@ export class WslPackagedJourney {
     // image; why is not established. 26 the way to the result's button, 48 the click on it, 49 Export shown enabled.
     this.phase = 26; await this.pane("Home"); await this.pane("Projects"); await this.paneKeyboard(); await this.pageTo(this.reviewed!);
     this.phase = 48; await this.u.click(this.home, this.reviewed!);
-    this.phase = 49; await this.u.until(() => this.u.nodes(this.home), nodes => nodes.some(node => exportButton(node) && !node.isOffscreen && node.isEnabled === true), 30_000);
+    // The click leaves the keyboard on the result's button; Tab from there walks the open review to Export and scrolls
+    // it into view as focus moves, which the page keys do not (the click alone did not show it either, on Windows
+    // Server 2025). 49 Export shown enabled; the Tab search's own endings are 41 to 44.
+    this.phase = 49; await this.tabTo(exportButton);
     const fresh = fs.readdirSync(this.exported).filter(name => !existing.has(name)); expect(fresh).toHaveLength(1);
     this.assertExport(path.join(this.exported, fresh[0]), publicDependencies, cumulative);
   }
