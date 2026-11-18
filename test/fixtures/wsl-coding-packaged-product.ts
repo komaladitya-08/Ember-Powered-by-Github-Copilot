@@ -441,12 +441,14 @@ export class WslPackagedJourney {
     this.phase = 18; expect(await this.u.text(window.hwnd, id("title"))).toBe("May I prepare public dependencies?");
     const data = wslProductProject(true, changed), expected = PublicNpmPlan.create({ packageJson: Buffer.from(data["package.json"]), packageLock: Buffer.from(data["package-lock.json"]) }).summary;
     // What the question's text must hold, each under a phase of its own (the review's failure-only split shares these
-    // numbers; a reading names the step by what ran before it): 33 the text read and the WSL target's label, 34 the
-    // package.json hash, 35 the lock hash, 36 the set hash, 37 each package and version.
-    this.phase = 33; const body = await this.u.text(window.hwnd, id("body")); expect(body).toContain(this.targetLabel);
+    // numbers; a reading names the step by what ran before it): 33 reading the text at all, 34 the package.json hash,
+    // 35 the lock hash, 36 the set hash, 37 each package and version, 38 the WSL target's label (last, so that a
+    // text read short of its beginning or its end shows as one or the other).
+    this.phase = 33; const body = await this.u.text(window.hwnd, id("body"));
     this.phase = 34; expect(body).toContain(expected.packageJsonSha256); this.phase = 35; expect(body).toContain(expected.lockSha256);
     this.phase = 36; expect(body).toContain(expected.setSha256);
     this.phase = 37; for (const pkg of expected.packages) expect(body).toContain(pkg.name + "@" + pkg.version);
+    this.phase = 38; expect(body).toContain(this.targetLabel);
     this.phase = 19;
     if (answer === "Allow") {
       if (!(await this.u.nodes(window.hwnd)).some(node => node.name === "Allow" && node.isEnabled)) { await this.u.focus(window.hwnd, await this.u.node(window.hwnd, id("body"), false)); this.u.key(window.hwnd, "End"); }
