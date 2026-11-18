@@ -427,14 +427,13 @@ export class WslPackagedJourney {
     // Phases within the decision: 8 the Home pane, 39 its button that opens the waiting question, 17 the question's
     // window, 18 its title and text, 19 Allow enabled and the fresh arm waited out, 20 the answer and the pane switch.
     this.phase = 8; await this.pane("Home"); this.phase = 39;
-    try { await this.u.click(this.home, id("tasks-open-approval")); }
-    catch {
-      // Failure only, and still a failure: one further look of up to 30 s says whether the question came late (38) or
-      // not at all (39 stays). Nothing is clicked and the refusal stands.
-      try { await this.u.until(async () => (await this.u.nodes(this.home)).some(node => node.automationId === "tasks-open-approval" && node.isEnabled === true), Boolean, 30_000); this.phase = 38; }
-      catch { /* It did not come: 39. */ }
-      throw wslProductRefusal(this.phase);
-    }
+    // The notice with that button stands in Task activity, below the conversation, which grows with every request the
+    // journey sends: by this case it is below the fold and so unlisted (it had not appeared after a full minute on the
+    // hosted Windows Server 2025 image). The keyboard goes to a control of the conversation that shows, and the page
+    // keys scroll the pane until the button does.
+    const conversation = ["conversation-new", "conversation-send", "conversation-stop", "keep-conversation"];
+    const held = await this.u.until(async () => (await this.u.nodes(this.home)).find(node => conversation.includes(node.automationId ?? "") && !node.isOffscreen && node.isEnabled === true), Boolean);
+    await this.u.focus(this.home, held!); await this.pageTo(id("tasks-open-approval")); await this.u.click(this.home, id("tasks-open-approval"));
     this.phase = 17; const window = (await this.u.until(() => this.u.windows(), windows => windows.some(window => window.name === "Ember needs you"), 30_000)).find(window => window.name === "Ember needs you")!;
     this.phase = 18; expect(await this.u.text(window.hwnd, id("title"))).toBe("May I prepare public dependencies?");
     const data = wslProductProject(true, changed), expected = PublicNpmPlan.create({ packageJson: Buffer.from(data["package.json"]), packageLock: Buffer.from(data["package-lock.json"]) }).summary;
