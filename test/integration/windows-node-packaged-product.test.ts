@@ -452,6 +452,23 @@ class Journey {
     if (!sameNode(await this.node(hwnd, select), before)) throw refusal(this.phase);
     await this.click(hwnd, select);
   }
+  /**
+   * Scrolls Home's pane by Page Down (or Page Up) from a focused button, up to twelve pages, then from the far end
+   * (End, or Home going up) twelve pages back, until the control shows. For a stretch whose Tab stops cannot be counted.
+   */
+  private async pageHomeControl(select: Selector, enabled = true, up = false): Promise<RawNode> {
+    const shown = async () => (await this.nodes(this.home)).find(node => select(node) && node.isOffscreen === false && (!enabled || node.isEnabled === true));
+    for (const [key, presses] of [[up ? "Page_Up" : "Page_Down", 12], [up ? "Home" : "End", 1], [up ? "Page_Down" : "Page_Up", 12]] as const) {
+      for (let pressed = 0; pressed < presses; pressed++) {
+        const found = await shown(); if (found) return found;
+        this.current(); if (!this.input || this.input.blockedReason?.(this.home) || this.input.activeWindow() !== this.home) throw refusal(this.phase);
+        try { this.pressKey(key); } finally { this.input.releaseAll(); }
+        await pause(250);
+      }
+    }
+    const found = await shown(); if (found) return found;
+    throw refusal(this.phase);
+  }
   /** UIA does not descend an offscreen group: reveal Home controls with ordinary forward or reverse Tab navigation. */
   private async revealHomeControl(select: Selector, enabled = true, backwards = false): Promise<RawNode> {
     this.current();
@@ -795,10 +812,12 @@ class Journey {
     // on Show conversation, 3 the folder button, 5 the folder's Forget, 6 the session's Stop shown, 7 Stop clicked.
     this.observe({ nextLabel: 1 }); expect((await this.revealHomeControl(id("project-sessions-forget"), false)).isEnabled).toBe(false);
     this.observe({ nextLabel: 2 }); await this.focus(this.home, await this.revealHomeControl(id("project-sessions-conversation")));
-    this.observe({ nextLabel: 3 }); await this.revealHomeControl(id("project-coding-choose"), false);
-    this.observe({ nextLabel: 5 }); expect((await this.revealHomeControl(id("project-coding-forget"), false)).isEnabled).toBe(false);
+    // A running session lists its own controls between the request box and the Coding group, more Tab stops than a
+    // search allows (twelve Tabs did not show the folder button on the hosted Windows Server 2022 image), so this
+    // stretch is scrolled by the page keys from the focused button.
+    this.observe({ nextLabel: 3 }); this.observe({ nextLabel: 5 }); expect((await this.pageHomeControl(id("project-coding-forget"), false)).isEnabled).toBe(false);
     const stops: Selector = node => (node.name ?? "").startsWith("Stop session:");
-    if (kind === "stop") { this.observe({ nextLabel: 6 }); await this.revealHomeControl(stops, true, true); this.observe({ nextLabel: 7 }); await this.click(this.home, stops); }
+    if (kind === "stop") { this.observe({ nextLabel: 6 }); await this.pageHomeControl(stops, true, true); this.observe({ nextLabel: 7 }); await this.click(this.home, stops); }
     else if (kind === "mode") {
       await this.pane("Apps & privacy"); await this.click(this.home, id("mode-assisted")); await this.armed(this.home, id("approvals-yes")); await this.pane("Projects");
     } else {
