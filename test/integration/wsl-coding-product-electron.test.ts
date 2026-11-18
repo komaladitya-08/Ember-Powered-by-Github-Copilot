@@ -13,6 +13,7 @@ import { modeCardVersion, type ApprovalMode } from "../../app/shared/approvals";
 import { cardSha256 } from "../../app/main/commands/window";
 import type { CommandsApi } from "../../app/renderer/command/model";
 import type { CodingResultSummary } from "../../app/shared/project-coding";
+import { CODING_ARTIFACT_MESSAGES } from "../../app/main/agent/coding-artifact-store";
 import { closeTestElectron } from "./close-electron";
 import { wslProductPreflight, wslProductScratchParent, wslProductChildEnvironment } from "../fixtures/wsl-coding-product-preflight";
 import { WSL_PRODUCT_CASES, wslProductTitle, type WslSourceCase } from "../fixtures/wsl-coding-product-contract";
@@ -307,10 +308,21 @@ async function openReview(f: Journey, result: CodingResultSummary): Promise<void
 async function exportReview(f: Journey, publicDependencies: boolean, changed: boolean): Promise<{ directory: string; json: string }> {
   const before = new Set(fs.readdirSync(f.exported)), requests = f.model.requests.length;
   // Within the first repair's export only, the check in progress: 20 written, 23 originals kept, 24 excluded roots, 25 scope,
-  // 26 private markers, 27 no model request.
+  // 26 private markers, 27 no model request; 28-36 name what Home said when nothing was written.
   const mark = (phase: number) => { if (f.phase === 20 || (f.phase >= 23 && f.phase <= 27)) f.phase = phase; };
   await f.home!.locator("#project-coding-export").click();
-  await expect.poll(() => fs.readdirSync(f.exported).length, { timeout: 15_000 }).toBe(before.size + 1);
+  try { await expect.poll(() => fs.readdirSync(f.exported).length, { timeout: 15_000 }).toBe(before.size + 1); }
+  catch (error) {
+    // Failure only: which fixed sentence Home showed instead of a written export. 28 says exported, 29-35 are the
+    // store's refusals in this order, 36 is anything else. The sentence itself, which may name a folder, is never kept.
+    try {
+      const said = (await f.home!.locator("#project-coding-status").textContent()) ?? "";
+      const refusals = ["artifact", "destination", "limit", "stale", "invalid", "unsupported", "cleanup"] as const;
+      const at = refusals.findIndex(code => said === CODING_ARTIFACT_MESSAGES[code]);
+      mark(said.startsWith("Exported the coding review") ? 28 : at >= 0 ? 29 + at : 36);
+    } catch { /* The original refusal stands with its phase. */ }
+    throw error;
+  }
   const fresh = fs.readdirSync(f.exported).filter(name => !before.has(name)); expect(fresh).toHaveLength(1);
   const directory = path.join(f.exported, fresh[0]), json = fs.readFileSync(path.join(directory, "review.json"), "utf8"), review = JSON.parse(json);
   expect(review.purpose).toBe("review-only"); mark(23);
