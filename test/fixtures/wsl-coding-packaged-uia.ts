@@ -71,12 +71,13 @@ export class WslPackagedUi {
     const value = await this.until(async () => (await this.nodes(hwnd)).find(node => select(node) && (!enabled || node.isEnabled === true)), value => !!value);
     return value!;
   }
-  async text(hwnd: number, select: WslUiSelector): Promise<string> {
+  /** `by`: when given, the time (ms since the epoch) until which a control that is busy, gone or silent is read again, in place of 10 s from now. */
+  async text(hwnd: number, select: WslUiSelector, by?: number): Promise<string> {
     this.operation = 3; this.textError = 0; this.textStage = 1; const node = await this.node(hwnd, select, false); if (node.isPassword) this.fail(); this.textStage = 2;
     // A control that does not answer in time is busy, and one redrawn since it was listed is gone, as a window's read
     // allows for both: found again and read again, within the caller's own limit. Any other refusal of the text stands.
     let result: { text?: string; secret?: boolean; truncated?: boolean } | undefined, target = node;
-    for (const end = Math.min(this.p.deadline, Date.now() + 10_000); ;) {
+    for (const end = Math.min(this.p.deadline, by ?? Date.now() + 10_000); ;) {
       // No answer at all inside the client's 5 s is the same slow app, seen from this side: the bridge answers busy at
       // 2.5 s when it can, and a runner busy starting WSL can keep even that from arriving.
       const answer = await this.p.bridge.request("textInfo", { handle: target.h, maxChars: 32_000, deadlineMs: 2500 }, 5000).catch(() => null); this.current();

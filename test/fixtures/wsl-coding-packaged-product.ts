@@ -421,20 +421,13 @@ export class WslPackagedJourney {
     const read = answer && !answer.error ? answer.result as { nodes?: unknown[]; busy?: boolean; truncated?: boolean; cut?: unknown[] } : null;
     return !read || read.busy ? other : read.truncated || read.cut?.length ? cut : !read.nodes?.length ? empty : other;
   }
-  /** A control's own value from one whole read of its window, never a password's or one the bridge cut short. */
-  private async listedValue(hwnd: number, select: WslUiSelector): Promise<string> {
-    const node = (await this.u.until(() => this.u.nodes(hwnd, true), nodes => nodes.some(select), 10_000)).find(select)!;
-    const value = node.patterns?.value;
-    if (node.isPassword || !value || value.truncated || typeof value.value !== "string") this.fail();
-    return value.value;
-  }
   async allowCommand(): Promise<void> {
     // Phases within a command decision: 7 the command window, 27 a fresh card in it (40 is the fixture's own bounded
     // helper), 33 the keyboard on the card, 34 its command text, 35 the folder it
     // names, 36 the target's label, 7 again the click,
     // 22 the answered card leaving the window.
     this.phase = 7; const hwnd = await this.command();
-    this.phase = 27;
+    this.phase = 27; const cardBy = Date.now() + 90_000;
     // 90 s for the card, 45 s until the owner raised it on 18 November 2026: on the hosted Windows Server 2022 image a
     // card came just after 45 s while WSL was starting cold (and a later card waits for the command before it to
     // install, build and test inside WSL). The card must still come and hold what is checked below.
@@ -449,14 +442,13 @@ export class WslPackagedJourney {
     // read was cut short, 34 neither); once found, how far its text's read got: 52 the text itself was refused, 53 it
     // was secret or cut short, 54 the read of the card's children was refused, 55 that read was busy or cut short.
     // 47 the card's text was read whole and is not the expected command.
-    const command = await this.u.text(hwnd, id("ask-cmd")).catch(async () => {
-      // 52 by the bridge's own answer: 57 it failed, 58 it was denied, 59 another error, 60 no answer for the whole
-      // 10 s, 61 busy for it, 62 gone for it; 52 stays for the journey's own guard after an answer.
+    // The card's text is read inside the card's own 90 s (the owner's limit for this step), not a further 10 s: on the
+    // hosted Windows Server 2022 image's slow runs the bridge sent no answer to that one read for a whole 10 s while WSL
+    // was starting, and the window's value read was as silent, where its quicker runs and Server 2025 answer at once.
+    const command = await this.u.text(hwnd, id("ask-cmd"), cardBy).catch(async () => {
+      // 52 by the bridge's own answer: 57 it failed, 58 it was denied, 59 another error, 60 no answer for the rest
+      // of the card's 90 s, 61 busy for it, 62 gone for it; 52 stays for the journey's own guard after an answer.
       const stage = this.u.textStage, error = this.u.textError;
-      // The bridge sent no answer at all to the card's text for the whole 10 s on the hosted Windows Server 2022 image
-      // (two runs), while every read of the window around it answered. The command is then read as the card's own
-      // value in one whole read of the window, and compared exactly as before. Why the bridge stays silent is open.
-      if (stage === 2 && error === 6) return this.listedValue(hwnd, id("ask-cmd"));
       this.phase = stage === 2 && error >= 3 ? 54 + error : stage === 2 && error ? 60 + error : stage >= 2 && stage <= 5 ? 50 + stage : await this.windowRead(hwnd, 45, 46, 34); throw wslProductRefusal(this.phase);
     });
     if (command !== WSL_PRODUCT_CHECK) { this.phase = 47; this.fail(); }
