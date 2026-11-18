@@ -495,6 +495,7 @@ class Journey {
     void this.appClosed.catch(() => undefined);
     if (!this.app.pid) throw refusal(2);
     this.watchdog = setTimeout(() => { this.forced = true; this.stopped = true; this.app?.kill(); }, 305_000);
+    this.startClipboardHost();
     this.bridge = new UiaBridge(script, bridgeEnv(this.env, { EMBER_UIA_CACHE: path.join(this.root, "bridge-cache"), EMBER_UIA_STARTUP_OBSERVE: "1" }));
     this.observe({ operation: 2, bridgeError: 0 });
     try { await bounded(this.bridge.ready, 30_000); }
@@ -725,25 +726,36 @@ class Journey {
     expect(await this.review(scenario.goal, "Checks: 0 run, 0 passed, 0 failed")).toMatch(/Didn't finish ·[^\n]*Checks: 0 run, 0 passed, 0 failed/);
     expect(this.model.steps.get("denied")).toBe(1); await this.forget();
   }
-  private async clipboard(mode: "clear" | "ready"): Promise<boolean> {
+  private clipboardHost?: { child: ReturnType<typeof spawn>; lines: string[]; rest: string };
+  /**
+   * One Windows PowerShell for every clipboard step, started with the journey. Starting PowerShell and loading Windows
+   * Forms for each step did not finish in the step's 10 s on the hosted images once Ember and a writer were running
+   * (the script started; Windows Forms had not loaded). It answers a line per request: ready once loaded, then 1 or 0.
+   */
+  private startClipboardHost(): void {
     const systemRoot = Object.entries(this.env).find(([key]) => key.toLowerCase() === "systemroot")?.[1]; if (!systemRoot) throw refusal(this.phase);
-    // The script writes a mark as it starts, another once Windows Forms is loaded, and its answer last.
-    const script = "[Console]::Write('a');Add-Type -AssemblyName System.Windows.Forms;[Console]::Write('b');" + (mode === "clear" ? "[System.Windows.Forms.Clipboard]::SetText('PACKAGED_NODE_CLIPBOARD_FRESH');[Console]::Write('1')"
-      : "$s=[System.Windows.Forms.Clipboard]::GetText();if($s.Contains('" + WINDOWS_NODE_WRITER_READY + "')){[Console]::Write('1')}else{[Console]::Write('0')}");
-    const child = spawn(path.join(systemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe"), ["-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-Command", script], { env: bridgeEnv(this.env), stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
-    let output = ""; child.stdout.on("data", bytes => { if (output.length < 16) output += bytes; });
-    let timer: NodeJS.Timeout | undefined;
-    const ended = await new Promise<boolean>(resolve => {
-      timer = setTimeout(() => resolve(false), 10_000); child.once("error", () => resolve(false)); child.once("close", (code, signal) => resolve(code === 0 && !signal));
+    const script = "Add-Type -AssemblyName System.Windows.Forms;[Console]::Out.WriteLine('r');while(($l=[Console]::In.ReadLine()) -ne $null){"
+      + "if($l -eq 'c'){[System.Windows.Forms.Clipboard]::SetText('PACKAGED_NODE_CLIPBOARD_FRESH');[Console]::Out.WriteLine('1')}"
+      + "elseif($l -eq 'g'){$s=[System.Windows.Forms.Clipboard]::GetText();if($s.Contains('" + WINDOWS_NODE_WRITER_READY + "')){[Console]::Out.WriteLine('1')}else{[Console]::Out.WriteLine('0')}}}";
+    const child = spawn(path.join(systemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe"), ["-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-Command", script], { env: bridgeEnv(this.env), stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
+    const host = { child, lines: [] as string[], rest: "" }; this.clipboardHost = host;
+    child.once("error", () => { /* A step that needs it refuses at its own limit. */ });
+    child.stdout!.on("data", bytes => {
+      if (host.rest.length + host.lines.length > 4096) return;
+      const parts = (host.rest + bytes).split(/\r?\n/); host.rest = parts.pop() ?? ""; host.lines.push(...parts);
     });
-    clearTimeout(timer);
-    if (!ended) {
-      // Failure only, as the `nextLabel` fact: within its 10 s the helper 5 never started its script, 6 started it and
-      // did not load Windows Forms, 7 loaded it and did not come back from the clipboard.
-      child.kill(); this.observe({ nextLabel: output.startsWith("ab") ? 7 : output.startsWith("a") ? 6 : 5 }); throw refusal(this.phase);
-    }
-    return output === "ab1";
   }
+  private async clipboard(mode: "clear" | "ready"): Promise<boolean> {
+    const host = this.clipboardHost; if (!host) throw refusal(this.phase);
+    // Each step keeps its 10 s: for the helper to be ready (its first line) and for this request's answer (the next).
+    const end = Date.now() + 10_000, line = async (): Promise<string | undefined> => { while (!host.lines.length && Date.now() < end) { this.current(); await pause(50); } return host.lines.shift(); };
+    // Failure only, as the `nextLabel` fact: 5 the helper was not ready, 6 it did not answer.
+    if (!this.clipboardReady) { if (await line() !== "r") { this.observe({ nextLabel: 5 }); throw refusal(this.phase); } this.clipboardReady = true; }
+    host.lines.length = 0; host.child.stdin!.write(mode === "clear" ? "c\n" : "g\n");
+    const answer = await line(); if (answer === undefined) { this.observe({ nextLabel: 6 }); throw refusal(this.phase); }
+    return answer === "1";
+  }
+  private clipboardReady = false;
   private async writerReady(): Promise<void> {
     // The welcome's unused `nextLabel` fact counts the steps while phase 6 lasts: 1 the command window, 2 clearing the
     // clipboard, 3 the run's own tab with a live Stop, 4 its command text and Copy output until the writer says ready.
@@ -873,6 +885,7 @@ class Journey {
     if (this.app && this.app.exitCode === null && this.app.signalCode === null) { this.stopped = true; this.forced = true; this.app.kill(); clean = false; }
     try { if (this.appClosed) { const result = await bounded(this.appClosed, 10_000); clean &&= result.code === 0 && result.signal === null; } } catch { clean = false; }
     this.input?.releaseAll(); this.input?.close();
+    try { this.clipboardHost?.child.stdin?.end(); this.clipboardHost?.child.kill(); } catch { /* Already gone. */ }
     try { if (this.bridge) { const result = await bounded(this.bridge.close(), 10_000); clean &&= result.code === 0; } } catch { this.bridge?.kill(); clean = false; }
     return clean;
   }
