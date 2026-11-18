@@ -773,6 +773,9 @@ class Journey {
     this.observe({ nextLabel: 4 });
     await this.until(async () => {
       const nodes = await this.nodes(hwnd);
+      // A busy command window answers with nothing (a writer is filling it): read again inside the same 30 s, as the
+      // journey's other waits do, rather than take the empty read for a tab that has gone.
+      if (!nodes.length) return false;
       const panel = panelFor(nodes, selected);
       if (!nodes.some(node => sameNode(node, selected) && node.patterns.selectionItem?.selected === true) || !panel.some(live)) throw refusal(this.phase);
       const command = panel.find(named("The command")); if (!command) throw refusal(this.phase);
@@ -785,9 +788,15 @@ class Journey {
   async writer(kind: "stop" | "mode" | "account"): Promise<void> {
     const scenario = windowsNodeSourceScenarios(kind)[0]; await this.project(kind); await this.send(scenario.request); await this.decide(WINDOWS_NODE_WRITER_ARGV); await this.writerReady();
     this.phase = 8; await this.pane("Projects");
-    expect((await this.node(this.home, id("project-coding-forget"), false)).isEnabled).toBe(false);
-    expect((await this.node(this.home, id("project-sessions-forget"), false)).isEnabled).toBe(false);
-    if (kind === "stop") await this.click(this.home, node => (node.name ?? "").startsWith("Stop session:"));
+    // A snapshot leaves out what is scrolled out of view, so each control is brought into view before it is read: the
+    // project's Forget button beside the request box, then by Tab from the Show conversation button the folder's
+    // Forget button, and back by Shift+Tab to the running session's Stop.
+    expect((await this.revealHomeControl(id("project-sessions-forget"), false)).isEnabled).toBe(false);
+    await this.focus(this.home, await this.revealHomeControl(id("project-sessions-conversation")));
+    await this.revealHomeControl(id("project-coding-choose"), false);
+    expect((await this.revealHomeControl(id("project-coding-forget"), false)).isEnabled).toBe(false);
+    const stops: Selector = node => (node.name ?? "").startsWith("Stop session:");
+    if (kind === "stop") { await this.revealHomeControl(stops, true, true); await this.click(this.home, stops); }
     else if (kind === "mode") {
       await this.pane("Apps & privacy"); await this.click(this.home, id("mode-assisted")); await this.armed(this.home, id("approvals-yes")); await this.pane("Projects");
     } else {
