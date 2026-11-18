@@ -78,8 +78,14 @@ export class WslPackagedJourney {
   /** Failure-only: which selection guard refused (1–12) times 16, plus the Down count so far (0–11); 0 when none did. */
   private selection = 0;
   private selectionStep = 0;
+  /**
+   * Failure-only, when no or several options read as selected: what the snapshot held under the combo. Descendants
+   * (0–15, capped) + 16 × those with a selection-item pattern (0–15, capped) + 256 when the combo has a value pattern
+   * + 512 × its expand state (0 none, 1 collapsed, 2 expanded, 3 other). Counts only: no names, values or identities.
+   */
+  private selectionShape = 0;
   private readonly privateFailures: unknown[] = [];
-  private captured?: Readonly<{ phase: number; operation: number; bridgeStage: number; projectStage: number; selection: number }>;
+  private captured?: Readonly<{ phase: number; operation: number; bridgeStage: number; projectStage: number; selection: number; selectionShape: number }>;
   constructor(readonly root: string, readonly model: WslPackagedModel, readonly distro: string, readonly targetLabel: string) {
     this.profile = path.join(root, "profile"); this.temporary = path.join(root, "temporary"); this.exported = path.join(root, "exported");
     this.source = path.join(root, "source"); this.publicSource = path.join(root, "public-source");
@@ -99,9 +105,10 @@ export class WslPackagedJourney {
   capture(error?: unknown): void {
     if (this.captured) return; this.privateFailures.push(error);
     this.captured = Object.freeze({ phase: this.phase, operation: this.ui?.operation ?? 0, bridgeStage: this.bridge?.startupStage ?? 0, projectStage: this.phase === 6 ? this.projectStage : 0,
-      selection: this.phase === 6 && this.projectStage === 15 ? this.selection : 0 });
+      selection: this.phase === 6 && this.projectStage === 15 ? this.selection : 0,
+      selectionShape: this.phase === 6 && this.projectStage === 15 && (this.selection >> 4 === 7 || this.selection >> 4 === 8) ? this.selectionShape : 0 });
   }
-  observation(): Readonly<{ phase: number; operation: number; bridgeStage: number; projectStage: number; selection: number }> | undefined { return this.captured; }
+  observation(): Readonly<{ phase: number; operation: number; bridgeStage: number; projectStage: number; selection: number; selectionShape: number }> | undefined { return this.captured; }
   private async pane(name: string): Promise<void> { await this.u.click(this.home, node => node.controlType === "Hyperlink" && node.name === name); }
   private async accessible(accepts: (value: string) => boolean, ms = 30_000): Promise<string> {
     const value = await this.u.until(async () => (await this.u.nodes(this.home)).filter(node => node.controlType === "Text" && !node.isPassword && typeof node.name === "string")
@@ -272,7 +279,12 @@ export class WslPackagedJourney {
       if (typeof item.selected !== "boolean") this.refuseSelection(6);
       if (item.selected) selected.push(node);
     }
-    if (selected.length !== 1) this.refuseSelection(selected.length ? 8 : 7);
+    if (selected.length !== 1) {
+      const items = [...descendants].filter(at => at !== root && nodes[at].patterns?.selectionItem).length, expand = control.patterns?.expand;
+      this.selectionShape = Math.min(descendants.size - 1, 15) + 16 * Math.min(items, 15) + (control.patterns?.value ? 256 : 0)
+        + 512 * (expand === undefined ? 0 : expand === "Collapsed" ? 1 : expand === "Expanded" ? 2 : 3);
+      this.refuseSelection(selected.length ? 8 : 7);
+    }
     if (!selected[0].name || selected[0].isPassword) this.refuseSelection(9);
     return { control, option: selected[0] };
   }
@@ -310,7 +322,7 @@ export class WslPackagedJourney {
     this.projectStage = 14; const focusedCombo = await this.u.focus(this.home, await this.u.node(this.home, combo));
     if (focusedCombo.hasKeyboardFocus !== true) this.fail();
     this.u.key(this.home, "Home");
-    this.projectStage = 15; this.selection = 0; this.selectionStep = 0; const desired = await this.chooseWslOption(focusedCombo);
+    this.projectStage = 15; this.selection = 0; this.selectionStep = 0; this.selectionShape = 0; const desired = await this.chooseWslOption(focusedCombo);
     this.projectStage = 16; await this.u.reveal(this.home, combo, id("project-coding-execution-choose"));
     this.projectStage = 17; await this.commitWslOption(focusedCombo, desired);
     this.projectStage = 18; await this.accessible(text => text.includes("isolated copy") && text.includes("offline"));

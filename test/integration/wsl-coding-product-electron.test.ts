@@ -339,12 +339,14 @@ async function repair(f: Journey, publicDependencies: boolean): Promise<void> {
   expect(first).toMatchObject({ status: "done", checks: { ran: publicDependencies ? 3 : 2, passed: publicDependencies ? 2 : 1, failed: 1 }, conflicts: 0, patchComplete: false });
   expect(f.approved[0].sha256).toBe(f.approved[1].sha256); expect(f.approved[0].n).not.toBe(f.approved[1].n);
   expect(JSON.stringify([...f.model.results.values()])).toContain("ERR_ASSERTION");
-  await openReview(f, first); await expect.poll(() => f.home!.locator("#project-coding-patch").textContent()).toContain("'ready'");
-  const exported = await exportReview(f, publicDependencies, publicDependencies);
+  // Phases 19-22 name the review steps of the first repair: preview, export, limited changes, continuation form.
+  await openReview(f, first); f.phase = 19; await expect.poll(() => f.home!.locator("#project-coding-patch").textContent()).toContain("'ready'");
+  f.phase = 20; const exported = await exportReview(f, publicDependencies, publicDependencies);
+  f.phase = 21;
   // The build's new dist directory is the one change the text patch cannot carry; it is recorded in JSON instead.
   const limited = (JSON.parse(exported.json).changes as { path: string; kind: string; conflicts: string[]; patchUnsupported: string[] }[]).filter(change => change.conflicts.length || change.patchUnsupported.length);
   expect(limited.map(change => [change.path, change.kind, change.conflicts.length])).toEqual([["dist", "add", 0]]);
-  await f.home!.locator("#project-coding-continue").click(); await f.home!.locator("#project-coding-continue-request").fill(scenarios[1].request);
+  f.phase = 22; await f.home!.locator("#project-coding-continue").click(); await f.home!.locator("#project-coding-continue-request").fill(scenarios[1].request);
   await f.home!.locator("#project-coding-continue-send").click();
   if (publicDependencies) await f.dependencies(true, "baseline");
   await f.decide(); if (!publicDependencies) await f.decide();

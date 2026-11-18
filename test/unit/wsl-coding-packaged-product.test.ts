@@ -198,6 +198,8 @@ it.each(["selected", "wrong first", "wrong throughout", "outside combo", "duplic
   // Failure-only numeric evidence: the refusing guard times 16 plus the Down count; exhaustion and success record none.
   const guard = { duplicate: 8, unknown: 6, none: 7, disabled: 10, omitted: 5, "focus drift": 12 }[scenario as string] ?? 0;
   expect(Reflect.get(journey, "selection")).toBe(guard * 16);
+  // Counts only: the group and both options under the combo, the two options with a selection-item pattern.
+  expect(Reflect.get(journey, "selectionShape")).toBe(guard === 7 || guard === 8 ? 3 + 16 * 2 : 0);
 });
 
 it.each(["stable", "selection changes", "selected option replaced", "combo replaced", "commit loses focus"] as const)("checks selection during the final commit focus snapshot: %s", async scenario => {
