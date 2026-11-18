@@ -429,10 +429,11 @@ export class WslPackagedJourney {
     // 90 s for the card, 45 s until the owner raised it on 18 November 2026: on the hosted Windows Server 2022 image a
     // card came just after 45 s while WSL was starting cold (and a later card waits for the command before it to
     // install, build and test inside WSL). The card must still come and hold what is checked below.
-    const node = (await this.u.until(() => this.u.nodes(hwnd), nodes => nodes.some(node => node.automationId === "ask-cmd" && !!node.runtimeId && node.runtimeId !== this.previousCard), 90_000).catch(async () => {
+    const node = (await this.u.until(() => this.u.nodes(hwnd, false, true), nodes => nodes.some(node => node.automationId === "ask-cmd" && !!node.runtimeId && node.runtimeId !== this.previousCard), 90_000).catch(async () => {
       // Failure only: one plain read of the command window says why. 37 it listed nothing, 38 its read was cut short
       // (a window full of a command's output), 27 neither, so the card did not come in its 90 s.
-      this.phase = await this.windowRead(hwnd, 37, 38, 27); throw wslProductRefusal(this.phase);
+      // A read the wait itself refused says so first: 56 the bridge's own error, 38 cut short.
+      const refused = this.u.readRefusal; this.phase = refused === 1 ? 56 : refused === 2 ? 38 : await this.windowRead(hwnd, 37, 38, 27); throw wslProductRefusal(this.phase);
     })).find(id("ask-cmd"))!;
     this.phase = 33; await this.u.focus(hwnd, node); this.phase = 34;
     // Failure only: while the card was still being found, the same plain read (45 the window listed nothing, 46 its

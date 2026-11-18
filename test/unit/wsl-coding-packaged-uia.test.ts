@@ -68,3 +68,21 @@ it.each(["blocked", "foreground"] as const)("stops normal folder-path typing aft
   expect(() => f.ui.type(123, "ab")).toThrow(f.refused);
   expect(f.input.textKey.mock.calls).toEqual([["a", true], ["a", false]]); expect(f.input.releaseAll).toHaveBeenCalledOnce();
 });
+it("reads a control's text again when the control did not answer in time, and refuses any other error (WSL packaged, Server 2022 phase 52)", async () => {
+  const f = fixture(), request = f.bridge.request as unknown as ReturnType<typeof vi.fn>; let asked = 0;
+  request.mockImplementation(async (...args: unknown[]) => {
+    if (args[0] !== "textInfo") return { result: { busy: false, truncated: false, cut: [], nodes: [f.target] } };
+    return ++asked === 1 ? { error: { code: "busy" } } : { result: { text: "npm test" } };
+  });
+  await expect(f.ui.text(123, wslUiId("target"))).resolves.toBe("npm test"); expect(asked).toBe(2); expect(f.ui.textStage).toBe(0);
+  request.mockImplementation(async (...args: unknown[]) => args[0] === "textInfo" ? { error: { code: "stale" } }
+    : { result: { busy: false, truncated: false, cut: [], nodes: [f.target] } });
+  await expect(f.ui.text(123, wslUiId("target"))).rejects.toBe(f.refused); expect(f.ui.textStage).toBe(2);
+});
+it("takes a just-opened window that lists nothing as not ready only where asked, and never a read cut short", async () => {
+  const f = fixture(), request = f.bridge.request as unknown as ReturnType<typeof vi.fn>; request.mockResolvedValue({ result: { busy: false, truncated: false, cut: [], nodes: [] } });
+  await expect(f.ui.nodes(123, false, true)).resolves.toEqual([]);
+  await expect(f.ui.nodes(123)).rejects.toBe(f.refused); expect(f.ui.readRefusal).toBe(3);
+  request.mockResolvedValue({ result: { busy: false, truncated: true, cut: [], nodes: [f.target] } });
+  await expect(f.ui.nodes(123, false, true)).rejects.toBe(f.refused); expect(f.ui.readRefusal).toBe(2);
+});
