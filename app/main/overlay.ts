@@ -167,8 +167,6 @@ export class OverlayManager {
    * as the overlay's page sees it change (reducedMotionChanged), so the spring follows the switch without a restart.
    */
   avoid: (() => Rect | null) | null = null;
-  /** Ember's approval windows that ask now (DIP): presses inside them are theirs. */
-  private asking: readonly Rect[] = [];
   systemReducedMotion = false;
 
   /** Called by IPC when an overlay's page sees the desktop's reduce-motion preference change. */
@@ -180,10 +178,9 @@ export class OverlayManager {
   /** A window of Ember's own the user is working in (settings): Ember waits beside it, or out of sight. */
   private aside: Rect | null = null;
 
-  stepAside(r: Rect | null, asking: readonly Rect[] = []): void {
+  stepAside(r: Rect | null): void {
     this.wake();
     this.aside = r;
-    this.asking = asking;
   }
 
   setState(next: Partial<EmberState>): void {
@@ -531,10 +528,7 @@ export class OverlayManager {
       // through, which is why live clicks on Allow/Stop missed the overlay on X11 until the shape was used.
       if (o.shaped) continue;
       const local = { x: cursor.x - o.display.bounds.x, y: cursor.y - o.display.bounds.y };
-      // An approval window that asks holds the buttons that answer it: over it the overlay takes no new press, even
-      // where the bubble's own buttons lie (a press already held ends where it began).
-      const theirs = !(cursor.buttons ?? 0) && this.asking.some(r => contains(r, cursor));
-      const over = !this.borrowing && !theirs && (o.pointerUntil > now || takesPointer(!o.clickThrough, contains(o.display.bounds, cursor) ? local : null, o.interactive, cursor.buttons ?? 0));
+      const over = !this.borrowing && (o.pointerUntil > now || takesPointer(!o.clickThrough, contains(o.display.bounds, cursor) ? local : null, o.interactive, cursor.buttons ?? 0));
       if (over === o.clickThrough) {
         o.clickThrough = !over;
         if (over) o.win.setIgnoreMouseEvents(false); else this.passThrough(o.win);

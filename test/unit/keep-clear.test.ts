@@ -7,7 +7,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("electron", () => ({ BrowserWindow: class {}, screen: {} }));
-const { askingWindows, keepClearOf } = await import("../../app/main/windows");
+const { keepClearOf } = await import("../../app/main/windows");
 
 const rect = (x: number) => ({ x, y: 100, width: 400, height: 300 });
 const shown = (x: number, more: { visible?: boolean; minimized?: boolean; focused?: boolean } = {}) =>
@@ -33,14 +33,5 @@ describe("keepClearOf (review #125)", () => {
     expect(keepClearOf({ home: null, prompt: null, command: shown(900), commandCard: false })).toEqual({ aside: null, avoid: [] });
     expect(keepClearOf({ home: null, prompt: null, command: shown(900, { visible: false }), commandCard: true })).toEqual({ aside: null, avoid: [] });
     expect(keepClearOf({ home: null, prompt: shown(500), command: shown(900), commandCard: true })).toEqual({ aside: rect(500), avoid: [rect(500), rect(900)] });
-  });
-});
-
-describe("Ember's approval windows that ask", () => {
-  it("are the prompt, the vault's form and the command window while its card is up, never Settings", () => {
-    const w = (x: number) => ({ visible: true, minimized: false, focused: false, bounds: { x, y: 0, width: 100, height: 100 } });
-    expect(askingWindows({ prompt: w(1), command: w(2), commandCard: true, vault: w(3) }).map(r => r.x)).toEqual([1, 3, 2]);
-    expect(askingWindows({ prompt: null, command: w(2), commandCard: false })).toEqual([]);
-    expect(askingWindows({ prompt: { ...w(1), minimized: true }, command: { ...w(2), visible: false }, commandCard: true })).toEqual([]);
   });
 });
