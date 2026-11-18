@@ -378,8 +378,11 @@ export class WslPackagedJourney {
     this.phase = 9; await this.pane("Projects"); const result = named("Review result: " + titleOf(goal));
     // Up to fifteen controls lie between the request box and the results, so the search goes by way of the Coding
     // group's folder button: twelve Tabs to it, twelve more from it.
-    await this.u.reveal(this.home, id("project-sessions-request"), id("project-coding-choose"), false, false);
-    await this.u.reveal(this.home, id("project-coding-choose"), result); await this.u.click(this.home, result);
+    // Phases within the review: 12 the search for the folder button, 13 the search for the result's button, 14 the
+    // click, 15 the read.
+    this.phase = 12; await this.u.reveal(this.home, id("project-sessions-request"), id("project-coding-choose"), false, false);
+    this.phase = 13; await this.u.reveal(this.home, id("project-coding-choose"), result); this.phase = 14; await this.u.click(this.home, result);
+    this.phase = 15;
     const region: WslUiSelector = node => node.automationId === "project-coding-review" || ["Group", "Pane"].includes(node.controlType ?? "") && node.name === titleOf(goal);
     return this.u.until(() => this.u.text(this.home, region), text => text.includes(counts), 45_000);
   }
@@ -413,13 +416,15 @@ export class WslPackagedJourney {
     this.assertUnchanged();
   }
   private async exportReview(publicDependencies: boolean, cumulative: boolean): Promise<void> {
-    await this.idle(); const before = this.model.requests.length, existing = new Set(fs.readdirSync(this.exported));
+    // Phases within the export: 16 the idle wait, 21 the search for the folder button, 22 for a result's button, 23 for
+    // Export, 24 the click, the folder dialog and what follows.
+    this.phase = 16; await this.idle(); const before = this.model.requests.length, existing = new Set(fs.readdirSync(this.exported));
     // After the idle wait Export is scrolled out of view and so not listed: Tab navigation brings it there by way of
     // the request box, the Coding group's folder button and the first result's button, twelve Tabs a stage.
     const listedResult: WslUiSelector = node => (node.name ?? "").startsWith("Review result: ");
-    await this.u.reveal(this.home, id("project-sessions-request"), id("project-coding-choose"), false, false);
-    await this.u.reveal(this.home, id("project-coding-choose"), listedResult); await this.u.reveal(this.home, listedResult, id("project-coding-export"));
-    await this.u.click(this.home, id("project-coding-export")); await this.folder("Export coding review", this.exported);
+    this.phase = 21; await this.u.reveal(this.home, id("project-sessions-request"), id("project-coding-choose"), false, false);
+    this.phase = 22; await this.u.reveal(this.home, id("project-coding-choose"), listedResult); this.phase = 23; await this.u.reveal(this.home, listedResult, id("project-coding-export"));
+    this.phase = 24; await this.u.click(this.home, id("project-coding-export")); await this.folder("Export coding review", this.exported);
     await this.accessible(text => text.includes("Exported the coding review")); expect(this.model.requests.length).toBe(before);
     const fresh = fs.readdirSync(this.exported).filter(name => !existing.has(name)); expect(fresh).toHaveLength(1);
     this.assertExport(path.join(this.exported, fresh[0]), publicDependencies, cumulative);
