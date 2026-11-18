@@ -59,7 +59,8 @@ class FakeWindow implements BrowserWindowLike {
   isDestroyed() { return this.destroyed; }
   isAlwaysOnTop() { return this.onTop; }
   isFocused() { return this.focused; }
-  setAlwaysOnTop(flag: boolean) { this.onTop = flag; this.calls.push(`top:${flag}`); }
+  level: string | undefined;
+  setAlwaysOnTop(flag: boolean, level?: string) { this.onTop = flag; this.level = level; this.calls.push(`top:${flag}`); }
   setBounds() { /* not used */ }
   setContentProtection() { /* windows.ts sets it */ }
   on(event: string, fn: () => void) { this.handlers.set(event, [...(this.handlers.get(event) ?? []), fn]); }
@@ -116,12 +117,12 @@ class FakeRun implements RunningCommand {
   finish(e: Partial<RunExit> = {}) { this.end({ code: 0, signal: null, ended: "exit", ms: 3200, ...e }); }
 }
 
-function setup(o: { keyHint?: () => string | null; screenReader?: () => boolean; stopKey?: () => string | null; textScale?: () => number } = {}) {
+function setup(o: { keyHint?: () => string | null; screenReader?: () => boolean; stopKey?: () => string | null; textScale?: () => number; os?: "linux" | "win32" | "darwin" } = {}) {
   const ipc = new FakeIpc();
   const windows: FakeWindow[] = [];
   const ctl = createCommandWindowController({
     create: () => { const w = new FakeWindow(); windows.push(w); return w; },
-    ipc, log, os: "linux", keyHint: o.keyHint ?? (() => "Ctrl+Alt+Y allow · Ctrl+Alt+N not now"),
+    ipc, log, os: o.os ?? "linux", keyHint: o.keyHint ?? (() => "Ctrl+Alt+Y allow · Ctrl+Alt+N not now"),
     ...(o.screenReader ? { screenReader: o.screenReader } : {}),
     ...(o.stopKey ? { stopKey: o.stopKey } : {}),
     ...(o.textScale ? { textScale: o.textScale } : {}),
@@ -442,6 +443,15 @@ describe("one card at a time", () => {
     expect(ctl.cardReady(1)).toBe(true);
     ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "once", sha256: SHA });
     expect(answers).toEqual([{ n: 1, answer: "once", sha256: SHA }]);
+  });
+
+  it("keeps a card above the user's other windows on Windows, at a level Electron doesn't put behind the taskbar (hosted Windows Node packaged run of 9aa42e32)", () => {
+    for (const [os, level] of [["win32", "pop-up-menu"], ["linux", "floating"], ["darwin", "floating"]] as const) {
+      const { ctl, win } = setup({ os });
+      ctl.showCard(1, card());
+      expect(win().level, os).toBe(level);
+      ctl.dispose();
+    }
   });
 
   it("brings the window up without taking the keyboard, on top while the card shows, and lets it go after", () => {

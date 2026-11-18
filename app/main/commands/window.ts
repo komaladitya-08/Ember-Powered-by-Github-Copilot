@@ -493,7 +493,11 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       // On the display the user is on (a card always; otherwise when it comes up from hidden), and on every workspace
       // while a card or countdown is up, so its Allow or Stop is where the bubble is (review #272).
       if (onTop || hidden) p.placeNearUser?.();
-      if (onTop) { w.setAlwaysOnTop(true, "floating"); p.setOnAllWorkspaces?.(true); }
+      // Windows: Electron puts a "floating" window behind the taskbar's window, and where that window is not itself on
+      // top the command window leaves the always-on-top band while Electron still says it is on top: on the hosted
+      // Windows Server 2022 and 2025 images Home then covered the second card and its Allow could not be clicked.
+      // "pop-up-menu" is the lowest level Electron leaves where Windows put it.
+      if (onTop) { w.setAlwaysOnTop(true, o.os === "win32" ? "pop-up-menu" : "floating"); p.setOnAllWorkspaces?.(true); }
       if (hidden) w.showInactive();
       if (onTop || raise) w.moveTop();
     });
