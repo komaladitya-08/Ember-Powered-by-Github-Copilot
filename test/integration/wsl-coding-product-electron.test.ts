@@ -47,6 +47,8 @@ type SourceTerminalObservation = { episode: number; stage: number; session: numb
 
 class Journey {
   terminalSummaryKind = 0;
+  /** How many requests the fixed model had when the last public-dependency set was approved: failure reports only. */
+  requestsAtApproval = -1;
   terminalObservation?: SourceTerminalObservation;
   phase = 1;
   app?: ElectronApplication;
@@ -150,8 +152,9 @@ class Journey {
     this.phase = 4; let command: Page;
     try { command = await this.command(); await expect.poll(() => command.evaluate(() => (window as Window & { emberCommands: CommandsApi }).emberCommands.pull().then(snapshot => snapshot?.state.card?.n ?? 0)), { timeout: 45_000 }).toBeGreaterThan(this.lastApproval); }
     catch (error) {
-      // Failure only: no command window or no new card came. 37 the fixed model had refused a step, 38 it had not.
-      this.phase = this.model.failures.length ? 37 : 38;
+      // Failure only: no command window or no new card came. 37 the fixed model had refused a step, 38 it had not;
+      // 40 the model has had no request since the public packages were approved, so they are still being prepared.
+      this.phase = this.model.failures.length ? 37 : this.requestsAtApproval === this.model.requests.length ? 40 : 38;
       throw error;
     }
     // A card that came but doesn't match, or never arms, reports as 39.
@@ -184,6 +187,7 @@ class Journey {
       for (let step = 0; step < 12 && await button.getAttribute("aria-disabled") === "true"; step++) { await whole.hover(); await page!.mouse.wheel(0, 500); await page!.waitForTimeout(150); }
       await expect.poll(() => button.getAttribute("aria-disabled"), { timeout: 15_000 }).not.toBe("true");
       await expect.poll(() => button.isEnabled(), { timeout: 15_000 }).toBe(true); this.publicApproved.push(sha256);
+      this.requestsAtApproval = this.model.requests.length;
     }
     await button.click();
   }
