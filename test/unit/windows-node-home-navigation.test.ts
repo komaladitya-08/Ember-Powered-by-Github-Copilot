@@ -78,9 +78,11 @@ it("waits for the session to end, focuses the request box and reaches the result
     async pane(value: string) { expect(value).toBe("Projects"); calls.push("projects"); },
     // The request box is found and focused first; the Tab search for the result's button starts from there.
     async revealHomeControl(select: Selector, enabled?: boolean) {
-      expect(port.phase).toBe(11); expect(enabled).toBeUndefined();
-      if (stage === 0) { expect(select({ automationId: "project-sessions-request" })).toBe(true); calls.push("request"); stage = 1; return { h: 5 }; }
-      expect(stage).toBe(3); expect(select({ name: "Review result: Public review" })).toBe(true); calls.push("result"); stage = 2;
+      expect(port.phase).toBe(11);
+      if (stage === 0) { expect(enabled).toBeUndefined(); expect(select({ automationId: "project-sessions-request" })).toBe(true); calls.push("request"); stage = 1; return { h: 5 }; }
+      // The folder button may be disabled: it only has to show.
+      if (stage === 3) { expect(enabled).toBe(false); expect(select({ automationId: "project-coding-choose" })).toBe(true); calls.push("folder"); stage = 4; return { h: 7 }; }
+      expect(enabled).toBeUndefined(); expect(stage).toBe(4); expect(select({ name: "Review result: Public review" })).toBe(true); calls.push("result"); stage = 2;
       return { h: 9 };
     },
     async focus(window: number, node: { h: number }) { expect(window).toBe(73); expect(stage).toBe(1); expect(node.h).toBe(5); calls.push("focus"); stage = 3; },
@@ -92,7 +94,7 @@ it("waits for the session to end, focuses the request box and reaches the result
     async until<T>(read: () => Promise<T>, accept: (value: T) => boolean, timeout: number) { expect(timeout).toBe(45_000); const value = await read(); expect(accept(value)).toBe(true); return value; },
   };
   expect(await review.call(port, "Public review", "Checks: 2 run")).toBe("Checks: 2 run");
-  expect(port.phase).toBe(11); expect(calls).toEqual(["idle", "projects", "request", "focus", "result", "click", "read"]); expect(steps).toEqual([1, 2, 3, 4, 5]);
+  expect(port.phase).toBe(11); expect(calls).toEqual(["idle", "projects", "request", "focus", "folder", "result", "click", "read"]); expect(steps).toEqual([1, 2, 3, 4, 5, 6]);
 });
 
 it("reveals the Coding group and Export again after the actual idle helper returns to Projects", async () => {

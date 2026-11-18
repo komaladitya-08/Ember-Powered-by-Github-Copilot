@@ -657,16 +657,19 @@ class Journey {
     // Phase 7 ends at the Projects pane; 11 is the reveal, the click and the read. A snapshot leaves out whatever is
     // scrolled out of view, with everything under it, so a result's button is never listed until it shows: waiting for
     // it to be listed or scrolling it by its handle cannot work. Ordinary Tab navigation brings it into view instead,
-    // from the request box above the Coding group: found within twelve Tabs of the pane's link, focused, and the
-    // result's button within twelve more. Within phase 11 the welcome's unused `target` fact counts the steps:
-    // 1 finding the request box, 2 focusing it, 3 the Tab search for the result's button, 4 the click, 5 the read.
+    // from the request box above the Coding group: found within twelve Tabs of the pane's link and focused; then the
+    // Coding group's folder button within twelve Tabs, and the result's button within twelve more (up to fifteen
+    // controls lie between the request box and the results). Within phase 11 the welcome's unused `target` fact
+    // counts the steps: 1 finding the request box, 2 focusing it, 3 the Tab search for the folder button, 4 the Tab
+    // search for the result's button, 5 the click, 6 the read.
     this.phase = 7; await this.idle(); await this.pane("Projects");
     const result = named("Review result: " + titleOf(goal));
     this.phase = 11; this.observe({ target: 1 }); const request = await this.revealHomeControl(id("project-sessions-request"));
     this.observe({ target: 2 }); await this.focus(this.home, request);
-    this.observe({ target: 3 }); await this.revealHomeControl(result);
-    this.observe({ target: 4 }); await this.click(this.home, result);
-    this.observe({ target: 5 });
+    this.observe({ target: 3 }); await this.revealHomeControl(id("project-coding-choose"), false);
+    this.observe({ target: 4 }); await this.revealHomeControl(result);
+    this.observe({ target: 5 }); await this.click(this.home, result);
+    this.observe({ target: 6 });
     const region: Selector = node => node.automationId === "project-coding-review" || (["Group", "Pane"].includes(node.controlType ?? "") && node.name === titleOf(goal));
     return this.until(() => this.homeText(region), text => text.includes(counts), 45_000);
   }

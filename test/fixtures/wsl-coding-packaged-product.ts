@@ -376,7 +376,10 @@ export class WslPackagedJourney {
     // A snapshot leaves out whatever is scrolled out of view, with everything under it, so the result's button is
     // listed only once it shows: ordinary Tab navigation from the request box above the Coding group brings it there.
     this.phase = 9; await this.pane("Projects"); const result = named("Review result: " + titleOf(goal));
-    await this.u.reveal(this.home, id("project-sessions-request"), result); await this.u.click(this.home, result);
+    // Up to fifteen controls lie between the request box and the results, so the search goes by way of the Coding
+    // group's folder button: twelve Tabs to it, twelve more from it.
+    await this.u.reveal(this.home, id("project-sessions-request"), id("project-coding-choose"), false, false);
+    await this.u.reveal(this.home, id("project-coding-choose"), result); await this.u.click(this.home, result);
     const region: WslUiSelector = node => node.automationId === "project-coding-review" || ["Group", "Pane"].includes(node.controlType ?? "") && node.name === titleOf(goal);
     return this.u.until(() => this.u.text(this.home, region), text => text.includes(counts), 45_000);
   }
