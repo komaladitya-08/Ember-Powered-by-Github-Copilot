@@ -47,6 +47,8 @@ type SourceTerminalObservation = { episode: number; stage: number; session: numb
 
 class Journey {
   terminalSummaryKind = 0;
+  /** Set while the first repair's continuation waits for its command cards: failure reports only. */
+  continuing = false;
   terminalObservation?: SourceTerminalObservation;
   phase = 1;
   app?: ElectronApplication;
@@ -148,7 +150,14 @@ class Journey {
   }
   async decide(commandText = WSL_PRODUCT_CHECK, answer: "Allow" | "Not now" = "Allow"): Promise<Page> {
     this.phase = 4; const command = await this.command();
-    await expect.poll(() => command.evaluate(() => (window as Window & { emberCommands: CommandsApi }).emberCommands.pull().then(snapshot => snapshot?.state.card?.n ?? 0)), { timeout: 45_000 }).toBeGreaterThan(this.lastApproval);
+    try { await expect.poll(() => command.evaluate(() => (window as Window & { emberCommands: CommandsApi }).emberCommands.pull().then(snapshot => snapshot?.state.card?.n ?? 0)), { timeout: 45_000 }).toBeGreaterThan(this.lastApproval); }
+    catch (error) {
+      // Failure only, in the first repair's continuation: no new card came. 37 the fixed model had refused a step, 38 it had not.
+      if (this.continuing) this.phase = this.model.failures.length ? 37 : 38;
+      throw error;
+    }
+    // A card that came but doesn't match, or never arms, reports as 39 there.
+    if (this.continuing) this.phase = 39;
     const card = await command.evaluate(() => (window as Window & { emberCommands: CommandsApi }).emberCommands.pull().then(snapshot => snapshot!.state.card!)); this.lastApproval = card.n;
     expect(card.kind).not.toBe("node"); expect({ target: card.target, command: card.command, shell: card.shell, cwd: card.cwd }).toEqual({ target: this.input.target, command: commandText, shell: "bash", cwd: "/work" });
     expect(card.sha256).toBe(cardSha256(card)); await expect.poll(() => command.locator("#ask-cmd").textContent()).toBe(commandText);
@@ -373,7 +382,7 @@ async function repair(f: Journey, publicDependencies: boolean): Promise<void> {
   f.phase = 22; await f.home!.locator("#project-coding-continue").click(); await f.home!.locator("#project-coding-continue-request").fill(scenarios[1].request);
   await f.home!.locator("#project-coding-continue-send").click();
   if (publicDependencies) await f.dependencies(true, "baseline");
-  await f.decide(); if (!publicDependencies) await f.decide();
+  f.continuing = true; await f.decide(); if (!publicDependencies) await f.decide(); f.continuing = false;
   await f.terminal(1, "done"); const all = await f.results(); expect(all).toHaveLength(2);
   const continued = all.find(result => result.id !== first.id)!;
   expect(continued.taskId).not.toBe(first.taskId); expect(continued).toMatchObject({ status: "done", checks: { ran: publicDependencies ? 1 : 2, passed: publicDependencies ? 1 : 2, failed: 0 } });
