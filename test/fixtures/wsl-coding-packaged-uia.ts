@@ -117,8 +117,10 @@ export class WslPackagedUi {
       this.foreground(hwnd); this.p.input.button(1, true);
     } finally { this.p.input.button(1, false); this.p.input.releaseAll(); }
   }
-  async press(hwnd: number, select: WslUiSelector): Promise<void> {
-    const fresh = await this.focus(hwnd, await this.node(hwnd, select)); if (!select(fresh)) this.fail(); this.key(hwnd, "Return");
+  async press(hwnd: number, select: WslUiSelector, guard?: SnapshotGuard): Promise<void> {
+    const fresh = await this.focus(hwnd, await this.node(hwnd, select), guard);
+    if (!select(fresh) || (guard && fresh.hasKeyboardFocus !== true)) this.fail();
+    this.key(hwnd, "Return");
   }
   async fill(hwnd: number, select: WslUiSelector, value: string, password = false): Promise<void> {
     const node = await this.focus(hwnd, await this.node(hwnd, select)); if (!select(node) || !!node.isPassword !== password) this.fail();

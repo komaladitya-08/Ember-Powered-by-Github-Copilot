@@ -74,8 +74,9 @@ export class WslPackagedJourney {
   private executableHash = "";
   private readonly assets: { path: string; sha256: string }[] = [];
   private previousCard = "";
+  private projectStage = 0;
   private readonly privateFailures: unknown[] = [];
-  private captured?: Readonly<{ phase: number; operation: number; bridgeStage: number }>;
+  private captured?: Readonly<{ phase: number; operation: number; bridgeStage: number; projectStage: number }>;
   constructor(readonly root: string, readonly model: WslPackagedModel, readonly distro: string, readonly targetLabel: string) {
     this.profile = path.join(root, "profile"); this.temporary = path.join(root, "temporary"); this.exported = path.join(root, "exported");
     this.source = path.join(root, "source"); this.publicSource = path.join(root, "public-source");
@@ -93,9 +94,9 @@ export class WslPackagedJourney {
   private get u(): WslPackagedUi { if (!this.ui) this.fail(); return this.ui; }
   capture(error?: unknown): void {
     if (this.captured) return; this.privateFailures.push(error);
-    this.captured = Object.freeze({ phase: this.phase, operation: this.ui?.operation ?? 0, bridgeStage: this.bridge?.startupStage ?? 0 });
+    this.captured = Object.freeze({ phase: this.phase, operation: this.ui?.operation ?? 0, bridgeStage: this.bridge?.startupStage ?? 0, projectStage: this.phase === 6 ? this.projectStage : 0 });
   }
-  observation(): Readonly<{ phase: number; operation: number; bridgeStage: number }> | undefined { return this.captured; }
+  observation(): Readonly<{ phase: number; operation: number; bridgeStage: number; projectStage: number }> | undefined { return this.captured; }
   private async pane(name: string): Promise<void> { await this.u.click(this.home, node => node.controlType === "Hyperlink" && node.name === name); }
   private async accessible(accepts: (value: string) => boolean, ms = 30_000): Promise<string> {
     const value = await this.u.until(async () => (await this.u.nodes(this.home)).filter(node => node.controlType === "Text" && !node.isPassword && typeof node.name === "string")
@@ -237,31 +238,82 @@ export class WslPackagedJourney {
     await this.idle();
   }
   private async folder(title: string, destination: string): Promise<void> {
-    const dialog = (await this.u.until(() => this.u.windows(), windows => windows.some(window => window.name === title), 20_000)).find(window => window.name === title)!;
-    if (!this.input || this.input.blockedReason?.(dialog.hwnd)) this.fail(); this.input.activate(dialog.hwnd);
+    this.projectStage = 6; const dialog = (await this.u.until(() => this.u.windows(), windows => windows.some(window => window.name === title), 20_000)).find(window => window.name === title)!;
+    this.projectStage = 7; if (!this.input || this.input.blockedReason?.(dialog.hwnd)) this.fail(); this.input.activate(dialog.hwnd);
     await this.u.until(async () => this.input!.activeWindow(), hwnd => hwnd === dialog.hwnd, 5000);
-    this.u.chord(dialog.hwnd, "Alt_L", "d");
+    this.projectStage = 8; this.u.chord(dialog.hwnd, "Alt_L", "d");
     try { this.u.type(dialog.hwnd, destination); this.u.key(dialog.hwnd, "Return"); }
     finally { this.input.releaseAll(); }
-    await this.u.until(() => this.u.nodes(dialog.hwnd), nodes => nodes.some(node => (node.name ?? "").toLowerCase().includes(path.basename(destination).toLowerCase())));
-    await this.u.click(dialog.hwnd, node => node.controlType === "Button" && /^Select Folder$/i.test(node.name ?? ""));
-    await this.u.until(() => this.u.windows(), windows => !windows.some(window => window.hwnd === dialog.hwnd));
+    this.projectStage = 9; await this.u.until(() => this.u.nodes(dialog.hwnd), nodes => nodes.some(node => (node.name ?? "").toLowerCase().includes(path.basename(destination).toLowerCase())));
+    this.projectStage = 10; await this.u.click(dialog.hwnd, node => node.controlType === "Button" && /^Select Folder$/i.test(node.name ?? ""));
+    this.projectStage = 11; await this.u.until(() => this.u.windows(), windows => !windows.some(window => window.hwnd === dialog.hwnd));
+  }
+  private selectedWslOption(nodes: readonly RawNode[], combo: RawNode): { control: RawNode; option: RawNode } {
+    const incomplete = (node: RawNode & { omitted?: boolean; childrenFailed?: boolean; childrenCut?: boolean }) =>
+      node.gone || node.omitted || node.childrenFailed || node.childrenCut;
+    const roots = nodes.flatMap((node, at) => sameWslUiNode(node, combo) ? [at] : []);
+    if (roots.length !== 1) this.fail();
+    const [root] = roots, control = nodes[root];
+    if (control.isEnabled !== true || incomplete(control)) this.fail();
+    const descendants = new Set([root]);
+    const selected: RawNode[] = [];
+    for (const [at, node] of nodes.entries()) {
+      if (!descendants.has(node.parent ?? -1)) continue;
+      if (incomplete(node)) this.fail();
+      descendants.add(at);
+      const item = node.patterns.selectionItem;
+      if (!item) continue;
+      if (typeof item.selected !== "boolean") this.fail();
+      if (item.selected) selected.push(node);
+    }
+    if (selected.length !== 1 || !selected[0].name || selected[0].isPassword) this.fail();
+    return { control, option: selected[0] };
+  }
+  private async chooseWslOption(combo: RawNode): Promise<RawNode> {
+    const label = this.distro + " (WSL2)";
+    for (let index = 0; index < 12; index++) {
+      const { control, option } = this.selectedWslOption(await this.u.nodes(this.home), combo);
+      if (option.name === label) {
+        if (option.isEnabled !== true || !option.runtimeId || option.pid !== control.pid) this.fail();
+        return option;
+      }
+      if (control.isOffscreen !== false || control.hasKeyboardFocus !== true) this.fail();
+      this.u.key(this.home, "Down");
+    }
+    this.fail();
+  }
+  private async commitWslOption(combo: RawNode, expected: RawNode): Promise<void> {
+    await this.u.press(this.home, id("project-coding-execution-choose"), nodes => {
+      const { option } = this.selectedWslOption(nodes, combo);
+      if (!sameWslUiNode(option, expected) || option.name !== this.distro + " (WSL2)" || option.isEnabled !== true) this.fail();
+    });
   }
   async project(publicDependencies: boolean, suffix: string): Promise<void> {
-    this.phase = 6; await this.pane("Projects"); await this.u.fill(this.home, id("project-sessions-name"), "Packaged WSL " + suffix); await this.u.click(this.home, id("project-sessions-add"));
-    await this.u.reveal(this.home, id("project-sessions-add"), id("project-coding-choose")); await this.u.press(this.home, id("project-coding-choose"));
+    this.phase = 6; this.projectStage = 1; await this.pane("Projects");
+    this.projectStage = 2; await this.u.fill(this.home, id("project-sessions-name"), "Packaged WSL " + suffix);
+    this.projectStage = 3; await this.u.click(this.home, id("project-sessions-add"));
+    this.projectStage = 4; await this.u.reveal(this.home, id("project-sessions-add"), id("project-coding-choose"));
+    this.projectStage = 5; await this.u.press(this.home, id("project-coding-choose"));
     await this.folder("Choose a coding folder", publicDependencies ? this.publicSource : this.source);
-    await this.accessible(text => text.includes(publicDependencies ? this.publicSource : this.source));
-    const combo = id("project-coding-execution-select"); await this.u.reveal(this.home, id("project-coding-choose"), combo); await this.u.focus(this.home, await this.u.node(this.home, combo)); this.u.key(this.home, "Home");
-    let chosen = false;
-    for (let index = 0; index < 12; index++) { if ((await this.u.text(this.home, combo)).includes(this.distro + " (WSL2)")) { chosen = true; break; } this.u.key(this.home, "Down"); }
-    if (!chosen) this.fail(); await this.u.reveal(this.home, combo, id("project-coding-execution-choose")); await this.u.press(this.home, id("project-coding-execution-choose"));
-    await this.accessible(text => text.includes("isolated copy") && text.includes("offline"));
-    const preference = id("project-coding-public-dependencies-on"); await this.u.reveal(this.home, id("project-coding-execution-choose"), preference); await this.u.toggle(this.home, preference, publicDependencies ? "On" : "Off");
-    expect(await this.u.text(this.home, id("project-coding-public-dependencies-detail"))).toContain("registry.npmjs.org"); expect(this.model.requests).toBeDefined();
+    this.projectStage = 12; await this.accessible(text => text.includes(publicDependencies ? this.publicSource : this.source));
+    const combo: WslUiSelector = node => node.automationId === "project-coding-execution-select" && node.controlType === "ComboBox";
+    this.projectStage = 13; await this.u.reveal(this.home, id("project-coding-choose"), combo);
+    this.projectStage = 14; const focusedCombo = await this.u.focus(this.home, await this.u.node(this.home, combo));
+    if (focusedCombo.hasKeyboardFocus !== true) this.fail();
+    this.u.key(this.home, "Home");
+    this.projectStage = 15; const desired = await this.chooseWslOption(focusedCombo);
+    this.projectStage = 16; await this.u.reveal(this.home, combo, id("project-coding-execution-choose"));
+    this.projectStage = 17; await this.commitWslOption(focusedCombo, desired);
+    this.projectStage = 18; await this.accessible(text => text.includes("isolated copy") && text.includes("offline"));
+    const preference = id("project-coding-public-dependencies-on");
+    this.projectStage = 19; await this.u.reveal(this.home, id("project-coding-execution-choose"), preference);
+    this.projectStage = 20; await this.u.toggle(this.home, preference, publicDependencies ? "On" : "Off");
+    this.projectStage = 21; expect(await this.u.text(this.home, id("project-coding-public-dependencies-detail"))).toContain("registry.npmjs.org"); expect(this.model.requests).toBeDefined();
   }
   async send(request: string): Promise<void> {
-    await this.u.reveal(this.home, id("project-coding-public-dependencies-on"), id("project-sessions-request"), true); await this.u.fill(this.home, id("project-sessions-request"), request); await this.u.click(this.home, id("project-sessions-send"));
+    this.projectStage = 22; await this.u.reveal(this.home, id("project-coding-public-dependencies-on"), id("project-sessions-request"), true);
+    this.projectStage = 23; await this.u.fill(this.home, id("project-sessions-request"), request);
+    this.projectStage = 24; await this.u.click(this.home, id("project-sessions-send"));
   }
   private async command(): Promise<number> { return (await this.u.until(() => this.u.windows(), windows => windows.some(window => window.name === "Ember commands"), 45_000)).find(window => window.name === "Ember commands")!.hwnd; }
   async allowCommand(): Promise<void> {

@@ -165,3 +165,71 @@ it.each(["fits", "scrolls", "fits after focus", "nonfocusable", "wrong title", "
     if (layout.startsWith("replaced")) expect(shown).toBe(replacement);
   } finally { vi.useRealTimers(); }
 });
+
+it.each(["selected", "wrong first", "wrong throughout", "outside combo", "duplicate", "unknown", "none", "disabled", "omitted", "focus drift"] as const)("establishes exact selected WSL option evidence: %s", async scenario => {
+  const { journey } = fixture();
+  const combo: RawNode = { h: 1, automationId: "project-coding-execution-select", controlType: "ComboBox", pid: 7, runtimeId: "combo",
+    isEnabled: true, isOffscreen: false, hasKeyboardFocus: true, patterns: {} };
+  const label = "Ubuntu-22.04 (WSL2)";
+  let down = 0;
+  const option = (name: string, selected: boolean | undefined, parent = 1, isEnabled = true): RawNode => ({
+    h: 3, parent, name, pid: 7, runtimeId: name, controlType: "ListItem", isEnabled, isOffscreen: true, patterns: { selectionItem: { selected } },
+  });
+  const nodes = vi.fn(async () => {
+    const desired = scenario === "selected" || scenario === "duplicate" || scenario === "disabled" || scenario === "omitted" || (scenario === "wrong first" && down > 0);
+    const group = { h: 2, parent: 0, patterns: {}, omitted: scenario === "omitted" };
+    const local = option("This computer", scenario === "duplicate" || (!desired && scenario !== "none"));
+    const wsl = option(label, scenario === "unknown" ? undefined : desired, 1, scenario !== "disabled");
+    return [{ ...combo, hasKeyboardFocus: scenario !== "focus drift" }, group, local, wsl, ...(scenario === "outside combo" ? [option(label, true, -1)] : [])];
+  });
+  const input = { activeWindow: () => 123, blockedReason: () => null, releaseAll: () => {},
+    keysymOf: vi.fn((name: string) => { expect(name).toBe("Down"); return 1; }),
+    keysym: vi.fn((_symbol: number, pressed: boolean) => { if (pressed) down++; return true; }) };
+  const ui = new WslPackagedUi({ input, current: () => {}, deadline: Date.now() + 30_000, refuse: () => new Error("Fixed UI refusal.") } as unknown as WslUiPorts);
+  vi.spyOn(ui, "nodes").mockImplementation(nodes);
+  Reflect.set(journey, "home", 123); Reflect.set(journey, "ui", ui);
+  const chosen = (journey as unknown as { chooseWslOption(node: RawNode): Promise<RawNode> }).chooseWslOption(combo);
+  if (scenario === "selected" || scenario === "wrong first") await expect(chosen).resolves.toMatchObject({ name: label });
+  else await expect(chosen).rejects.toThrow();
+  const expectedDown = scenario === "wrong first" ? 1 : scenario === "wrong throughout" || scenario === "outside combo" ? 12 : 0;
+  expect(input.keysymOf).toHaveBeenCalledTimes(expectedDown);
+  expect(input.keysym).toHaveBeenCalledTimes(2 * expectedDown);
+  expect(nodes).toHaveBeenCalledTimes(expectedDown === 12 ? 12 : expectedDown + 1);
+});
+
+it.each(["stable", "selection changes", "selected option replaced", "combo replaced", "commit loses focus"] as const)("checks selection during the final commit focus snapshot: %s", async scenario => {
+  const { journey } = fixture();
+  const raw = (node: Partial<RawNode>): RawNode => ({ h: 1, pid: 7, isEnabled: true, isOffscreen: false,
+    bounds: { x: 10, y: 20, width: 30, height: 40 }, patterns: {}, ...node });
+  const combo = raw({ controlType: "ComboBox", automationId: "project-coding-execution-select", runtimeId: "combo", hasKeyboardFocus: true });
+  const desired = raw({ h: 2, parent: 0, controlType: "ListItem", runtimeId: "wsl", name: "Ubuntu-22.04 (WSL2)", patterns: { selectionItem: { selected: true } } });
+  const button = raw({ h: 4, controlType: "Button", automationId: "project-coding-execution-choose", runtimeId: "confirm" });
+  let focused = false, change = false;
+  const nodes = () => {
+    const changed = change && scenario === "selection changes";
+    return [{ ...combo, hasKeyboardFocus: !focused, runtimeId: change && scenario === "combo replaced" ? "new combo" : combo.runtimeId },
+      { ...desired, runtimeId: change && scenario === "selected option replaced" ? "new wsl" : desired.runtimeId, patterns: { selectionItem: { selected: !changed } } },
+      raw({ h: 3, parent: 0, controlType: "ListItem", runtimeId: "local", name: "This computer", patterns: { selectionItem: { selected: changed } } }),
+      { ...button, hasKeyboardFocus: focused && !(change && scenario === "commit loses focus") }];
+  };
+  const bridge = { call: vi.fn(async (method: string, values: { handle?: number }) => {
+    if (method === "perform") { expect(values.handle).toBe(button.h); focused = true; return {}; }
+    expect(method).toBe("focused");
+    change = true;
+    return { hwnd: 123, element: { ...button, hasKeyboardFocus: true } };
+  }) };
+  const input = { activeWindow: () => 123, blockedReason: () => null, activate: () => {}, releaseAll: () => {},
+    keysymOf: vi.fn((name: string) => { expect(name).toBe("Return"); return 1; }), keysym: vi.fn(() => true) };
+  const ui = new WslPackagedUi({ bridge, input, current: () => {}, deadline: Date.now() + 30_000, refuse: () => new Error("Fixed UI refusal.") } as unknown as WslUiPorts);
+  const snapshot = vi.spyOn(ui, "nodes").mockImplementation(async () => nodes());
+  Reflect.set(journey, "home", 123); Reflect.set(journey, "ui", ui);
+  const steps = journey as unknown as { chooseWslOption(control: RawNode): Promise<RawNode>; commitWslOption(control: RawNode, expected: RawNode): Promise<void> };
+  const expected = await steps.chooseWslOption(combo);
+  const committed = steps.commitWslOption(combo, expected);
+  if (scenario === "stable") await expect(committed).resolves.toBeUndefined();
+  else await expect(committed).rejects.toThrow();
+  expect(focused).toBe(true); expect(change).toBe(true);
+  expect(snapshot).toHaveBeenCalledTimes(3);
+  expect(input.keysymOf).toHaveBeenCalledTimes(scenario === "stable" ? 1 : 0);
+  expect(input.keysym).toHaveBeenCalledTimes(scenario === "stable" ? 2 : 0);
+});

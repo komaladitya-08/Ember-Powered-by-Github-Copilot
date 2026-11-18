@@ -169,16 +169,30 @@ it.each(["private", "substring", "newline", "wrong-case", "out-of-range", "multi
   const { frames } = await failedChild("source", value); expect(frames[1][1].report).toBe(1); expect(frames[1][1].cases[0]).toEqual({ case: 1, status: 2, phase: 0 });
 });
 it("projects the exact complete cached packaged numeric frame from otherwise private captured output", async () => {
-  const { frames } = await failedChild("packaged", failedReport("packaged"), { stdout: 'PRIVATE unrelated transcript\nWindows WSL packaged cached observation {"phase":2,"operation":9,"bridgeStage":30}\r\nPRIVATE tail\n' });
-  expect(frames[2]).toEqual(["WSL product failure cached stage", { schema: 1, available: 1, phase: 2, operation: 9, bridgeStage: 30 }]);
+  const { frames } = await failedChild("packaged", failedReport("packaged"), { stdout: 'PRIVATE unrelated transcript\nWindows WSL packaged cached observation {"phase":2,"operation":9,"bridgeStage":30,"projectStage":0}\r\nPRIVATE tail\n' });
+  expect(frames[2]).toEqual(["WSL product failure cached stage", { schema: 1, available: 1, phase: 2, operation: 9, bridgeStage: 30, projectStage: 0 }]);
+});
+it.each([1, 15, 24])("projects packaged project stage %i only for a verified failed phase-six case", async projectStage => {
+  const stdout = "Windows WSL packaged cached observation " + JSON.stringify({ phase: 6, operation: 2, bridgeStage: 25, projectStage }) + "\n";
+  const { frames } = await failedChild("packaged", failedReport("packaged", 6), { stdout });
+  expect(frames[2]).toEqual(["WSL product failure cached stage", { schema: 1, available: 1, phase: 6, operation: 2, bridgeStage: 25, projectStage }]);
+  const wrongPhase = await failedChild("packaged", failedReport("packaged", 5), { stdout });
+  expect(wrongPhase.frames[2][1].projectStage).toBe(0);
+  const signal = await failedChild("packaged", failedReport("packaged", 6), { stdout, outcome: { signal: "SIGTERM", status: null } });
+  expect(signal.frames[2][1].projectStage).toBe(0);
+});
+it.each([{ phase: 6, projectStage: 0 }, { phase: 6, projectStage: 25 }, { phase: 5, projectStage: 3 }])("rejects inconsistent packaged project frame %j", async ({ phase, projectStage }) => {
+  const stdout = "Windows WSL packaged cached observation " + JSON.stringify({ phase, operation: 2, bridgeStage: 25, projectStage }) + "\n";
+  const { frames } = await failedChild("packaged", failedReport("packaged", phase), { stdout });
+  expect(frames[2]).toEqual(["WSL product failure cached stage", { schema: 1, available: 0, phase: 0, operation: 0, bridgeStage: 0, projectStage: 0 }]);
 });
 it.each(["partial", "duplicate", "partial-duplicate", "prefix", "extra-key", "phase-range", "operation-range", "bridge-range", "oversize"])("keeps %s cached packaged output unavailable", async kind => {
-  const line = 'Windows WSL packaged cached observation {"phase":2,"operation":9,"bridgeStage":30}';
+  const line = 'Windows WSL packaged cached observation {"phase":2,"operation":9,"bridgeStage":30,"projectStage":0}';
   const stdout = kind === "partial" ? line : kind === "duplicate" ? line + "\n" + line + "\n" : kind === "partial-duplicate" ? line + "\n" + line : kind === "prefix" ? "PRIVATE " + line + "\n"
     : kind === "extra-key" ? line.replace("}", ',"PRIVATE":1}') + "\n" : kind === "phase-range" ? line.replace('"phase":2', '"phase":41') + "\n"
     : kind === "operation-range" ? line.replace('"operation":9', '"operation":10') + "\n" : kind === "bridge-range" ? line.replace('"bridgeStage":30', '"bridgeStage":31') + "\n" : "PRIVATE".repeat(400_000);
   const { frames } = await failedChild("packaged", failedReport("packaged"), { stdout });
-  expect(frames[2]).toEqual(["WSL product failure cached stage", { schema: 1, available: 0, phase: 0, operation: 0, bridgeStage: 0 }]);
+  expect(frames[2]).toEqual(["WSL product failure cached stage", { schema: 1, available: 0, phase: 0, operation: 0, bridgeStage: 0, projectStage: 0 }]);
 });
 it.each([{ error: { code: "ETIMEDOUT" }, status: null }, { signal: "SIGTERM", status: null }])("keeps original child error classification and fatal refusal with outcome %j", async outcome => {
   const { frames } = await failedChild("resources", failedReport("resources"), { outcome });
@@ -193,16 +207,16 @@ it("uses handle clocks only against handle clocks and pathname clocks only again
 });
 
 it("accepts only known SGR decoration around a complete canonical packaged frame, as emitted by the real Vitest formatter", async () => {
-  const line = 'Windows WSL packaged cached observation {"phase":2,"operation":9,"bridgeStage":30}';
+  const line = 'Windows WSL packaged cached observation {"phase":2,"operation":9,"bridgeStage":30,"projectStage":0}';
   const { frames } = await failedChild("packaged", failedReport("packaged"), { stdout: "\x1b[22m" + line + "\x1b[39m\n" });
-  expect(frames[2]).toEqual(["WSL product failure cached stage", { schema: 1, available: 1, phase: 2, operation: 9, bridgeStage: 30 }]);
+  expect(frames[2]).toEqual(["WSL product failure cached stage", { schema: 1, available: 1, phase: 2, operation: 9, bridgeStage: 30, projectStage: 0 }]);
 });
 it.each(["other-escape", "control-prefix", "partial-sgr", "private-prefix", "decorated-duplicate"])("refuses %s around otherwise canonical cached packaged data", async kind => {
-  const line = 'Windows WSL packaged cached observation {"phase":2,"operation":9,"bridgeStage":30}';
+  const line = 'Windows WSL packaged cached observation {"phase":2,"operation":9,"bridgeStage":30,"projectStage":0}';
   const stdout = kind === "other-escape" ? "\x1b[2J" + line + "\n" : kind === "control-prefix" ? "\0" + line + "\n" : kind === "partial-sgr" ? "\x1b[22" + line + "\n"
     : kind === "private-prefix" ? "\x1b[22mPRIVATE " + line + "\x1b[39m\n" : "\x1b[22m" + line + "\n" + line + "\x1b[39m\n";
   const { frames } = await failedChild("packaged", failedReport("packaged"), { stdout });
-  expect(frames[2]).toEqual(["WSL product failure cached stage", { schema: 1, available: 0, phase: 0, operation: 0, bridgeStage: 0 }]);
+  expect(frames[2]).toEqual(["WSL product failure cached stage", { schema: 1, available: 0, phase: 0, operation: 0, bridgeStage: 0, projectStage: 0 }]);
 });
 
 it("preserves bounded child failure evidence if the fixture pipe also fails", async () => {

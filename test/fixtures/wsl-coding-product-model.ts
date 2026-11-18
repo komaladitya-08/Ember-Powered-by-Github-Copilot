@@ -45,6 +45,11 @@ export function wslProductScenarios(kind: WslSourceCase): readonly WslProductSce
   const keys = kind === "revocation" ? ["mode", "forget"] : [kind];
   return Object.freeze(keys.map(key => scenario(key, "writer", `For the ${key} revocation check, start ${WSL_PRODUCT_WRITER} in this project's isolated WSL copy at /work. It writes only the private parent/child counters until I stop or revoke the request. Never retry or fall back to this computer after revocation.`, `Start both copied WSL writers for ${key} and respect Stop or revoked ownership`)));
 }
+const acceptedFinishStep: Partial<Record<WslProductScenario["kind"], number>> = Object.freeze({
+  repair: 4, continuation: 5, "public-repair": 9, "public-continuation": 4,
+});
+const acceptedFinishReply = "Coding result recorded for host review.";
+
 interface Message { role: string; content: unknown }
 interface Reply { text?: string; tool?: { name: string; args: Record<string, unknown> } }
 function textOf(value: unknown): string {
@@ -73,8 +78,14 @@ export async function createWslProductModel(scenarios: readonly WslProductScenar
     if (!scenario) return refusal(1);
     const expected = scenario.publicDependencies ? WSL_PUBLIC_PRODUCT_TOOLS : WSL_PRODUCT_TOOLS;
     if ([...tools].sort().join("\0") !== [...expected].sort().join("\0")) return refusal(2);
-    const step = steps.get(scenario.key) ?? 0; steps.set(scenario.key, step + 1);
+    const step = steps.get(scenario.key) ?? 0;
     const lastTool = messages.findLast(message => message.role === "tool");
+    // The SDK asks for one final model reply after an accepted finish tool. Command and file
+    // data are wrapped inside untrusted result frames, so only the exact controller reply can end the script.
+    if (step === acceptedFinishStep[scenario.kind] && lastTool?.content === acceptedFinishReply) {
+      return { text: "The copied WSL result is ready for review." };
+    }
+    steps.set(scenario.key, step + 1);
     const last = JSON.stringify(lastTool?.content ?? "");
     if (scenario.kind === "repair" && step === 3 || scenario.kind === "continuation" && step === 4) {
       lastCommands.set(scenario.key, sourceCommandKind(lastTool?.content));
