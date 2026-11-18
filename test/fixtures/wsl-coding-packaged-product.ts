@@ -408,10 +408,11 @@ export class WslPackagedJourney {
   }
   private async command(): Promise<number> { return (await this.u.until(() => this.u.windows(), windows => windows.some(window => window.name === "Ember commands"), 45_000)).find(window => window.name === "Ember commands")!.hwnd; }
   async allowCommand(): Promise<void> {
-    // Phases within a command decision: 7 the command window, 40 a fresh card in it, 7 again its text and the click,
+    // Phases within a command decision: 7 the command window, 27 a fresh card in it (40 is the fixture's own bounded
+    // helper), 7 again its text and the click,
     // 22 the answered card leaving the window.
     this.phase = 7; const hwnd = await this.command();
-    this.phase = 40;
+    this.phase = 27;
     const node = (await this.u.until(() => this.u.nodes(hwnd), nodes => nodes.some(node => node.automationId === "ask-cmd" && !!node.runtimeId && node.runtimeId !== this.previousCard), 45_000)).find(id("ask-cmd"))!;
     this.phase = 7; await this.u.focus(hwnd, node); expect(await this.u.text(hwnd, id("ask-cmd"))).toBe(WSL_PRODUCT_CHECK);
     const words = (await this.u.nodes(hwnd)).map(node => node.name ?? "").join("\n");
