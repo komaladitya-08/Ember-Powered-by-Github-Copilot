@@ -670,8 +670,9 @@ class Journey {
       // it, 6 it is not listed at all.
       try {
         const read = await this.nodes(this.home), list = read.find(id("project-coding-results"));
-        const names = read.map(node => node.name ?? ""), has = (text: string) => names.some(name => name === text);
-        this.observe({ nextLabel: names.some(name => name.startsWith("Review result: ")) ? 1 : has("Review result") ? 2 : has("No coding results for this project yet.") ? 3
+        const names = read.map(node => node.name ?? ""), has = (text: string) => names.some(name => name.includes(text));
+        // A list item's own name may carry its marker, so the sentences are looked for within a name.
+        this.observe({ nextLabel: has("Review result: ") ? 1 : has("Review result") ? 2 : has("No coding results for this project yet.") ? 3
           : has("Select a project to see its coding results.") ? 4 : !list ? 6 : read.some(node => node.parent === list.h) ? 7 : 5 });
       } catch { /* The original refusal stands. */ }
       throw error;
