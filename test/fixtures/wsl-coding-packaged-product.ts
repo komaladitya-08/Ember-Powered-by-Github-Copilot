@@ -132,9 +132,9 @@ export class WslPackagedJourney {
    * stretches near the top of the pane; `pageTo` crosses the long one.
    */
   private async tabTo(select: WslUiSelector, enabled = true, backwards = false): Promise<void> {
-    // Failure only, in place of the step's own phase: 32 a read of Home was refused (cut short or too large), 34 every
-    // read came back empty (Home busy), 35 the keyboard never left the request box, 36 it ended on another control of
-    // Home's, 33 it ended outside Home or nowhere.
+    // Failure only, in place of the step's own phase: 32 a read of Home was refused (cut short or too large), 41 every
+    // read came back empty (Home busy), 42 the keyboard never left the request box, 43 it ended on another control of
+    // Home's, 44 it ended outside Home or nowhere. (41 to 44 are this search's alone: a command card's checks keep 33 to 36.)
     const step = this.phase; let read = false;
     for (let tabs = 0; ; tabs++) {
       this.phase = 32; const nodes = await this.u.nodes(this.home); this.phase = step; read ||= nodes.length > 0;
@@ -142,10 +142,10 @@ export class WslPackagedJourney {
       if (tabs === 12) break;
       if (backwards) this.u.chord(this.home, "Shift_L", "Tab"); else this.u.key(this.home, "Tab");
     }
-    if (!read) this.phase = 34;
+    if (!read) this.phase = 41;
     else {
       const at = await this.bridge!.call<{ element: RawNode | null; hwnd: number | null }>("focused", { values: false, deadlineMs: 2500 }, 5000).catch(() => null);
-      this.phase = !at || at.hwnd !== this.home || !at.element ? 33 : at.element.automationId === "project-sessions-request" ? 35 : 36;
+      this.phase = !at || at.hwnd !== this.home || !at.element ? 44 : at.element.automationId === "project-sessions-request" ? 42 : 43;
     }
     this.fail();
   }

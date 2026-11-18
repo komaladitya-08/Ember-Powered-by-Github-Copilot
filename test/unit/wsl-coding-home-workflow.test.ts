@@ -164,7 +164,7 @@ it.each(["foreign-file", "foreign-title", "duplicate", "partial", "extra", "coun
 it.each(["private", "substring", "newline", "wrong-case", "out-of-range", "multiple"])("refuses %s phase messages while retaining the exact numeric case inventory", async kind => {
   const value = failedReport("source"), assertion = value.testResults[0].assertionResults[0];
   const message = "Error: Windows WSL source journey refused (case 1, phase 2).";
-  const text = kind === "private" ? "PRIVATE stack and path" : kind === "substring" ? "PRIVATE prefix " + message : kind === "newline" ? message + "\n" : kind === "wrong-case" ? message.replace("case 1", "case 2") : kind === "out-of-range" ? message.replace("phase 2", "phase 41") : message;
+  const text = kind === "private" ? "PRIVATE stack and path" : kind === "substring" ? "PRIVATE prefix " + message : kind === "newline" ? message + "\n" : kind === "wrong-case" ? message.replace("case 1", "case 2") : kind === "out-of-range" ? message.replace("phase 2", "phase 49") : message;
   Object.assign(assertion, { failureMessages: kind === "multiple" ? [text, message] : [text] });
   const { frames } = await failedChild("source", value); expect(frames[1][1].report).toBe(1); expect(frames[1][1].cases[0]).toEqual({ case: 1, status: 2, phase: 0 });
 });
@@ -211,7 +211,7 @@ it.each([{ phase: 6, projectStage: 0 }, { phase: 6, projectStage: 25 }, { phase:
 it.each(["partial", "duplicate", "partial-duplicate", "prefix", "extra-key", "phase-range", "operation-range", "bridge-range", "oversize"])("keeps %s cached packaged output unavailable", async kind => {
   const line = 'Windows WSL packaged cached observation {"phase":2,"operation":9,"bridgeStage":30,"projectStage":0,"selection":0,"selectionShape":0}';
   const stdout = kind === "partial" ? line : kind === "duplicate" ? line + "\n" + line + "\n" : kind === "partial-duplicate" ? line + "\n" + line : kind === "prefix" ? "PRIVATE " + line + "\n"
-    : kind === "extra-key" ? line.replace("}", ',"PRIVATE":1}') + "\n" : kind === "phase-range" ? line.replace('"phase":2', '"phase":41') + "\n"
+    : kind === "extra-key" ? line.replace("}", ',"PRIVATE":1}') + "\n" : kind === "phase-range" ? line.replace('"phase":2', '"phase":49') + "\n"
     : kind === "operation-range" ? line.replace('"operation":9', '"operation":10') + "\n" : kind === "bridge-range" ? line.replace('"bridgeStage":30', '"bridgeStage":31') + "\n" : "PRIVATE".repeat(400_000);
   const { frames } = await failedChild("packaged", failedReport("packaged"), { stdout });
   expect(frames[2]).toEqual(["WSL product failure cached stage", { schema: 1, available: 0, phase: 0, operation: 0, bridgeStage: 0, projectStage: 0, selection: 0, selectionShape: 0 }]);
