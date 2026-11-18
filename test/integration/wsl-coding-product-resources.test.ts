@@ -110,8 +110,12 @@ async function runCase(mode: typeof WSL_PRODUCT_CASES.resources[number]): Promis
         void running.catch(() => undefined); let startTimer: ReturnType<typeof setTimeout> | undefined;
         try { await known(Promise.race([started, running.then(() => { throw failure(phase); }), new Promise<never>((_resolve, reject) => { startTimer = setTimeout(() => reject(failure(phase)), 30_000); })])); }
         finally { clearTimeout(startTimer); }
-        phase = 10; await known(workspace.stop()); const stopped = await known(running); observations.push(stopped);
-        expect(stopped).toMatchObject({ observed: true, stopped: true, timedOut: false, outputLimited: false });
+        // Each way the stop can go wrong has its own phase, so a hosted refusal says which it was.
+        phase = 10; await known(workspace.stop());
+        phase = 17; const stopped = await known(running); observations.push(stopped);
+        phase = 18; expect(stopped.observed).toBe(true);
+        phase = 19; expect(stopped.stopped).toBe(true);
+        phase = 20; expect(stopped).toMatchObject({ observed: true, stopped: true, timedOut: false, outputLimited: false });
       }
       phase = 11; expect(workspace.nodeAvailable).toBe(false); await expect(workspace.run("node --version", "/work", () => undefined, task.signal, "bash")).rejects.toThrow();
       expect(typeof workspace.sealForReview).toBe("function"); await known(workspace.sealForReview!());
