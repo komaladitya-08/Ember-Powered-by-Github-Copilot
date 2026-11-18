@@ -417,7 +417,7 @@ export class WslPackagedJourney {
   }
   private async exportReview(publicDependencies: boolean, cumulative: boolean): Promise<void> {
     // Phases within the export: 16 the idle wait, 21 the search for the folder button, 22 for a result's button, 23 for
-    // Export, 24 the click, the folder dialog and what follows.
+    // Export, 24 the click and the folder dialog, 25 and 26 below.
     this.phase = 16; await this.idle(); const before = this.model.requests.length, existing = new Set(fs.readdirSync(this.exported));
     // After the idle wait Export is scrolled out of view and so not listed: Tab navigation brings it there by way of
     // the request box, the Coding group's folder button and the first result's button, twelve Tabs a stage.
@@ -425,7 +425,11 @@ export class WslPackagedJourney {
     this.phase = 21; await this.u.reveal(this.home, id("project-sessions-request"), id("project-coding-choose"), false, false);
     this.phase = 22; await this.u.reveal(this.home, id("project-coding-choose"), listedResult); this.phase = 23; await this.u.reveal(this.home, listedResult, id("project-coding-export"));
     this.phase = 24; await this.u.click(this.home, id("project-coding-export")); await this.folder("Export coding review", this.exported);
+    // Home's sentence stands above the results list, out of view and so unlisted once Export below it has been
+    // clicked: 25 Shift+Tab back to the folder button shows it and it is read; 26 Tab forward again shows Export.
+    this.phase = 25; await this.u.reveal(this.home, id("project-coding-export"), listedResult, true); await this.u.reveal(this.home, listedResult, id("project-coding-choose"), true, false);
     await this.accessible(text => text.includes("Exported the coding review")); expect(this.model.requests.length).toBe(before);
+    this.phase = 26; await this.u.reveal(this.home, id("project-coding-choose"), listedResult); await this.u.reveal(this.home, listedResult, id("project-coding-export"));
     const fresh = fs.readdirSync(this.exported).filter(name => !existing.has(name)); expect(fresh).toHaveLength(1);
     this.assertExport(path.join(this.exported, fresh[0]), publicDependencies, cumulative);
   }

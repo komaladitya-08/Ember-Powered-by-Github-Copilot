@@ -105,10 +105,13 @@ it("reaches Export from the pane's link by way of the request box, the folder bu
     observe(values: { nextLabel: number }) { steps.push(values.nextLabel); },
     async idle() { calls.push("idle"); stage = 0; },
     // From the pane's link: the request box (focused), the folder button, the first result's button, then Export.
-    async revealHomeControl(select: Selector, enabled?: boolean) {
-      const expected = [{ automationId: "project-sessions-request" }, { automationId: "project-coding-choose" }, { name: "Review result: Public review" }, { automationId: "project-coding-export" }][stage];
-      expect(select(expected)).toBe(true); expect(enabled).toBe(stage === 1 ? false : undefined);
-      calls.push(["request", "folder-button", "result", "export"][stage++]); return { h: stage };
+    // After the folder dialog: back up to a result's button and the folder button for Home's sentence, then down again.
+    async revealHomeControl(select: Selector, enabled?: boolean, backwards?: boolean) {
+      const result = { name: "Review result: Public review" }, folderButton = { automationId: "project-coding-choose" }, exportButton = { automationId: "project-coding-export" };
+      const expected = [{ automationId: "project-sessions-request" }, folderButton, result, exportButton, result, folderButton, result, exportButton][stage];
+      expect(select(expected)).toBe(true); expect(enabled).toBe(stage === 1 || stage === 5 ? false : stage === 4 ? true : undefined);
+      expect(backwards).toBe(stage === 4 || stage === 5 ? true : undefined);
+      calls.push(["request", "folder-button", "result", "export", "back-result", "back-folder-button", "result-again", "export-again"][stage++]); return { h: stage };
     },
     async focus(window: number, node: { h: number }) { expect(window).toBe(73); expect(stage).toBe(1); expect(node.h).toBe(1); calls.push("focus"); },
     async click(window: number, select: Selector) {
@@ -116,11 +119,12 @@ it("reaches Export from the pane's link by way of the request box, the folder bu
       expect(window).toBe(73); expect(select({ automationId: "project-coding-export" })).toBe(true); calls.push("click");
     },
     async folder(title: string, destination: string) { expect(title).toBe("Export coding review"); expect(destination).toBe("C:\\public-review-export"); calls.push("folder"); },
-    async accessibleText(accept: (value: string) => boolean) { expect(accept("Exported the coding review")).toBe(true); calls.push("receipt"); },
+    // The sentence is read only once the folder button above it has been brought back into view.
+    async accessibleText(accept: (value: string) => boolean) { expect(stage).toBe(6); expect(accept("Exported the coding review")).toBe(true); calls.push("receipt"); },
     assertExport(cumulative: boolean) { expect(cumulative).toBe(true); calls.push("files"); },
   };
   await exportReview.call(port, true);
-  expect(calls).toEqual(["idle", "request", "focus", "folder-button", "result", "export", "click", "folder", "receipt", "files"]); expect(steps).toEqual([1, 2, 3, 4, 5, 6]); expect(port.model.requests).toEqual([]);
+  expect(calls).toEqual(["idle", "request", "focus", "folder-button", "result", "export", "click", "folder", "back-result", "back-folder-button", "receipt", "result-again", "export-again", "files"]); expect(steps).toEqual([1, 2, 3, 4, 5, 6]); expect(port.model.requests).toEqual([]);
 });
 
 it("reveals the newly opened Continue request before the real repair sequence fills or submits it", async () => {

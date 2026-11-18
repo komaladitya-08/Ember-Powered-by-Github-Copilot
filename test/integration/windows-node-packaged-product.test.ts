@@ -698,9 +698,14 @@ class Journey {
     // After the idle wait the focus is on the pane's link, further than twelve Tabs from Export: the search goes by
     // way of the request box (focused), the Coding group's folder button and the first result's button.
     this.observe({ nextLabel: 2 }); await this.focus(this.home, await this.revealHomeControl(id("project-sessions-request"))); await this.revealHomeControl(id("project-coding-choose"), false);
-    this.observe({ nextLabel: 3 }); await this.revealHomeControl(node => (node.name ?? "").startsWith("Review result: ")); await this.revealHomeControl(id("project-coding-export"));
+    const listedResult: Selector = node => (node.name ?? "").startsWith("Review result: ");
+    this.observe({ nextLabel: 3 }); await this.revealHomeControl(listedResult); await this.revealHomeControl(id("project-coding-export"));
     this.observe({ nextLabel: 4 }); await this.click(this.home, id("project-coding-export")); await this.folder("Export coding review", this.exported);
-    this.observe({ nextLabel: 5 }); await this.accessibleText(text => text.includes("Exported the coding review"));
+    // Home's sentence stands above the results list, out of view and so unlisted once Export below it has been
+    // clicked: Shift+Tab back to the folder button shows it, and Tab forward again leaves Export shown for what follows.
+    this.observe({ nextLabel: 5 }); await this.revealHomeControl(listedResult, true, true); await this.revealHomeControl(id("project-coding-choose"), false, true);
+    await this.accessibleText(text => text.includes("Exported the coding review"));
+    await this.revealHomeControl(listedResult); await this.revealHomeControl(id("project-coding-export"));
     this.observe({ nextLabel: 6 }); expect(this.model.requests.length).toBe(before); this.assertExport(cumulative);
   }
   async repair(): Promise<void> {
