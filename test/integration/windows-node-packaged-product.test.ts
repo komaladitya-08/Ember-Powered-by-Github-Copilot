@@ -782,15 +782,28 @@ class Journey {
   }
   private async forget(): Promise<void> {
     this.phase = 9; await this.pane("Projects");
+    // A snapshot leaves out what is scrolled out of view, so the controls are brought into view by Tab from the pane's
+    // link first. The welcome's unused `nextLabel` fact counts the steps: 1 to the request box and the folder button,
+    // 2 looking for a result, 3 forgetting results, 4 forgetting the folder, 5 forgetting the project, 7 the roles.
+    this.observe({ nextLabel: 1 }); await this.focus(this.home, await this.revealHomeControl(id("project-sessions-request"))); await this.revealHomeControl(id("project-coding-choose"), false);
+    const forgets: Selector = node => (node.name ?? "").startsWith("Forget private result:");
+    // Results follow the Coding group's own controls: twelve Tabs show the first one's button if there is one. None
+    // shown then counts as none; the private roles read from disk at the end are the proof that nothing is left.
+    this.observe({ nextLabel: 2 });
+    for (let tabs = 0; tabs < 12 && !(await this.nodes(this.home)).some(node => forgets(node) && node.isOffscreen === false); tabs++) { this.current(); try { this.pressKey("Tab"); } finally { this.input!.releaseAll(); } }
     // Only actual stopped results and inactive folder/project controls are used.
-    while ((await this.nodes(this.home)).some(node => (node.name ?? "").startsWith("Forget private result:"))) {
-      const before = (await this.nodes(this.home)).filter(node => (node.name ?? "").startsWith("Forget private result:")).length;
-      await this.click(this.home, node => (node.name ?? "").startsWith("Forget private result:"));
-      await this.until(() => this.nodes(this.home), nodes => nodes.filter(node => (node.name ?? "").startsWith("Forget private result:")).length < before);
+    this.observe({ nextLabel: 3 });
+    while ((await this.nodes(this.home)).some(forgets)) {
+      const before = (await this.nodes(this.home)).filter(forgets).length;
+      await this.click(this.home, forgets);
+      await this.until(() => this.nodes(this.home), nodes => nodes.filter(forgets).length < before);
     }
+    this.observe({ nextLabel: 4 }); await this.revealHomeControl(id("project-coding-forget"), true, true);
     await this.click(this.home, id("project-coding-forget")); await this.accessibleText(text => text.includes("No coding folder selected"));
-    await this.click(this.home, id("project-sessions-forget"));
+    this.observe({ nextLabel: 5 }); await this.revealHomeControl(id("project-sessions-forget"), true, true);
+    await this.click(this.home, id("project-sessions-forget")); await this.revealHomeControl(id("project-sessions-request"), false, true);
     await this.until(() => this.nodes(this.home), nodes => nodes.some(node => node.automationId === "project-sessions-request" && node.isEnabled === false));
+    this.observe({ nextLabel: 7 });
     this.assertUnchanged(); await this.rolesEmpty();
   }
   private async rolesEmpty(): Promise<void> {

@@ -477,13 +477,23 @@ export class WslPackagedJourney {
   }
   private async forget(): Promise<void> {
     this.phase = 10; await this.idle();
+    // The controls are brought into view by Tab from the pane's link first. Phases: 28 to the request box and the folder
+    // button and looking for a result, 29 forgetting results, 30 forgetting the folder, 31 forgetting the project.
+    const request = id("project-sessions-request"), forgets: WslUiSelector = node => (node.name ?? "").startsWith("Forget private result:");
+    this.phase = 28; await this.tabTo(request); await this.u.focus(this.home, await this.u.node(this.home, request)); await this.tabTo(id("project-coding-choose"), false);
+    // Results follow the Coding group's own controls: twelve Tabs show the first one's button if there is one. None
+    // shown then counts as none; the private roles read from disk at the end are the proof that nothing is left.
+    for (let tabs = 0; tabs < 12 && !(await this.u.nodes(this.home)).some(node => forgets(node) && !node.isOffscreen); tabs++) this.u.key(this.home, "Tab");
+    this.phase = 29;
     for (let removed = 0; removed < 4; removed++) {
-      const nodes = await this.u.nodes(this.home), before = nodes.filter(node => (node.name ?? "").startsWith("Forget private result:")).length; if (!before) break;
-      await this.u.click(this.home, node => (node.name ?? "").startsWith("Forget private result:")); await this.u.until(() => this.u.nodes(this.home), fresh => fresh.filter(node => (node.name ?? "").startsWith("Forget private result:")).length < before);
+      const nodes = await this.u.nodes(this.home), before = nodes.filter(forgets).length; if (!before) break;
+      await this.u.click(this.home, forgets); await this.u.until(() => this.u.nodes(this.home), fresh => fresh.filter(forgets).length < before);
     }
-    expect((await this.u.nodes(this.home)).some(node => (node.name ?? "").startsWith("Forget private result:"))).toBe(false);
-    await this.u.click(this.home, id("project-coding-forget")); await this.accessible(text => text.includes("No coding folder selected")); await this.u.click(this.home, id("project-sessions-forget"));
-    await this.u.until(() => this.u.nodes(this.home), nodes => nodes.some(node => node.automationId === "project-sessions-request" && node.isEnabled === false)); this.assertUnchanged(); await this.rolesEmpty();
+    expect((await this.u.nodes(this.home)).some(forgets)).toBe(false);
+    this.phase = 30; await this.tabTo(id("project-coding-forget"), true, true);
+    await this.u.click(this.home, id("project-coding-forget")); await this.accessible(text => text.includes("No coding folder selected"));
+    this.phase = 31; await this.tabTo(id("project-sessions-forget"), true, true); await this.u.click(this.home, id("project-sessions-forget")); await this.tabTo(request, false, true);
+    await this.u.until(() => this.u.nodes(this.home), nodes => nodes.some(node => node.automationId === "project-sessions-request" && node.isEnabled === false)); this.phase = 10; this.assertUnchanged(); await this.rolesEmpty();
   }
   async finish(): Promise<void> {
     this.phase = 11; this.assertUnchanged(); expect(this.model.failures).toEqual([]);
