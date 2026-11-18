@@ -425,7 +425,15 @@ export class WslPackagedJourney {
     // Phases within the review: 12 the keyboard into the pane, 13 paging down to the result's button, 14 the click,
     // 15 the read.
     this.phase = 12; await this.paneKeyboard();
-    this.phase = 13; await this.pageTo(result); this.phase = 14; await this.u.click(this.home, result);
+    this.phase = 13;
+    if (!await this.pageTo(result, true, false, true)) {
+      // Failure only: what shows after paging down. 33 a result's button under another title, 34 the Coding group's
+      // folder button without any result's button, 35 its Export without either, 36 none of those.
+      const shown = (await this.u.nodes(this.home)).filter(node => !node.isOffscreen);
+      this.phase = shown.some(node => (node.name ?? "").startsWith("Review result: ")) ? 33 : shown.some(id("project-coding-choose")) ? 34 : shown.some(id("project-coding-export")) ? 35 : 36;
+      this.fail();
+    }
+    this.phase = 14; await this.u.click(this.home, result);
     this.phase = 15;
     const region: WslUiSelector = node => node.automationId === "project-coding-review" || ["Group", "Pane"].includes(node.controlType ?? "") && node.name === titleOf(goal);
     return this.u.until(() => this.u.text(this.home, region), text => text.includes(counts), 45_000);
