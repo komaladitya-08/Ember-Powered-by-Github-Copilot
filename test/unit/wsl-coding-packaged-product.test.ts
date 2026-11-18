@@ -166,7 +166,7 @@ it.each(["fits", "scrolls", "fits after focus", "nonfocusable", "wrong title", "
   } finally { vi.useRealTimers(); }
 });
 
-it.each(["selected", "wrong first", "wrong throughout", "outside combo", "duplicate", "unknown", "none", "disabled", "omitted", "focus drift"] as const)("establishes exact selected WSL option evidence: %s", async scenario => {
+it.each(["selected", "wrong first", "wrong throughout", "outside combo", "duplicate", "unknown", "none", "disabled", "omitted", "focus drift", "closed selected", "closed wrong first", "closed without value", "closed wrong throughout"] as const)("establishes exact selected WSL option evidence: %s", async scenario => {
   const { journey } = fixture();
   const combo: RawNode = { h: 1, automationId: "project-coding-execution-select", controlType: "ComboBox", pid: 7, runtimeId: "combo",
     isEnabled: true, isOffscreen: false, hasKeyboardFocus: true, patterns: {} };
@@ -175,7 +175,11 @@ it.each(["selected", "wrong first", "wrong throughout", "outside combo", "duplic
   const option = (name: string, selected: boolean | undefined, parent = 1, isEnabled = true): RawNode => ({
     h: 3, parent, name, pid: 7, runtimeId: name, controlType: "ListItem", isEnabled, isOffscreen: true, patterns: { selectionItem: { selected } },
   });
-  const nodes = vi.fn(async () => {
+  const nodes = vi.fn(async (_hwnd?: number, values?: boolean) => {
+    expect(values).toBe(true);
+    // Chromium lists nothing under a closed list: its choice is the combo's own value.
+    if (scenario.startsWith("closed")) return [{ ...combo, patterns: { expand: "Collapsed" as const,
+      value: scenario === "closed without value" ? {} : { value: scenario === "closed selected" || (scenario === "closed wrong first" && down > 0) ? label : "This computer" } } }];
     const desired = scenario === "selected" || scenario === "duplicate" || scenario === "disabled" || scenario === "omitted" || (scenario === "wrong first" && down > 0);
     const group = { h: 2, parent: 0, patterns: {}, omitted: scenario === "omitted" };
     const local = option("This computer", scenario === "duplicate" || (!desired && scenario !== "none"));
@@ -190,13 +194,14 @@ it.each(["selected", "wrong first", "wrong throughout", "outside combo", "duplic
   Reflect.set(journey, "home", 123); Reflect.set(journey, "ui", ui);
   const chosen = (journey as unknown as { chooseWslOption(node: RawNode): Promise<RawNode> }).chooseWslOption(combo);
   if (scenario === "selected" || scenario === "wrong first") await expect(chosen).resolves.toMatchObject({ name: label });
+  else if (scenario === "closed selected" || scenario === "closed wrong first") await expect(chosen).resolves.toMatchObject({ runtimeId: "combo" });
   else await expect(chosen).rejects.toThrow();
-  const expectedDown = scenario === "wrong first" ? 1 : scenario === "wrong throughout" || scenario === "outside combo" ? 12 : 0;
+  const expectedDown = scenario === "wrong first" || scenario === "closed wrong first" ? 1 : scenario === "wrong throughout" || scenario === "outside combo" || scenario === "closed wrong throughout" ? 12 : 0;
   expect(input.keysymOf).toHaveBeenCalledTimes(expectedDown);
   expect(input.keysym).toHaveBeenCalledTimes(2 * expectedDown);
   expect(nodes).toHaveBeenCalledTimes(expectedDown === 12 ? 12 : expectedDown + 1);
   // Failure-only numeric evidence: the refusing guard times 16 plus the Down count; exhaustion and success record none.
-  const guard = { duplicate: 8, unknown: 6, none: 7, disabled: 10, omitted: 5, "focus drift": 12 }[scenario as string] ?? 0;
+  const guard = { duplicate: 8, unknown: 6, none: 7, disabled: 10, omitted: 5, "focus drift": 12, "closed without value": 13 }[scenario as string] ?? 0;
   expect(Reflect.get(journey, "selection")).toBe(guard * 16);
   // Counts only: the group and both options under the combo, the two options with a selection-item pattern.
   expect(Reflect.get(journey, "selectionShape")).toBe(guard === 7 || guard === 8 ? 3 + 16 * 2 : 0);

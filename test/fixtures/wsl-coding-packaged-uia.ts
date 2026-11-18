@@ -44,9 +44,10 @@ export class WslPackagedUi {
     if (answer.error) this.fail();
     return (answer.result as { windows: UiaWindow[] }).windows.filter(window => window.pid === this.p.pid && !window.busy && !window.skipped);
   }
-  async nodes(hwnd: number): Promise<RawNode[]> {
+  /** `values`: also read each non-password control's own value (a closed list's choice is only its combo's value). */
+  async nodes(hwnd: number, values = false): Promise<RawNode[]> {
     this.operation = 2; this.current();
-    const answer = await this.p.bridge.request("snapshot", { hwnd, values: false, maxNodes: 2000, maxChildren: 500, deadlineMs: 3000 }, 5000); this.current();
+    const answer = await this.p.bridge.request("snapshot", { hwnd, values, maxNodes: 2000, maxChildren: 500, deadlineMs: 3000 }, 5000); this.current();
     if (answer.error?.code === "busy" || answer.error?.code === "gone") return [];
     if (answer.error) this.fail();
     const result = answer.result as { nodes: RawNode[]; busy: boolean; truncated: boolean; cut: string[] };
@@ -75,7 +76,7 @@ export class WslPackagedUi {
   private foreground(hwnd: number): void {
     this.current(); if (this.p.input.blockedReason?.(hwnd) || this.p.input.activeWindow() !== hwnd) this.fail();
   }
-  async focus(hwnd: number, node: RawNode, guard?: SnapshotGuard): Promise<RawNode> {
+  async focus(hwnd: number, node: RawNode, guard?: SnapshotGuard, values = false): Promise<RawNode> {
     this.operation = 4; this.current(); if (this.p.input.blockedReason?.(hwnd)) this.fail(); this.p.input.activate(hwnd);
     // Activation may return before Windows raises the HWND. Verify foreground and exact focus in one budget.
     const focusDeadline = Date.now() + 10_000;
@@ -93,7 +94,7 @@ export class WslPackagedUi {
       if (Date.now() >= focusDeadline) this.fail();
       return result;
     }, result => result !== null && result.hwnd === hwnd && !!result.element && sameWslUiNode(result.element, node) && result.element.hasKeyboardFocus === true, focusDeadline - Date.now());
-    const nodes = await this.nodes(hwnd);
+    const nodes = await this.nodes(hwnd, values);
     guard?.(nodes);
     const fresh = nodes.find(value => sameWslUiNode(value, node)); this.foreground(hwnd);
     if (!fresh || fresh.isEnabled !== true || fresh.isOffscreen || !fresh.bounds || fresh.bounds.width <= 0 || fresh.bounds.height <= 0) this.fail();
@@ -117,8 +118,8 @@ export class WslPackagedUi {
       this.foreground(hwnd); this.p.input.button(1, true);
     } finally { this.p.input.button(1, false); this.p.input.releaseAll(); }
   }
-  async press(hwnd: number, select: WslUiSelector, guard?: SnapshotGuard): Promise<void> {
-    const fresh = await this.focus(hwnd, await this.node(hwnd, select), guard);
+  async press(hwnd: number, select: WslUiSelector, guard?: SnapshotGuard, values = false): Promise<void> {
+    const fresh = await this.focus(hwnd, await this.node(hwnd, select), guard, values);
     if (!select(fresh) || (guard && fresh.hasKeyboardFocus !== true)) this.fail();
     this.key(hwnd, "Return");
   }

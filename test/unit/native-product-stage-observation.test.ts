@@ -76,6 +76,9 @@ it("preserves the entire native WSL test after reversing only the new observatio
 });
 it("preserves the entire packaged test after reversing only the new project/folder stage field and markers", () => {
   let source = fs.readFileSync("test/integration/windows-node-packaged-product.test.ts", "utf8");
+  // Reverse the review step's wait for its session to end (the result button exists only then).
+  const reviewWait = "    // A result exists only once its session has ended: Home says so before the Tab search for its button begins.\n    this.phase = 7; await this.idle(); await this.pane(\"Projects\");";
+  expect(source.split(reviewWait)).toHaveLength(2); source = source.replace(reviewWait, "    this.phase = 7; await this.pane(\"Projects\");");
   // Reverse the cached command focus diagnostics before reconstructing earlier layers.
   const commandFocusAdditions = [
     "  commandWindows: number; targetType: number; focusedType: number; targetState: number; focusTrajectory: number;\n",

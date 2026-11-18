@@ -306,17 +306,22 @@ async function openReview(f: Journey, result: CodingResultSummary): Promise<void
 }
 async function exportReview(f: Journey, publicDependencies: boolean, changed: boolean): Promise<{ directory: string; json: string }> {
   const before = new Set(fs.readdirSync(f.exported)), requests = f.model.requests.length;
+  // Within the first repair's export only, the check in progress: 20 written, 23 originals kept, 24 excluded roots, 25 scope,
+  // 26 private markers, 27 no model request.
+  const mark = (phase: number) => { if (f.phase === 20 || (f.phase >= 23 && f.phase <= 27)) f.phase = phase; };
   await f.home!.locator("#project-coding-export").click();
   await expect.poll(() => fs.readdirSync(f.exported).length, { timeout: 15_000 }).toBe(before.size + 1);
   const fresh = fs.readdirSync(f.exported).filter(name => !before.has(name)); expect(fresh).toHaveLength(1);
   const directory = path.join(f.exported, fresh[0]), json = fs.readFileSync(path.join(directory, "review.json"), "utf8"), review = JSON.parse(json);
-  expect(review.purpose).toBe("review-only");
+  expect(review.purpose).toBe("review-only"); mark(23);
   for (const tree of [review.baseline, review.current]) for (const [name, text] of Object.entries(f.originals)) {
     expect(tree).toContainEqual(expect.objectContaining({ path: name, base64: Buffer.from(text).toString("base64") }));
   }
+  mark(24);
   for (const tree of [review.baseline, review.current, review.proposed]) for (const entry of tree) {
     expect(entry.path === ".git" || entry.path.startsWith(".git/") || entry.path === "node_modules" || entry.path.startsWith("node_modules/")).toBe(false);
   }
+  mark(25);
   expect(review.scope).toMatchObject({ executionProfile: publicDependencies ? "wsl-public-lock" : "wsl-offline", dependencies: null });
   if (publicDependencies) {
     const summary = expectedPublicSummary(changed);
@@ -324,10 +329,11 @@ async function exportReview(f: Journey, publicDependencies: boolean, changed: bo
       packageJsonSha256: summary.packageJsonSha256, lockSha256: summary.lockSha256, setSha256: summary.setSha256 });
     expect(review.scope.publicDependencies.compressedBytes).toBeGreaterThan(0);
   }
+  mark(26);
   for (const marker of [outside, credential, environmentCanary, excludedGit, excludedDependency]) {
     expect(json).not.toContain(marker); expect(json).not.toContain(Buffer.from(marker).toString("base64"));
   }
-  expect(f.model.requests.length).toBe(requests); return { directory, json };
+  mark(27); expect(f.model.requests.length).toBe(requests); return { directory, json };
 }
 async function repair(f: Journey, publicDependencies: boolean): Promise<void> {
   const scenarios = wslProductScenarios(publicDependencies ? "public-repair" : "repair");
@@ -339,7 +345,7 @@ async function repair(f: Journey, publicDependencies: boolean): Promise<void> {
   expect(first).toMatchObject({ status: "done", checks: { ran: publicDependencies ? 3 : 2, passed: publicDependencies ? 2 : 1, failed: 1 }, conflicts: 0, patchComplete: false });
   expect(f.approved[0].sha256).toBe(f.approved[1].sha256); expect(f.approved[0].n).not.toBe(f.approved[1].n);
   expect(JSON.stringify([...f.model.results.values()])).toContain("ERR_ASSERTION");
-  // Phases 19-22 name the review steps of the first repair: preview, export, limited changes, continuation form.
+  // Phases 19-22 name the review steps of the first repair: preview, export (23-27 inside it), limited changes, continuation form.
   await openReview(f, first); f.phase = 19; await expect.poll(() => f.home!.locator("#project-coding-patch").textContent()).toContain("'ready'");
   f.phase = 20; const exported = await exportReview(f, publicDependencies, publicDependencies);
   f.phase = 21;

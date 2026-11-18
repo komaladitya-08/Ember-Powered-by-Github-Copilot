@@ -66,11 +66,13 @@ function actualMethod(prefix: string, next: string, parameters: string, globals:
   return module.exports;
 }
 
-it("reveals the Coding group then the exact result before the actual review click and bounded read", async () => {
+it("waits for the session to end, then reveals the Coding group and the exact result before the actual review click and bounded read", async () => {
   const review = actualMethod("  private async review(", "\n  private assertExport", "goal, counts");
   const calls: string[] = []; let stage = 0;
   const port = {
     home: 73, phase: 0,
+    // A result exists only once its session has ended: the wait for Home's Ready comes before the Tab search.
+    async idle() { expect(port.phase).toBe(7); calls.push("idle"); },
     async pane(value: string) { expect(value).toBe("Projects"); calls.push("projects"); },
     async revealHomeControl(select: Selector, enabled?: boolean) {
       if (!stage) { expect(select({ automationId: "project-coding" })).toBe(true); expect(enabled).toBe(false); calls.push("group"); }
@@ -85,7 +87,7 @@ it("reveals the Coding group then the exact result before the actual review clic
     async until(read: () => Promise<string>, accept: (value: string) => boolean, timeout: number) { expect(timeout).toBe(45_000); const value = await read(); expect(accept(value)).toBe(true); return value; },
   };
   expect(await review.call(port, "Public review", "Checks: 2 run")).toBe("Checks: 2 run");
-  expect(port.phase).toBe(7); expect(calls).toEqual(["projects", "group", "result", "click", "read"]);
+  expect(port.phase).toBe(7); expect(calls).toEqual(["idle", "projects", "group", "result", "click", "read"]);
 });
 
 it("reveals the Coding group and Export again after the actual idle helper returns to Projects", async () => {

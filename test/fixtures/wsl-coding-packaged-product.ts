@@ -75,7 +75,7 @@ export class WslPackagedJourney {
   private readonly assets: { path: string; sha256: string }[] = [];
   private previousCard = "";
   private projectStage = 0;
-  /** Failure-only: which selection guard refused (1–12) times 16, plus the Down count so far (0–11); 0 when none did. */
+  /** Failure-only: which selection guard refused (1–13) times 16, plus the Down count so far (0–11); 0 when none did. */
   private selection = 0;
   private selectionStep = 0;
   /**
@@ -260,7 +260,12 @@ export class WslPackagedJourney {
     this.projectStage = 10; await this.u.click(dialog.hwnd, node => node.controlType === "Button" && /^Select Folder$/i.test(node.name ?? ""));
     this.projectStage = 11; await this.u.until(() => this.u.windows(), windows => !windows.some(window => window.hwnd === dialog.hwnd));
   }
-  private selectedWslOption(nodes: readonly RawNode[], combo: RawNode): { control: RawNode; option: RawNode } {
+  /**
+   * The combo's one current choice. An open or listed drop-down names it by its single selected option. Chromium
+   * lists nothing under a closed list (measured on both Windows images: no descendants, a value pattern, collapsed),
+   * so there the choice is the combo's own value, read in the same snapshot.
+   */
+  private selectedWslOption(nodes: readonly RawNode[], combo: RawNode): { control: RawNode; option: RawNode; name: string } {
     const incomplete = (node: RawNode & { omitted?: boolean; childrenFailed?: boolean; childrenCut?: boolean }) =>
       node.gone || node.omitted || node.childrenFailed || node.childrenCut;
     const roots = nodes.flatMap((node, at) => sameWslUiNode(node, combo) ? [at] : []);
@@ -270,6 +275,11 @@ export class WslPackagedJourney {
     if (incomplete(control)) this.refuseSelection(4);
     const descendants = new Set([root]);
     const selected: RawNode[] = [];
+    if (!nodes.some(node => node.parent === root) && control.patterns.expand === "Collapsed" && control.patterns.value) {
+      const value = control.patterns.value.value;
+      if (typeof value !== "string" || !value || control.isPassword || (control.patterns.value as { truncated?: boolean }).truncated) this.refuseSelection(13);
+      return { control, option: control, name: value };
+    }
     for (const [at, node] of nodes.entries()) {
       if (!descendants.has(node.parent ?? -1)) continue;
       if (incomplete(node)) this.refuseSelection(5);
@@ -286,14 +296,14 @@ export class WslPackagedJourney {
       this.refuseSelection(selected.length ? 8 : 7);
     }
     if (!selected[0].name || selected[0].isPassword) this.refuseSelection(9);
-    return { control, option: selected[0] };
+    return { control, option: selected[0], name: selected[0].name! };
   }
   private async chooseWslOption(combo: RawNode): Promise<RawNode> {
     const label = this.distro + " (WSL2)";
     for (let index = 0; index < 12; index++) {
       this.selectionStep = index;
-      const { control, option } = this.selectedWslOption(await this.u.nodes(this.home), combo);
-      if (option.name === label) {
+      const { control, option, name } = this.selectedWslOption(await this.u.nodes(this.home, true), combo);
+      if (name === label) {
         if (option.isEnabled !== true || !option.runtimeId || option.pid !== control.pid) this.refuseSelection(10);
         return option;
       }
@@ -305,9 +315,9 @@ export class WslPackagedJourney {
   }
   private async commitWslOption(combo: RawNode, expected: RawNode): Promise<void> {
     await this.u.press(this.home, id("project-coding-execution-choose"), nodes => {
-      const { option } = this.selectedWslOption(nodes, combo);
-      if (!sameWslUiNode(option, expected) || option.name !== this.distro + " (WSL2)" || option.isEnabled !== true) this.fail();
-    });
+      const { option, name } = this.selectedWslOption(nodes, combo);
+      if (!sameWslUiNode(option, expected) || name !== this.distro + " (WSL2)" || option.isEnabled !== true) this.fail();
+    }, true);
   }
   async project(publicDependencies: boolean, suffix: string): Promise<void> {
     this.phase = 6; this.projectStage = 1; await this.pane("Projects");

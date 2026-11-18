@@ -181,13 +181,13 @@ it.each([1, 15, 24])("projects packaged project stage %i only for a verified fai
   const signal = await failedChild("packaged", failedReport("packaged", 6), { stdout, outcome: { signal: "SIGTERM", status: null } });
   expect(signal.frames[2][1].projectStage).toBe(0);
 });
-it.each([16, 80, 203])("projects selection guard %i only with a verified stage-fifteen project failure", async selection => {
+it.each([16, 80, 219])("projects selection guard %i only with a verified stage-fifteen project failure", async selection => {
   const frame = (projectStage: number, value: number) => "Windows WSL packaged cached observation " + JSON.stringify({ phase: 6, operation: 2, bridgeStage: 25, projectStage, selection: value, selectionShape: 0 }) + "\n";
   const { frames } = await failedChild("packaged", failedReport("packaged", 6), { stdout: frame(15, selection) });
   expect(frames[2]).toEqual(["WSL product failure cached stage", { schema: 1, available: 1, phase: 6, operation: 2, bridgeStage: 25, projectStage: 15, selection, selectionShape: 0 }]);
   const unverified = await failedChild("packaged", failedReport("packaged", 5), { stdout: frame(15, selection) });
   expect(unverified.frames[2][1]).toMatchObject({ projectStage: 0, selection: 0, selectionShape: 0 });
-  for (const stdout of [frame(14, selection), frame(15, 15), frame(15, 28), frame(15, 204)]) {
+  for (const stdout of [frame(14, selection), frame(15, 15), frame(15, 28), frame(15, 220)]) {
     const refused = await failedChild("packaged", failedReport("packaged", 6), { stdout });
     expect(refused.frames[2]).toEqual(["WSL product failure cached stage", { schema: 1, available: 0, phase: 0, operation: 0, bridgeStage: 0, projectStage: 0, selection: 0, selectionShape: 0 }]);
   }
