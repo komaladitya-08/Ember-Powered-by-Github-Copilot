@@ -291,7 +291,8 @@ class Journey {
   failureObservation(): Readonly<PackagedObservation> | undefined { try { return this.observation.value(); } catch { return undefined; } }
   private lastClick?: { x: number; y: number; node: RawNode };
   private clickUnder = 0;
-  commandFailureObservation(): Readonly<PackagedCommandCardObservation> | undefined { return this.commandObservation && { ...this.commandObservation, under: this.commandObservation.known ? this.clickUnder : 0 }; }
+  private clickGeometry: Partial<PackagedCommandCardObservation> = {};
+  commandFailureObservation(): Readonly<PackagedCommandCardObservation> | undefined { return this.commandObservation && { ...this.commandObservation, ...(this.commandObservation.known ? { under: this.clickUnder, ...this.clickGeometry } : {}) }; }
   beginCleanup(): void { this.cleanupStarted = true; }
   constructor(readonly root: string, readonly model: Model) {
     const selected = process.env.EMBER_WINDOWS_NODE_PACKAGE;
@@ -631,6 +632,9 @@ class Journey {
         // 10: the click point lies outside the command window's own frame, so the button's rectangle reaches past it.
         const frame = at && (await this.nodes(hwnd)).find(node => node.hwnd === hwnd)?.bounds;
         const outside = !!at && !!frame && (at.x < frame.x || at.y < frame.y || at.x >= frame.x + frame.width || at.y >= frame.y + frame.height);
+        const unit = (value: number | undefined) => Math.max(0, Math.min(1023, Math.round((value ?? 0) / 4)));
+        if (at && leaf && root && leaf.pid === at.node.pid) this.clickGeometry = { px: unit(at.x), py: unit(at.y), fx: unit(frame?.x), fy: unit(frame?.y), fw: unit(frame?.width), fh: unit(frame?.height),
+          ox: unit(root.bounds?.x), oy: unit(root.bounds?.y), ow: unit(root.bounds?.width), oh: unit(root.bounds?.height) };
         this.clickUnder = !at || !Array.isArray(chain) ? 0 : !leaf || !root ? 4 : chain.some(node => sameNode(node, at.node)) ? 1
           : leaf.pid !== at.node.pid ? 3 : root.hwnd === hwnd ? 2 : outside ? 10
           : title === "Ember overlay" ? 6 : title === "Ember needs you" ? 7 : title === "Ask Ember" ? 8 : title !== "Ember" ? 5

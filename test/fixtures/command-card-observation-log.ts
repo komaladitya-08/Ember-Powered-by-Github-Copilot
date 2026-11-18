@@ -17,9 +17,14 @@ export interface PackagedCommandCardObservation {
    * a window titled just Ember by size class: 11 the handle's pill or tab, 12 a narrow card, 9 larger; 0 not asked.
    */
   under: number;
+  /**
+   * With `under`, in units of four pixels and capped at 1023: the click point (px, py), the command window's frame
+   * (fx, fy, fw, fh) and the frame of the window found on top there (ox, oy, ow, oh). Ember's own windows only.
+   */
+  px: number; py: number; fx: number; fy: number; fw: number; fh: number; ox: number; oy: number; ow: number; oh: number;
 }
 const empty = (capped = 0): Readonly<PackagedCommandCardObservation> => Object.freeze({ schema: 1, known: 0, card: 0, sample: 0, source: 0,
-  model: 0, ui: 0, geometry: 0, arm: 0, capped, host: 0, visibility: 0, under: 0 });
+  model: 0, ui: 0, geometry: 0, arm: 0, capped, host: 0, visibility: 0, under: 0, px: 0, py: 0, fx: 0, fy: 0, fw: 0, fh: 0, ox: 0, oy: 0, ow: 0, oh: 0 });
 const RANGES = { ...COMMAND_CARD_OBSERVATION_RANGES, card: [1, 40], sample: [1, 16], host: [0, 7] } as const;
 const MAX_TAIL = 256 * 1024;
 
@@ -52,9 +57,9 @@ export function parseCommandCardObservationLog(value: unknown): Readonly<Package
       }
       if (data.capped === 1 || data.sample >= 16) return empty(1);
       const next: PackagedCommandCardObservation = { schema: 1, known: 1, card: data.card, sample: data.sample, source: data.source, model: data.model,
-        ui: data.ui, geometry: data.geometry, arm: data.arm, capped: data.capped, host: data.host, visibility: 0, under: 0 };
+        ui: data.ui, geometry: data.geometry, arm: data.arm, capped: data.capped, host: data.host, visibility: 0, under: 0, px: 0, py: 0, fx: 0, fy: 0, fw: 0, fh: 0, ox: 0, oy: 0, ow: 0, oh: 0 };
       if (last && (next.card < last.card || next.card === last.card && next.sample < last.sample)) return empty();
-      if (last && next.card === last.card && next.sample === last.sample && Object.keys(next).some(key => key !== "visibility" && key !== "under" && next[key as keyof typeof next] !== last![key as keyof typeof next])) return empty();
+      if (last && next.card === last.card && next.sample === last.sample && Object.keys(next).some(key => key !== "visibility" && key !== "under" && !/^[pfo][xywh]$/.test(key) && next[key as keyof typeof next] !== last![key as keyof typeof next])) return empty();
       if (!last || next.card !== last.card) { visibility = 0; wasVisible = false; }
       const visible = (next.geometry & 16) !== 0; // COMMAND_CARD_OBSERVATION_BITS.geometry.visible
       visibility = (visibility & 5) | (visible ? 3 : 0) | (wasVisible && !visible ? 4 : 0);
