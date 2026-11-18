@@ -666,11 +666,13 @@ class Journey {
     const listed = (await this.until(async () => (await this.nodes(this.home)).find(result), node => !!node, 45_000).catch(async error => {
       // Failure only: one more read says what the Projects pane lists instead, as the welcome's unused `nextLabel` fact.
       // 1 a result under another title, 2 a result button without its title, 3 no results for this project,
-      // 4 no project selected, 5 the Coding group without any of those, 6 none of them.
+      // 4 no project selected; none of those: 5 the results list is there with nothing in it, 7 it has something in
+      // it, 6 it is not listed at all.
       try {
-        const names = (await this.nodes(this.home)).map(node => node.name ?? ""), has = (text: string) => names.some(name => name === text);
+        const read = await this.nodes(this.home), list = read.find(id("project-coding-results"));
+        const names = read.map(node => node.name ?? ""), has = (text: string) => names.some(name => name === text);
         this.observe({ nextLabel: names.some(name => name.startsWith("Review result: ")) ? 1 : has("Review result") ? 2 : has("No coding results for this project yet.") ? 3
-          : has("Select a project to see its coding results.") ? 4 : (await this.nodes(this.home)).some(id("project-coding")) ? 5 : 6 });
+          : has("Select a project to see its coding results.") ? 4 : !list ? 6 : read.some(node => node.parent === list.h) ? 7 : 5 });
       } catch { /* The original refusal stands. */ }
       throw error;
     }))!;
