@@ -492,9 +492,12 @@ export class WslPackagedJourney {
       await this.u.click(this.home, forgets); await this.u.until(() => this.u.nodes(this.home), fresh => fresh.filter(forgets).length < before);
     }
     expect((await this.u.nodes(this.home)).some(forgets)).toBe(false);
-    this.phase = 30; await this.tabTo(id("project-coding-forget"), true, true);
+    // Forgetting a result, the folder or the project removes or disables the control that held the keyboard, so each
+    // later search starts again from the pane's link and the request box rather than backwards from where it was.
+    this.phase = 30; await this.pane("Projects"); await this.tabTo(request); await this.u.focus(this.home, await this.u.node(this.home, request)); await this.tabTo(id("project-coding-forget"), true, false, 24);
     await this.u.click(this.home, id("project-coding-forget")); await this.accessible(text => text.includes("No coding folder selected"));
-    this.phase = 31; await this.tabTo(id("project-sessions-forget"), true, true, 24); await this.u.click(this.home, id("project-sessions-forget")); await this.tabTo(request, false, true);
+    this.phase = 31; await this.pane("Projects"); await this.tabTo(request); await this.u.focus(this.home, await this.u.node(this.home, request)); await this.tabTo(id("project-sessions-forget"));
+    await this.u.click(this.home, id("project-sessions-forget")); await this.pane("Projects"); await this.tabTo(request, false);
     await this.u.until(() => this.u.nodes(this.home), nodes => nodes.some(node => node.automationId === "project-sessions-request" && node.isEnabled === false)); this.phase = 10; this.assertUnchanged(); await this.rolesEmpty();
   }
   async finish(): Promise<void> {

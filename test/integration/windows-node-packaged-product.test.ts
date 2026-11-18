@@ -798,10 +798,14 @@ class Journey {
       await this.click(this.home, forgets);
       await this.until(() => this.nodes(this.home), nodes => nodes.filter(forgets).length < before);
     }
-    this.observe({ nextLabel: 4 }); await this.revealHomeControl(id("project-coding-forget"), true, true);
+    // Forgetting a result, the folder or the project removes or disables the control that held the keyboard, so each
+    // later search starts again from the pane's link and the request box rather than backwards from where it was.
+    this.observe({ nextLabel: 4 }); await this.pane("Projects"); await this.focus(this.home, await this.revealHomeControl(id("project-sessions-request")));
+    await this.revealHomeControl(id("project-coding-forget"));
     await this.click(this.home, id("project-coding-forget")); await this.accessibleText(text => text.includes("No coding folder selected"));
-    this.observe({ nextLabel: 5 }); await this.revealHomeControl(id("project-sessions-forget"), true, true);
-    await this.click(this.home, id("project-sessions-forget")); await this.revealHomeControl(id("project-sessions-request"), false, true);
+    this.observe({ nextLabel: 5 }); await this.pane("Projects"); await this.focus(this.home, await this.revealHomeControl(id("project-sessions-request")));
+    await this.revealHomeControl(id("project-sessions-forget"));
+    await this.click(this.home, id("project-sessions-forget")); await this.pane("Projects"); await this.revealHomeControl(id("project-sessions-request"), false);
     await this.until(() => this.nodes(this.home), nodes => nodes.some(node => node.automationId === "project-sessions-request" && node.isEnabled === false));
     this.observe({ nextLabel: 7 });
     this.assertUnchanged(); await this.rolesEmpty();
