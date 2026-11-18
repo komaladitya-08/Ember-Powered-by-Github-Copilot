@@ -123,11 +123,10 @@ export class WslPackagedJourney {
   /**
    * Up to twelve Tabs (Shift+Tab backwards) from wherever the keyboard is in Home, until the control shows. A snapshot
    * leaves out what is scrolled out of view, so nothing below the fold can serve as an anchor after a pane switch:
-   * the search starts from the pane's link, which the switch has just clicked. `limit`: the stretch from the request
-   * box to the Coding group's folder button holds ten fixed controls and one row for each session and saved draft, and
-   * twelve Tabs did not cross it on the hosted Windows Server 2022 image, so that stretch alone allows twenty-four.
+   * the search starts from the pane's link, which the switch has just clicked. It serves the short
+   * stretches near the top of the pane; `pageTo` crosses the long one.
    */
-  private async tabTo(select: WslUiSelector, enabled = true, backwards = false, limit = 12): Promise<void> {
+  private async tabTo(select: WslUiSelector, enabled = true, backwards = false): Promise<void> {
     // Failure only, in place of the step's own phase: 32 a read of Home was refused (cut short or too large), 34 every
     // read came back empty (Home busy), 35 the keyboard never left the request box, 36 it ended on another control of
     // Home's, 33 it ended outside Home or nowhere.
@@ -135,7 +134,7 @@ export class WslPackagedJourney {
     for (let tabs = 0; ; tabs++) {
       this.phase = 32; const nodes = await this.u.nodes(this.home); this.phase = step; read ||= nodes.length > 0;
       if (nodes.some(node => select(node) && !node.isOffscreen && (!enabled || node.isEnabled === true))) return;
-      if (tabs === limit) break;
+      if (tabs === 12) break;
       if (backwards) this.u.chord(this.home, "Shift_L", "Tab"); else this.u.key(this.home, "Tab");
     }
     if (!read) this.phase = 34;
@@ -144,6 +143,28 @@ export class WslPackagedJourney {
       this.phase = !at || at.hwnd !== this.home || !at.element ? 33 : at.element.automationId === "project-sessions-request" ? 35 : 36;
     }
     this.fail();
+  }
+  /**
+   * Scrolls the Projects pane by Page Down (or Page Up), up to twelve pages, until the control shows. Tab cannot cross
+   * the pane in a known number of steps: the delegated sessions between the request box and the Coding group add their
+   * own stops, and twenty-four Tabs did not reach the folder button on either hosted image. The keyboard must be on a
+   * button inside the pane (a text box would take the keys itself): `paneKeyboard` puts it there after a pane switch.
+   * `soft`: returns false rather than refusing when the control never shows. Failure only: 32 a read was refused.
+   */
+  private async pageTo(select: WslUiSelector, enabled = true, up = false, soft = false): Promise<boolean> {
+    const step = this.phase;
+    for (let pages = 0; ; pages++) {
+      this.phase = 32; const nodes = await this.u.nodes(this.home); this.phase = step;
+      if (nodes.some(node => select(node) && !node.isOffscreen && (!enabled || node.isEnabled === true))) return true;
+      if (pages === 12) break;
+      this.u.key(this.home, up ? "Page_Up" : "Page_Down"); await pause(250); this.current();
+    }
+    if (soft) return false;
+    this.fail();
+  }
+  /** After a pane switch the keyboard is on the pane's link: moves it to the Show conversation button, inside the pane. */
+  private async paneKeyboard(): Promise<void> {
+    const button = id("project-sessions-conversation"); await this.tabTo(button); await this.u.focus(this.home, await this.u.node(this.home, button));
   }
   private async armed(hwnd: number, select: WslUiSelector): Promise<void> {
     const before = await this.u.node(hwnd, select); await pause(600); this.current();
@@ -401,14 +422,10 @@ export class WslPackagedJourney {
     // A snapshot leaves out whatever is scrolled out of view, with everything under it, so the result's button is
     // listed only once it shows: ordinary Tab navigation from the request box above the Coding group brings it there.
     this.phase = 9; await this.pane("Projects"); const result = named("Review result: " + titleOf(goal));
-    // Up to fifteen controls lie between the request box and the results, so the search goes by way of the Coding
-    // group's folder button: twelve Tabs to it, twelve more from it.
-    // Phases within the review: 12 the search for the request box and its focus, 27 the search for the folder button,
-    // 13 the search for the result's button, 14 the click, 15 the read.
-    const request = id("project-sessions-request");
-    this.phase = 12; await this.tabTo(request); await this.u.focus(this.home, await this.u.node(this.home, request));
-    this.phase = 27; await this.tabTo(id("project-coding-choose"), false, false, 24);
-    this.phase = 13; await this.tabTo(result); this.phase = 14; await this.u.click(this.home, result);
+    // Phases within the review: 12 the keyboard into the pane, 13 paging down to the result's button, 14 the click,
+    // 15 the read.
+    this.phase = 12; await this.paneKeyboard();
+    this.phase = 13; await this.pageTo(result); this.phase = 14; await this.u.click(this.home, result);
     this.phase = 15;
     const region: WslUiSelector = node => node.automationId === "project-coding-review" || ["Group", "Pane"].includes(node.controlType ?? "") && node.name === titleOf(goal);
     return this.u.until(() => this.u.text(this.home, region), text => text.includes(counts), 45_000);
@@ -443,18 +460,17 @@ export class WslPackagedJourney {
     this.assertUnchanged();
   }
   private async exportReview(publicDependencies: boolean, cumulative: boolean): Promise<void> {
-    // Phases within the export: 16 the idle wait, 21 the search for the request box, its focus and the search for the
-    // folder button, 22 the search for a result's button, 23 for Export, 24 the click and the folder dialog, 25 back by
-    // Shift+Tab to the folder button and the read of Home's sentence, 26 forward again to Export.
+    // Phases within the export: 16 the idle wait, 21 the keyboard into the pane, 23 paging down to Export, 24 the click
+    // and the folder dialog, 25 paging back up to Home's sentence and reading it, 26 paging down to Export again.
     this.phase = 16; await this.idle(); const before = this.model.requests.length, existing = new Set(fs.readdirSync(this.exported));
-    const request = id("project-sessions-request"), listedResult: WslUiSelector = node => (node.name ?? "").startsWith("Review result: ");
-    this.phase = 21; await this.tabTo(request); await this.u.focus(this.home, await this.u.node(this.home, request)); await this.tabTo(id("project-coding-choose"), false, false, 24);
-    this.phase = 22; await this.tabTo(listedResult); this.phase = 23; await this.tabTo(id("project-coding-export"));
-    this.phase = 24; await this.u.click(this.home, id("project-coding-export")); await this.folder("Export coding review", this.exported);
+    const exportButton = id("project-coding-export"), sentence: WslUiSelector = node => node.controlType === "Text" && (node.name ?? "").includes("Exported the coding review");
+    this.phase = 21; await this.paneKeyboard(); this.phase = 23; await this.pageTo(exportButton);
+    this.phase = 24; await this.u.click(this.home, exportButton); await this.folder("Export coding review", this.exported);
     // Home's sentence stands above the results list, out of view and so unlisted once Export below it has been clicked.
-    this.phase = 25; await this.tabTo(listedResult, true, true); await this.tabTo(id("project-coding-choose"), false, true);
+    // The folder dialog may leave the keyboard nowhere: Export, still shown, takes it before the page keys are used.
+    this.phase = 25; await this.u.focus(this.home, await this.u.node(this.home, exportButton)); await this.pageTo(sentence, false, true);
     await this.accessible(text => text.includes("Exported the coding review")); expect(this.model.requests.length).toBe(before);
-    this.phase = 26; await this.tabTo(listedResult); await this.tabTo(id("project-coding-export"));
+    this.phase = 26; await this.pageTo(exportButton);
     const fresh = fs.readdirSync(this.exported).filter(name => !existing.has(name)); expect(fresh).toHaveLength(1);
     this.assertExport(path.join(this.exported, fresh[0]), publicDependencies, cumulative);
   }
@@ -490,13 +506,12 @@ export class WslPackagedJourney {
   }
   private async forget(): Promise<void> {
     this.phase = 10; await this.idle();
-    // The controls are brought into view by Tab from the pane's link first. Phases: 28 to the request box and the folder
-    // button and looking for a result, 29 forgetting results, 30 forgetting the folder, 31 forgetting the project.
+    // Phases: 28 the keyboard into the pane and paging down for a result, 29 forgetting results, 30 forgetting the
+    // folder, 31 forgetting the project.
     const request = id("project-sessions-request"), forgets: WslUiSelector = node => (node.name ?? "").startsWith("Forget private result:");
-    this.phase = 28; await this.tabTo(request); await this.u.focus(this.home, await this.u.node(this.home, request)); await this.tabTo(id("project-coding-choose"), false, false, 24);
-    // Results follow the Coding group's own controls: twelve Tabs show the first one's button if there is one. None
-    // shown then counts as none; the private roles read from disk at the end are the proof that nothing is left.
-    for (let tabs = 0; tabs < 12 && !(await this.u.nodes(this.home)).some(node => forgets(node) && !node.isOffscreen); tabs++) this.u.key(this.home, "Tab");
+    // No result shown after paging through the pane counts as none; the private roles read from disk at the end are
+    // the proof that nothing is left.
+    this.phase = 28; await this.paneKeyboard(); await this.pageTo(forgets, true, false, true);
     this.phase = 29;
     for (let removed = 0; removed < 4; removed++) {
       const nodes = await this.u.nodes(this.home), before = nodes.filter(forgets).length; if (!before) break;
@@ -504,11 +519,11 @@ export class WslPackagedJourney {
     }
     expect((await this.u.nodes(this.home)).some(forgets)).toBe(false);
     // Forgetting a result, the folder or the project removes or disables the control that held the keyboard, so each
-    // later search starts again from the pane's link and the request box rather than backwards from where it was.
-    this.phase = 30; await this.pane("Projects"); await this.tabTo(request); await this.u.focus(this.home, await this.u.node(this.home, request)); await this.tabTo(id("project-coding-forget"), true, false, 24);
+    // later step switches to the pane again and starts from its link.
+    this.phase = 30; await this.pane("Projects"); await this.paneKeyboard(); await this.pageTo(id("project-coding-forget"));
     await this.u.click(this.home, id("project-coding-forget")); await this.accessible(text => text.includes("No coding folder selected"));
-    this.phase = 31; await this.pane("Projects"); await this.tabTo(request); await this.u.focus(this.home, await this.u.node(this.home, request)); await this.tabTo(id("project-sessions-forget"));
-    await this.u.click(this.home, id("project-sessions-forget")); await this.pane("Projects"); await this.tabTo(request, false);
+    this.phase = 31; await this.pane("Projects"); await this.tabTo(id("project-sessions-forget")); await this.u.click(this.home, id("project-sessions-forget"));
+    await this.pane("Projects"); await this.tabTo(request, false);
     await this.u.until(() => this.u.nodes(this.home), nodes => nodes.some(node => node.automationId === "project-sessions-request" && node.isEnabled === false)); this.phase = 10; this.assertUnchanged(); await this.rolesEmpty();
   }
   async finish(): Promise<void> {
