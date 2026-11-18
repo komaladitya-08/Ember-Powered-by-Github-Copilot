@@ -72,6 +72,7 @@ export class WslPackagedJourney {
   private watchdog?: ReturnType<typeof setTimeout>;
   /** Set by `pageTo`: whether its page keys moved the pane. */
   private paged = false;
+  private pagedShown = false;
   private stopped = false;
   private forced = false;
   private home = 0;
@@ -159,10 +160,14 @@ export class WslPackagedJourney {
   private async pageTo(select: WslUiSelector, enabled = true, up = false, soft = false): Promise<boolean> {
     const step = this.phase, anchor = id("project-sessions-conversation");
     const read = async () => { this.phase = 32; const nodes = await this.u.nodes(this.home); this.phase = step; return nodes; };
-    const shows = (nodes: RawNode[]) => nodes.some(node => select(node) && !node.isOffscreen && (!enabled || node.isEnabled === true));
+    const shows = (nodes: RawNode[]) => {
+      // Failure only: whether the control ever showed at all during the search, enabled or not.
+      this.pagedShown ||= nodes.some(node => select(node) && !node.isOffscreen);
+      return nodes.some(node => select(node) && !node.isOffscreen && (!enabled || node.isEnabled === true));
+    };
     // Whether the pane scrolled at all: the Show conversation button moved or left the view after a page key.
     const place = (nodes: RawNode[]) => { const node = nodes.find(anchor); return node && !node.isOffscreen ? node.bounds?.y ?? -1 : -1; };
-    let nodes = await read(); const first = place(nodes); this.paged = false;
+    let nodes = await read(); const first = place(nodes); this.paged = false; this.pagedShown = false;
     // Twelve pages one way; then the far end of the pane (End, or Home going up) and twelve pages back, for a pane
     // longer than twelve pages.
     for (const [key, presses] of [[up ? "Page_Up" : "Page_Down", 12], [up ? "Home" : "End", 1], [up ? "Page_Down" : "Page_Up", 12]] as const) {
@@ -538,15 +543,16 @@ export class WslPackagedJourney {
     // The folder dialog may leave the keyboard nowhere: Export, still shown, takes it before the page keys are used.
     this.phase = 25; await this.u.focus(this.home, await this.u.node(this.home, exportButton)); await this.pageTo(sentence, false, true);
     await this.accessible(text => text.includes("Exported the coding review")); expect(this.model.requests.length).toBe(before);
-    // Failure only: 48 the page keys never moved the pane (the keyboard was no longer in it). Where it moved, one more
-    // read says what became of Export: 49 it shows but is disabled, 50 it is listed out of view, 51 neither it nor the
-    // review's patch is listed (the review closed), 26 the patch is listed and Export is not.
+    // Failure only: 48 the page keys never moved the pane (the keyboard was no longer in it). Where it moved: 49 Export
+    // came into view during the search and was never enabled; else one more read, taken where the search ended: 50 it
+    // is listed out of view, 51 neither it nor the review's patch is listed (the review closed), 26 the patch is
+    // listed and Export is not.
     this.phase = 26;
     if (!await this.pageTo(exportButton, true, false, true)) {
       if (!this.paged) this.phase = 48;
       else {
         const nodes = await this.u.nodes(this.home), found = nodes.find(exportButton);
-        this.phase = found ? (found.isOffscreen ? 50 : 49) : nodes.some(id("project-coding-patch")) ? 26 : 51;
+        this.phase = this.pagedShown || found && !found.isOffscreen ? 49 : found ? 50 : nodes.some(id("project-coding-patch")) ? 26 : 51;
       }
       this.fail();
     }
