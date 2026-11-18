@@ -72,7 +72,8 @@ export class WslPackagedJourney {
   private watchdog?: ReturnType<typeof setTimeout>;
   /** Set by `pageTo`: whether its page keys moved the pane. */
   private paged = false;
-  private pagedShown = false;
+  /** The result's button the last review opened: the way back to that review after an export. */
+  private reviewed?: WslUiSelector;
   private stopped = false;
   private forced = false;
   private home = 0;
@@ -160,14 +161,10 @@ export class WslPackagedJourney {
   private async pageTo(select: WslUiSelector, enabled = true, up = false, soft = false): Promise<boolean> {
     const step = this.phase, anchor = id("project-sessions-conversation");
     const read = async () => { this.phase = 32; const nodes = await this.u.nodes(this.home); this.phase = step; return nodes; };
-    const shows = (nodes: RawNode[]) => {
-      // Failure only: whether the control ever showed at all during the search, enabled or not.
-      this.pagedShown ||= nodes.some(node => select(node) && !node.isOffscreen);
-      return nodes.some(node => select(node) && !node.isOffscreen && (!enabled || node.isEnabled === true));
-    };
+    const shows = (nodes: RawNode[]) => nodes.some(node => select(node) && !node.isOffscreen && (!enabled || node.isEnabled === true));
     // Whether the pane scrolled at all: the Show conversation button moved or left the view after a page key.
     const place = (nodes: RawNode[]) => { const node = nodes.find(anchor); return node && !node.isOffscreen ? node.bounds?.y ?? -1 : -1; };
-    let nodes = await read(); const first = place(nodes); this.paged = false; this.pagedShown = false;
+    let nodes = await read(); const first = place(nodes); this.paged = false;
     // Twelve pages one way; then the far end of the pane (End, or Home going up) and twelve pages back, for a pane
     // longer than twelve pages.
     for (const [key, presses] of [[up ? "Page_Up" : "Page_Down", 12], [up ? "Home" : "End", 1], [up ? "Page_Down" : "Page_Up", 12]] as const) {
@@ -493,7 +490,7 @@ export class WslPackagedJourney {
   private async review(goal: string, counts: string): Promise<string> {
     // A snapshot leaves out whatever is scrolled out of view, with everything under it, so the result's button is
     // listed only once it shows: ordinary Tab navigation from the request box above the Coding group brings it there.
-    this.phase = 9; await this.pane("Projects"); const result = named("Review result: " + titleOf(goal));
+    this.phase = 9; await this.pane("Projects"); const result = named("Review result: " + titleOf(goal)); this.reviewed = result;
     // Phases within the review: 12 the keyboard into the pane, 13 paging down to the result's button, 14 the click,
     // 15 the read.
     this.phase = 12; await this.paneKeyboard();
@@ -534,7 +531,7 @@ export class WslPackagedJourney {
   }
   private async exportReview(publicDependencies: boolean, cumulative: boolean): Promise<void> {
     // Phases within the export: 16 the idle wait, 21 the keyboard into the pane, 23 paging down to Export, 24 the click
-    // and the folder dialog, 25 paging back up to Home's sentence and reading it, 26 paging down to Export again (48 the keys moved nothing).
+    // and the folder dialog, 25 paging back up to Home's sentence and reading it, 26 to 49 back to the review and its Export.
     this.phase = 16; await this.idle(); const before = this.model.requests.length, existing = new Set(fs.readdirSync(this.exported));
     const exportButton = id("project-coding-export"), sentence: WslUiSelector = node => node.controlType === "Text" && (node.name ?? "").includes("Exported the coding review");
     this.phase = 21; await this.paneKeyboard(); this.phase = 23; await this.pageTo(exportButton);
@@ -543,22 +540,14 @@ export class WslPackagedJourney {
     // The folder dialog may leave the keyboard nowhere: Export, still shown, takes it before the page keys are used.
     this.phase = 25; await this.u.focus(this.home, await this.u.node(this.home, exportButton)); await this.pageTo(sentence, false, true);
     await this.accessible(text => text.includes("Exported the coding review")); expect(this.model.requests.length).toBe(before);
-    // Failure only: 48 the page keys never moved the pane (the keyboard was no longer in it). Where it moved: 49 Export
-    // came into view during the search and was never enabled; else one more read, taken where the search ended: 50 it
-    // is listed out of view, 51 neither it nor the review's patch is listed (the review closed), 26 the patch is
-    // listed and Export is not.
-    // The search starts as the first one did (phase 23), from the pane's link and its Show conversation button: on the
-    // hosted Windows Server 2025 image the page keys, sent with the keyboard still on Export, moved the pane and never
-    // brought Export back into view (three runs), where the first search finds it every time. Why is not established.
-    this.phase = 26; await this.pane("Home"); await this.pane("Projects"); await this.paneKeyboard();
-    if (!await this.pageTo(exportButton, true, false, true)) {
-      if (!this.paged) this.phase = 48;
-      else {
-        const nodes = await this.u.nodes(this.home), found = nodes.find(exportButton);
-        this.phase = this.pagedShown || found && !found.isOffscreen ? 49 : found ? 50 : nodes.some(id("project-coding-patch")) ? 26 : 51;
-      }
-      this.fail();
-    }
+    // Back to the review the way the journey reached it (phases 12 to 14): the keyboard into the pane, the page keys
+    // to the result's button, a click on it, which brings the open review and its Export into view on both hosted
+    // images every run. Paging for Export itself did not: with the keyboard on Export the keys moved the pane and never
+    // showed the button on Windows Server 2025 (three runs), and from Show conversation they showed it on neither
+    // image; why is not established. 26 the way to the result's button, 48 the click on it, 49 Export shown enabled.
+    this.phase = 26; await this.pane("Home"); await this.pane("Projects"); await this.paneKeyboard(); await this.pageTo(this.reviewed!);
+    this.phase = 48; await this.u.click(this.home, this.reviewed!);
+    this.phase = 49; await this.u.until(() => this.u.nodes(this.home), nodes => nodes.some(node => exportButton(node) && !node.isOffscreen && node.isEnabled === true), 30_000);
     const fresh = fs.readdirSync(this.exported).filter(name => !existing.has(name)); expect(fresh).toHaveLength(1);
     this.assertExport(path.join(this.exported, fresh[0]), publicDependencies, cumulative);
   }
