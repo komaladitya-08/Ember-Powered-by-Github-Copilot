@@ -547,7 +547,10 @@ export class WslPackagedJourney {
     // came into view during the search and was never enabled; else one more read, taken where the search ended: 50 it
     // is listed out of view, 51 neither it nor the review's patch is listed (the review closed), 26 the patch is
     // listed and Export is not.
-    this.phase = 26;
+    // The search starts as the first one did (phase 23), from the pane's link and its Show conversation button: on the
+    // hosted Windows Server 2025 image the page keys, sent with the keyboard still on Export, moved the pane and never
+    // brought Export back into view (three runs), where the first search finds it every time. Why is not established.
+    this.phase = 26; await this.pane("Home"); await this.pane("Projects"); await this.paneKeyboard();
     if (!await this.pageTo(exportButton, true, false, true)) {
       if (!this.paged) this.phase = 48;
       else {
