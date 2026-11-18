@@ -732,7 +732,10 @@ class Journey {
     return await run(path.join(systemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe"), ["-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-Command", script], bridgeEnv(this.env), 10_000, 4096) === "1";
   }
   private async writerReady(): Promise<void> {
-    const hwnd = await this.command(); expect(await this.clipboard("clear")).toBe(true);
+    // The welcome's unused `nextLabel` fact counts the steps while phase 6 lasts: 1 the command window, 2 clearing the
+    // clipboard, 3 the run's own tab with a live Stop, 4 its command text and Copy output until the writer says ready.
+    this.observe({ nextLabel: 1 }); const hwnd = await this.command(); this.observe({ nextLabel: 2 }); expect(await this.clipboard("clear")).toBe(true);
+    this.observe({ nextLabel: 3 });
     const freshTab = (node: RawNode) => node.controlType === "TabItem" && !!node.runtimeId && !this.previousTabs.has(node.runtimeId) && node.patterns.selectionItem?.selected === true;
     const panelFor = (nodes: readonly RawNode[], tab: RawNode) => {
       if (!/^tab-\d+$/.test(tab.automationId ?? "")) throw refusal(this.phase);
@@ -742,6 +745,7 @@ class Journey {
     const selected = (await this.until(() => this.nodes(hwnd), nodes => {
       const tab = nodes.find(freshTab); return !!tab && panelFor(nodes, tab).some(live);
     })).find(freshTab)!;
+    this.observe({ nextLabel: 4 });
     await this.until(async () => {
       const nodes = await this.nodes(hwnd);
       const panel = panelFor(nodes, selected);
