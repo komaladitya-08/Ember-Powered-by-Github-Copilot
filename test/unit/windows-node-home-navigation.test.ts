@@ -84,10 +84,12 @@ it("waits for the session to end, then reveals the Coding group and the exact re
       expect(window).toBe(73); expect(select({ name: "Review result: Public review" })).toBe(true); calls.push("click");
     },
     async homeText(select: Selector) { expect(select({ automationId: "project-coding-review" })).toBe(true); calls.push("read"); return "Checks: 2 run"; },
-    async until(read: () => Promise<string>, accept: (value: string) => boolean, timeout: number) { expect(timeout).toBe(45_000); const value = await read(); expect(accept(value)).toBe(true); return value; },
+    // The result's button is listed only once its session has ended: the Tab search waits for that, as phase 11.
+    async nodes(window: number) { expect(window).toBe(73); expect(port.phase).toBe(11); calls.push("listed"); return [{ name: "Review result: Public review" }]; },
+    async until<T>(read: () => Promise<T>, accept: (value: T) => boolean, timeout: number) { expect(timeout).toBe(45_000); const value = await read(); expect(accept(value)).toBe(true); return value; },
   };
   expect(await review.call(port, "Public review", "Checks: 2 run")).toBe("Checks: 2 run");
-  expect(port.phase).toBe(7); expect(calls).toEqual(["idle", "projects", "group", "result", "click", "read"]);
+  expect(port.phase).toBe(7); expect(calls).toEqual(["idle", "projects", "group", "listed", "result", "click", "read"]);
 });
 
 it("reveals the Coding group and Export again after the actual idle helper returns to Projects", async () => {

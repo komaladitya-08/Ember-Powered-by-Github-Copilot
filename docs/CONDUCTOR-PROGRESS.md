@@ -20,6 +20,8 @@ The hosted run of `278049b6` then showed:
 - **WSL source.** The patch preview passed; the first repair refused inside the review export (phase 20) on both images. Its checks now mark phases 23–27.
 - **WSL resources, Server 2025.** Case 1 refused during workspace assembly (stage 4, a refused workspace call), as it did at `0eecb62d`; it passed at `5930bc4b` and `1890768e`, and Server 2022 passed both cases. Not yet explained.
 
+On `bb4b539a` both images' packaged Node journeys reached the review step with the command page visible, which confirms the occlusion change on Server 2025 as well. Both still refused there after three model steps, and the Ready wait returned in about ten seconds, so Home's Ready did not hold the step until the approved command's result existed. The review now waits, within the same 45 s bound its read already uses, for the result's button to be listed before the bounded Tab search, and that wait reports as phase 11. Whether the second approved command finishes at all in the packaged app is not yet established.
+
 These changes touch fixtures, two workflows' failure reporting, tests and this document. The 146-file native graph, its verifier, the fixed producer and all application runtime/build inputs are unchanged. One product follow-up is recorded, not addressed: a new directory that only holds new files marks the whole text patch as limited, though such a patch could carry it; the exporter is in the qualified graph, so changing it needs requalification.
 
 The paragraphs below describe the preceding checkpoint.

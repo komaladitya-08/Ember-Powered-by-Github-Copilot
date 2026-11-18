@@ -618,10 +618,14 @@ class Journey {
     this.observe({ commandStage: 14 });
   }
   private async review(goal: string, counts: string): Promise<string> {
-    // A result exists only once its session has ended: Home says so before the Tab search for its button begins.
+    // A result exists only once its session has ended, so the bounded Tab search for its button starts only after the
+    // button is listed. Phase 11 is that wait; 7 is the rest of the review step.
     this.phase = 7; await this.idle(); await this.pane("Projects");
-    await this.revealHomeControl(id("project-coding"), false); await this.revealHomeControl(named("Review result: " + titleOf(goal)));
-    await this.click(this.home, named("Review result: " + titleOf(goal)));
+    await this.revealHomeControl(id("project-coding"), false);
+    const result = named("Review result: " + titleOf(goal));
+    this.phase = 11; await this.until(async () => (await this.nodes(this.home)).some(result), listed => listed, 45_000);
+    this.phase = 7; await this.revealHomeControl(result);
+    await this.click(this.home, result);
     const region: Selector = node => node.automationId === "project-coding-review" || (["Group", "Pane"].includes(node.controlType ?? "") && node.name === titleOf(goal));
     return this.until(() => this.homeText(region), text => text.includes(counts), 45_000);
   }
