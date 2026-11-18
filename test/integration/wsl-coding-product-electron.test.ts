@@ -147,10 +147,10 @@ class Journey {
     return this.app!.windows().find(page => page.url().includes("/renderer/command/index.html"))!;
   }
   async decide(commandText = WSL_PRODUCT_CHECK, answer: "Allow" | "Not now" = "Allow"): Promise<Page> {
-    this.phase = 4; const command = await this.command();
-    try { await expect.poll(() => command.evaluate(() => (window as Window & { emberCommands: CommandsApi }).emberCommands.pull().then(snapshot => snapshot?.state.card?.n ?? 0)), { timeout: 45_000 }).toBeGreaterThan(this.lastApproval); }
+    this.phase = 4; let command: Page;
+    try { command = await this.command(); await expect.poll(() => command.evaluate(() => (window as Window & { emberCommands: CommandsApi }).emberCommands.pull().then(snapshot => snapshot?.state.card?.n ?? 0)), { timeout: 45_000 }).toBeGreaterThan(this.lastApproval); }
     catch (error) {
-      // Failure only: no new card came. 37 the fixed model had refused a step, 38 it had not.
+      // Failure only: no command window or no new card came. 37 the fixed model had refused a step, 38 it had not.
       this.phase = this.model.failures.length ? 37 : 38;
       throw error;
     }
