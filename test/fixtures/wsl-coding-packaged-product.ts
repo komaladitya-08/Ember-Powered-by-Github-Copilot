@@ -153,8 +153,8 @@ export class WslPackagedJourney {
    * button inside the pane (a text box would take the keys itself): `paneKeyboard` puts it there after a pane switch.
    * `soft`: returns false rather than refusing when the control never shows. Failure only: 32 a read was refused.
    */
-  private async pageTo(select: WslUiSelector, enabled = true, up = false, soft = false, anchor: WslUiSelector = id("project-sessions-conversation")): Promise<boolean> {
-    const step = this.phase;
+  private async pageTo(select: WslUiSelector, enabled = true, up = false, soft = false): Promise<boolean> {
+    const step = this.phase, anchor = id("project-sessions-conversation");
     const read = async () => { this.phase = 32; const nodes = await this.u.nodes(this.home); this.phase = step; return nodes; };
     const shows = (nodes: RawNode[]) => nodes.some(node => select(node) && !node.isOffscreen && (!enabled || node.isEnabled === true));
     // Whether the pane scrolled at all: the Show conversation button moved or left the view after a page key.
@@ -427,14 +427,11 @@ export class WslPackagedJourney {
     // Phases within the decision: 8 the Home pane, 39 its button that opens the waiting question, 17 the question's
     // window, 18 its title and text, 19 Allow enabled and the fresh arm waited out, 20 the answer and the pane switch.
     this.phase = 8; await this.pane("Home"); this.phase = 39;
-    // The notice with that button stands in Task activity, below the conversation, which grows with every request the
-    // journey sends: by this case it is below the fold and so unlisted (it had not appeared after a full minute on the
-    // hosted Windows Server 2025 image). The keyboard goes to a control of the conversation that shows, and the page
-    // keys scroll the pane until the button does.
-    const conversation = ["conversation-new", "conversation-send", "conversation-stop", "keep-conversation"];
-    const held = await this.u.until(async () => (await this.u.nodes(this.home)).find(node => conversation.includes(node.automationId ?? "") && !node.isOffscreen && node.isEnabled === true), Boolean);
-    // Failure here: 37 the page keys never moved the pane (judged by the held control), 39 they did and no button showed.
-    await this.u.focus(this.home, held!); await this.pageTo(id("tasks-open-approval"), true, false, false, id(held!.automationId!)); await this.u.click(this.home, id("tasks-open-approval"));
+    // Home offers the waiting question twice, by the same handler: in its status panel at the top of the pane, and in
+    // Task activity below the conversation, which grows with every request and is below the fold by this case (a
+    // snapshot leaves it out there: the lower button had not appeared after a full minute on the hosted Windows Server
+    // 2025 image). The journey clicks whichever shows.
+    await this.u.click(this.home, node => node.automationId === "p-waiting" || node.automationId === "tasks-open-approval");
     this.phase = 17; const window = (await this.u.until(() => this.u.windows(), windows => windows.some(window => window.name === "Ember needs you"), 30_000)).find(window => window.name === "Ember needs you")!;
     this.phase = 18; expect(await this.u.text(window.hwnd, id("title"))).toBe("May I prepare public dependencies?");
     const data = wslProductProject(true, changed), expected = PublicNpmPlan.create({ packageJson: Buffer.from(data["package.json"]), packageLock: Buffer.from(data["package-lock.json"]) }).summary;

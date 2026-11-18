@@ -72,11 +72,7 @@ it.each([false, true])("waits for fresh actual Confirmer arming after the full d
     click: async (_hwnd: number, select: (node: RawNode) => boolean) => { if (select({ name: "Allow" } as RawNode)) accepted.push(confirmer.answer("q1:once")); },
     windows: async () => [{ hwnd: 321, name: "Ember needs you" }],
     text: async (_hwnd: number, select: (node: RawNode) => boolean) => select({ automationId: "title" } as RawNode) ? "May I prepare public dependencies?" : body,
-    // Home (123) shows a control of the conversation to hold the keyboard and, once paged to, Open approval; the
-    // question's own window shows Allow.
-    nodes: async (hwnd: number) => hwnd === 123
-      ? [{ automationId: "conversation-send", isEnabled: true, isOffscreen: false }, { automationId: "tasks-open-approval", isEnabled: true, isOffscreen: false }]
-      : [{ name: "Allow", isEnabled: seen }],
+    nodes: async () => [{ name: "Allow", isEnabled: seen }],
     node: async (_hwnd: number, select: (node: RawNode) => boolean) => {
       const node = [{ automationId: "body", isEnabled: true }, { name: "Allow", isEnabled: seen }].find(value => select(value as RawNode));
       expect(node).toBeDefined(); return node;
