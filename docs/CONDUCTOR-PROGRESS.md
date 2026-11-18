@@ -29,6 +29,16 @@ Hosted results of `d7a05118` and `e0b652e7`:
 - **WSL source, both images.** The export refused at phase 20 without reaching the new classification, so a folder did appear. The journey read `review.json` as soon as the folder existed, though the store makes the folder before writing into it; the Node journey waits for Home's "Exported the coding review" instead. The WSL journey now waits for that sentence too, inside the same 15 s bound.
 - **Ordinary CI.** On `d7a05118` the unit job failed once in the portable C witness test: its compiler was killed at the fixed 2.5 s bound (setup 5, compiler 1/0/1/1). The test and its sources are unchanged and it passed on the four heads before; the bound is not raised.
 
+Hosted results of `ec885497` to `7a8e9d93`, and two product corrections they led to:
+
+- **WSL source.** On Server 2022 seven of nine cases passed at `7a8e9d93`, the first repair with its export and continuation among them. Case 8, the public-dependencies repair, refused while waiting for a command card and case 9 was quarantined behind it; every decision's card wait now reports whether the fixed model had refused a step (phases 37–39).
+- **WSL packaged.** Server 2022 reached project stage 21; the journey now reads the dependencies hint as listed text.
+- **Node packaged.** The second Allow's click is not taken: the card stays armed, seen and in view with focus on its button, and the hit test at the click point finds an element of Ember's that is not that button. The report now tells the command window's own elements from Ember's other windows. No product change is made for this yet.
+- **Late landing after setup (product).** Both packaged journeys stopped intermittently in provider setup with keyboard focus on another element of Home. After setup, main waits for Copilot up to 20 s and then asks Home to focus a section heading, wherever the person has gone meanwhile. That landing now moves focus only while it is still where Start left it, which also spares a keyboard or screen-reader user who has moved on.
+- **WSL workspace open (product).** WSL resources on Server 2025 refused in workspace assembly on three runs in a row; the proof step took 45 s, which fits the workspace's 30 s open ending. Staging the coding tools wrote about two thousand files with a disk sync each. The per-file sync is removed; each file is still created exclusively, read back and compared, and the copy is a task's scratch space. The timeout is inferred from timing, not observed directly; the hosted run is the verification.
+
+The qualified 146-file graph is unchanged by both: `main.ts`, Home's renderer and `wsl-coding-tools.ts` are outside it.
+
 These changes touch fixtures, two workflows' failure reporting, tests and this document. The 146-file native graph, its verifier, the fixed producer and all application runtime/build inputs are unchanged. One product follow-up is recorded, not addressed: a new directory that only holds new files marks the whole text patch as limited, though such a patch could carry it; the exporter is in the qualified graph, so changing it needs requalification.
 
 The paragraphs below describe the preceding checkpoint.

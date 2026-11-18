@@ -150,7 +150,9 @@ export async function prepareWslCodingTools(profile: WslCodingToolProfile, input
     input.signal?.throwIfAborted(); const target = path.join(folder, name, f.path);
     await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
     const out = await fs.open(target, "wx", 0o600);
-    try { await out.writeFile(f.bytes); await out.sync(); const read = await fs.readFile(target); if (!read.equals(f.bytes)) throw bad(); }
+    // No fsync per file: this is a task's scratch copy, read back and compared here, and about two thousand syncs on a
+    // WSL2 disk took the workspace past its 30 s open (Windows Server 2025: the open refused 45 s into the proof).
+    try { await out.writeFile(f.bytes); const read = await fs.readFile(target); if (!read.equals(f.bytes)) throw bad(); }
     finally { await out.close(); }
   }
   await fs.symlink("bash", path.join(root, "usr/bin/sh"));

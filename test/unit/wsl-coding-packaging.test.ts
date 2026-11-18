@@ -50,3 +50,11 @@ it.skipIf(!selected)("stages the authenticated real archive and exact license, r
   const changed = fs.readFileSync(source); changed[changed.length - 1] ^= 1; fs.writeFileSync(source, changed);
   expect(() => verifyWslCodingTools(source)).toThrow();
 });
+
+it("stages a task's coding tools read back and compared, without a disk sync per file (WSL workspace open, Windows Server 2025)", () => {
+  const source = fs.readFileSync("app/main/agent/wsl-coding-tools.ts", "utf8");
+  const loop = source.slice(source.indexOf('for (const [name, files] of [["npm", value.npm], ["typescript", value.typescript]] as const)'), source.indexOf('await fs.symlink("bash"'));
+  expect(loop).toContain('const out = await fs.open(target, "wx", 0o600);');
+  expect(loop).toContain("await out.writeFile(f.bytes); const read = await fs.readFile(target); if (!read.equals(f.bytes)) throw bad();");
+  expect(loop).not.toMatch(/\.sync\(|\.datasync\(/);
+});
