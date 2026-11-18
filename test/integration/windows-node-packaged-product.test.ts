@@ -755,8 +755,10 @@ class Journey {
   private startClipboardHost(): void {
     const systemRoot = Object.entries(this.env).find(([key]) => key.toLowerCase() === "systemroot")?.[1]; if (!systemRoot) throw refusal(this.phase);
     const script = "Add-Type -AssemblyName System.Windows.Forms;[Console]::Out.WriteLine('r');while(($l=[Console]::In.ReadLine()) -ne $null){"
-      + "if($l -eq 'c'){[System.Windows.Forms.Clipboard]::SetText('PACKAGED_NODE_CLIPBOARD_FRESH');[Console]::Out.WriteLine('1')}"
-      + "elseif($l -eq 'g'){$s=[System.Windows.Forms.Clipboard]::GetText();if($s.Contains('" + WINDOWS_NODE_WRITER_READY + "')){[Console]::Out.WriteLine('1')}else{[Console]::Out.WriteLine('0')}}}";
+      // A clipboard another program holds open at that instant makes the call throw: the helper answers 0 rather than
+      // nothing, so a read is tried again inside the writer check's own 30 s and a failed clear refuses at once.
+      + "if($l -eq 'c'){try{[System.Windows.Forms.Clipboard]::SetText('PACKAGED_NODE_CLIPBOARD_FRESH');[Console]::Out.WriteLine('1')}catch{[Console]::Out.WriteLine('0')}}"
+      + "elseif($l -eq 'g'){try{$s=[System.Windows.Forms.Clipboard]::GetText();if($s.Contains('" + WINDOWS_NODE_WRITER_READY + "')){[Console]::Out.WriteLine('1')}else{[Console]::Out.WriteLine('0')}}catch{[Console]::Out.WriteLine('0')}}}";
     const child = spawn(path.join(systemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe"), ["-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-Command", script], { env: bridgeEnv(this.env), stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
     const host = { child, lines: [] as string[], rest: "" }; this.clipboardHost = host;
     child.once("error", () => { /* A step that needs it refuses at its own limit. */ });
