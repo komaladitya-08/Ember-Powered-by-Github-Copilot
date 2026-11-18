@@ -289,7 +289,9 @@ class Journey {
   private observeInput<T>(value: T, rejection = false): T { try { this.observation.input(value, rejection); } catch { /* Preserve the exact result. */ } return value; }
   captureFailure(): void { if (this.failureCaptured) return; this.failureCaptured = true; try { this.observe({ repairStep: this.model.steps.get("repair") ?? 0, repairResults: this.model.results.get("repair")?.length ?? 0 }); } catch { /* Cached local fixture counts only. */ } try { this.observation.capture(); } catch { /* Never retry with later cleanup state. */ } if (!this.cleanupStarted) try { this.commandObservation = readCommandCardObservationLog(this.profile); } catch { /* Unknown; never read again during cleanup. */ } }
   failureObservation(): Readonly<PackagedObservation> | undefined { try { return this.observation.value(); } catch { return undefined; } }
-  commandFailureObservation(): Readonly<PackagedCommandCardObservation> | undefined { return this.commandObservation; }
+  private lastClick?: { x: number; y: number; node: RawNode };
+  private clickUnder = 0;
+  commandFailureObservation(): Readonly<PackagedCommandCardObservation> | undefined { return this.commandObservation && { ...this.commandObservation, under: this.commandObservation.known ? this.clickUnder : 0 }; }
   beginCleanup(): void { this.cleanupStarted = true; }
   constructor(readonly root: string, readonly model: Model) {
     const selected = process.env.EMBER_WINDOWS_NODE_PACKAGE;
@@ -408,6 +410,7 @@ class Journey {
   }
   private async click(hwnd: number, select: Selector, guard?: SnapshotGuard): Promise<void> {
     const node = await this.focus(hwnd, await this.node(hwnd, select, true, guard), guard), box = node.bounds!;
+    this.lastClick = { x: box.x + Math.floor(box.width / 2), y: box.y + Math.floor(box.height / 2), node };
     this.observe({ operation: 13, inputResult: 0 }); this.observeInput(this.input!.move(box.x + Math.floor(box.width / 2), box.y + Math.floor(box.height / 2)));
     try { this.observe({ operation: 14, inputResult: 0 }); this.observeInput(this.input!.button(1, true)); }
     catch (error) { this.captureFailure(); throw error; }
@@ -616,7 +619,16 @@ class Journey {
       return true;
     });
     // The click is input, not proof it was taken: an answered card leaves the window. Still commandStage 13 until it does.
-    await this.until(async () => { const after = await this.nodes(hwnd); return after.length > 0 && !hasDisplay(after); }, answered => answered, 10_000);
+    try { await this.until(async () => { const after = await this.nodes(hwnd); return after.length > 0 && !hasDisplay(after); }, answered => answered, 10_000); }
+    catch (error) {
+      // Failure only: one hit test at the click point says what took the press. No name, bounds or identity is kept.
+      try {
+        const at = this.lastClick, chain = at && await this.bridge!.call<RawNode[]>("elementsAt", { x: at.x, y: at.y, values: false, deadlineMs: 2500 }, 5000);
+        const leaf = chain?.at(-1);
+        this.clickUnder = !at || !Array.isArray(chain) ? 0 : !leaf ? 4 : sameNode(leaf, at.node) ? 1 : leaf.pid === at.node.pid ? 2 : 3;
+      } catch { this.clickUnder = 0; /* The original refusal stands. */ }
+      throw error;
+    }
     this.observe({ commandStage: 14 });
   }
   private async review(goal: string, counts: string): Promise<string> {

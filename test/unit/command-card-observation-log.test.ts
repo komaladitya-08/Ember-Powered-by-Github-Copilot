@@ -21,11 +21,11 @@ it("projects only numeric fields from the actual private Logger format", () => {
   expect(main).toContain('const log = createLogger({\n  dir: path.join(userData, "logs"),');
   log.info("unrelated", { text: "PRIVATE code and transcript" }); log.info("commands.card_observation", data);
   const value = readCommandCardObservationLog(dir);
-  expect(value).toEqual({ ...data, known: 1, visibility: 3 }); expect(Object.isFrozen(value)).toBe(true);
+  expect(value).toEqual({ ...data, known: 1, visibility: 3, under: 0 }); expect(Object.isFrozen(value)).toBe(true);
   expect(JSON.stringify(value)).not.toContain("PRIVATE"); expect(value).not.toHaveProperty("t"); expect(value).not.toHaveProperty("scope");
 });
 it("keeps last ordered observations and accepts identical duplicate lines without inventing a new sample", () => {
-  expect(parse(row({ ...data, sample: 2 }) + row() + row())).toEqual({ ...data, known: 1, visibility: 3 });
+  expect(parse(row({ ...data, sample: 2 }) + row() + row())).toEqual({ ...data, known: 1, visibility: 3, under: 0 });
   expect(parse(row() + row({ ...data, card: 3, sample: 1 }))).toMatchObject({ known: 1, card: 3, sample: 1 });
 });
 it.each([
@@ -88,17 +88,17 @@ function facts(attempt: unknown) {
   const code = workflow.slice(begin, end) + "\ncommandFailureFacts(attempt);";
   return runInNewContext(code, { attempt, Buffer, require: (name: string) => { expect(name).toBe("node:util"); return { types }; } });
 }
-const frame = { ...data, known: 1, visibility: 3 };
+const frame = { ...data, known: 1, visibility: 3, under: 0 };
 const attempt = (value: unknown = frame) => ({ stdout: Buffer.from("PRIVATE ordinary child output\nWindows Node packaged command observation " + JSON.stringify(value) + "\n"), stderr: Buffer.from("") });
 it("runs the actual workflow projection independently of primary child outcome and prints no child or log text", () => {
   expect(facts({ ...attempt(), status: 1, error: new Error("PRIVATE") })).toEqual(frame);
   expect(JSON.stringify(facts(attempt()))).not.toContain("PRIVATE");
-  expect(facts(attempt({ schema: 1, known: 0, card: 0, sample: 0, source: 0, model: 0, ui: 0, geometry: 0, arm: 0, capped: 1, host: 0, visibility: 0 }))).toMatchObject({ known: 0, capped: 1 });
+  expect(facts(attempt({ schema: 1, known: 0, card: 0, sample: 0, source: 0, model: 0, ui: 0, geometry: 0, arm: 0, capped: 1, host: 0, visibility: 0, under: 0 }))).toMatchObject({ known: 0, capped: 1 });
 });
 it.each([
   { ...frame, known: 2 }, { ...frame, known: 0 }, { ...frame, capped: 1 }, { ...frame, sample: 16 }, { ...frame, card: 0 },
   { ...frame, source: 3 }, { ...frame, model: 128 }, { ...frame, ui: 32 }, { ...frame, geometry: 512 }, { ...frame, arm: 3 },
-  { ...frame, host: 8 }, { ...frame, visibility: 8 }, { ...frame, extra: "PRIVATE" },
+  { ...frame, host: 8 }, { ...frame, visibility: 8 }, { ...frame, under: 5 }, { ...frame, extra: "PRIVATE" },
 ])("refuses unsupported public numeric frame %#", value => { expect(facts(attempt(value))).toMatchObject({ known: 0, model: 0 }); });
 it("refuses contradictory or malformed public records without touching hostile attempt accessors", () => {
   const a = attempt(); a.stdout = Buffer.concat([a.stdout, Buffer.from("Windows Node packaged command observation " + JSON.stringify({ ...frame, ui: 15 }) + "\n")]);
