@@ -14,7 +14,7 @@ import { runtimeFor, locateRuntime } from "../../app/main/agent/runtime";
 import { requireWslProductAdmission } from "./wsl-coding-product-contract";
 
 export function wslProductRefusal(phase: number): Error {
-  const value = Number.isInteger(phase) && phase >= 1 && phase <= 48 ? phase : 0;
+  const value = Number.isInteger(phase) && phase >= 1 && phase <= 60 ? phase : 0;
   const error = new Error("Windows WSL product journey refused (phase " + value + ")."); error.stack = "Error: " + error.message; return error;
 }
 const refusal = (_phase: string) => wslProductRefusal(1);

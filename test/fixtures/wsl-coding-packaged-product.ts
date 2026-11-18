@@ -530,9 +530,18 @@ export class WslPackagedJourney {
     // The folder dialog may leave the keyboard nowhere: Export, still shown, takes it before the page keys are used.
     this.phase = 25; await this.u.focus(this.home, await this.u.node(this.home, exportButton)); await this.pageTo(sentence, false, true);
     await this.accessible(text => text.includes("Exported the coding review")); expect(this.model.requests.length).toBe(before);
-    // Failure only: 48 the page keys never moved the pane (the keyboard was no longer in it), 26 it moved and Export
-    // never showed enabled.
-    this.phase = 26; if (!await this.pageTo(exportButton, true, false, true)) { if (!this.paged) this.phase = 48; this.fail(); }
+    // Failure only: 48 the page keys never moved the pane (the keyboard was no longer in it). Where it moved, one more
+    // read says what became of Export: 49 it shows but is disabled, 50 it is listed out of view, 51 neither it nor the
+    // review's patch is listed (the review closed), 26 the patch is listed and Export is not.
+    this.phase = 26;
+    if (!await this.pageTo(exportButton, true, false, true)) {
+      if (!this.paged) this.phase = 48;
+      else {
+        const nodes = await this.u.nodes(this.home), found = nodes.find(exportButton);
+        this.phase = found ? (found.isOffscreen ? 50 : 49) : nodes.some(id("project-coding-patch")) ? 26 : 51;
+      }
+      this.fail();
+    }
     const fresh = fs.readdirSync(this.exported).filter(name => !existing.has(name)); expect(fresh).toHaveLength(1);
     this.assertExport(path.join(this.exported, fresh[0]), publicDependencies, cumulative);
   }
