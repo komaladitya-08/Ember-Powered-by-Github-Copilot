@@ -340,7 +340,8 @@ export class WslPackagedJourney {
     // Home disables the commit button once its choice is the saved one, so the Tab search starts from the combo.
     this.projectStage = 19; await this.u.reveal(this.home, combo, preference);
     this.projectStage = 20; await this.u.toggle(this.home, preference, publicDependencies ? "On" : "Off");
-    this.projectStage = 21; expect(await this.u.text(this.home, id("project-coding-public-dependencies-detail"))).toContain("registry.npmjs.org"); expect(this.model.requests).toBeDefined();
+    // UI Automation lists the hint's words as a Text node, not the paragraph that carries its id.
+    this.projectStage = 21; expect(await this.accessible(text => text.includes("registry.npmjs.org"))).toContain("registry.npmjs.org"); expect(this.model.requests).toBeDefined();
   }
   async send(request: string): Promise<void> {
     this.projectStage = 22; await this.u.reveal(this.home, id("project-coding-public-dependencies-on"), id("project-sessions-request"), true);
