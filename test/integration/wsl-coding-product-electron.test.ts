@@ -194,9 +194,14 @@ class Journey {
       for (let step = 0; step < 12 && await button.getAttribute("aria-disabled") === "true"; step++) { await whole.hover(); await page!.mouse.wheel(0, 500); await page!.waitForTimeout(150); }
       await expect.poll(() => button.getAttribute("aria-disabled"), { timeout: 15_000 }).not.toBe("true");
       await expect.poll(() => button.isEnabled(), { timeout: 15_000 }).toBe(true); this.publicApproved.push(sha256);
+      // Seeing the whole text arms Allow afresh (at most 1.5 s), so the scroll that showed its end can't also allow it:
+      // a click inside that arm is refused without a word. The packaged journey waits it out the same way.
+      await page!.waitForTimeout(1600);
       this.requestsAtApproval = this.model.requests.length;
     }
     await button.click();
+    // A taken answer takes the question down; one still showing was not taken.
+    await expect.poll(() => whole.isVisible().catch(() => false), { timeout: 10_000 }).toBe(false);
   }
   async writerReady(): Promise<void> {
     this.phase = 5;
