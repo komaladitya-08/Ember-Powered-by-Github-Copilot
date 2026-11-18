@@ -628,8 +628,11 @@ class Journey {
         // 1 the button or something inside it, 2 something else in the command window; another window of Ember's by its
         // own fixed title: 6 the overlay, 7 the prompt, 8 the Ask box, 9 Home, the handle or the vault's form, 5 any other.
         const title = root?.name ?? "";
+        // 10: the click point lies outside the command window's own frame, so the button's rectangle reaches past it.
+        const frame = at && (await this.nodes(hwnd)).find(node => node.hwnd === hwnd)?.bounds;
+        const outside = !!at && !!frame && (at.x < frame.x || at.y < frame.y || at.x >= frame.x + frame.width || at.y >= frame.y + frame.height);
         this.clickUnder = !at || !Array.isArray(chain) ? 0 : !leaf || !root ? 4 : chain.some(node => sameNode(node, at.node)) ? 1
-          : leaf.pid !== at.node.pid ? 3 : root.hwnd === hwnd ? 2
+          : leaf.pid !== at.node.pid ? 3 : root.hwnd === hwnd ? 2 : outside ? 10
           : title === "Ember overlay" ? 6 : title === "Ember needs you" ? 7 : title === "Ask Ember" ? 8 : title === "Ember" ? 9 : 5;
       } catch { this.clickUnder = 0; /* The original refusal stands. */ }
       throw error;
