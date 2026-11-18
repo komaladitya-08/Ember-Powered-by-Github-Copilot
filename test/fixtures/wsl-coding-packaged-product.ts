@@ -407,12 +407,19 @@ export class WslPackagedJourney {
   }
   private async command(): Promise<number> { return (await this.u.until(() => this.u.windows(), windows => windows.some(window => window.name === "Ember commands"), 45_000)).find(window => window.name === "Ember commands")!.hwnd; }
   async allowCommand(): Promise<void> {
+    // Phases within a command decision: 7 the command window, 40 a fresh card in it, 7 again its text and the click,
+    // 22 the answered card leaving the window.
     this.phase = 7; const hwnd = await this.command();
+    this.phase = 40;
     const node = (await this.u.until(() => this.u.nodes(hwnd), nodes => nodes.some(node => node.automationId === "ask-cmd" && !!node.runtimeId && node.runtimeId !== this.previousCard), 45_000)).find(id("ask-cmd"))!;
-    await this.u.focus(hwnd, node); expect(await this.u.text(hwnd, id("ask-cmd"))).toBe(WSL_PRODUCT_CHECK);
+    this.phase = 7; await this.u.focus(hwnd, node); expect(await this.u.text(hwnd, id("ask-cmd"))).toBe(WSL_PRODUCT_CHECK);
     const words = (await this.u.nodes(hwnd)).map(node => node.name ?? "").join("\n");
     expect(words).toContain("/work"); expect(words).toContain(this.targetLabel); this.previousCard = node.runtimeId!;
     await this.u.click(hwnd, named("Allow"));
+    // The click is input, not proof it was taken: an answered card leaves the window (as the Node journey requires).
+    this.phase = 22;
+    await this.u.until(() => this.u.nodes(hwnd), nodes => nodes.length > 0 && !nodes.some(shown => shown.automationId === "ask-cmd" && shown.runtimeId === node.runtimeId), 10_000);
+    this.phase = 7;
   }
   async publicDecision(changed: boolean, answer: "Allow" | "Not now" = "Allow"): Promise<void> {
     // Phases within the decision: 8 the Home pane, 39 its button that opens the waiting question, 17 the question's
