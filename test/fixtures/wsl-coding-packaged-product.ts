@@ -120,6 +120,18 @@ export class WslPackagedJourney {
     await this.u.until(async () => this.model.requests.every((request: { doneAt?: number }) => typeof request.doneAt === "number"), Boolean);
     await this.pane("Projects");
   }
+  /**
+   * Up to twelve Tabs (Shift+Tab backwards) from wherever the keyboard is in Home, until the control shows. A snapshot
+   * leaves out what is scrolled out of view, so nothing below the fold can serve as an anchor after a pane switch:
+   * the search starts from the pane's link, which the switch has just clicked.
+   */
+  private async tabTo(select: WslUiSelector, enabled = true, backwards = false): Promise<void> {
+    for (let tabs = 0; ; tabs++) {
+      if ((await this.u.nodes(this.home)).some(node => select(node) && !node.isOffscreen && (!enabled || node.isEnabled === true))) return;
+      if (tabs === 12) this.fail();
+      if (backwards) this.u.chord(this.home, "Shift_L", "Tab"); else this.u.key(this.home, "Tab");
+    }
+  }
   private async armed(hwnd: number, select: WslUiSelector): Promise<void> {
     const before = await this.u.node(hwnd, select); await pause(600); this.current();
     if (!sameWslUiNode(before, await this.u.node(hwnd, select))) this.fail(); await this.u.click(hwnd, select);
@@ -378,10 +390,12 @@ export class WslPackagedJourney {
     this.phase = 9; await this.pane("Projects"); const result = named("Review result: " + titleOf(goal));
     // Up to fifteen controls lie between the request box and the results, so the search goes by way of the Coding
     // group's folder button: twelve Tabs to it, twelve more from it.
-    // Phases within the review: 12 the search for the folder button, 13 the search for the result's button, 14 the
-    // click, 15 the read.
-    this.phase = 12; await this.u.reveal(this.home, id("project-sessions-request"), id("project-coding-choose"), false, false);
-    this.phase = 13; await this.u.reveal(this.home, id("project-coding-choose"), result); this.phase = 14; await this.u.click(this.home, result);
+    // Phases within the review: 12 the search for the request box and its focus, 27 the search for the folder button,
+    // 13 the search for the result's button, 14 the click, 15 the read.
+    const request = id("project-sessions-request");
+    this.phase = 12; await this.tabTo(request); await this.u.focus(this.home, await this.u.node(this.home, request));
+    this.phase = 27; await this.tabTo(id("project-coding-choose"), false);
+    this.phase = 13; await this.tabTo(result); this.phase = 14; await this.u.click(this.home, result);
     this.phase = 15;
     const region: WslUiSelector = node => node.automationId === "project-coding-review" || ["Group", "Pane"].includes(node.controlType ?? "") && node.name === titleOf(goal);
     return this.u.until(() => this.u.text(this.home, region), text => text.includes(counts), 45_000);
@@ -416,20 +430,18 @@ export class WslPackagedJourney {
     this.assertUnchanged();
   }
   private async exportReview(publicDependencies: boolean, cumulative: boolean): Promise<void> {
-    // Phases within the export: 16 the idle wait, 21 the search for the folder button, 22 for a result's button, 23 for
-    // Export, 24 the click and the folder dialog, 25 and 26 below.
+    // Phases within the export: 16 the idle wait, 21 the search for the request box, its focus and the search for the
+    // folder button, 22 the search for a result's button, 23 for Export, 24 the click and the folder dialog, 25 back by
+    // Shift+Tab to the folder button and the read of Home's sentence, 26 forward again to Export.
     this.phase = 16; await this.idle(); const before = this.model.requests.length, existing = new Set(fs.readdirSync(this.exported));
-    // After the idle wait Export is scrolled out of view and so not listed: Tab navigation brings it there by way of
-    // the request box, the Coding group's folder button and the first result's button, twelve Tabs a stage.
-    const listedResult: WslUiSelector = node => (node.name ?? "").startsWith("Review result: ");
-    this.phase = 21; await this.u.reveal(this.home, id("project-sessions-request"), id("project-coding-choose"), false, false);
-    this.phase = 22; await this.u.reveal(this.home, id("project-coding-choose"), listedResult); this.phase = 23; await this.u.reveal(this.home, listedResult, id("project-coding-export"));
+    const request = id("project-sessions-request"), listedResult: WslUiSelector = node => (node.name ?? "").startsWith("Review result: ");
+    this.phase = 21; await this.tabTo(request); await this.u.focus(this.home, await this.u.node(this.home, request)); await this.tabTo(id("project-coding-choose"), false);
+    this.phase = 22; await this.tabTo(listedResult); this.phase = 23; await this.tabTo(id("project-coding-export"));
     this.phase = 24; await this.u.click(this.home, id("project-coding-export")); await this.folder("Export coding review", this.exported);
-    // Home's sentence stands above the results list, out of view and so unlisted once Export below it has been
-    // clicked: 25 Shift+Tab back to the folder button shows it and it is read; 26 Tab forward again shows Export.
-    this.phase = 25; await this.u.reveal(this.home, id("project-coding-export"), listedResult, true); await this.u.reveal(this.home, listedResult, id("project-coding-choose"), true, false);
+    // Home's sentence stands above the results list, out of view and so unlisted once Export below it has been clicked.
+    this.phase = 25; await this.tabTo(listedResult, true, true); await this.tabTo(id("project-coding-choose"), false, true);
     await this.accessible(text => text.includes("Exported the coding review")); expect(this.model.requests.length).toBe(before);
-    this.phase = 26; await this.u.reveal(this.home, id("project-coding-choose"), listedResult); await this.u.reveal(this.home, listedResult, id("project-coding-export"));
+    this.phase = 26; await this.tabTo(listedResult); await this.tabTo(id("project-coding-export"));
     const fresh = fs.readdirSync(this.exported).filter(name => !existing.has(name)); expect(fresh).toHaveLength(1);
     this.assertExport(path.join(this.exported, fresh[0]), publicDependencies, cumulative);
   }
