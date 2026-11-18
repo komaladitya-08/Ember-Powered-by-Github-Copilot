@@ -662,7 +662,18 @@ class Journey {
     const result = named("Review result: " + titleOf(goal));
     // Within phase 11 the welcome's unused `target` fact counts its steps: 1 waiting for the result to be listed, 2 its
     // scroll into view, 3 the reveal, 4 the click, 5 reading the review.
-    this.phase = 11; this.observe({ target: 1 }); const listed = (await this.until(async () => (await this.nodes(this.home)).find(result), node => !!node, 45_000))!;
+    this.phase = 11; this.observe({ target: 1 });
+    const listed = (await this.until(async () => (await this.nodes(this.home)).find(result), node => !!node, 45_000).catch(async error => {
+      // Failure only: one more read says what the Projects pane lists instead, as the welcome's unused `nextLabel` fact.
+      // 1 a result under another title, 2 a result button without its title, 3 no results for this project,
+      // 4 no project selected, 5 the Coding group without any of those, 6 none of them.
+      try {
+        const names = (await this.nodes(this.home)).map(node => node.name ?? ""), has = (text: string) => names.some(name => name === text);
+        this.observe({ nextLabel: names.some(name => name.startsWith("Review result: ")) ? 1 : has("Review result") ? 2 : has("No coding results for this project yet.") ? 3
+          : has("Select a project to see its coding results.") ? 4 : (await this.nodes(this.home)).some(id("project-coding")) ? 5 : 6 });
+      } catch { /* The original refusal stands. */ }
+      throw error;
+    }))!;
     if (listed.isOffscreen !== false) {
       this.observe({ target: 2 }); if (listed.patterns?.scrollItem !== true) throw refusal(this.phase);
       await this.bridge!.call("perform", { handle: listed.h, op: "scrollIntoView", deadlineMs: 2500 }, 5000);
