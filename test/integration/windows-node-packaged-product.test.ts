@@ -654,33 +654,16 @@ class Journey {
     this.observe({ commandStage: 14 });
   }
   private async review(goal: string, counts: string): Promise<string> {
-    // A result exists only once its session has ended, so the step first waits for its button to be listed. Phase 7
-    // ends at the Projects pane; 11 is that wait and the scroll, reveal, click and read. The journey's twelve-Tab search
-    // from the pane's link never brought the Coding group into view, so UI Automation scrolls the listed button into
-    // view; the reveal and the click below still require it shown, enabled and focused.
+    // Phase 7 ends at the Projects pane; 11 is the reveal, the click and the read. A snapshot leaves out whatever is
+    // scrolled out of view, with everything under it, so a result's button is never listed until it shows: waiting for
+    // it to be listed or scrolling it by its handle cannot work. Ordinary Tab navigation brings it into view instead,
+    // from the request box above the Coding group: found within twelve Tabs of the pane's link, focused, and the
+    // result's button within twelve more. Within phase 11 the welcome's unused `target` fact counts the steps:
+    // 1 finding the request box, 2 focusing it, 3 the Tab search for the result's button, 4 the click, 5 the read.
     this.phase = 7; await this.idle(); await this.pane("Projects");
     const result = named("Review result: " + titleOf(goal));
-    // Within phase 11 the welcome's unused `target` fact counts its steps: 1 waiting for the result to be listed, 2 its
-    // scroll into view, 3 the reveal, 4 the click, 5 reading the review.
-    this.phase = 11; this.observe({ target: 1 });
-    const listed = (await this.until(async () => (await this.nodes(this.home)).find(result), node => !!node, 45_000).catch(async error => {
-      // Failure only: one more read says what the Projects pane lists instead, as the welcome's unused `nextLabel` fact.
-      // 1 a result under another title, 2 a result button without its title, 3 no results for this project,
-      // 4 no project selected; none of those: 5 the results list is there with nothing in it, 7 it has something in
-      // it, 6 it is not listed at all.
-      try {
-        const read = await this.nodes(this.home), list = read.find(id("project-coding-results"));
-        const names = read.map(node => node.name ?? ""), has = (text: string) => names.some(name => name.includes(text));
-        // A list item's own name may carry its marker, so the sentences are looked for within a name.
-        this.observe({ nextLabel: has("Review result: ") ? 1 : has("Review result") ? 2 : has("No coding results for this project yet.") ? 3
-          : has("Select a project to see its coding results.") ? 4 : !list ? 6 : read.some(node => node.parent === list.h) ? 7 : 5 });
-      } catch { /* The original refusal stands. */ }
-      throw error;
-    }))!;
-    if (listed.isOffscreen !== false) {
-      this.observe({ target: 2 }); if (listed.patterns?.scrollItem !== true) throw refusal(this.phase);
-      await this.bridge!.call("perform", { handle: listed.h, op: "scrollIntoView", deadlineMs: 2500 }, 5000);
-    }
+    this.phase = 11; this.observe({ target: 1 }); const request = await this.revealHomeControl(id("project-sessions-request"));
+    this.observe({ target: 2 }); await this.focus(this.home, request);
     this.observe({ target: 3 }); await this.revealHomeControl(result);
     this.observe({ target: 4 }); await this.click(this.home, result);
     this.observe({ target: 5 });

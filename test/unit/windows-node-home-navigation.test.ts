@@ -66,7 +66,7 @@ function actualMethod(prefix: string, next: string, parameters: string, globals:
   return module.exports;
 }
 
-it("waits for the session to end, then scrolls the listed result into view and reveals it before the actual review click and bounded read", async () => {
+it("waits for the session to end, focuses the request box and reaches the result by Tab before the actual review click and bounded read (hosted Windows Node packaged run of 6e7c839f)", async () => {
   const review = actualMethod("  private async review(", "\n  private assertExport", "goal, counts");
   const calls: string[] = []; let stage = 0; const steps: number[] = [];
   const port = {
@@ -76,22 +76,23 @@ it("waits for the session to end, then scrolls the listed result into view and r
     // A result exists only once its session has ended: the wait for Home's Ready comes before the Tab search.
     async idle() { expect(port.phase).toBe(7); calls.push("idle"); },
     async pane(value: string) { expect(value).toBe("Projects"); calls.push("projects"); },
+    // The request box is found and focused first; the Tab search for the result's button starts from there.
     async revealHomeControl(select: Selector, enabled?: boolean) {
-      expect(stage).toBe(0); expect(select({ name: "Review result: Public review" })).toBe(true); expect(enabled).toBeUndefined(); calls.push("result");
-      stage = 2;
+      expect(port.phase).toBe(11); expect(enabled).toBeUndefined();
+      if (stage === 0) { expect(select({ automationId: "project-sessions-request" })).toBe(true); calls.push("request"); stage = 1; return { h: 5 }; }
+      expect(stage).toBe(3); expect(select({ name: "Review result: Public review" })).toBe(true); calls.push("result"); stage = 2;
+      return { h: 9 };
     },
+    async focus(window: number, node: { h: number }) { expect(window).toBe(73); expect(stage).toBe(1); expect(node.h).toBe(5); calls.push("focus"); stage = 3; },
     async click(window: number, select: Selector) {
       if (stage !== 2) throw new Error("The Projects pane has not exposed the result control.");
       expect(window).toBe(73); expect(select({ name: "Review result: Public review" })).toBe(true); calls.push("click");
     },
     async homeText(select: Selector) { expect(select({ automationId: "project-coding-review" })).toBe(true); calls.push("read"); return "Checks: 2 run"; },
-    // The result's button is listed only once its session has ended: the Tab search waits for that, as phase 11.
-    async nodes(window: number) { expect(window).toBe(73); expect(port.phase).toBe(11); calls.push("listed"); return [{ h: 9, name: "Review result: Public review", isOffscreen: true, patterns: { scrollItem: true } }]; },
-    bridge: { async call(method: string, values: { handle: number; op: string }) { expect(method).toBe("perform"); expect(values).toMatchObject({ handle: 9, op: "scrollIntoView" }); calls.push("scroll"); } },
     async until<T>(read: () => Promise<T>, accept: (value: T) => boolean, timeout: number) { expect(timeout).toBe(45_000); const value = await read(); expect(accept(value)).toBe(true); return value; },
   };
   expect(await review.call(port, "Public review", "Checks: 2 run")).toBe("Checks: 2 run");
-  expect(port.phase).toBe(11); expect(calls).toEqual(["idle", "projects", "listed", "scroll", "result", "click", "read"]); expect(steps).toEqual([1, 2, 3, 4, 5]);
+  expect(port.phase).toBe(11); expect(calls).toEqual(["idle", "projects", "request", "focus", "result", "click", "read"]); expect(steps).toEqual([1, 2, 3, 4, 5]);
 });
 
 it("reveals the Coding group and Export again after the actual idle helper returns to Projects", async () => {
