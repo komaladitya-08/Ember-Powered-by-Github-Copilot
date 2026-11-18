@@ -1,6 +1,7 @@
 /** Deterministic model replies only. Production Host, policy, Windows custody, WSL and HTTPS remain real. */
 // @ts-expect-error -- fixed local JavaScript provider, never a live account
 import { startMockLlm } from "../mock-llm/server.mjs";
+import { sourceCommandKind } from "./wsl-coding-product-observation";
 import type { WslSourceCase } from "./wsl-coding-product-contract";
 
 export const WSL_PRODUCT_CHECK = "npm ci --offline && npm run build && npm test";
@@ -54,6 +55,7 @@ function textOf(value: unknown): string {
 }
 export async function createWslProductModel(scenarios: readonly WslProductScenario[], target: string) {
   const dispatched = new Set<string>(), steps = new Map<string, number>(), results = new Map<string, string[]>();
+  const lastCommands = new Map<string, number>();
   const inventories: string[][] = [], failures: number[] = [];
   const refusal = (code: number): Reply => { failures.push(code); return { tool: { name: "finish_coding", args: { success: false, summary: "The fixed WSL fixture could not verify its expected step." } } }; };
   const command = (text = WSL_PRODUCT_CHECK): Reply => ({ tool: { name: "run_command", args: { target, command: text, shell: "bash", cwd: "/work", why: "Verify only the explicitly requested copied WSL fixture" } } });
@@ -72,7 +74,11 @@ export async function createWslProductModel(scenarios: readonly WslProductScenar
     const expected = scenario.publicDependencies ? WSL_PUBLIC_PRODUCT_TOOLS : WSL_PRODUCT_TOOLS;
     if ([...tools].sort().join("\0") !== [...expected].sort().join("\0")) return refusal(2);
     const step = steps.get(scenario.key) ?? 0; steps.set(scenario.key, step + 1);
-    const last = JSON.stringify(messages.findLast(message => message.role === "tool")?.content ?? "");
+    const lastTool = messages.findLast(message => message.role === "tool");
+    const last = JSON.stringify(lastTool?.content ?? "");
+    if (scenario.kind === "repair" && step === 3 || scenario.kind === "continuation" && step === 4) {
+      lastCommands.set(scenario.key, sourceCommandKind(lastTool?.content));
+    }
     const history = results.get(scenario.key) ?? []; history.push(last); results.set(scenario.key, history);
     if (scenario.kind === "denied") return step === 0 ? command() : refusal(3);
     if (scenario.kind === "public-denied") return step === 0 ? prepare() : refusal(4);
@@ -96,5 +102,11 @@ export async function createWslProductModel(scenarios: readonly WslProductScenar
     if (step === 2) return { tool: { name: "coding_replace", args: { path: "test.cjs", oldText: "copied WSL result", newText: "continued WSL result" } } };
     return step === 4 ? finish() : refusal(12);
   } });
-  return { ...model, dispatched, steps, results, inventories, failures };
+  function terminalEvidence(episode: number) {
+    const scenario = scenarios[episode - 1];
+    if (!scenario) return { steps: 0, command: 0 };
+    const finishStep = episode === 1 ? 4 : 5;
+    return { steps: Math.min(steps.get(scenario.key) ?? 0, finishStep + 1), command: lastCommands.get(scenario.key) ?? 0 };
+  }
+  return { ...model, dispatched, steps, results, inventories, failures, terminalEvidence };
 }

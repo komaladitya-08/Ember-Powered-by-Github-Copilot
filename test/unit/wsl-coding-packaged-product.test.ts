@@ -4,9 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { Confirmer } from "../../app/main/agent/confirm";
+import { consentPanel } from "../../app/main/remote/prompt-window";
+import { PROMPT_ARM_MS, judgeRead, moreBelow, promptHint, type ReadGate } from "../../app/renderer/prompt/copy";
 import type { RawNode } from "../integration/uia-client";
 import { PublicNpmPlan } from "../../app/main/agent/public-npm-lock";
 import { WslPackagedJourney, type WslPackagedModel } from "../fixtures/wsl-coding-packaged-product";
+import { WslPackagedUi, type WslUiPorts } from "../fixtures/wsl-coding-packaged-uia";
 import { wslProductProject } from "../fixtures/wsl-coding-product-model";
 
 const roots: string[] = [];
@@ -81,4 +84,84 @@ it.each([false, true])("waits for fresh actual Confirmer arming after the full d
     const answer = f.journey.publicDecision(false); await vi.advanceTimersByTimeAsync(1600); await answer;
     expect(accepted).toEqual([true]); await expect(question).resolves.toBe("once");
   } finally { confirmer.cancelAll(); await question; vi.useRealTimers(); }
+});
+
+it.each(["fits", "scrolls", "fits after focus", "nonfocusable", "wrong title", "replaced during readiness", "replaced before End", "replaced before click",
+  "has an exact heading child", "has extra heading text", "has duplicate headings"] as const)("scopes consent input when the card %s", async layout => {
+  vi.useFakeTimers();
+  try {
+    const started = Date.now();
+    const { journey } = fixture();
+    const target = "wsl:Ubuntu-22.04";
+    const panel = consentPanel({ feature: "wsl", os: "win32", target, targetLabel: "WSL", byok: true });
+    const replacement = consentPanel({ feature: "commands", os: "win32", target, targetLabel: "Ubuntu-22.04 (WSL)", commands: { wsl: true, byok: true } });
+    const overflows = ["scrolls", "fits after focus", "nonfocusable", "replaced before End"].includes(layout);
+    const metrics = { clientHeight: 400, scrollHeight: overflows ? 500 : 400, scrollTop: 0 };
+    let gate: ReadGate = { seen: false, layout: "default" };
+    let shown = panel;
+    let open = true;
+    let focused = 0;
+    const raw = (node: Partial<RawNode>): RawNode => ({ h: 1, pid: 7, patterns: {}, isOffscreen: false, isEnabled: true, bounds: { x: 10, y: 20, width: 30, height: 40 }, ...node });
+    const nodes = () => {
+      gate = judgeRead(gate, metrics, true, "default");
+      const hint = promptHint({ consent: true, seen: gate.seen, more: moreBelow(metrics), field: false, focused: true, sinceShownMs: Date.now() - started });
+      const fallback = layout === "has an exact heading child" || layout === "has extra heading text";
+      const title = raw({ automationId: "title", name: fallback ? "" : shown.title });
+      const heading = [title];
+      if (fallback) heading.push(raw({ controlType: "Text", name: shown.title, parent: 0 }));
+      if (layout === "has extra heading text") heading.push(raw({ controlType: "Text", name: replacement.title, parent: 0 }));
+      if (layout === "has duplicate headings") heading.push({ ...title });
+      const button = raw({ h: 2, runtimeId: "button", controlType: "Button", name: shown.yes,
+        isEnabled: gate.seen && Date.now() - started >= PROMPT_ARM_MS, hasKeyboardFocus: focused === 2 });
+      const body = raw({ h: 3, automationId: "body", controlType: "Group", runtimeId: "body", hasKeyboardFocus: focused === 3,
+        isKeyboardFocusable: layout !== "nonfocusable" });
+      // An enabled text descendant with the same name must not stand in for an armed button.
+      return [...heading, raw({ controlType: "Text", name: shown.yes }), button, ...(moreBelow(metrics) ? [body] : []), ...(hint ? [raw({ controlType: "Text", name: hint })] : [])];
+    };
+    const bridge = { call: vi.fn(async (method: string, values: { handle?: number }) => {
+      if (method === "perform") {
+        focused = values.handle!;
+        return {};
+      }
+      expect(method).toBe("focused");
+      const element = nodes().find(node => node.h === focused);
+      if ((focused === 3 && layout === "replaced before End") || (focused === 2 && layout === "replaced before click")) shown = replacement;
+      return { hwnd: 321, element };
+    }) };
+    const input = {
+      blockedReason: () => null, activeWindow: () => 321, activate: () => {}, move: vi.fn(), releaseAll: () => {},
+      keysymOf: vi.fn((name: string) => { expect(name).toBe("End"); return 1; }),
+      keysym: vi.fn((_symbol: number, down: boolean) => {
+        if (down) { expect(moreBelow(metrics)).toBe(true); metrics.scrollTop = metrics.scrollHeight - metrics.clientHeight; }
+        return true;
+      }),
+      button: vi.fn((_button: number, down: boolean) => { if (down) open = false; }),
+    };
+    const ui = new WslPackagedUi({ bridge, input, current: () => {}, deadline: started + 30_000, refuse: () => new Error("Fixed consent refusal.") } as unknown as WslUiPorts);
+    vi.spyOn(ui, "windows").mockImplementation(async () => open ? [{ hwnd: 321, pid: 7, processName: "Ember", name: "Ember needs you", isTopmost: true, focused: true, z: 0 }] : []);
+    vi.spyOn(ui, "nodes").mockImplementation(async () => nodes());
+    vi.spyOn(ui, "text").mockImplementation(async (_hwnd, select) => {
+      expect(select(raw({ automationId: "title" }))).toBe(true);
+      if (layout === "replaced during readiness") shown = replacement;
+      return layout === "wrong title" ? replacement.title : panel.title;
+    });
+    if (layout === "fits after focus") {
+      const focus = ui.focus.bind(ui);
+      vi.spyOn(ui, "focus").mockImplementation(async (...args) => {
+        const node = await focus(...args);
+        if (node.h === 3) metrics.scrollHeight = metrics.clientHeight;
+        return node;
+      });
+    }
+    Reflect.set(journey, "ui", ui);
+    const prompt = (journey as unknown as { prompt(title: string): Promise<void> }).prompt(panel.title);
+    const accepts = layout === "fits" || layout === "scrolls" || layout === "fits after focus" || layout === "has an exact heading child";
+    const completion = accepts ? expect(prompt).resolves.toBeUndefined() : expect(prompt).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(layout === "nonfocusable" ? 30_000 : PROMPT_ARM_MS + 150);
+    await completion;
+    expect(input.keysym.mock.calls).toEqual(layout === "scrolls" ? [[1, true], [1, false]] : []);
+    expect(input.button.mock.calls).toEqual(accepts ? [[1, true], [1, false]] : []);
+    expect(input.move).toHaveBeenCalledTimes(accepts ? 1 : 0);
+    if (layout.startsWith("replaced")) expect(shown).toBe(replacement);
+  } finally { vi.useRealTimers(); }
 });

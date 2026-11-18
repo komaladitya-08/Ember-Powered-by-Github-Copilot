@@ -359,6 +359,15 @@ jobs:
               } catch { observation = unavailable(); }
               finally { if (fd !== undefined) { try { fs.closeSync(fd); } catch { observation = unavailable(); } } }
               console.info("WSL product failure inventory", JSON.stringify(observation));
+              const detailFrame = (label, pattern) => {
+                const output = outcome.stdout.toString("utf8").replace(/\x1b\[[0-9;]*m/g, "");
+                const lines = output.split("\n"), tail = lines.pop();
+                const matching = lines.filter(line => line.includes(label));
+                if (matching.length !== 1 || tail.includes(label)) throw new Error();
+                const match = pattern.exec(matching[0]);
+                if (!match || match[0].length !== matching[0].length) throw new Error();
+                return match.slice(1).map(Number);
+              };
               if (journey === "resources") {
                 let stage = { schema: 1, available: 0, case: 0, stage: 0 };
                 try {
@@ -376,6 +385,15 @@ jobs:
                   stage = { schema: 1, available: 1, case: Number(match[1]), stage: Number(match[2]) };
                 } catch { /* No complete stage tied to a failed phase-five resource case. */ }
                 console.info("WSL product failure resource workspace stage", JSON.stringify(stage));
+                let detail = { schema: 1, available: 0, case: 0, rpc: 0, edge: 0, refusal: 0, reply: 0, outer: 0 };
+                try {
+                  if (!stage.available || stage.stage !== 4) throw new Error();
+                  const [index, rpc, edge, refusal, reply, outer] = detailFrame("Windows WSL resource workspace detail",
+                    /^Windows WSL resource workspace detail \{"case":([12]),"rpc":([0-3]),"edge":([0-3]),"refusal":([0-3]),"reply":([0-3]),"outer":([1-3])\}\r?$/);
+                  if (index !== stage.case || (rpc === 0) !== (edge === 0) || (edge === 3) !== (refusal > 0) || (edge === 2) !== (reply > 0)) throw new Error();
+                  detail = { schema: 1, available: 1, case: index, rpc, edge, refusal, reply, outer };
+                } catch { /* Optional detail is valid only for the same verified stage-four resource failure. */ }
+                console.info("WSL product failure resource workspace detail", JSON.stringify(detail));
               }
               if (journey === "source") {
                 let terminal = { schema: 1, available: 0, episode: 0, stage: 0, session: 0, turn: 0 };
@@ -394,6 +412,16 @@ jobs:
                   terminal = { schema: 1, available: 1, episode, stage, session, turn };
                 } catch { /* No complete terminal stage tied to a failed phase-six repair case. */ }
                 console.info("WSL product failure source terminal stage", JSON.stringify(terminal));
+                let detail = { schema: 1, available: 0, episode: 0, summaryKind: 0, steps: 0, command: 0 };
+                try {
+                  if (!terminal.available) throw new Error();
+                  const [episode, summaryKind, steps, command] = detailFrame("Windows WSL source terminal detail",
+                    /^Windows WSL source terminal detail \{"episode":([12]),"summaryKind":([0-9]|1[0-2]),"steps":([0-6]),"command":([0-3])\}\r?$/);
+                  const finish = episode + 3;
+                  if (episode !== terminal.episode || steps > finish + 1 || command > 0 && steps < finish || summaryKind > 0 && terminal.session < 4) throw new Error();
+                  detail = { schema: 1, available: 1, episode, summaryKind, steps, command };
+                } catch { /* Optional detail is valid only for the same verified terminal episode. */ }
+                console.info("WSL product failure source terminal detail", JSON.stringify(detail));
               }
               if (journey === "packaged") {
                 let cached = { schema: 1, available: 0, phase: 0, operation: 0, bridgeStage: 0 };

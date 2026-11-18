@@ -1,14 +1,23 @@
 # Conductor progress and remaining work
 
-Software progress updated on 17 November 2026, following published product checkpoint `1507dc70` and its local software follow-up. The original submitted
-baseline was `audit/beta-readiness` at `76d0a2c9`; main was `85b5bd56` at that audit.
-[draft #262](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/262) targets main and records
-the latest head and its exact checks. The integration adds reviewed WSL/public-dependency and saved-draft
-work to the published conductor/project/session and Windows Node foundations. Their final 146-file native
-source graph is qualified; complete current-source Windows product journeys remain pending. The legacy native-SDK
-`codingAvailable()` gate remains false. This is not merge readiness.
+Software progress updated on 18 November 2026, following published checkpoint `0eecb62d` and its reviewed local fixture follow-up. The original submitted baseline was `audit/beta-readiness` at `76d0a2c9`; main remains `85b5bd56`.
+[PR #262](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/pull/262) targets main and records its current source and checks. The conductor, projects, named coding/desktop sessions, cursor companion, isolated coding, public dependencies and encrypted drafts are implemented. Complete Windows product acceptance remains required before merge.
 
-## Current software work on 17 November 2026
+## Current software work on 18 November 2026
+
+Published P6 `0eecb62d` completed all seven ordinary CI jobs, twelve preservation workflows and 876 registration contracts successfully. Its strict product inventory remains **22 of 46**: Node 18/20, WSL 2/24 and encrypted-draft restart 2/2. Seven of fourteen product leaves passed; the seven failed leaves and two required aggregates correctly block merge. Linux passed 23,079 unit cases, 322 integration cases and all 355 renderer journeys; its 39 unit and 856 integration skips are configured platform/feature exclusions. These results certify P6 only.
+
+Both packaged Node cases now stop while verifying native focus on the command readout. Both WSL source suites reach the first repair's failed terminal session state and quarantine later cases. Server 2025 WSL resources stop during workspace assembly, while both Server 2022 resource cases pass. Both packaged WSL cases stop during environment configuration. The bounded cached observations do not establish these failures' causes.
+
+The reviewed local follow-up adds failure-only numeric detail from reads already performed: packaged command target/focused control types and state, focus trajectory and window count; WSL workspace RPC entry/result/refusal and first-repair session/model milestones. Private runtime identities never enter reports and are discarded on stage exit or first capture. Independent controls corrected revoked-Proxy handling and observer access to hostile getters, connection objects and Promise hooks. Observations preserve existing connection, argument and promise identity, action sequence, deadlines, guard predicates and success qualification. Alternate or contradictory evidence remains unknown.
+
+A separate portable reproduction found a packaged WSL fixture error: its 600 ms assumption treated the consent button's normal 900 ms arming delay as unread overflow, then tried to focus a fitting, nonfocusable body. The correction waits within the original bound for either the exact enabled affirmative button or explicit unread-body evidence. End input and the final guarded click require a fresh exact consent title, including unnamed-heading fallback, so a replacement card cannot inherit the earlier decision. This fixture finding is not attribution of the hosted failure; the actual Windows journey must verify it.
+
+The complete 146-file native source graph, its verifier and the fixed toolchain producer remain byte-identical to their qualified versions. This follow-up changes fixtures, reporting, tests and this document; application runtime/build inputs are unchanged. Combined Root verification passed: full TypeScript over 1,579 unchanged inputs, all 587 affected cases across nine files without skips, scoped lint over 13 TypeScript paths, both YAML workflows and whitespace checks. All 757 application runtime/build source files and the built main bundle match P6 exactly, preserving its successful build and normal-sandbox launcher/Ask smoke; no new build, smoke, browser or SDK run is claimed. A new exact-source hosted run remains required. The legacy native-SDK `codingAvailable()` gate remains false.
+
+The user has authorized push and merge after current-source CI/CD passes and review findings are fixed. GitHub's automated review services reported payer usage limits; they published no code/security findings or failing review check contexts. Selected independent source reviews have been completed; they do not claim a complete review of the entire large diff. No merge, release or physical laptop acceptance has occurred. This session's remote Linux workspace briefly disconnected and recovered with its files and completed test receipts intact; the user's Windows PC was unaffected.
+
+## Previous checkpoints
 
 Published P5 `1507dc70` again completed **22 of 46** required product cases (Node 18/20, WSL 2/24, draft restart 2/2), with all twelve preservation workflows and all 876 registration contracts passed. Windows 2025 resources advanced from phase 2 to workspace assembly at phase 5; Windows 2022 resources passed both cases. Both source suites advanced from phase 2 to the first repair's phase-6 terminal/idle/result boundary and quarantined their remaining cases. Packaged Node stopped in native focus: the Models & connections link on Server 2025 and the fresh second command readout on Server 2022. Packaged WSL stopped earlier at navigation/settings stages. These remain distinct unqualified product outcomes.
 

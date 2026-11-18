@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 import { expect, it, vi } from "vitest";
+import { sourceSummaryKind } from "../fixtures/wsl-coding-product-observation";
 import { WSL_PRODUCT_CASES, WSL_PRODUCT_FILES, wslProductTitle, type WslProductJourney } from "../fixtures/wsl-coding-product-contract";
 
 const nativeRequire = createRequire(import.meta.url), workflow = fs.readFileSync(".github/workflows/wsl-coding-home.yml", "utf8");
@@ -311,7 +312,7 @@ it.each([1, 2, 3, 4, 5])("records resource assembly stage %i in the actual bindi
   const unavailable = () => { throw new Error("PRIVATE original refusal"); };
   const observed = await runInNewContext(enumSource.replace(" as const", "") + `
     (async () => {
-      let phase = 4, assembling, refusedStage, workspace;
+      let phase = 4, assembling, refusedStage, workspace, observeCalls, refusedCalls;
       try { ${assembly} }
       catch {
         ${freeze}
@@ -322,6 +323,7 @@ it.each([1, 2, 3, 4, 5])("records resource assembly stage %i in the actual bindi
     })();`, {
     graph, task, spec: {}, current: () => true, transport: {}, scriptLinuxPath: "/fixed",
     path, input: { repository: "/repository" }, expect, known: (work: Promise<unknown>) => work,
+    observeResourceWorkspaceCalls: () => () => ({ rpc: 0, edge: 0, refusal: 0, reply: 0 }), resourceOuterKind: () => 3, error: new Error(),
     connectWslCodingHelper: async () => stage === 2 ? unavailable() : connection,
     readWslCodingTypeScriptArchive: () => stage === 3 ? unavailable() : Buffer.alloc(1),
     resource: { async createWslWorkspace(_spec: unknown, _signal: AbortSignal, _current: () => boolean, binding: { open(): Promise<unknown> }) {
@@ -380,18 +382,22 @@ it.each([[0, "failed", "idle", 1, 5, 0], [1, "done", "held", 2, 4, 4], [1, "done
       (async () => {
         const fixture = { kind: "repair", sessions, home: { evaluate }, ${method} };
         try { await fixture.terminal(index, "done"); } catch {}
-        let refusedTerminal;
+        let refusedTerminal, refusedDetail;
         const phase = fixture.phase;
         ${freeze.slice(0, freeze.lastIndexOf("  }"))}
         fixture.terminalObservation.stage = 0;
-        return refusedTerminal;
+        return { refusedTerminal, refusedDetail };
       })();`, { loader: "ts", target: "node22" }).code;
-    const sessions = vi.fn(async () => Array.from({ length: index + 1 }, () => ({ status })));
+    const sessions = vi.fn(async () => Array.from({ length: index + 1 }, () => ({ status, summary: "The coding worker did not report an explicit completed result." })));
+    const terminalEvidence = vi.fn(() => ({ steps: 4, command: 1 }));
     const evaluate = vi.fn(async () => turn);
     const poll = (read: () => Promise<unknown>) => ({ async toBe(expected: unknown) { expect(await read()).toBe(expected); } });
-    const observed = await runInNewContext(extracted, { expect: { poll }, sessions, evaluate, index }, { timeout: 1000 });
-    expect(observed).toEqual({ episode: index + 1, stage, session: sessionId, turn: turnId });
-    expect(Object.isFrozen(observed)).toBe(true);
+    const observed = await runInNewContext(extracted, { expect: { poll }, sessions, evaluate, index, sourceSummaryKind, model: { terminalEvidence } }, { timeout: 1000 });
+    expect(observed.refusedTerminal).toEqual({ episode: index + 1, stage, session: sessionId, turn: turnId });
+    expect(Object.isFrozen(observed.refusedTerminal)).toBe(true);
+    expect(observed.refusedDetail).toEqual({ episode: index + 1, summaryKind: 6, steps: 4, command: 1 });
+    expect(Object.isFrozen(observed.refusedDetail)).toBe(true);
+    expect(terminalEvidence).toHaveBeenCalledExactlyOnceWith(index + 1);
     expect(sessions).toHaveBeenCalledOnce();
     expect(evaluate).toHaveBeenCalledTimes(stage === 1 ? 0 : 1);
   },
@@ -407,4 +413,52 @@ it.each(["resources", "source"] as const)("withholds contradictory %s stages wit
   expect(contradictory.frames[1][1]).toMatchObject({ report: 1, failed: WSL_PRODUCT_CASES[journey].length });
   expect(valid.frames[2][1]).toMatchObject({ available: 1, stage: 3 });
   expect(contradictory.frames[2][1]).toMatchObject({ available: 0, stage: 0 });
+});
+
+const resourceDetail = 'Windows WSL resource workspace detail {"case":1,"rpc":2,"edge":3,"refusal":1,"reply":0,"outer":2}';
+const sourceDetail = 'Windows WSL source terminal detail {"episode":1,"summaryKind":6,"steps":4,"command":1}';
+
+it.each(["resources", "source"] as const)("projects only report-bound optional %s details", async journey => {
+  const resource = journey === "resources";
+  const report = resource ? resourceStageReport() : sourceTerminalReport();
+  const prior = resource ? resourceStageFrame(4) : sourceTerminalFrame(1, 1, 5, 0);
+  const detail = resource ? resourceDetail : sourceDetail;
+  const without = await failedChild(journey, report, { stdout: prior + "\n" });
+  const withDetail = await failedChild(journey, report, { stdout: prior + "\n\x1b[22m" + detail + "\x1b[39m\r\n" });
+  const label = resource ? "WSL product failure resource workspace detail" : "WSL product failure source terminal detail";
+  expect(withDetail.frames.slice(0, 3)).toEqual(without.frames.slice(0, 3));
+  expect(withDetail.frames[3]).toEqual([label, resource
+    ? { schema: 1, available: 1, case: 1, rpc: 2, edge: 3, refusal: 1, reply: 0, outer: 2 }
+    : { schema: 1, available: 1, episode: 1, summaryKind: 6, steps: 4, command: 1 }]);
+  expect(without.frames[3][1].available).toBe(0);
+});
+
+it.each([
+  ["resources", resourceStageFrame(4), resourceDetail.replace('"case":1', '"case":2')],
+  ["resources", resourceStageFrame(3), resourceDetail],
+  ["resources", resourceStageFrame(4), resourceDetail.replace('"rpc":2', '"rpc":0')],
+  ["resources", resourceStageFrame(4), resourceDetail.replace('"refusal":1', '"refusal":0')],
+  ["resources", resourceStageFrame(4), resourceDetail.replace('"edge":3', '"edge":2')],
+  ["resources", resourceStageFrame(4), resourceDetail.replace('"outer":2', '"outer":0')],
+  ["resources", resourceStageFrame(4), resourceDetail.replace('"reply":0', '"reply":1')],
+  ["source", sourceTerminalFrame(1, 1, 5, 0), sourceDetail.replace('"episode":1', '"episode":2')],
+  ["source", sourceTerminalFrame(1, 1, 5, 0), sourceDetail.replace('"steps":4', '"steps":3')],
+  ["source", sourceTerminalFrame(1, 1, 5, 0), sourceDetail.replace('"steps":4', '"steps":6')],
+  ["source", sourceTerminalFrame(1, 1, 5, 0), sourceDetail.replace('"summaryKind":6', '"summaryKind":13')],
+  ["source", sourceTerminalFrame(1, 1, 2, 0), sourceDetail],
+  ["source", sourceTerminalFrame(1, 1, 5, 0), sourceDetail.replace("}", ',"PRIVATE":1}')],
+  ["source", sourceTerminalFrame(1, 1, 5, 0), sourceDetail + "\n" + sourceDetail],
+  ["source", sourceTerminalFrame(1, 1, 5, 0), "PRIVATE " + sourceDetail],
+] as const)("withholds contradictory or noncanonical %s detail", async (journey, prior, detail) => {
+  const report = journey === "resources" ? resourceStageReport() : sourceTerminalReport();
+  const { frames } = await failedChild(journey, report, { stdout: prior + "\n" + detail + "\n" });
+  expect(frames[2][1].available).toBe(1);
+  expect(frames[3][1].available).toBe(0);
+});
+
+it("withholds a partial detail and leaves the existing failed-case frames unchanged", async () => {
+  const prior = resourceStageFrame(4) + "\n";
+  const without = await failedChild("resources", resourceStageReport(), { stdout: prior });
+  const partial = await failedChild("resources", resourceStageReport(), { stdout: prior + resourceDetail });
+  expect(partial.frames).toEqual(without.frames);
 });

@@ -76,6 +76,7 @@ async function run(file: string, args: readonly string[], env: NodeJS.ProcessEnv
 interface PackagedObservation {
   operation: number; iteration: number; welcomeStep: number; nextLabel: number; target: number;
   bridgeError: number; snapshotFlags: number; focusFlags: number; inputResult: number; bridgeStage: number; projectStage: number;
+  commandWindows: number; targetType: number; focusedType: number; targetState: number; focusTrajectory: number;
   providerStage: number; commandStage: number; commandDecision: number; repairStep: number; repairResults: number; focusIdentity: number; cardFlags: number; allowFlags: number; denyFlags: number; hintFlags: number;
 }
 /**
@@ -99,25 +100,59 @@ interface PackagedObservation {
  * Focus identity bits: target-runtime1/returned-runtime2/runtime-match4/target-PID8/returned-PID16/PID-match32/known-string-automation-ID-match64/known-string-control-type-match128.
  * Card bits from an existing display poll: ask-cmd-present1/nonempty-runtime2/different-from-previous4/previous-recorded8.
  * Target codes1..7 keep the existing welcome controls;8project-sessions-request/9project-sessions-send.
+ * Stage8 focus: control types0missing/1Edit/2Document/3Pane/4Window/5TabItem/6Button/7Group/8other.
+ * Target state uses base-3 digits0unknown/1false/2true, low to high: focusable, offscreen, enabled, positive area.
+ * Focus trajectory0no comparable readout/1first/2repeated first/3different runtime seen. Window candidates0unknown or none/1one/2multiple.
  * Existing stage13 snapshot only: Allow/Not now presence1/enabled2/disabled4/onscreen8/offscreen16; hint bits exact whole-command-read1/answer-retry2.
  */
 function packagedObservation() {
-  const limits: PackagedObservation = { operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 9, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30, projectStage: 16, providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15, allowFlags: 31, denyFlags: 31, hintFlags: 3 };
-  const current: PackagedObservation = { operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0, projectStage: 0, providerStage: 0, commandStage: 0, commandDecision: 0, repairStep: 0, repairResults: 0, focusIdentity: 0, cardFlags: 0, allowFlags: 0, denyFlags: 0, hintFlags: 0 };
+  const limits: PackagedObservation = { operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 9, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30, projectStage: 16, providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15, allowFlags: 31, denyFlags: 31, hintFlags: 3, commandWindows: 2, targetType: 8, focusedType: 8, targetState: 80, focusTrajectory: 3 };
+  const current: PackagedObservation = { operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0, projectStage: 0, providerStage: 0, commandStage: 0, commandDecision: 0, repairStep: 0, repairResults: 0, focusIdentity: 0, cardFlags: 0, allowFlags: 0, denyFlags: 0, hintFlags: 0, commandWindows: 0, targetType: 0, focusedType: 0, targetState: 0, focusTrajectory: 0 };
   let captured = false, first: Readonly<PackagedObservation> | undefined;
   let decisions = 0;
+  let firstFocusedRuntime: string | undefined;
   const own = (value: unknown, key: string): unknown => {
     if (!value || typeof value !== "object" || types.isProxy(value)) return undefined;
     const property = Object.getOwnPropertyDescriptor(value, key); return property && Object.hasOwn(property, "value") ? property.value : undefined;
   };
+  const focusType = (value: unknown): number => typeof value === "string" && value
+    ? ["Edit", "Document", "Pane", "Window", "TabItem", "Button", "Group"].indexOf(value) + 1 || 8 : 0;
   const update = (values: Partial<PackagedObservation>) => {
     try { for (const key of Object.keys(limits) as (keyof PackagedObservation)[]) {
       const value = own(values, key); if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= limits[key]) current[key] = value;
     } } catch { /* An observation cannot alter the operation being observed. */ }
+    if (current.commandStage !== 8) firstFocusedRuntime = undefined;
   };
   return {
     update,
     decision() { try { decisions = Math.min(9, decisions + 1); update({ commandDecision: decisions <= 8 ? decisions : 0 }); } catch { /* The counter never controls a decision. */ } },
+    resetCommandFocus() {
+      firstFocusedRuntime = undefined;
+      update({ commandWindows: 0, targetType: 0, focusedType: 0, targetState: 0, focusTrajectory: 0 });
+    },
+    commandWindowCandidates(value: unknown) {
+      if (current.commandStage !== 6) return;
+      const count = own(value, "length");
+      if (types.isProxy(value) || !Array.isArray(value) || typeof count !== "number" || !Number.isInteger(count) || count < 0 || count > 2000) {
+        update({ commandWindows: 0 }); return;
+      }
+      let candidates = 0;
+      for (let index = 0; index < count && candidates < 2; index++) {
+        if (own(own(value, String(index)), "name") === "Ember commands") candidates++;
+      }
+      update({ commandWindows: candidates });
+    },
+    commandFocusTarget(target: unknown) {
+      if (current.commandStage !== 8) return;
+      firstFocusedRuntime = undefined;
+      const tri = (value: unknown): number => value === true ? 2 : value === false ? 1 : 0;
+      const bounds = own(target, "bounds"), width = own(bounds, "width"), height = own(bounds, "height");
+      const area = typeof width === "number" && Number.isFinite(width) && typeof height === "number" && Number.isFinite(height)
+        ? width > 0 && height > 0 : undefined;
+      update({ targetType: focusType(own(target, "controlType")), focusedType: 0, focusTrajectory: 0,
+        targetState: tri(own(target, "isKeyboardFocusable")) + 3 * tri(own(target, "isOffscreen"))
+          + 9 * tri(own(target, "isEnabled")) + 27 * tri(area) });
+    },
     card(value: unknown, previous: unknown) { try {
       const count = own(value, "length"); let flags = typeof previous === "string" && previous ? 8 : 0;
       if (!Array.isArray(value) || types.isProxy(value) || typeof count !== "number" || !Number.isInteger(count) || count < 0 || count > 2000) { update({ cardFlags: 0 }); return; }
@@ -189,6 +224,14 @@ function packagedObservation() {
         | (validTargetPid ? 8 : 0) | (validPid ? 16 : 0) | (validTargetPid && validPid && pid === targetPid ? 32 : 0)
         | (typeof own(element, "automationId") === "string" && own(element, "automationId") === own(target, "automationId") ? 64 : 0)
         | (typeof own(element, "controlType") === "string" && own(element, "controlType") === own(target, "controlType") ? 128 : 0) });
+      if (!captured && current.commandStage === 8) {
+        update({ focusedType: focusType(own(element, "controlType")) });
+        if (own(value, "hwnd") === hwnd && own(element, "hasKeyboardFocus") === true && validPid && validTargetPid && pid === targetPid
+          && typeof runtime === "string" && runtime.length > 0 && runtime.length <= 512) {
+          if (firstFocusedRuntime === undefined) { firstFocusedRuntime = runtime; update({ focusTrajectory: 1 }); }
+          else if (current.focusTrajectory !== 3) update({ focusTrajectory: runtime === firstFocusedRuntime ? 2 : 3 });
+        }
+      }
       const same = typeof runtime === "string" && !!runtime && typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0 && runtime === own(target, "runtimeId") && pid === own(target, "pid")
         && own(element, "automationId") === own(target, "automationId") && own(element, "controlType") === own(target, "controlType");
       update({ focusFlags: (own(value, "hwnd") === hwnd ? 1 : 0) | (element ? 2 : 0) | (same ? 4 : 0) | (own(element, "hasKeyboardFocus") === true ? 8 : 0) });
@@ -198,7 +241,7 @@ function packagedObservation() {
       update({ focusFlags: (value ? 1 : 0) | (own(value, "isOffscreen") === false ? 2 : 0) | (bounds ? 4 : 0) | (typeof width === "number" && !(width <= 0) ? 8 : 0) | (typeof height === "number" && !(height <= 0) ? 16 : 0) });
     } catch { /* No new bounds or foreground queries. */ } },
     input<T>(value: T, rejection = false): T { try { update({ inputResult: typeof value === "boolean" ? (rejection ? !value : value) ? 1 : 2 : 0 }); } catch { /* Preserve the exact returned value. */ } return value; },
-    capture() { if (captured) return; captured = true; try { first = Object.freeze({ ...current }); } catch { /* Do not retry with later cleanup state. */ } },
+    capture() { if (captured) return; captured = true; firstFocusedRuntime = undefined; try { first = Object.freeze({ ...current }); } catch { /* Do not retry with later cleanup state. */ } },
     value() { return first; },
   };
 }
@@ -277,6 +320,7 @@ class Journey {
     if (answer.error?.code === "busy" || answer.error?.code === "gone") return [];
     if (answer.error) throw refusal(this.phase);
     const windows = (answer.result as { windows: UiaWindow[] }).windows.filter(window => window.pid === this.app!.pid && !window.busy && !window.skipped);
+    try { this.observation.commandWindowCandidates(windows); } catch { /* Cached filtered candidates only. */ }
     try { this.observation.windows(windows); } catch { /* Preserve the exact returned array. */ } return windows;
   }
   private async nodes(hwnd: number): Promise<RawNode[]> {
@@ -317,6 +361,7 @@ class Journey {
   }
   private async focus(hwnd: number, node: RawNode, guard?: SnapshotGuard): Promise<RawNode> {
     this.observe({ operation: 10, focusFlags: 0, inputResult: 0, focusIdentity: 0 }); try { this.observation.node(node); } catch { /* Cached target only. */ }
+    try { this.observation.commandFocusTarget(node); } catch { /* Cached stage8 target only. */ }
     if (!this.input || this.input.blockedReason?.(hwnd)) throw refusal(this.phase);
     this.current();
     this.observeInput(this.input.activate(hwnd));
@@ -538,6 +583,7 @@ class Journey {
   async send(request: string): Promise<void> { await this.revealHomeControl(id("project-sessions-request"), true, true); await this.fill(this.home, id("project-sessions-request"), request); await this.click(this.home, id("project-sessions-send")); }
   private async command(): Promise<number> { return (await this.until(() => this.windows(), windows => windows.some(window => window.name === "Ember commands"), 45_000)).find(window => window.name === "Ember commands")!.hwnd; }
   async decide(argv: readonly string[], answer: "Allow" | "Not now" = "Allow"): Promise<void> {
+    try { this.observation.resetCommandFocus(); } catch { /* Cached decision diagnostics only. */ }
     this.phase = 6; try { this.observation.decision(); } catch { /* Count only this existing call. */ } this.observe({ commandStage: 6, cardFlags: 0, allowFlags: 0, denyFlags: 0, hintFlags: 0 }); const hwnd = await this.command();
     this.observe({ commandStage: 7 });
     const commandBlock = id("ask-cmd");

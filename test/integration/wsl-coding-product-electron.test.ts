@@ -16,6 +16,7 @@ import type { CodingResultSummary } from "../../app/shared/project-coding";
 import { closeTestElectron } from "./close-electron";
 import { wslProductPreflight, wslProductScratchParent, wslProductChildEnvironment } from "../fixtures/wsl-coding-product-preflight";
 import { WSL_PRODUCT_CASES, wslProductTitle, type WslSourceCase } from "../fixtures/wsl-coding-product-contract";
+import { sourceSummaryKind } from "../fixtures/wsl-coding-product-observation";
 import { createWslProductModel, wslProductProject, wslProductScenarios, WSL_PRODUCT_CHECK, WSL_PRODUCT_WRITER,
   WSL_PRODUCT_WRITER_READY, WSL_PRODUCT_TOOLS, WSL_PUBLIC_PRODUCT_TOOLS } from "../fixtures/wsl-coding-product-model";
 
@@ -44,6 +45,7 @@ const sourceTerminalStage = Object.freeze({ session: 1, idle: 2, results: 3 } as
 type SourceTerminalObservation = { episode: number; stage: number; session: number; turn: number };
 
 class Journey {
+  terminalSummaryKind = 0;
   terminalObservation?: SourceTerminalObservation;
   phase = 1;
   app?: ElectronApplication;
@@ -193,9 +195,13 @@ class Journey {
     const observation = this.kind === "repair" && (index === 0 || index === 1)
       ? { episode: index + 1, stage: sourceTerminalStage.session, session: 0, turn: 0 } as SourceTerminalObservation : undefined;
     this.terminalObservation = observation;
+    this.terminalSummaryKind = 0;
     await expect.poll(async () => {
       const item = (await this.sessions())[index];
-      if (observation) observation.session = ["queued", "running", "waiting", "done", "failed", "stopped"].indexOf(item?.status ?? "") + 1;
+      if (observation) {
+        observation.session = ["queued", "running", "waiting", "done", "failed", "stopped"].indexOf(item?.status ?? "") + 1;
+        this.terminalSummaryKind = sourceSummaryKind(item?.summary);
+      }
       return status ? item?.status === status : !!item && ["done", "failed", "stopped"].includes(item.status);
     }, { timeout: 45_000 }).toBe(true);
     if (this.kind === "denied") this.phase = 17;
@@ -243,6 +249,7 @@ class Journey {
 async function journey(kind: WslSourceCase, run: (fixture: Journey) => Promise<void>): Promise<void> {
   if (quarantined) throw refusal(kind, 1);
   let fixture: Journey | undefined, model: Model | undefined, root: string | undefined, failed = false, phase = 1;
+  let refusedDetail: Readonly<{ episode: number; summaryKind: number; steps: number; command: number }> | undefined;
   let refusedTerminal: Readonly<SourceTerminalObservation> | undefined;
   let owned: Promise<void> | undefined, timer: ReturnType<typeof setTimeout> | undefined;
   const owner: { root?: string; model?: Model; fixture?: Journey; owned?: Promise<void> } = {};
@@ -260,7 +267,10 @@ async function journey(kind: WslSourceCase, run: (fixture: Journey) => Promise<v
     })]);
   } catch {
     quarantined = true; failed = true; phase = fixture?.phase ?? phase;
-    if (phase === 6 && fixture?.terminalObservation) refusedTerminal = Object.freeze({ ...fixture.terminalObservation });
+    if (phase === 6 && fixture?.terminalObservation) {
+      refusedTerminal = Object.freeze({ ...fixture.terminalObservation });
+      if (model) refusedDetail = Object.freeze({ episode: refusedTerminal.episode, summaryKind: fixture.terminalSummaryKind, ...model.terminalEvidence(refusedTerminal.episode) });
+    }
   }
   finally {
     quarantined = true;
@@ -281,6 +291,7 @@ async function journey(kind: WslSourceCase, run: (fixture: Journey) => Promise<v
   }
   if (failed) {
     if (refusedTerminal) console.info("Windows WSL source terminal observation", JSON.stringify(refusedTerminal));
+    if (refusedDetail) console.info("Windows WSL source terminal detail", JSON.stringify(refusedDetail));
     quarantined = true; throw refusal(kind, phase);
   }
   retainedOwners.delete(owner); quarantined = false;

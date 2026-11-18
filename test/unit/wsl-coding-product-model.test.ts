@@ -33,3 +33,24 @@ it("requires baseline preparation and a separate changed-set preparation before 
     expect(model.failures).toEqual([]);
   } finally { await model.close(); }
 });
+
+it.each([
+  ["Observed command exited successfully.\n<coding_command_result untrusted=\"true\">PRIVATE", 1],
+  ["Observed command exited unsuccessfully. Fix the copy and rerun this exact check before reporting success.\n<coding_command_result untrusted=\"true\">PRIVATE", 2],
+  ["PRIVATE embedded Observed command exited successfully.\n<coding_command_result untrusted=\"true\">", 3],
+] as const)("records only the repair command observation while preserving the mock replies (%#)", async (output, kind) => {
+  const scenarios = wslProductScenarios("repair"), model = await createWslProductModel(scenarios, "Ubuntu-22.04 (WSL)");
+  const goal = scenarios[0].goal;
+  try {
+    expect(model.terminalEvidence(1)).toEqual({ steps: 0, command: 0 });
+    expect((await reply(model, goal, WSL_PRODUCT_TOOLS)).name).toBe("run_command");
+    expect((await reply(model, goal, WSL_PRODUCT_TOOLS, "ERR_ASSERTION")).name).toBe("coding_replace");
+    expect((await reply(model, goal, WSL_PRODUCT_TOOLS)).name).toBe("run_command");
+    expect(model.terminalEvidence(1)).toEqual({ steps: 3, command: 0 });
+    expect(await reply(model, goal, WSL_PRODUCT_TOOLS, output)).toMatchObject({ name: "finish_coding", args: { success: true } });
+    expect(model.terminalEvidence(1)).toEqual({ steps: 4, command: kind });
+    expect(model.terminalEvidence(2)).toEqual({ steps: 0, command: 0 });
+    expect(await reply(model, goal, WSL_PRODUCT_TOOLS)).toMatchObject({ name: "finish_coding", args: { success: false } });
+    expect(model.terminalEvidence(1)).toEqual({ steps: 5, command: kind });
+  } finally { await model.close(); }
+});

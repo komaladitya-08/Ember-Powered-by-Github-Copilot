@@ -220,7 +220,7 @@ it("unchanged successful source reporting accepts only its complete seven-case i
 });
 
 const packagedFrame = (phase: number) => `Error: Windows Node packaged journey refused (phase ${phase}).`;
-const emptyObservation = () => ({ operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0, projectStage: 0, providerStage: 0, commandStage: 0, commandDecision: 0, repairStep: 0, repairResults: 0, focusIdentity: 0, cardFlags: 0, allowFlags: 0, denyFlags: 0, hintFlags: 0 });
+const emptyObservation = () => ({ operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0, projectStage: 0, providerStage: 0, commandStage: 0, commandDecision: 0, repairStep: 0, repairResults: 0, focusIdentity: 0, cardFlags: 0, allowFlags: 0, denyFlags: 0, hintFlags: 0, commandWindows: 0, targetType: 0, focusedType: 0, targetState: 0, focusTrajectory: 0 });
 type Observation = ReturnType<typeof emptyObservation>;
 const packagedDiagnostic = (fixture: ReturnType<typeof proofFixture>) => {
   const rows = fixture.printed.mock.calls.filter(call => call[0] === "Windows Node packaged proof failure facts"); expect(rows).toHaveLength(1);
@@ -275,12 +275,16 @@ interface ObservationHelper {
   update(value: unknown): void; answer(value: unknown): void; windows(value: unknown): void; node(value: unknown): void; step(value: unknown): void;
   readyError(error: unknown): void;
   focused(value: unknown, target: unknown, hwnd: number): void; fresh(value: unknown): void; input<T>(value: T, rejection?: boolean): T;
+  retainsRuntime(): boolean; resetCommandFocus(): void; commandWindowCandidates(value: unknown): void; commandFocusTarget(target: unknown): void;
   decision(): void; card(value: unknown, previous: unknown): void; controls(value: unknown): void; capture(): void; value(): Readonly<Observation> | undefined;
 }
 function observationHelper(globals: Record<string, unknown> = {}): ObservationHelper {
   const source = read(cases.packaged), start = source.indexOf("function packagedObservation()"), end = source.indexOf("/** Keep the real OS profile", start);
   expect(start >= 0 && end > start).toBe(true);
-  const code = transformSync(source.slice(start, end) + "\nmodule.exports = packagedObservation;", { loader: "ts", format: "cjs", target: "node22" }).code;
+  const body = source.slice(start, end), probe = "  return {\n    update,";
+  expect(body.split(probe)).toHaveLength(2);
+  const observed = body.replace(probe, "  return {\n    retainsRuntime: () => firstFocusedRuntime !== undefined,\n    update,");
+  const code = transformSync(observed + "\nmodule.exports = packagedObservation;", { loader: "ts", format: "cjs", target: "node22" }).code;
   const module = { exports: undefined as unknown as () => ObservationHelper };
   runInNewContext(code, { module, types, ...globals }); return module.exports();
 }
@@ -427,14 +431,92 @@ it("stage13 control projection reads neither proxy traps nor accessor properties
   o.update({ commandStage: 14 }); o.controls([{ controlType: "Button", name: "Allow", isEnabled: true, isOffscreen: false }]); o.capture();
   expect(reads).toBe(0); expect(o.value()).toMatchObject({ allowFlags: 1, denyFlags: 0, hintFlags: 0 });
 });
+it.each([
+  [[], 0], [[{ name: "PRIVATE" }], 0], [[{ name: "Ember commands" }], 1],
+  [Array(3).fill({ name: "Ember commands", hwnd: 77 }), 2], [Array(2001).fill({ name: "Ember commands" }), 0],
+] as const)("counts only bounded existing candidate rows, including repetitions %#", (windows, commandWindows) => {
+  const o = observationHelper(); o.update({ commandStage: 6 }); o.commandWindowCandidates(windows); o.capture();
+  expect(o.value()?.commandWindows).toBe(commandWindows);
+});
+it("clears prior window candidates for an unreadable revoked array without touching its traps", () => {
+  let reads = 0;
+  const o = observationHelper(), hostile = Proxy.revocable([], { getOwnPropertyDescriptor() { reads++; throw new Error("PRIVATE"); } });
+  o.update({ commandStage: 6 }); o.commandWindowCandidates([{ name: "Ember commands" }]);
+  hostile.revoke();
+  expect(() => o.commandWindowCandidates(hostile.proxy)).not.toThrow();
+  o.capture();
+  expect(reads).toBe(0); expect(o.value()?.commandWindows).toBe(0);
+});
+it.each([
+  [{}, 0, 0],
+  [{ controlType: "Edit", isKeyboardFocusable: true, isOffscreen: false, isEnabled: true, bounds: { width: 1, height: 1 } }, 1, 77],
+  [{ controlType: "PRIVATE", isKeyboardFocusable: false, isOffscreen: true, isEnabled: false, bounds: { width: 0, height: 1 } }, 8, 43],
+  [{ controlType: "TabItem", isEnabled: "true", bounds: { width: Infinity, height: 1 } }, 5, 0],
+] as const)("projects only the closed type and four tri-state flags from the stage8 target %#", (target, targetType, targetState) => {
+  const o = observationHelper(); o.update({ commandStage: 8 }); o.commandFocusTarget(target); o.capture();
+  expect(o.value()).toMatchObject({ targetType, targetState }); expect(JSON.stringify(o.value())).not.toContain("PRIVATE");
+});
+it.each([0, 1, 2, 3] as const)("bounds the stage8 trajectory at %i using only comparable readouts", expected => {
+  const o = observationHelper(), first = "P".repeat(512), other = "PRIVATE another identity";
+  const target = { runtimeId: "PRIVATE target", pid: 42 };
+  const focused = (runtimeId: string, hwnd = 99, pid = 42, hasKeyboardFocus = true) => {
+    o.focused({ hwnd, element: { runtimeId, pid, hasKeyboardFocus, controlType: "Document" } }, target, 99);
+  };
+  o.update({ commandStage: 8 }); o.commandFocusTarget(target);
+  focused(first + "P"); focused(first, 98); focused(first, 99, 41); focused(first, 99, 42, false);
+  if (expected >= 1) focused(first);
+  if (expected >= 2) focused(first);
+  if (expected === 3) { focused(other); focused(first); }
+  o.capture();
+  expect(o.value()).toMatchObject({ focusedType: 2, focusTrajectory: expected });
+  expect(JSON.stringify(o.value())).not.toContain("PRIVATE"); expect(JSON.stringify(o.value())).not.toContain(first);
+});
+it.each(["target", "decision"] as const)("clears prior comparison state on a new %s", reset => {
+  const o = observationHelper(), target = { runtimeId: "PRIVATE target", controlType: "Edit", pid: 42 };
+  const focused = (runtimeId: string) => o.focused({ hwnd: 99, element: { runtimeId, pid: 42, hasKeyboardFocus: true, controlType: "Pane" } }, target, 99);
+  o.update({ commandStage: 6 }); o.commandWindowCandidates([{ name: "Ember commands" }]);
+  o.update({ commandStage: 8 }); o.commandFocusTarget(target); focused("PRIVATE one"); focused("PRIVATE two");
+  if (reset === "target") o.commandFocusTarget(target);
+  else o.resetCommandFocus();
+  focused("PRIVATE two"); o.capture();
+  expect(o.value()).toMatchObject({ commandWindows: reset === "target" ? 1 : 0, targetType: reset === "target" ? 1 : 0, focusedType: 3, focusTrajectory: 1 });
+});
+it.each(["stage exit", "failure capture"] as const)("releases the bounded private runtime on %s and retains only numeric history", exit => {
+  const o = observationHelper(), target = { pid: 42 }, result = {
+    hwnd: 99, element: { runtimeId: "PRIVATE first identity", pid: 42, hasKeyboardFocus: true, controlType: "Document" },
+  };
+  o.update({ commandStage: 8 }); o.commandFocusTarget(target);
+  o.focused(result, target, 99); o.focused(result, target, 99);
+  expect(o.retainsRuntime()).toBe(true);
+  if (exit === "stage exit") o.update({ commandStage: 9 });
+  else o.capture();
+  expect(o.retainsRuntime()).toBe(false);
+  o.focused(result, target, 99);
+  expect(o.retainsRuntime()).toBe(false);
+  o.capture();
+  expect(o.value()).toMatchObject({ focusedType: 2, focusTrajectory: 2 });
+  expect(JSON.stringify(o.value())).not.toContain("PRIVATE");
+});
+it("ignores accessors, proxies and cached discriminator reads outside their stages", () => {
+  let reads = 0; const trap = () => { reads++; throw new Error("PRIVATE"); }, o = observationHelper();
+  const hostile = new Proxy({}, { get: trap, getOwnPropertyDescriptor: trap });
+  const target = { get controlType() { return trap(); }, get isEnabled() { return trap(); }, bounds: hostile };
+  o.commandFocusTarget({ controlType: "Edit", isEnabled: true });
+  o.focused({ hwnd: 99, element: { controlType: "Document" } }, {}, 99);
+  o.commandWindowCandidates([{ name: "Ember commands" }]);
+  o.update({ commandStage: 6 }); o.commandWindowCandidates([{ get name() { return trap(); } }, hostile]);
+  o.update({ commandStage: 8 }); o.commandFocusTarget(target); o.focused({ hwnd: 99, element: hostile }, target, 99); o.capture();
+  expect(reads).toBe(0);
+  expect(o.value()).toMatchObject({ commandWindows: 0, targetType: 0, focusedType: 0, targetState: 0, focusTrajectory: 0 });
+});
 it("the full maximum numeric frame remains inside the unchanged 512-byte strict parser boundary", () => {
   const o = observationHelper(); o.update({ operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 9, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30, projectStage: 16,
-    providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15, allowFlags: 31, denyFlags: 31, hintFlags: 3 }); o.capture();
+    providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15, allowFlags: 31, denyFlags: 31, hintFlags: 3, commandWindows: 2, targetType: 8, focusedType: 8, targetState: 80, focusTrajectory: 3 }); o.capture();
   expect(Buffer.byteLength(JSON.stringify(o.value()))).toBeLessThanOrEqual(512);
   const f = proofFixture("packaged", passing("packaged"), { attempt: sourceAttempt(packagedFrame(6) + "\n" + observationFrame(o.value())) });
   expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f).observation).toEqual(o.value()); expect(f.outputs).toEqual([]);
 });
-it.each(Object.entries({ target: 10, providerStage: 13, commandStage: 15, commandDecision: 9, repairStep: 5, repairResults: 5, focusIdentity: 256, cardFlags: 16, allowFlags: 32, denyFlags: 32, hintFlags: 4 }))("the strict workflow refuses an out-of-domain new %s field without accepting any partial frame", (field, invalid) => {
+it.each(Object.entries({ target: 10, providerStage: 13, commandStage: 15, commandDecision: 9, repairStep: 5, repairResults: 5, focusIdentity: 256, cardFlags: 16, allowFlags: 32, denyFlags: 32, hintFlags: 4, commandWindows: 3, targetType: 9, focusedType: 9, targetState: 81, focusTrajectory: 4 }))("the strict workflow refuses an out-of-domain new %s field without accepting any partial frame", (field, invalid) => {
   const tuple = { ...emptyObservation(), [field]: invalid };
   const f = proofFixture("packaged", passing("packaged"), { attempt: sourceAttempt(packagedFrame(6) + "\n" + observationFrame(tuple)) });
   expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f).observation).toEqual(emptyObservation()); expect(f.outputs).toEqual([]);
@@ -531,7 +613,7 @@ it("the actual pure fixture helper freezes only bounded cached fields before cle
   o.node({ ...node, name: "Agree and continue", value: "PRIVATE field" }); o.step("Step 2 of 6");
   o.focused({ hwnd: 99, element: node }, node, 99); o.fresh({ isOffscreen: false, bounds: { x: 100, y: 100, width: 36, height: 21 } });
   expect(o.input(false)).toBe(false); o.capture(); const first = o.value();
-  expect(first).toEqual({ operation: 14, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 1, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 0, projectStage: 0, providerStage: 0, commandStage: 0, commandDecision: 0, repairStep: 0, repairResults: 0, focusIdentity: 255, cardFlags: 0, allowFlags: 0, denyFlags: 0, hintFlags: 0 });
+  expect(first).toEqual({ operation: 14, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 1, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 0, projectStage: 0, providerStage: 0, commandStage: 0, commandDecision: 0, repairStep: 0, repairResults: 0, focusIdentity: 255, cardFlags: 0, allowFlags: 0, denyFlags: 0, hintFlags: 0, commandWindows: 0, targetType: 0, focusedType: 0, targetState: 0, focusTrajectory: 0 });
   expect(Object.isFrozen(first)).toBe(true); expect(JSON.stringify(first)).not.toContain("PRIVATE");
   o.update({ operation: 0, iteration: 12 }); o.capture(); expect(o.value()).toBe(first);
 });
@@ -698,13 +780,13 @@ it("the actual outer failure catch captures before close and does not replace th
   expect(await module.exports(fixture, { async close() { trace.push("model"); } })).toEqual({ failed: true, phase: 3 });
   expect(trace).toEqual(["capture", "cleanup-start", "close", "model"]); expect(o.value()?.operation).toBe(7);
 });
-it.each(Object.entries({ operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 9, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30, projectStage: 16, providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15, allowFlags: 31, denyFlags: 31, hintFlags: 3 }))("the pure helper refuses out-of-domain %s metadata", (field, maximum) => {
+it.each(Object.entries({ operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 9, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30, projectStage: 16, providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15, allowFlags: 31, denyFlags: 31, hintFlags: 3, commandWindows: 2, targetType: 8, focusedType: 8, targetState: 80, focusTrajectory: 3 }))("the pure helper refuses out-of-domain %s metadata", (field, maximum) => {
   for (const invalid of [-1, maximum + 1, 0.5, Infinity, "PRIVATE"]) {
     const o = observationHelper(); o.update({ [field]: invalid }); o.capture(); expect(o.value()).toEqual(emptyObservation());
   }
 });
 it("the strict workflow projects one agreeing cached tuple while preserving phase and the original fatal guard", () => {
-  const tuple = { operation: 7, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 0, snapshotFlags: 0, focusFlags: 15, inputResult: 1, bridgeStage: 30, projectStage: 16, providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15, allowFlags: 31, denyFlags: 31, hintFlags: 3 };
+  const tuple = { operation: 7, iteration: 2, welcomeStep: 2, nextLabel: 2, target: 1, bridgeError: 0, snapshotFlags: 0, focusFlags: 15, inputResult: 1, bridgeStage: 30, projectStage: 16, providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15, allowFlags: 31, denyFlags: 31, hintFlags: 3, commandWindows: 2, targetType: 8, focusedType: 8, targetState: 80, focusTrajectory: 3 };
   const f = proofFixture("packaged", passing("packaged"), { attempt: sourceAttempt(packagedFrame(3) + "\n" + observationFrame(tuple), observationFrame(tuple)) });
   expect(f.run).toThrow("could not be verified"); expect(packagedDiagnostic(f)).toEqual({ child: 2, timeout: 0, phase: 3, observation: tuple });
   expect(f.queries).toEqual(["exists", "read", "lstat", "exists"]); expect(f.outputs).toEqual([]);

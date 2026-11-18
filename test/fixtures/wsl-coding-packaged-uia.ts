@@ -4,6 +4,7 @@ import type { RawNode, UiaBridge, UiaWindow } from "../integration/uia-client";
 
 type Input = NonNullable<ReturnType<typeof openWin32Input>>;
 export type WslUiSelector = (node: RawNode) => boolean;
+type SnapshotGuard = (nodes: readonly RawNode[]) => void;
 export const wslUiId = (id: string): WslUiSelector => node => node.automationId === id;
 export const wslUiName = (name: string): WslUiSelector => node => node.name === name;
 export function sameWslUiNode(left: RawNode, right: RawNode): boolean {
@@ -74,7 +75,7 @@ export class WslPackagedUi {
   private foreground(hwnd: number): void {
     this.current(); if (this.p.input.blockedReason?.(hwnd) || this.p.input.activeWindow() !== hwnd) this.fail();
   }
-  async focus(hwnd: number, node: RawNode): Promise<RawNode> {
+  async focus(hwnd: number, node: RawNode, guard?: SnapshotGuard): Promise<RawNode> {
     this.operation = 4; this.current(); if (this.p.input.blockedReason?.(hwnd)) this.fail(); this.p.input.activate(hwnd);
     // Activation may return before Windows raises the HWND. Verify foreground and exact focus in one budget.
     const focusDeadline = Date.now() + 10_000;
@@ -92,7 +93,9 @@ export class WslPackagedUi {
       if (Date.now() >= focusDeadline) this.fail();
       return result;
     }, result => result !== null && result.hwnd === hwnd && !!result.element && sameWslUiNode(result.element, node) && result.element.hasKeyboardFocus === true, focusDeadline - Date.now());
-    const fresh = (await this.nodes(hwnd)).find(value => sameWslUiNode(value, node)); this.foreground(hwnd);
+    const nodes = await this.nodes(hwnd);
+    guard?.(nodes);
+    const fresh = nodes.find(value => sameWslUiNode(value, node)); this.foreground(hwnd);
     if (!fresh || fresh.isEnabled !== true || fresh.isOffscreen || !fresh.bounds || fresh.bounds.width <= 0 || fresh.bounds.height <= 0) this.fail();
     return fresh;
   }
@@ -106,8 +109,8 @@ export class WslPackagedUi {
     try { if (!this.p.input.keysym(symbol, true)) this.fail(); this.key(hwnd, key); }
     finally { this.p.input.keysym(symbol, false); this.p.input.releaseAll(); }
   }
-  async click(hwnd: number, select: WslUiSelector): Promise<void> {
-    const node = await this.focus(hwnd, await this.node(hwnd, select)), box = node.bounds!; if (!select(node)) this.fail();
+  async click(hwnd: number, select: WslUiSelector, guard?: SnapshotGuard): Promise<void> {
+    const node = await this.focus(hwnd, await this.node(hwnd, select), guard), box = node.bounds!; if (!select(node)) this.fail();
     this.operation = 7;
     try {
       this.foreground(hwnd); this.p.input.move(box.x + Math.floor(box.width / 2), box.y + Math.floor(box.height / 2));

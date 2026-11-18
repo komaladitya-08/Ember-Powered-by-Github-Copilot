@@ -76,6 +76,36 @@ it("preserves the entire native WSL test after reversing only the new observatio
 });
 it("preserves the entire packaged test after reversing only the new project/folder stage field and markers", () => {
   let source = fs.readFileSync("test/integration/windows-node-packaged-product.test.ts", "utf8");
+  // Reverse the cached command focus diagnostics before reconstructing earlier layers.
+  const commandFocusAdditions = [
+    "  commandWindows: number; targetType: number; focusedType: number; targetState: number; focusTrajectory: number;\n",
+    " * Stage8 focus: control types0missing/1Edit/2Document/3Pane/4Window/5TabItem/6Button/7Group/8other.\n",
+    " * Target state uses base-3 digits0unknown/1false/2true, low to high: focusable, offscreen, enabled, positive area.\n",
+    " * Focus trajectory0no comparable readout/1first/2repeated first/3different runtime seen. Window candidates0unknown or none/1one/2multiple.\n",
+    "  let firstFocusedRuntime: string | undefined;\n",
+    "    if (current.commandStage !== 8) firstFocusedRuntime = undefined;\n",
+    "    try { this.observation.commandWindowCandidates(windows); } catch { /* Cached filtered candidates only. */ }\n",
+    "    try { this.observation.commandFocusTarget(node); } catch { /* Cached stage8 target only. */ }\n",
+    "    try { this.observation.resetCommandFocus(); } catch { /* Cached decision diagnostics only. */ }\n",
+    ", commandWindows: 2, targetType: 8, focusedType: 8, targetState: 80, focusTrajectory: 3",
+    ", commandWindows: 0, targetType: 0, focusedType: 0, targetState: 0, focusTrajectory: 0",
+  ];
+  for (const addition of commandFocusAdditions) { expect(source.split(addition)).toHaveLength(2); source = source.replace(addition, ""); }
+  const releaseOnCapture = "captured = true; firstFocusedRuntime = undefined; try { first";
+  expect(source.split(releaseOnCapture)).toHaveLength(2);
+  source = source.replace(releaseOnCapture, "captured = true; try { first");
+  const commandFocusBlocks = [
+    ["  const focusType =", "  const update =", "ec1add0fed41c7a49bdbb83d5caab9a715c42531a1443df6ef8d67498e4a61d4"],
+    ["    resetCommandFocus() {", "    card(value:", "10b5c6e18ecd3b5f1b3cfb224377cb3e3abc4d2ffab2377e17c8e015d9446034"],
+    ["      if (!captured && current.commandStage === 8) {", "      const same =", "1a84fb360ae505b5ecf4190f357591586806ffe65435aac62401907820f33538"],
+  ];
+  for (const [start, end, hash] of commandFocusBlocks) {
+    const begin = source.indexOf(start), stop = source.indexOf(end, begin);
+    expect(begin >= 0 && stop > begin).toBe(true);
+    expect(digest(source.slice(begin, stop))).toBe(hash);
+    source = source.slice(0, begin) + source.slice(stop);
+  }
+  expect(digest(source)).toBe("d1c5c6a987d184cce862187a354c8812e70c8091ee6fa26cd48dae0cb343d6cb");
   // Reverse only the foreground-before-focus ordering change before reviewing historical observation bytes.
   const focusStart = source.indexOf("    // Activation may return before Windows raises the HWND.");
   const focusEnd = source.indexOf("    const nodes = await this.nodes(hwnd);", focusStart);
@@ -173,7 +203,13 @@ it("preserves the entire packaged test after reversing only the new project/fold
   expect(digest(source)).toBe("c4d7503b2d57490a95de5e78b2357bd6b8329e15c04b719f193ab7caf2c9c447");
 });
 it("preserves the whole workflow after reversing only the known diagnostic fields and exact reviewed source-proof promotion", () => {
-  let source = fs.readFileSync(".github/workflows/windows-node-product.yml", "utf8").replace(", projectStage: 16", "").replace(", projectStage: 0", "");
+  let source = fs.readFileSync(".github/workflows/windows-node-product.yml", "utf8");
+  for (const addition of [
+    ", commandWindows: 2, targetType: 8, focusedType: 8, targetState: 80, focusTrajectory: 3",
+    ", commandWindows: 0, targetType: 0, focusedType: 0, targetState: 0, focusTrajectory: 0",
+  ]) { expect(source.split(addition)).toHaveLength(2); source = source.replace(addition, ""); }
+  expect(digest(source)).toBe("f2a0f1217295a6c1f060c0f1a43ddab9f6aa75954b293c8069d619828a097fe1");
+  source = source.replace(", projectStage: 16", "").replace(", projectStage: 0", "");
   const commandStart = source.indexOf("          const commandFailureFacts ="), commandEnd = source.indexOf("          const failureFacts =", commandStart);
   expect(commandStart > 0 && commandEnd > commandStart).toBe(true);
   expect(digest(source.slice(commandStart, commandEnd))).toBe("94e358f8a718555de5b57a702e6d7d61bbbbdf78d92ead7ca4be43a93246b716");

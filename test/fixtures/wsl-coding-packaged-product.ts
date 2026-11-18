@@ -10,7 +10,8 @@ import { verifyWslCodingTools, WSL_CODING_TOOLS } from "../../scripts/package/ws
 import { openWin32Input } from "../../app/main/platform/win32/input";
 import { titleOf } from "../../app/main/agent/tasks";
 import { PublicNpmPlan } from "../../app/main/agent/public-npm-lock";
-import { UiaBridge, bridgeEnv } from "../integration/uia-client";
+import { CONSENT_READ_HINT } from "../../app/renderer/prompt/copy";
+import { UiaBridge, bridgeEnv, type RawNode } from "../integration/uia-client";
 import { WslPackagedUi, wslUiId as id, wslUiName as named, sameWslUiNode, type WslUiSelector } from "./wsl-coding-packaged-uia";
 import { wslProductRefusal } from "./wsl-coding-product-preflight";
 import { createWslProductModel, wslProductScenarios, wslProductProject, WSL_PRODUCT_CHECK, WSL_PRODUCT_TOOLS, WSL_PUBLIC_PRODUCT_TOOLS } from "./wsl-coding-product-model";
@@ -178,11 +179,52 @@ export class WslPackagedJourney {
     await this.u.node(this.home, named("Key saved"), false); await this.armed(this.home, id("byok-yes")); await this.u.click(this.home, id("byok-test")); await this.idle();
     expect(fs.readFileSync(path.join(this.profile, "settings.json"), "utf8")).not.toContain(this.key);
   }
-  private async prompt(title: string, yes = "Turn on"): Promise<void> {
+  private async prompt(title: string): Promise<void> {
     const window = (await this.u.until(() => this.u.windows(), windows => windows.some(window => window.name === "Ember needs you"), 20_000)).find(window => window.name === "Ember needs you")!;
-    expect(await this.u.text(window.hwnd, id("title"))).toBe(title); await pause(600);
-    if (!(await this.u.nodes(window.hwnd)).some(node => node.name === yes && node.isEnabled)) { await this.u.focus(window.hwnd, await this.u.node(window.hwnd, id("body"), false)); this.u.key(window.hwnd, "End"); }
-    await this.u.click(window.hwnd, named(yes)); await this.u.until(() => this.u.windows(), windows => !windows.some(value => value.hwnd === window.hwnd));
+    expect(await this.u.text(window.hwnd, id("title"))).toBe(title);
+    const yes: WslUiSelector = node => node.controlType === "Button" && node.name === "Turn on" && node.isOffscreen === false && node.isEnabled === true;
+    const scrollBody: WslUiSelector = node => node.automationId === "body" && node.isOffscreen === false && node.isEnabled === true && node.isKeyboardFocusable === true;
+    const scrollHint: WslUiSelector = node => node.controlType === "Text" && node.name === CONSENT_READ_HINT && node.isOffscreen === false;
+    // The window and its controls are reused when a different card reaches the front of the queue.
+    const guard = (nodes: readonly RawNode[]) => {
+      const headings = nodes.flatMap((node, index) => node.automationId === "title" && node.isOffscreen === false ? [index] : []);
+      if (headings.length !== 1) this.fail();
+      const [heading] = headings;
+      if (nodes[heading].isPassword) this.fail();
+      const name = nodes[heading].name;
+      if (name) {
+        if (name !== title) this.fail();
+        return;
+      }
+      const visible = new Set([heading]);
+      const words: string[] = [];
+      // Snapshot parents precede their descendants. Read the whole visible heading subtree after the unnamed heading.
+      for (const [index, node] of nodes.entries()) {
+        if (!visible.has(node.parent ?? -1) || node.isOffscreen !== false || node.isPassword) continue;
+        visible.add(index);
+        if (node.controlType === "Text" && node.name) words.push(node.name);
+      }
+      if (words.length !== 1 || words[0] !== title) this.fail();
+    };
+    // A fitting card still disables Turn on while it arms. Only the card's read hint and a focusable body call for End.
+    const ready = await this.u.until(async () => {
+      const nodes = await this.u.nodes(window.hwnd);
+      if (!nodes.length) return undefined;
+      guard(nodes);
+      if (nodes.some(yes)) return { body: undefined };
+      const body = nodes.some(scrollHint) ? nodes.find(scrollBody) : undefined;
+      return body ? { body } : undefined;
+    }, value => value !== undefined);
+    if (ready?.body) {
+      const body = await this.u.focus(window.hwnd, ready.body);
+      const nodes = await this.u.nodes(window.hwnd);
+      guard(nodes);
+      if (!nodes.some(yes) && nodes.some(scrollHint)) {
+        if (!nodes.some(node => sameWslUiNode(node, body) && scrollBody(node) && node.hasKeyboardFocus === true)) this.fail();
+        this.u.key(window.hwnd, "End");
+      }
+    }
+    await this.u.click(window.hwnd, yes, guard); await this.u.until(() => this.u.windows(), windows => !windows.some(value => value.hwnd === window.hwnd));
   }
   private async configureWsl(): Promise<void> {
     this.phase = 5; await this.pane("Computers"); await this.u.click(this.home, id("wsl-on")); await this.prompt("Use Ember with WSL?");

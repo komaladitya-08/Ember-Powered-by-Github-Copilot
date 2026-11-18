@@ -14,6 +14,7 @@ import type { TaskSpec } from "../../app/main/agent/worker";
 import type { CodingCommandWorkspace, CodingFileBroker } from "../../app/main/agent/coding-platform";
 import type { ObservedCodingCommand } from "../../app/main/agent/isolated-coding-command-runner";
 import { wslProductPreflight, wslProductRefusal, wslProductScratchParent } from "../fixtures/wsl-coding-product-preflight";
+import { observeResourceWorkspaceCalls, resourceOuterKind } from "../fixtures/wsl-coding-product-observation";
 import { WSL_PRODUCT_CASES, wslProductTitle } from "../fixtures/wsl-coding-product-contract";
 import { wslProductProject, WSL_PRODUCT_CHECK, WSL_PRODUCT_WRITER, WSL_PRODUCT_WRITER_READY } from "../fixtures/wsl-coding-product-model";
 
@@ -45,6 +46,8 @@ async function runCase(mode: typeof WSL_PRODUCT_CASES.resources[number]): Promis
   let completed = false, expired = false, failed: Error | undefined, timer: ReturnType<typeof setTimeout> | undefined, body: Promise<void> | undefined;
   const known = async <T>(work: Promise<T>): Promise<T> => { graph.pending.add(work); const value = await work; graph.pending.delete(work); if (expired) throw failure(phase); return value; };
   let assembling: WorkspaceStage | undefined, refusedStage: WorkspaceStage | undefined;
+  let observeCalls: ReturnType<typeof observeResourceWorkspaceCalls> | undefined;
+  let refusedCalls: Readonly<{ rpc: number; edge: number; refusal: number; reply: number; outer: number }> | undefined;
   const unchanged = () => {
     for (const [name, text] of Object.entries(originals)) expect(fs.readFileSync(path.join(source, name), "utf8")).toBe(userChangedSource && name === "src/result.ts" ? userSource : text);
     for (const name of ["parent-counter", "child-counter", "hook-ran"]) expect(fs.existsSync(path.join(source, name))).toBe(false);
@@ -77,6 +80,8 @@ async function runCase(mode: typeof WSL_PRODUCT_CASES.resources[number]): Promis
         assembling = workspaceStage.archive;
         try {
           const typescriptArchive = readWslCodingTypeScriptArchive(path.join(input.repository, "dist/wsl-coding-tools/typescript-5.9.3.tgz"));
+          try { observeCalls = observeResourceWorkspaceCalls(connection); }
+          catch { /* The original connection still owns its normal work and cleanup. */ }
           assembling = workspaceStage.create;
           return { connection, typescriptArchive };
         }
@@ -135,8 +140,9 @@ async function runCase(mode: typeof WSL_PRODUCT_CASES.resources[number]): Promis
       completed = true;
     })();
     await Promise.race([body, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => { expired = true; task.abort(); reject(failure(phase)); }, 180_000); })]);
-  } catch {
+  } catch (error) {
     if (phase === 5) refusedStage = assembling;
+    if (refusedStage === workspaceStage.create && observeCalls) refusedCalls = Object.freeze({ ...observeCalls(), outer: resourceOuterKind(error) });
     task.abort(); try { await resource?.invalidate(); } catch { /* Retain the native owner on uncertainty. */ } try { await body; } catch { /* Keep the original bounded failure. */ } failed = failure(phase);
   }
   finally {
@@ -149,6 +155,7 @@ async function runCase(mode: typeof WSL_PRODUCT_CASES.resources[number]): Promis
   }
   if (failed || !completed || expired) {
     if (refusedStage !== undefined) console.info("Windows WSL resource workspace observation", JSON.stringify({ case: WSL_PRODUCT_CASES.resources.indexOf(mode) + 1, stage: refusedStage }));
+    if (refusedCalls) console.info("Windows WSL resource workspace detail", JSON.stringify({ case: WSL_PRODUCT_CASES.resources.indexOf(mode) + 1, ...refusedCalls }));
     throw failed ?? failure(phase);
   }
 }
