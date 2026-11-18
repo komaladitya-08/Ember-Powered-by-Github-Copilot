@@ -123,12 +123,14 @@ export class WslPackagedJourney {
   /**
    * Up to twelve Tabs (Shift+Tab backwards) from wherever the keyboard is in Home, until the control shows. A snapshot
    * leaves out what is scrolled out of view, so nothing below the fold can serve as an anchor after a pane switch:
-   * the search starts from the pane's link, which the switch has just clicked.
+   * the search starts from the pane's link, which the switch has just clicked. `limit`: the stretch from the request
+   * box to the Coding group's folder button holds ten fixed controls and one row for each session and saved draft, and
+   * twelve Tabs did not cross it on the hosted Windows Server 2022 image, so that stretch alone allows twenty-four.
    */
-  private async tabTo(select: WslUiSelector, enabled = true, backwards = false): Promise<void> {
+  private async tabTo(select: WslUiSelector, enabled = true, backwards = false, limit = 12): Promise<void> {
     for (let tabs = 0; ; tabs++) {
       if ((await this.u.nodes(this.home)).some(node => select(node) && !node.isOffscreen && (!enabled || node.isEnabled === true))) return;
-      if (tabs === 12) this.fail();
+      if (tabs === limit) this.fail();
       if (backwards) this.u.chord(this.home, "Shift_L", "Tab"); else this.u.key(this.home, "Tab");
     }
   }
@@ -394,7 +396,7 @@ export class WslPackagedJourney {
     // 13 the search for the result's button, 14 the click, 15 the read.
     const request = id("project-sessions-request");
     this.phase = 12; await this.tabTo(request); await this.u.focus(this.home, await this.u.node(this.home, request));
-    this.phase = 27; await this.tabTo(id("project-coding-choose"), false);
+    this.phase = 27; await this.tabTo(id("project-coding-choose"), false, false, 24);
     this.phase = 13; await this.tabTo(result); this.phase = 14; await this.u.click(this.home, result);
     this.phase = 15;
     const region: WslUiSelector = node => node.automationId === "project-coding-review" || ["Group", "Pane"].includes(node.controlType ?? "") && node.name === titleOf(goal);
@@ -435,7 +437,7 @@ export class WslPackagedJourney {
     // Shift+Tab to the folder button and the read of Home's sentence, 26 forward again to Export.
     this.phase = 16; await this.idle(); const before = this.model.requests.length, existing = new Set(fs.readdirSync(this.exported));
     const request = id("project-sessions-request"), listedResult: WslUiSelector = node => (node.name ?? "").startsWith("Review result: ");
-    this.phase = 21; await this.tabTo(request); await this.u.focus(this.home, await this.u.node(this.home, request)); await this.tabTo(id("project-coding-choose"), false);
+    this.phase = 21; await this.tabTo(request); await this.u.focus(this.home, await this.u.node(this.home, request)); await this.tabTo(id("project-coding-choose"), false, false, 24);
     this.phase = 22; await this.tabTo(listedResult); this.phase = 23; await this.tabTo(id("project-coding-export"));
     this.phase = 24; await this.u.click(this.home, id("project-coding-export")); await this.folder("Export coding review", this.exported);
     // Home's sentence stands above the results list, out of view and so unlisted once Export below it has been clicked.
@@ -480,7 +482,7 @@ export class WslPackagedJourney {
     // The controls are brought into view by Tab from the pane's link first. Phases: 28 to the request box and the folder
     // button and looking for a result, 29 forgetting results, 30 forgetting the folder, 31 forgetting the project.
     const request = id("project-sessions-request"), forgets: WslUiSelector = node => (node.name ?? "").startsWith("Forget private result:");
-    this.phase = 28; await this.tabTo(request); await this.u.focus(this.home, await this.u.node(this.home, request)); await this.tabTo(id("project-coding-choose"), false);
+    this.phase = 28; await this.tabTo(request); await this.u.focus(this.home, await this.u.node(this.home, request)); await this.tabTo(id("project-coding-choose"), false, false, 24);
     // Results follow the Coding group's own controls: twelve Tabs show the first one's button if there is one. None
     // shown then counts as none; the private roles read from disk at the end are the proof that nothing is left.
     for (let tabs = 0; tabs < 12 && !(await this.u.nodes(this.home)).some(node => forgets(node) && !node.isOffscreen); tabs++) this.u.key(this.home, "Tab");
@@ -492,7 +494,7 @@ export class WslPackagedJourney {
     expect((await this.u.nodes(this.home)).some(forgets)).toBe(false);
     this.phase = 30; await this.tabTo(id("project-coding-forget"), true, true);
     await this.u.click(this.home, id("project-coding-forget")); await this.accessible(text => text.includes("No coding folder selected"));
-    this.phase = 31; await this.tabTo(id("project-sessions-forget"), true, true); await this.u.click(this.home, id("project-sessions-forget")); await this.tabTo(request, false, true);
+    this.phase = 31; await this.tabTo(id("project-sessions-forget"), true, true, 24); await this.u.click(this.home, id("project-sessions-forget")); await this.tabTo(request, false, true);
     await this.u.until(() => this.u.nodes(this.home), nodes => nodes.some(node => node.automationId === "project-sessions-request" && node.isEnabled === false)); this.phase = 10; this.assertUnchanged(); await this.rolesEmpty();
   }
   async finish(): Promise<void> {
