@@ -235,18 +235,26 @@ for (const sh of SHELLS) {
     it("ends what a command left running after `kill -9 $PPID` ended its launcher, before the run is reported (review wslio-y-1)", async () => {
       const flag = path.join(sharedDir(), `ppid-${sh.name}`);
       const runner = localRunner(s);
-      const cmd = runner.start({ ...spec(`echo a; kill -9 $PPID; sleep 1.5; echo b; touch ${flag}`, sh.shell), cwd: sharedDir() });
+      // What the command does after the kill must still be to come when the runner's TERM sweep lands: the runner
+      // waits up to 1 s for wsl.exe's output to close (here always all of it: RELAY hands the command's shell the
+      // runner's own pipes), then reads the running set and looks, and each sweep here is a /proc walk in a shell
+      // that took 0.2 s idle and 1.1 s on a loaded 4-CPU container, where a 1.5 s sleep had ended before the look
+      // reached it, so the look rightly found nothing left and "b" had run. The sleep is long enough for that, and
+      // the test waits past its end to see that nothing after it ever runs.
+      const AFTER_KILL_MS = 6000;
+      const t0 = Date.now();
+      const cmd = runner.start({ ...spec(`echo a; kill -9 $PPID; sleep ${AFTER_KILL_MS / 1000}; echo b; touch ${flag}`, sh.shell), cwd: sharedDir() });
       let out = "";
       cmd.onOutput(c => { out += Buffer.from(c).toString("latin1"); });
       const exit = await cmd.done;
       expect(exit).toMatchObject({ ended: "exit", outputCut: true, endLost: true });
       // Nothing of it is left when the run is reported, and nothing of it runs afterwards.
       await expect(cmd.stragglers).resolves.toEqual([]);
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, Math.max(0, t0 + AFTER_KILL_MS + 1500 - Date.now())));
       expect(out).toContain("a");
       expect(out).not.toMatch(/\bb\b/);
       expect(fs.existsSync(flag)).toBe(false);
-    }, 20_000);
+    }, 30_000);
 
     it("reports a run that ends with its marker as it ended, nothing swept", async () => {
       const runner = localRunner(s);
