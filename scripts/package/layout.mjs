@@ -36,8 +36,12 @@ export const REMOTE_PARTS_DIR = "remote-parts";
 /** Packages never bundled: tslib is only @emnapi's, and @emnapi is only sharp's wasm fallback's. */
 const NEVER_BUNDLED = name => name === "tslib" || name.startsWith("@emnapi/");
 
-/** The Copilot runtime's helpers for its own built-in tools, pruned on every target (see stage.mjs). */
-const COPILOT_TOOLS = ["ripgrep", "tgrep", "plugins", "builtin-skills"];
+/** Native coding uses these runtime-owned files, including SKILL.md, which is executable guidance rather than package documentation. */
+export function copilotToolAsset(packageDir, relative) {
+  const name = packageNameOf(packageDir);
+  return /^@github\/copilot-sdk-(?:linux|win32|darwin)-(?:x64|arm64)$/.test(name ?? "") &&
+    /^(?:ripgrep|tgrep|plugins|builtin-skills)(?:[\\/]|$)/.test(relative);
+}
 
 /**
  * onnxruntime-web's builds Voice Match and Better recall don't use (WebGPU, WebGL, browser bundles and their source
@@ -77,7 +81,7 @@ export function layoutFor(platform, arch) {
   const copilot = `@github/copilot-sdk-${target}`;
   const koffi = `@koromix/koffi-${target}`;
   const koffiDir = `${koffi}/${platform}_${arch}`;
-  const tools = [...COPILOT_TOOLS.map(d => `${copilot}/${d}`), ...ORT_UNUSED];
+  const tools = ORT_UNUSED;
   if (platform === "linux") {
     return {
       platform, arch, target, label: target,
@@ -95,7 +99,7 @@ export function layoutFor(platform, arch) {
       requiredDist: [...COMMON_DIST.slice(0, 1), "desk-agent.cjs", ...COMMON_DIST.slice(1), ...POSIX_HELPERS],
       sidecarDist: [],
       // The Windows/macOS accessibility host never runs here (the Python AT-SPI sidecar does).
-      excludeDist: ["ax-sidecar.cjs"],
+      excludeDist: ["ax-sidecar.cjs", "wsl-coding.cjs"],
       icon: null, exeResources: false, signing: null, voiceModels: "beside", voiceNative: VOICE_NATIVE_DIR,
     };
   }
@@ -123,7 +127,7 @@ export function layoutFor(platform, arch) {
       ],
       // `ember --doctor` for a console: Ember.exe is a windowed program, which cmd.exe doesn't wait for (design §9.9).
       launchers: [{ from: "packaging/windows/ember-doctor.cmd", to: "ember-doctor.cmd" }],
-      requiredDist: [...COMMON_DIST, "ax-sidecar.cjs", ...WINDOWS_HELPERS],
+      requiredDist: [...COMMON_DIST, "ax-sidecar.cjs", "wsl-coding.cjs", ...WINDOWS_HELPERS],
       // The accessibility host, run as Ember's own binary in node mode (ELECTRON_RUN_AS_NODE).
       sidecarDist: ["ax-sidecar.cjs"],
       excludeDist: ["desk-agent.cjs"],
@@ -155,7 +159,7 @@ export function layoutFor(platform, arch) {
     sidecarFiles: [],
     requiredDist: [...COMMON_DIST, "ax-sidecar.cjs", ...POSIX_HELPERS],
     sidecarDist: ["ax-sidecar.cjs"],
-    excludeDist: ["desk-agent.cjs"],
+    excludeDist: ["desk-agent.cjs", "wsl-coding.cjs"],
     icon: { kind: "icns", file: "Contents/Resources/ember.icns", replaces: "Contents/Resources/electron.icns" },
     // Info.plist names the bundle (mac-bundle.mjs); there is no PE resource to rewrite.
     exeResources: false,

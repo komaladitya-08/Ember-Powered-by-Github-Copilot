@@ -265,6 +265,7 @@ describe("main's wiring of the vault", () => {
   /** Main's own handler source, run with fakes (as host.test.ts runs them with the real host). */
   const handlerOf = (src: string, deps: Record<string, unknown>) => {
     let run!: () => Promise<void>;
+    deps = { forgetCurrentCoding: async () => undefined, ...deps };
     const names = Object.keys(deps);
     new Function("ipcMain", "IPC", "guard", ...names, `let signOuts = 0, accountErasures = 0, signInAbort = null, currentToken = "t", askHistory = [], memoryEpoch = 0;\n${src}`)(
       { handle: (_c: string, h: () => Promise<void>) => { run = h; } }, { signOut: "s", memoryForgetAll: "m" }, (fn: unknown) => fn, ...names.map(n => deps[n]));
@@ -278,32 +279,51 @@ describe("main's wiring of the vault", () => {
       agent: { forgetConversation: async () => { calls.push("conversation"); }, start: async () => { calls.push("start"); } },
       tokens: { clear: () => calls.push("tokens") }, keeper: { use() {} }, providers: { forget: o.providers ?? (() => calls.push("provider")) }, refusedTokens: { clear() {} },
       resetAnswerSpeech() {}, forgetProject() {}, forgetSessionWords: () => calls.push("session words"),
+      resetProjectCoding: async () => { calls.push("private coding"); },
       vault: { forgetAll: () => { calls.push("vault"); return gone; } },
     });
     const src = slice("ipcMain.handle(IPC.signOut,", "ipcMain.handle(IPC.cancelSignIn,");
     await handlerOf(src, deps(true))();
-    // First, before anything is awaited: a form still open closes at once.
-    expect(calls).toEqual(["vault", "conversation", "tokens", "provider", "session words", "start"]);
+    // Both cleanup paths begin before awaited account teardown: a form still open closes at once.
+    expect(calls).toEqual(["private coding", "vault", "conversation", "tokens", "provider", "session words", "start"]);
     calls.length = 0;
     await expect(handlerOf(src, deps(false))()).rejects.toThrow("Ember couldn't finish deleting the vault's file on this computer. You are signed out; Forget all in Apps & privacy tries again.");
-    expect(calls).toEqual(["vault", "conversation", "tokens", "provider", "session words", "start"]);
+    expect(calls).toEqual(["private coding", "vault", "conversation", "tokens", "provider", "session words", "start"]);
     // Nothing that fails afterwards keeps the vault.
     calls.length = 0;
     await expect(handlerOf(src, deps(true, { providers: () => { throw new Error("key"); } }))()).rejects.toThrow("key");
-    expect(calls[0]).toBe("vault");
+    expect(calls.slice(0, 2)).toEqual(["private coding", "vault"]);
   });
 
   it("Forget everything forgets the vault and says when its file couldn't be removed (vault-6)", async () => {
     const calls: string[] = [];
     const deps = (gone: boolean) => ({
-      learning: { forgetAll: () => calls.push("learning") }, agent: { forgetHistory: () => true }, forgetSessionWords: () => calls.push("session words"),
+      projectJob: { abort: () => calls.push("project.stop") },
+      projectSessionStore: { forgetAll: async () => { calls.push("projects"); } },
+      resetProjectCoding: async () => { calls.push("private coding"); },
+      learning: { forgetAll: () => calls.push("learning") }, agent: { forgetHistory: () => true, forgetProjectSessions: () => calls.push("projects.clear") }, forgetSessionWords: () => calls.push("session words"),
       memoryOwner: { clear: () => calls.push("owner.clear"), refresh: () => undefined }, memoryConfigured: () => true, publishMemoryOwner: () => undefined,
       vault: { forgetAll: () => { calls.push("vault"); return gone; } },
     });
     const src = slice("ipcMain.handle(IPC.memoryForgetAll,", '// "Tell Ember about you"');
     await handlerOf(src, deps(true))();
-    expect(calls).toEqual(["learning", "session words", "vault", "owner.clear"]);
-    expect(() => handlerOf(src, deps(false))()).toThrow("Ember couldn't finish deleting the vault's file on this computer. Try Forget again.");
+    expect(calls).toEqual(["project.stop", "projects.clear", "projects", "private coding", "learning", "session words", "vault", "owner.clear"]);
+    await expect(handlerOf(src, deps(false))()).rejects.toThrow("Ember couldn't finish deleting the vault's file on this computer. Try Forget again.");
+    expect(calls.filter(call => call === "private coding")).toHaveLength(2);
+  });
+
+  it("finishes signing out even when deleting the coding grant fails", async () => {
+    const calls: string[] = [];
+    const src = slice("ipcMain.handle(IPC.signOut,", "ipcMain.handle(IPC.cancelSignIn,");
+    const run = handlerOf(src, {
+      forgetCurrentCoding: async () => { throw new Error("read only"); },
+      resetProjectCoding: async () => { calls.push("private coding"); },
+      agent: { forgetConversation: async () => undefined, start: async () => { calls.push("signed out"); } },
+      tokens: { clear() {} }, keeper: { use() {} }, providers: { forget() {} }, refusedTokens: { clear() {} },
+      resetAnswerSpeech() {}, forgetProject() {}, forgetSessionWords() {}, vault: { forgetAll: () => { calls.push("vault forgotten"); return true; } },
+    });
+    await expect(run()).rejects.toThrow("Ember signed out, but couldn't remove its saved coding workspace");
+    expect(calls).toEqual(["private coding", "vault forgotten", "signed out"]);
   });
 
   it("closes the Secure Form when the mode or the settings change so that the vault can't be used, and redraws Home's list when the policy changes (vault-7)", () => {

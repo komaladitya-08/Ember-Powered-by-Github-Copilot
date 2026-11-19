@@ -356,8 +356,9 @@ Errors: `busy`, `gone`, `bad_request`.
 
 Params: `{skipPids?: number[], values?: true, legacy?: false, deadlineMs?}`. Result: `{"element": RawNode | null,
 "window": number | null, "hwnd": number | null}`: the element with the keyboard focus
-(`AutomationElement.FocusedElement`), the handle of its top-level window (the ancestor whose parent is the desktop)
-and that window's `hwnd`. `element` is null when nothing has the focus (the desktop root). When the foreground window
+(`AutomationElement.FocusedElement`), the handle of the request's captured native foreground window if it is the
+focused element or a cached control-view ancestor, otherwise the ancestor whose parent is the desktop, and that
+window's `hwnd`. `element` is null when nothing has the focus (the desktop root). When the foreground window
 belongs to a process in `skipPids`, the answer is `{"element": null, "window": null, "hwnd": <the foreground
 window>, "skipped": true}` and no UI Automation call is made; when the focused element turns out to be in such a
 process anyway, `{"element": null, "window": null, "hwnd": null, "skipped": true}`. Errors: `busy`, `bad_request`.

@@ -118,6 +118,30 @@ it("rejects stale output, private storage, links and concurrent destination edit
   expect(fs.readdirSync(dir).filter(name => name.startsWith(".ember-export-"))).toEqual([]);
 });
 
+it("refuses an existing destination that becomes the selected file through an alias", () => {
+  if (process.platform === "win32") return; // creating symlinks can require elevated privileges
+  const destination = path.join(dir, "answer.txt"), selected = path.join(dir, "selection.ts"), other = path.join(dir, "other.ts");
+  fs.writeFileSync(destination, "user version");
+  fs.writeFileSync(other, "other source");
+  fs.symlinkSync(other, selected);
+  const current = vi.fn().mockReturnValueOnce(true).mockImplementation(() => {
+    fs.unlinkSync(selected);
+    fs.symlinkSync(destination, selected);
+    return true;
+  });
+  expect(() => exportProjectText(destination, "model output", privateDir, current, [selected])).toThrow("approved patch");
+  expect(fs.readFileSync(destination, "utf8")).toBe("user version");
+  expect(fs.readdirSync(dir).filter(name => name.startsWith(".ember-export-"))).toEqual([]);
+});
+
+it("refuses a case alias of a selected source on a case-insensitive filesystem", () => {
+  const source = path.join(dir, "Foo.ts"), alias = path.join(dir, "foo.ts");
+  fs.writeFileSync(source, "source");
+  if (!fs.existsSync(alias)) return; // exercised on native case-insensitive filesystems
+  expect(() => exportProjectText(alias, "model output", privateDir, () => true, [source])).toThrow("approved patch");
+  expect(fs.readFileSync(source, "utf8")).toBe("source");
+});
+
 
 it("recognises complete fenced code while keeping HTML, incomplete fences and language labels inert", () => {
   expect(projectAnswerParts("A plan.\n```ts\nconst example = '<img src=x onerror=alert(1)>';\n```\nAfter.")).toEqual([

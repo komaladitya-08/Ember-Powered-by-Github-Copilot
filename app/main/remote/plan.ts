@@ -6,7 +6,6 @@
  * remote text: every value is read by name, bounded and validated; anything Ember can't read refuses. Pure.
  */
 
-import type { OS } from "../../shared/shortcuts";
 import { adminSummary, combineAdmin, lockedDown, parseAdminPolicy, type AdminSummary, type LoadedAdminPolicy } from "../admin";
 import { MESSAGES } from "./ssh-errors";
 import { sameMachine, type SelfIdentity } from "./same-machine";
@@ -255,9 +254,4 @@ export function probeSession(probe: Record<string, string>): { type: string; act
     seat: val(probe, "session.Seat"),
     locked: val(probe, "session.LockedHint") === "yes",
   };
-}
-
-/** The OS a remote target runs, for welcome checks. */
-export function targetOs(t: RemoteTarget): Extract<OS, "linux" | "darwin"> {
-  return t.startsWith("darwin") ? "darwin" : "linux";
 }

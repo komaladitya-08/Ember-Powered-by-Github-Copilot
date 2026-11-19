@@ -6,8 +6,9 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import { build } from "esbuild";
 import { chromium, type Browser, type Page } from "playwright-core";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import type { ExtensionsState } from "../../app/shared/ipc";
 import { AGREE_ARM_MS } from "../../app/shared/provider";
@@ -25,6 +26,8 @@ declare global {
     __ixExtChanged: () => void;
     __ixProjectFails: string[];
     __ixProjectAnswers: unknown[];
+    __ixCodingFails: boolean;
+    __ixResolveCoding: (value: unknown) => void;
   }
 }
 
@@ -34,17 +37,20 @@ const BUILT_IN = { name: "awesome-copilot", source: "GitHub: github/awesome-copi
 const OWN = { name: "octo-tools", source: "GitHub: octo/tools" };
 const ENTRY: MarketplaceEntry = { marketplace: "awesome-copilot", name: "fake", description: "A fake.", source: "plugins/fake", kind: "plugin", installed: false };
 
-interface Seed { extensions?: Partial<ExtensionsState>; entries?: MarketplaceEntry[]; agent?: Record<string, unknown>; settings?: Record<string, unknown>; targets?: boolean; admin?: Record<string, unknown> }
+interface Seed { extensions?: Partial<ExtensionsState>; entries?: MarketplaceEntry[]; agent?: Record<string, unknown>; settings?: Record<string, unknown>; targets?: boolean; admin?: Record<string, unknown>; codingStateDeferred?: boolean }
 
 let browser: Browser;
 let server: http.Server;
 let port = 0;
+let legacyCodingScript: string;
 
 beforeAll(async () => {
   if (gate) return;
+  legacyCodingScript = (await build({ stdin: { contents: 'import { mountCodingWorkspace } from "./app/renderer/home/coding-workspace"; mountCodingWorkspace();', resolveDir: process.cwd() }, bundle: true, platform: "browser", write: false })).outputFiles[0].text;
   browser = await chromium.launch({ executablePath: process.env.EMBER_CHROMIUM_PATH ?? "/usr/bin/chromium", headless: true, args: ["--no-sandbox"] });
-  const dist = path.resolve("dist");
+  const dist = path.resolve(process.env.EMBER_HOME_INTEGRATIONS_DIST ?? "dist");
   server = http.createServer((req, res) => {
+    if (req.url === "/legacy-coding-fixture.js") { res.setHeader("content-type", "text/javascript"); res.end(legacyCodingScript); return; }
     const file = path.resolve(dist, `.${decodeURIComponent((req.url ?? "/").split("?")[0])}`);
     if (!file.startsWith(dist + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); res.end(); return; }
     const mime: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" };
@@ -55,6 +61,7 @@ beforeAll(async () => {
   port = (server.address() as { port: number }).port;
 });
 afterAll(async () => { if (gate) return; await browser.close(); server.close(); });
+afterEach(async () => { if (!gate) await Promise.all(browser.contexts().map(context => context.close())); });
 
 /** Home after first run, on `pane`, with Extensions answering from `seed`. */
 async function open(pane: string, seed: Seed = {}): Promise<Page> {
@@ -67,7 +74,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page> {
   const errors: string[] = [];
   page.on("pageerror", e => errors.push(e.message));
   (page as Page & { errors: string[] }).errors = errors;
-  await page.addInitScript(({ settings, admin, agent, extensions, entries, targets }) => {
+  await page.addInitScript(({ settings, admin, agent, extensions, entries, targets, codingStateDeferred }) => {
     // The targets runtime (Computers and Commands panes), listing no other computer.
     if (targets) (window as unknown as { emberTargets: unknown }).emberTargets = { list: async () => [], onChanged: () => () => undefined, act: async () => ({ ok: true }) };
     window.__ixCalls = [];
@@ -77,6 +84,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page> {
     window.__ixBrowsed = [];
     window.__ixProjectFails = [];
     window.__ixProjectAnswers = [];
+    window.__ixCodingFails = false;
     const subs: Record<string, ((v: unknown) => void)[]> = {};
     window.__ixEmit = (name, value) => { for (const fn of subs[name] ?? []) fn(value); };
     const status = () => ({ appVersion: "0.1.1", settings, environment: { checks: [], versions: { node: "24", electron: "44", chrome: "152" } }, logFile: "/test/ember.log", settingsNotice: null, admin });
@@ -86,6 +94,9 @@ async function open(pane: string, seed: Seed = {}): Promise<Page> {
       if (name === "agentStatus") return async () => agent;
       if (name === "updateSettings") return async (patch: Record<string, unknown>) => { window.__ixCalls.push(`save:${JSON.stringify(patch)}`); };
       if (name === "conversation") return async () => [];
+      if (name === "codingState") return () => { window.__ixCalls.push("coding:state"); return codingStateDeferred ? new Promise(resolve => { window.__ixResolveCoding = resolve; }) : Promise.resolve({ folder: null, branch: null, running: false }); };
+      if (name === "codingChooseWorkspace") return async () => { window.__ixCalls.push("coding:choose"); if (window.__ixCodingFails) throw new Error("picker failed"); return { folder: "/work/example", branch: "main", running: false }; };
+      if (name === "codingClearWorkspace") return async () => { window.__ixCalls.push("coding:clear"); return { folder: null, branch: null, running: false }; };
       // Projects, as main answers when connected: one file chosen, a drafted patch.
       if (name === "projectPick") return async () => ({ names: ["greeting.ts"], sizes: [46], changed: true });
       if (name === "projectRun") return async () => {
@@ -126,7 +137,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page> {
         return { ok: true };
       },
     };
-  }, { settings, admin, agent: seed.agent ?? READY, extensions, entries: seed.entries ?? [ENTRY], targets: !!seed.targets });
+  }, { settings, admin, agent: seed.agent ?? READY, extensions, entries: seed.entries ?? [ENTRY], targets: !!seed.targets, codingStateDeferred: !!seed.codingStateDeferred });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   await page.waitForSelector(`a[href='#${pane}-h']`);
   await page.evaluate(() => document.body.classList.remove("loading", "first-run"));
@@ -135,6 +146,16 @@ async function open(pane: string, seed: Seed = {}): Promise<Page> {
 }
 
 const calls = (p: Page) => p.evaluate(() => window.__ixCalls);
+/** The retired workspace module is exercised only when a fixture explicitly mounts it on its own. */
+async function openLegacyCoding(seed: Seed = {}): Promise<Page> {
+  const page = await open("project", seed);
+  await page.evaluate(() => {
+    document.getElementById("project-coding")!.hidden = true;
+    document.getElementById("coding-workspace")!.hidden = false;
+  });
+  await page.addScriptTag({ url: `http://127.0.0.1:${port}/legacy-coding-fixture.js` });
+  return page;
+}
 const focused = (p: Page) => p.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset?.key ?? document.activeElement?.tagName ?? "");
 /** With EMBER_UI_EVIDENCE set, a screenshot for the render check (in light, then dark). */
 async function evidence(p: Page, name: string): Promise<void> {
@@ -150,6 +171,59 @@ async function evidence(p: Page, name: string): Promise<void> {
 }
 
 describe.skipIf(gate)("Home's Projects, as the person sets up a command (2026-11-07 product audit)", () => {
+  it("shows project coding guidance without loading the retired global workspace", async () => {
+    const page = await open("project");
+    expect(await page.locator("#coding-workspace").isHidden()).toBe(true);
+    expect(await page.locator("#project-coding").isVisible()).toBe(true);
+    expect(await page.locator("#project-coding-folder").innerText()).toContain("Create or select a project above");
+    expect(await page.locator("#project-coding-choose").isDisabled()).toBe(true);
+    expect(await calls(page)).not.toContain("coding:state");
+    await page.close();
+  });
+  it("keeps a newer workspace update when an older initial read resolves", async () => {
+    const page = await openLegacyCoding({ codingStateDeferred: true });
+    await page.evaluate(() => {
+      window.__ixEmit("onCodingState", { folder: "/new", branch: "main", running: false });
+      window.__ixResolveCoding({ folder: "/old", branch: null, running: false });
+    });
+    await expect.poll(() => page.locator("#coding-workspace-folder").innerText()).toBe("Active folder: /new");
+    await page.close();
+  });
+  it("keeps the standalone legacy workspace controls in step with the running task", async () => {
+    const page = await openLegacyCoding();
+    const choose = page.locator("#coding-workspace-choose");
+    await expect.poll(() => choose.isEnabled()).toBe(true);
+    expect(await page.locator("#coding-workspace-folder").innerText()).toBe("No coding folder selected.");
+    expect(await page.locator("#coding-workspace-hint").innerText()).toContain("other folders and the network");
+    await choose.click();
+    expect(await page.locator("#coding-workspace-folder").innerText()).toBe("Active folder: /work/example");
+    expect(await page.locator("#coding-workspace-branch").innerText()).toBe("Branch: main");
+    expect(await page.locator("#coding-workspace-ask").isEnabled()).toBe(true);
+    await page.evaluate(() => window.__ixEmit("onCodingState", { folder: "/work/example", branch: "main", running: true }));
+    expect(await choose.isDisabled()).toBe(true);
+    expect(await page.locator("#coding-workspace-forget").isDisabled()).toBe(true);
+    expect(await page.locator("#coding-workspace-status").innerText()).toContain("coding task is running");
+    await page.evaluate(() => window.__ixEmit("onCodingState", { folder: "/work/<project>", branch: null, running: false, error: "Can't reach the folder." }));
+    expect(await choose.isEnabled()).toBe(true);
+    expect(await page.locator("#coding-workspace-folder").innerText()).toBe("Active folder: /work/<project>");
+    expect(await page.locator("#coding-workspace-folder project").count()).toBe(0);
+    expect(await page.locator("#coding-workspace-branch").isHidden()).toBe(true);
+    expect(await page.locator("#coding-workspace-status").innerText()).toBe("Can't reach the folder.");
+    await page.evaluate(() => { window.__ixCodingFails = true; });
+    await choose.click();
+    expect(await page.locator("#coding-workspace-folder").innerText()).toBe("Active folder: /work/<project>");
+    expect(await page.locator("#coding-workspace-status").innerText()).toContain("Couldn't choose a coding folder");
+    await page.evaluate(() => window.__ixEmit("onCodingState", { folder: "/work/<project>", branch: null, running: false, available: false, error: "Coding work is temporarily unavailable." }));
+    expect(await choose.isDisabled()).toBe(true);
+    expect(await page.locator("#coding-workspace-ask").isDisabled()).toBe(true);
+    expect(await page.locator("#coding-workspace-forget").isEnabled()).toBe(true);
+    expect(await page.locator("#coding-workspace-status").innerText()).toBe("Coding work is temporarily unavailable.");
+    await page.locator("#coding-workspace-forget").click();
+    expect(await page.locator("#coding-workspace-folder").innerText()).toBe("No coding folder selected.");
+    expect(await page.locator("#coding-workspace-ask").isDisabled()).toBe(true);
+    expect(await calls(page)).toContain("coding:choose");
+    await page.close();
+  });
   it("says commands are off before a folder is chosen or a command typed, links to Commands, and opens once they are on (integrations-12)", async () => {
     const page = await open("project", { targets: true });
     await page.locator("#project-commands summary").click();

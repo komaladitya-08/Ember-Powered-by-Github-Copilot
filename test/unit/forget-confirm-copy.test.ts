@@ -14,7 +14,7 @@ describe("Sign out and Forget everything copy", () => {
   });
   it("tells the user Forget everything removes only saved memory and leaves the rest", () => {
     expect(forgetEverythingScope({ tasks: 2, facts: 5, reminders: 1, routines: 0 }))
-      .toBe("Forget everything? This removes 5 saved facts, what Ember learned from them and the conversation saved on this computer, if you keep one. It also forgets what you saved in the vault. 2 tasks, 1 reminder and 0 routines stay as they are, and so do the lines on screen now, but they aren't saved again.");
+      .toBe("Forget everything? This removes 5 saved facts, what Ember learned from them and the conversation saved on this computer, if you keep one. It also forgets what you saved in the vault. It also removes project records and all saved project checkpoints on this computer. 2 tasks, 1 reminder and 0 routines stay as they are, and so do the lines on screen now, but they aren't saved again.");
   });
   it("says a count is unknown, not zero, when it couldn't be read", () => {
     const t = signOutScope({ tasks: 0, facts: null, reminders: 1, routines: 0 });
@@ -25,7 +25,7 @@ describe("Sign out and Forget everything copy", () => {
   });
   it("starts Forget everything's second sentence with a capital when the task count is unknown (memory-r7-3)", () => {
     expect(forgetEverythingScope({ tasks: null, facts: 3, reminders: 0, routines: null }))
-      .toBe("Forget everything? This removes 3 saved facts, what Ember learned from them and the conversation saved on this computer, if you keep one. It also forgets what you saved in the vault. An unknown number of tasks, 0 reminders and an unknown number of routines stay as they are, and so do the lines on screen now, but they aren't saved again. Ember couldn't count everything right now, so those numbers are unknown, not zero.");
+      .toBe("Forget everything? This removes 3 saved facts, what Ember learned from them and the conversation saved on this computer, if you keep one. It also forgets what you saved in the vault. It also removes project records and all saved project checkpoints on this computer. An unknown number of tasks, 0 reminders and an unknown number of routines stay as they are, and so do the lines on screen now, but they aren't saved again. Ember couldn't count everything right now, so those numbers are unknown, not zero.");
   });
   it("says saved memory Ember can't match to this account stays, rather than promising to clear it (memory-11)", () => {
     const t = signOutScope({ tasks: 0, facts: null, reminders: 1, routines: 0, kept: true });

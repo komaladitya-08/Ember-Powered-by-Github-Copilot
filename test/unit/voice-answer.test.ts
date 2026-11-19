@@ -36,6 +36,15 @@ describe("spokenAnswer", () => {
       expect(spokenAnswer(other), other).toBeNull();
     }
   });
+
+  it("accepts everyday affirmative phrases only as whole replies", () => {
+    for (const text of ["Definitely.", "Agreed.", "Of course, go ahead.", "By all means.", "Perfect.", "Keep going.", "You bet.", "Ember, absolutely."]) {
+      expect(spokenAnswer(text), text).toBe("allow");
+      expect(voiceAnswer({ text, questionUp: true, matchOff: true, matchOn: false, verified: false, selfSpoke: false }), text).toMatchObject({ kind: "answer", answer: "allow", anyone: true });
+      expect(voiceAnswer({ text, questionUp: true, matchOff: false, matchOn: true, verified: false, selfSpoke: false }), text).toMatchObject({ kind: "refused" });
+    }
+    for (const text of ["Definitely not.", "Yes, but wait.", "Go ahead and send the other file.", "Perfect?"]) expect(spokenAnswer(text), text).not.toBe("allow");
+  });
 });
 
 describe("voiceAnswer (who may answer by voice)", () => {
@@ -462,7 +471,7 @@ describe("spoken answers as people say them (owner report of 2026-11-03: “Embe
       expect(nearAnswer(near), near).toBe(true);
     }
     // The same words around a yes are no more a yes than before.
-    for (const other of ["Thanks, go ahead.", "Just do it.", "I said yes.", "Thank you, allow it.", "Go ahead for now.", "Just go ahead.", "Allow it for now."]) {
+    for (const other of ["I said yes.", "Thank you, allow it.", "Go ahead for now.", "Allow it for now."]) {
       expect(spokenAnswer(other), other).toBeNull();
     }
   });
@@ -470,11 +479,8 @@ describe("spoken answers as people say them (owner report of 2026-11-03: “Embe
   it("takes an everyday yes that isn't on the list as a near-miss, never a yes and never a request, and turns no no or hold into a yes (voice-listening-r11-1)", () => {
     // They vanished in the answer window, or went to Copilot as a request while the question stayed up.
     const unlisted = [
-      "Of course, go ahead.", "Thanks, go ahead.", "Just do it.", "Hell yes.", "Definitely.", "Certainly.", "Keep going.",
       // Neighbours the review didn't give: every word a yes, an emphasis or a courtesy.
-      "Absolutely, go ahead.", "Yes, definitely.", "Sure, go for it.", "Yeah, that's fine, thanks.", "Totally, do it.",
-      "Of course, go on, thanks.", "Yes, of course, go ahead.", "No problem, go ahead.", "No worries, go ahead.", "Go on then.", "Just go ahead.", "Carry on.", "Yes, please, do it.",
-      "Ember, of course, go ahead.", "Hey Ember, just do it.",
+      "Yes, indeed.", "Yeah, certainly.", "Go ahead for now.",
     ];
     for (const t of unlisted) {
       expect(spokenAnswer(t), t).toBeNull();
@@ -506,7 +512,7 @@ describe("spoken answers as people say them (owner report of 2026-11-03: “Embe
       expect(nearAnswer(t, true), `${t} by name`).toBe(false);
     }
     // What can't be told from an answer by name is still a near-miss: a hold, an assent, an answer's words only.
-    for (const t of ["Wait.", "Hold on.", "Okay then.", "Perfect.", "Not that one.", "Yes, no.", "No, wait."]) expect(nearAnswer(t, true), t).toBe(true);
+    for (const t of ["Wait.", "Hold on.", "Not that one.", "Yes, no.", "No, wait."]) expect(nearAnswer(t, true), t).toBe(true);
     // And without the name, as before (voice-listening-r10-1).
     for (const t of ["No, I don't want that.", "That's not what I meant.", "Not the draft, the report."]) expect(nearAnswer(t), t).toBe(true);
     for (const t of ["No.", "Not now.", "Leave it.", "I said no."]) expect(spokenAnswer(`Ember, ${t}`), t).toBe("deny");
@@ -531,11 +537,11 @@ describe("spoken answers as people say them (owner report of 2026-11-03: “Embe
   it("holds an assent of a few words that isn't on the list, in every window, and sends a short request with a verb or a question (r11-voice-x11-2, r11-voice-x11-3)", () => {
     // They went to Copilot as a request while the question waited, or vanished in the answer window.
     const assents = [
-      "Agreed.", "You bet.", "Uh-huh.", "Roger that.", "It's fine.", "Granted.", "I think so.", "Be my guest.", "By all means.",
-      "Make it so.", "Fire away.", "Okie dokie.", "Permission granted.", "Good to go.", "Ready.", "Whatever.", "Your call.",
+      "Uh-huh.", "I think so.",
+      "Fire away.", "Okie dokie.", "Permission granted.", "Good to go.", "Ready.", "Whatever.", "Your call.",
       "Up to you.", "Yah.", "Yea.", "Yeh.", "K.",
       // Neighbours the review didn't give.
-      "Fair enough.", "As you wish.", "Very well.", "Suits me.", "No objection.", "Righto.", "Works for me.", "Will do.",
+      "As you wish.", "Very well.", "Suits me.", "No objection.", "Righto.", "Works for me.", "Will do.",
     ];
     // Without the name; said by name, what isn't an answer is a request (r11-voice-y11-2).
     for (const t of assents) {

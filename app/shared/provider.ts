@@ -10,7 +10,6 @@ export type ProviderType = (typeof PROVIDER_TYPES)[number];
 
 /** The API formats an OpenAI or Azure endpoint speaks (ProviderConfig `wireApi`). */
 export const WIRE_APIS = ["completions", "responses"] as const;
-export type WireApi = (typeof WIRE_APIS)[number];
 
 /** The longest endpoint address Ember keeps. */
 export const MAX_ENDPOINT = 2048;

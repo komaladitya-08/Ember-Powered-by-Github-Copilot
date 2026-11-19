@@ -39,21 +39,49 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      actions: read
       id-token: write
     steps:
+      - name: Validate the requested tag
+        env:
+          TAG: ${{ github.event.workflow_run.head_branch || inputs.tag }}
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || { echo "::error::Invalid release tag"; exit 1; }
+      # Read the gate from the default branch even when publishing an older tag.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # The tagged commit for a release; the branch it was run on for a manual run (whose launcher must still have
-          # the tag's version).
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.event.repository.default_branch }}
+          path: release-gate
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ github.event.workflow_run.head_branch || inputs.tag }}
+          path: source
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
+      - name: Verify the tag's source and release checks
+        id: verified
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.workflow_run.head_branch || inputs.tag }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          EMBER_ARM64_RUNNER: ${{ vars.EMBER_ARM64_RUNNER }}
+        run: |
+          set -euo pipefail
+          sha=$(git -C source rev-parse HEAD)
+          if [ -n "$RUN_SHA" ] && [ "$sha" != "$RUN_SHA" ]; then
+            echo "::error::The tag no longer points to the CI run's commit"; exit 1
+          fi
+          node release-gate/scripts/package/release-gate.mjs remote "$TAG" "$sha"
+          node release-gate/scripts/package/release-gate.mjs ci "$TAG" "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
       # Trusted publishing needs npm 11.5.1 or later.
       - run: npm install -g npm@11.6.2
       - name: The tag, the launcher's version, and the release's files
         id: check
+        working-directory: source
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.workflow_run.head_branch || inputs.tag }}
@@ -83,15 +111,27 @@ jobs:
           echo "version=$v" >> "$GITHUB_OUTPUT"
       - name: The package's files
         if: steps.check.outputs.skip == 'false'
-        working-directory: packages/npm
-        run: npm pack --dry-run
+        working-directory: source/packages/npm
+        run: |
+          test -z "$(git status --porcelain --untracked-files=all --ignored)" || { echo '::error::Tagged source changed'; exit 1; }
+          npm pack --dry-run --ignore-scripts
       - name: npm publish --access public --provenance (trusted publishing, else NPM_TOKEN)
         if: steps.check.outputs.skip == 'false'
-        working-directory: packages/npm
+        working-directory: source/packages/npm
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.workflow_run.head_branch || inputs.tag }}
+          VERIFIED_SHA: ${{ steps.verified.outputs.sha }}
+          EMBER_ARM64_RUNNER: ${{ vars.EMBER_ARM64_RUNNER }}
         run: |
           set -uo pipefail
+          node ../../../release-gate/scripts/package/release-gate.mjs remote "$TAG" "$VERIFIED_SHA" || exit 1
+          node ../../../release-gate/scripts/package/release-gate.mjs ci "$TAG" "$VERIFIED_SHA" || exit 1
+          live_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha) || { echo '::error::Could not verify the release tag'; exit 1; }
+          if [ "$live_sha" != "$VERIFIED_SHA" ]; then
+            echo '::error::The release tag moved after the checks'; exit 1
+          fi
           if [ -n "$NPM_TOKEN" ]; then
             # Only the fallback: npm uses trusted publishing instead when it is set up for this workflow.
             npm config set "//registry.npmjs.org/:_authToken" "$NPM_TOKEN" --location=user
@@ -99,7 +139,8 @@ jobs:
           else
             echo "NPM_TOKEN isn't set: trusted publishing only"
           fi
-          if npm publish --access public --provenance; then
+          test -z "$(git status --porcelain --untracked-files=all --ignored)" || { echo '::error::Tagged source changed'; exit 1; }
+          if npm publish --access public --provenance --ignore-scripts; then
             echo "::notice::published ${{ steps.check.outputs.name }}@${{ steps.check.outputs.version }}"
             exit 0
           fi

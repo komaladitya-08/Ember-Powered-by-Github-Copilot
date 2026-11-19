@@ -34,6 +34,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { consentVersion } from "../../scripts/consent-version.mjs";
 import { startMockLlm } from "../mock-llm/server.mjs";
 import { voiceConversation, voiceStop, voiceSystemSpeech } from "./voice-checks.mjs";
 
@@ -191,7 +192,7 @@ function startEmber(name, wav, { debugPort = false, wakeWord = true, conversatio
   // the run is the same with or without parec and a sound server (it changes how "Hey Ember" over Ember's voice is taken).
   // Conversations off but in their own scenario: the rest check the follow-up window, which is what that switch leaves.
   writeFileSync(path.join(userData, "settings.json"), JSON.stringify({
-    version: 1, onboarded: true, consent: { version: 11, at: new Date().toISOString() },
+    version: 1, onboarded: true, consent: { version: consentVersion, at: new Date().toISOString() },
     wakeWord, speak: true, voice: { consent: wakeWord, speakerRejection: false, muted: false, match: false, conversation, clearHearing },
   }));
   const env = {

@@ -168,7 +168,7 @@ describe("Interactive's card (FEATURE_CONSENT_VERSION.autonomy, modes-A9)", () =
   });
 
   it("is versioned on its own, at 3 since it replaced Work without asking's card (an agreement to that one is none to this), at 4 since it says a dangerous command asked for exactly doesn't ask (accessibility-c11-1), at 5 since it follows the owner's table of 2026-11-14", () => {
-    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(5);
+    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(6);
     expect(MODE_CARD_TEXT.interactive).toBe(AUTONOMY_CONSENT_TEXT);
     expect(modeCard("interactive")).toEqual({ title: "Before you choose Interactive", text: AUTONOMY_CONSENT_TEXT, yes: "I agree, use Interactive", no: "Not now" });
   });
@@ -176,7 +176,7 @@ describe("Interactive's card (FEATURE_CONSENT_VERSION.autonomy, modes-A9)", () =
   it("says plainly what is announced instead of asked, what still asks every time, what never happens, and that a stop always works", () => {
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/^In Interactive, Ember does ordinary steps without asking first: it works in your apps, borrows your mouse and keyboard, runs ordinary commands and ones it doesn't know, moves text between apps and presses OK on a message box that has nothing else to choose\./);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/It tells you what it is doing as it goes, and keeps a record under What Ember did\./);
-    expect(AUTONOMY_CONSENT_TEXT).toMatch(/It still asks every time before anything risky in an app: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings and any dialog that asks a question\. It asks before a dangerous command too, one that deletes, publishes, changes the system, touches passwords or keys, downloads and runs code or keeps running after you stop Ember, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system: then it shows it first, with a few seconds to stop it\. It asks before code it can't read, too\./);
+    expect(AUTONOMY_CONSENT_TEXT).toMatch(/It still asks every time before anything risky in an app: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings and any dialog that asks a question\. It asks before a dangerous command too, one that deletes, publishes, changes the system, touches passwords or keys, downloads and runs code or keeps running after you stop Ember, even when you asked for it\. It asks before code it can't read, too\./);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/It asks more often in your system's settings and security apps, and a task goes back to asking once you say no or a page or file tries to give it instructions\./);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/It never types passwords and never acts in sign-in prompts\./);
     expect(AUTONOMY_CONSENT_TEXT).toMatch(/“Ember, stop” or Ember's stop shortcut stops everything at once, and moving your mouse takes it back\./);

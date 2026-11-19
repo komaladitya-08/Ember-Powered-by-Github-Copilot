@@ -11,8 +11,6 @@ export type NaturalVoiceModel = "kokoro" | "supertonic" | "kitten";
 
 /** Neural speech must be made in at most half its playback duration, keeping streamed sentences ahead of playback. */
 export const NATURAL_MAX_RTF = 0.5;
-/** Approximate preflight cost of optional Kokoro relative to Kitten; Kokoro's own probe still decides before use. */
-export const NATURAL_COST = 3.5;
 /** A laptop timed on battery or while busy gets another try after a week, without loading a slow model every start. */
 export const NATURAL_RECHECK_MS = 7 * 24 * 3_600_000;
 

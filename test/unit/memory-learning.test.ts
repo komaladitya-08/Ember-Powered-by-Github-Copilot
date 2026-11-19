@@ -776,12 +776,15 @@ describe("what the user asks Ember to remember is kept once, however its turn's 
     expect(learned).toEqual([`user: ${kept}`]);
   });
 
-  it("keeps it once when Ember already remembered it and the turn's reading words it another way (memory-c8-1)", async () => {
+  it("retains differently worded earlier facts but does not learn the same turn a second time (memory-c8-1)", async () => {
     const { l, s, advance } = learning({ model: async () => answer([{ from: 1, fact: "The user is a vegetarian", about: [USER], confidence: 0.9, evidence: "I'm vegetarian" }]) });
     s.learn({ text: "Is vegetarian", about: [USER], source: "user" });
     const tools = l.conductorMemory();
+    // Different wording is kept rather than merged by similarity: small wording changes can reverse meaning.
+    expect(tools.remember("Vegetarian", [USER], "Remember that I'm vegetarian")).toContain("Remembered");
     const before = s.list().map(i => i.text);
-    expect(tools.remember("Vegetarian", [USER], "Remember that I'm vegetarian")).toContain("Already remembered");
+    expect(before).toHaveLength(2);
+    expect(before).toEqual(expect.arrayContaining(["Is vegetarian", "Vegetarian"]));
     tools.heard("Remember that I'm vegetarian", "Got it.", true, tools.asked());
     advance(61_000);
     expect(await l.flush()).toBe(0);

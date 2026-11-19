@@ -1004,10 +1004,47 @@ describe("the memory graph", () => {
     const c = clock();
     const g = new MemoryGraph(undefined, c);
     g.add({ text: "Prefers dark mode", about: [{ name: "User", kind: "person" }], source: "observed" });
-    const r = g.add({ text: "prefers dark mode.", about: [{ name: "user" }], source: "user" });
+    const r = g.add({ text: "Prefers dark mode.", about: [{ name: "user" }], source: "user" });
     expect(r.kind).toBe("reinforced");
     expect(g.size.facts).toBe(1);
     expect(g.allFacts()[0]).toMatchObject({ source: "user", confidence: 1, uses: 1 });
+  });
+
+  it("does not promote similar observed words or lose changed values and relationships", () => {
+    const g = new MemoryGraph(undefined, clock());
+    const about = [{ name: "User" }];
+    const publicText = "User prefers detailed weekly project progress reports including screenshots shared publicly";
+    const privateText = "User prefers detailed weekly project progress reports including screenshots shared privately";
+    g.add({ text: publicText, about, source: "observed" });
+    expect(g.add({ text: privateText, about, source: "user" }).kind).toBe("added");
+    expect(g.allFacts(true).find(f => f.text === publicText)?.source).toBe("observed");
+    expect(g.allFacts(true).find(f => f.text === privateText)?.source).toBe("user");
+
+    g.add({ text: "Remind me 15 minutes before weekly project meetings", about, predicate: "reminder_time", single: true, source: "user" });
+    const changed = g.add({ text: "Remind me 30 minutes before weekly project meetings", about, predicate: "reminder_time", single: true, source: "user" });
+    expect(changed).toMatchObject({ kind: "added", closed: [{ text: "Remind me 15 minutes before weekly project meetings" }] });
+    const people = [{ name: "Alice" }, { name: "Bob" }];
+    g.add({ text: "Alice manages Bob", about: people, predicate: "manages", source: "observed" });
+    expect(g.add({ text: "Alice manages Bob", about: [...people].reverse(), predicate: "manages", source: "user" }).kind).toBe("added");
+    expect(g.add({ text: "Alice manages Bob", about: people, predicate: "reports_to", source: "user" }).kind).toBe("added");
+    g.add({ text: "The US office publishes weekly updates", about, source: "observed" });
+    expect(g.add({ text: "The us office publishes weekly updates", about, source: "user" }).kind).toBe("added");
+    expect(g.allFacts(true).find(f => f.text === "The US office publishes weekly updates")?.source).toBe("observed");
+  });
+
+  it("does not promote different words when undoing a forgotten fact", () => {
+    const g = new MemoryGraph(undefined, clock());
+    const about = [{ name: "User" }];
+    const privateText = "User prefers detailed weekly project progress reports including screenshots shared privately";
+    const publicText = privateText.replace("privately", "publicly");
+    const removed = g.add({ text: privateText, about, source: "user" });
+    if (removed.kind !== "added") throw new Error("expected fact");
+    const entities = [...g.allEntities()];
+    g.forgetFact(removed.fact.id);
+    g.add({ text: publicText, about, source: "observed" });
+    g.putBack(entities, [removed.fact]);
+    expect(g.allFacts(true).find(f => f.text === publicText)?.source).toBe("observed");
+    expect(g.allFacts(true).find(f => f.text === privateText)?.source).toBe("user");
   });
 
   it("closes, never deletes, the fact a newer one replaces (temporal validity)", () => {
@@ -1325,6 +1362,24 @@ describe("the memory block a model sees", () => {
 });
 
 describe("sleep-time consolidation", () => {
+  it("only merges identical facts with the same ordered entities and predicate", () => {
+    const c = clock();
+    const g = new MemoryGraph(undefined, c);
+    const about = [{ name: "User" }];
+    const text = "User prefers detailed weekly project progress reports including screenshots shared publicly";
+    const a = g.add({ text, about, predicate: "sharing", source: "observed" });
+    const b = g.add({ text: "placeholder one", about, predicate: "sharing", source: "user" });
+    const d = g.add({ text: "placeholder two", about, predicate: "different", source: "user" });
+    const e = g.add({ text: "placeholder three", about, predicate: "sharing", source: "user" });
+    if (a.kind !== "added" || b.kind !== "added" || d.kind !== "added" || e.kind !== "added") throw new Error("expected facts");
+    g.replaceFact({ ...b.fact, text: text.replace("publicly", "privately") });
+    g.replaceFact({ ...d.fact, text });
+    g.replaceFact({ ...e.fact, text: `${text}.`, source: "observed" });
+    expect(consolidate(g, { now: c.now() }).mergedFacts).toBe(1);
+    expect(g.allFacts(true)).toHaveLength(3);
+    expect(g.allFacts(true).find(f => f.predicate === "sharing" && f.text.includes("publicly"))?.source).toBe("observed");
+    expect(g.allFacts(true).find(f => f.text.includes("privately"))?.source).toBe("user");
+  });
   it("refuses an alias another entity already answers to", () => {
     const g = new MemoryGraph(undefined, clock());
     g.add({ text: "Leads the Atlas project", about: [{ name: "Priya Sharma", kind: "person" }], source: "user" });

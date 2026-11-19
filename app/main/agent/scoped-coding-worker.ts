@@ -1,0 +1,311 @@
+/** A trusted custom-tool controller, isolated command copy and review export under one TaskManager lifetime. */
+import type { ProviderConfig } from "@github/copilot-sdk";
+import type { CodingResultSummary } from "../../shared/project-coding";
+import type { CommandService, RunnerFacts, ShellId } from "../commands/types";
+import { runCommandTool, runNodeTool, type CommandFlowContext, type CommandConsentSource, type CommandTargetGuard } from "../commands/flow";
+import { CustomCodingController, CodingControllerCleanupError, type CodingControllerResult, type CustomCodingControllerOptions, type CodingControllerToolContext, type CodingControllerCommandResult } from "./custom-coding-controller";
+import { ScopedCodingFiles } from "./scoped-coding-files";
+import type { CodingCommandWorkspace, CodingReviewWorkspace, CodingWorkspaceReview, CodingPlatformAdapter, CodingFileBroker } from "./coding-platform";
+import { parseTargetId } from "../../shared/targets";
+import type { TargetBinding } from "../targets/types";
+import type { RunNodeArgs } from "../commands/node-invocation";
+import { IsolatedCodingCommandRunner } from "./isolated-coding-command-runner";
+import type { PrivateControllerRuntimeInput } from "./private-controller-runtime";
+import type { TaskSpec, WorkerResult } from "./worker";
+import { codingDraftContext } from "./coding-draft-context";
+import { handoffContext } from "./handoff-context";
+import { CodingPrivacyCleanupError } from "./coding-privacy-scanner";
+import { WindowsCodingCleanupError } from "./windows-coding-native";
+import { CodingArtifactCleanupError } from "./coding-artifact-store";
+import { CodingSeedCleanupError } from "./coding-seed-snapshot";
+import { PUBLIC_NPM_LIMITS, type PublicNpmPreparationRequest } from "./public-npm-lock";
+
+export interface ScopedCodingChecks { ran: number; passed: number; failed: number }
+interface ScopedCodingWorkerBaseOptions {
+  runtime: PrivateControllerRuntimeInput;
+  model?: string | null;
+  provider?: ProviderConfig;
+  current(): boolean;
+  reviewBase: string;
+  /** The registry owns a separate captured account/project capability, including rejection and artifact cleanup. */
+  publish(output: CodingWorkspaceReview, status: "done" | "failed" | "stopped", checks: ScopedCodingChecks, summary?: string): Promise<CodingResultSummary>;
+  progress(text: string): void;
+  beforeStart(): Promise<void>;
+  onRetiring?(): void;
+  onInvalidated?(): void;
+  clarify?: CustomCodingControllerOptions["clarify"];
+}
+export interface ScopedCodingWorkerOptions extends ScopedCodingWorkerBaseOptions {
+  mode?: "commands";
+  /** Host-selected source, private paths and owner binding. No model-supplied path reaches this factory. */
+  createWorkspace(signal: AbortSignal, admit: () => boolean): Promise<CodingCommandWorkspace>;
+  /** Host-selected platform implementation; omission keeps the existing Linux backend/file facts. */
+  platform?: CodingPlatformAdapter;
+  /** Immutable host-selected constraints, not task or model text. */
+  toolchain?: "windows-node";
+  /** Exact trusted project selection, immutable at intake; omitted retains local-only behavior. */
+  target?: Readonly<TargetBinding>;
+  commandService: CommandService;
+  /** Called once. Its original words, refusals, taint, policy and mutable flow state survive every command. */
+  commandContext(service: CommandService, signal: AbortSignal): CommandFlowContext;
+  publicDependencies?: { current(): boolean; authorize(request: Readonly<PublicNpmPreparationRequest>, context: CommandFlowContext, signal: AbortSignal): Promise<boolean> };
+}
+export interface FileOnlyScopedCodingWorkerOptions extends ScopedCodingWorkerBaseOptions {
+  mode: "files-only";
+  createWorkspace(signal: AbortSignal, admit: () => boolean): Promise<CodingReviewWorkspace>;
+  platform: Pick<CodingPlatformAdapter, "files">;
+  commandService?: never;
+  commandContext?: never;
+  publicDependencies?: never;
+}
+export type CodingWorkerOptions = ScopedCodingWorkerOptions | FileOnlyScopedCodingWorkerOptions;
+
+/** Copy the existing service's live policy/capabilities, while replacing every executable runner entry point. */
+function isolatedService(source: CommandService, runner: IsolatedCodingCommandRunner, shells: readonly ShellId[]): CommandService {
+  const service: CommandService & Partial<CommandConsentSource & CommandTargetGuard> = {
+    binding: structuredClone(source.binding), runner, window: source.window, shells: () => [...shells],
+    capability: () => source.capability(), consented: () => source.consented(), userAskEvery: () => source.userAskEvery(), mode: () => source.mode(),
+  };
+  const extra = source as CommandService & Partial<CommandConsentSource & CommandTargetGuard>;
+  if (extra.consentPanel) service.consentPanel = extra.consentPanel.bind(source);
+  if (extra.othersNamed) service.othersNamed = extra.othersNamed.bind(source);
+  if (extra.placesNamed) service.placesNamed = extra.placesNamed.bind(source);
+  return service;
+}
+
+export class ScopedCodingWorker {
+  private readonly lifetime = new AbortController();
+  private workspace: CodingReviewWorkspace | null = null;
+  private controller: CustomCodingController | null = null;
+  private runner: IsolatedCodingCommandRunner | null = null;
+  private files: CodingFileBroker | null = null;
+  private runPromise: Promise<WorkerResult> | null = null;
+  private disposing: Promise<void> | null = null;
+  private stopProofs: Promise<void>[] = [];
+  private watch: ReturnType<typeof setInterval> | null = null;
+  private retired = false;
+  private invalid = false;
+  private commandFailed = false;
+  private commandStopped = false;
+  private cleanupFailed = false;
+  private completed = false;
+  private settled = false;
+  private publicPreparationCurrent: (() => boolean) | null = null;
+  private finishDisposed!: (ok: boolean) => void;
+  readonly disposed = new Promise<boolean>(resolve => { this.finishDisposed = resolve; });
+
+  constructor(private readonly spec: TaskSpec, private readonly o: CodingWorkerOptions) {}
+  get sessionId(): null { return null; }
+  async steer(): Promise<boolean> { return false; }
+  /** Read after dispose; independent of whether the completed work may hand off successfully. */
+  cleanupComplete(): boolean { return this.settled && !this.cleanupFailed; }
+  handoffSafe(): boolean {
+    if (!this.current()) this.completed = false;
+    return this.completed && this.settled && !this.cleanupFailed;
+  }
+
+  private current = (): boolean => {
+    try { return !this.lifetime.signal.aborted && !this.invalid && (!this.publicPreparationCurrent || this.publicPreparationCurrent()) && this.o.current() === true; } catch { return false; }
+  };
+  private requireCurrent(): void {
+    if (!this.current()) throw new Error("The coding task is no longer current.");
+  }
+  private retiring(): void {
+    if (this.retired) return;
+    this.retired = true;
+    try { this.o.onRetiring?.(); } catch { this.cleanupFailed = true; }
+  }
+  /** Host invalidation is synchronous; the watcher is only a second check for missed notifications. */
+  invalidate(): void {
+    if (!this.invalid) { this.invalid = true; try { this.o.onInvalidated?.(); } catch { this.cleanupFailed = true; } }
+    this.stop();
+  }
+  /** Stops task admission immediately, while recording the asynchronous proof which disposal must await. */
+  stop(): void {
+    this.completed = false;
+    this.retiring();
+    this.lifetime.abort();
+    if (this.workspace) {
+      const proof = this.workspace.stop(); this.stopProofs.push(proof); void proof.catch(() => undefined);
+    }
+    if (this.runner) { const proof = this.runner.stopAll("killswitch"); this.stopProofs.push(proof); void proof.catch(() => undefined); }
+    void this.controller?.stop().catch(() => undefined);
+  }
+
+  run(signal: AbortSignal): Promise<WorkerResult> {
+    if (this.runPromise) return Promise.resolve({ success: false, summary: "This coding task has already run." });
+    if (this.disposing) return Promise.resolve({ success: false, stopped: true, summary: "Stopped." });
+    this.runPromise = this.perform(signal);
+    return this.runPromise;
+  }
+
+  private async perform(signal: AbortSignal): Promise<WorkerResult> {
+    const stop = () => this.stop();
+    signal.addEventListener("abort", stop, { once: true });
+    let result: CodingControllerResult = { success: false, summary: "The coding task could not be completed safely." };
+    let published = false, pipelineFailed = false;
+    try {
+      if (signal.aborted) this.stop();
+      this.requireCurrent();
+      if (this.o.mode !== undefined && this.o.mode !== "commands" && this.o.mode !== "files-only") throw new Error("The coding capability is invalid.");
+      if (this.o.mode === "files-only" && (this.o.commandService !== undefined || this.o.commandContext !== undefined || this.o.publicDependencies !== undefined || typeof this.o.platform?.files !== "function")) throw new Error("The coding capability is invalid.");
+      // Capture execution authority before startup can wait. A later caller mutation cannot upgrade this task.
+      const commands = this.o.mode === "files-only" ? null : { service: this.o.commandService, context: this.o.commandContext,
+        toolchain: this.o.toolchain, target: this.o.target ? structuredClone(this.o.target) : undefined, facts: this.o.platform?.facts.bind(this.o.platform), createWorkspace: this.o.createWorkspace.bind(this.o),
+        publicDependencies: this.o.publicDependencies ? { current: this.o.publicDependencies.current.bind(this.o.publicDependencies), authorize: this.o.publicDependencies.authorize.bind(this.o.publicDependencies) } : undefined };
+      this.publicPreparationCurrent = commands?.publicDependencies?.current ?? null;
+      const files = this.o.platform?.files.bind(this.o.platform);
+      const createWorkspace = this.o.createWorkspace.bind(this.o);
+      this.watch = setInterval(() => { if (!this.current() && !this.lifetime.signal.aborted) this.invalidate(); }, 100);
+      this.watch.unref?.();
+      await this.o.beforeStart(); this.requireCurrent();
+      let commandWorkspace: CodingCommandWorkspace | null = null;
+      this.workspace = commands === null ? await createWorkspace(this.lifetime.signal, this.current)
+        : commandWorkspace = await commands.createWorkspace(this.lifetime.signal, this.current);
+      if (!this.current()) { this.stop(); this.requireCurrent(); }
+      const controller = { runtime: this.o.runtime, ...(this.o.model ? { model: this.o.model } : {}),
+        ...(this.o.provider ? { provider: this.o.provider } : {}),
+        current: this.current, signal: this.lifetime.signal, progress: this.o.progress, clarify: this.o.clarify,
+        files: async (controllerSignal: AbortSignal) => {
+          this.requireCurrent();
+          const signal = AbortSignal.any([controllerSignal, this.lifetime.signal]);
+          this.files = files ? await files(this.workspace!, signal) : await ScopedCodingFiles.create({ workspace: this.workspace!, signal });
+          this.requireCurrent(); return this.files;
+        },
+        finishCheck: () => this.workspace!.quiescent
+          ? this.workspace!.quiescent().then(ready => ready && this.current() && (commands === null ? this.runner === null : this.runner !== null && this.runner.running === 0))
+          : this.workspace!.files(async () => this.current() && (commands === null ? this.runner === null : this.runner !== null && this.runner.running === 0)),
+      };
+      if (commands === null) this.controller = await CustomCodingController.start({ ...controller, mode: "files-only" });
+      else {
+        if (!commandWorkspace) throw new Error("The coding command workspace is unavailable.");
+        const original = commands.service;
+        const target = commands.target;
+        if (target ? target.kind !== "wsl" || parseTargetId(target.id)?.kind !== "wsl" || target.shellOs !== "linux" ||
+          JSON.stringify(target) !== JSON.stringify(original.binding) : original.binding.id !== "local" || original.binding.kind !== "local") throw new Error("The coding command target changed.");
+        const hostFacts = await original.runner.facts(); this.requireCurrent();
+        const facts: RunnerFacts = commands.facts?.(commandWorkspace, hostFacts) ?? { ...hostFacts, os: "linux", home: "/tmp", shells: ["bash"], shellPaths: { bash: "/usr/bin/bash" }, script: null, pty: false, extraPath: [] };
+        if (target && (facts.os !== "linux" || facts.privileged || !facts.shells.includes("bash") || !commandWorkspace.nodeAvailable || !commands.facts)) throw new Error("The WSL coding platform is unavailable.");
+        if (facts.shells.some(shell => !["bash", "sh", "zsh", "powershell"].includes(shell))) throw new Error("The coding platform has no supported command shell.");
+        this.runner = new IsolatedCodingCommandRunner({ workspace: commandWorkspace, facts, target: target?.id ?? "local", signal: this.lifetime.signal,
+          current: this.current, inspect: (paths, cwd) => this.files ? this.files.inspect(paths, cwd) : Promise.resolve(paths.map(() => ({ exists: null, real: null }))) });
+        if (!facts.shells.length && !this.runner.nodeAvailable) throw new Error("The coding platform has no supported execution capability.");
+        if (commands.toolchain !== undefined && (commands.toolchain !== "windows-node" || facts.os !== "win32" || facts.shells.length || !this.runner.nodeAvailable)) throw new Error("The coding toolchain capability is invalid.");
+        const service = isolatedService(original, this.runner, facts.shells), context = commands.context(service, this.lifetime.signal);
+        context.state.cwd = facts.os === "win32" ? "\\work" : this.workspace.executionRoot;
+        const dependencies = commands.publicDependencies, prepare = commandWorkspace.preparePublicDependencies?.bind(commandWorkspace);
+        if (dependencies && (!target || !dependencies.current() || !prepare)) throw new Error("Public dependency preparation is unavailable for this coding task.");
+        const preparePublicDependencies = dependencies && prepare ? async (tool: CodingControllerToolContext) => {
+          this.requireCurrent();
+          if (!dependencies.current() || context.state.running) throw new Error("Public dependency preparation is unavailable for this coding task.");
+          const combined = AbortSignal.any([context.signal, tool.signal, this.lifetime.signal]);
+          context.state.running = true;
+          try {
+            const result = await prepare(async (request, requestSignal) => {
+              const signal = AbortSignal.any([combined, requestSignal]);
+              if (!this.current() || !dependencies.current() || signal.aborted) return false;
+              const permitted = await dependencies.authorize(request, { ...context, signal,
+                isOver: () => signal.aborted || !this.current() || !dependencies.current() || context.isOver(),
+                confirmer: { ...context.confirmer, ask: (question, askSignal) => tool.waiting(() => context.confirmer.ask(question,
+                  askSignal ? AbortSignal.any([signal, askSignal]) : signal)) },
+              }, signal);
+              return permitted && this.current() && dependencies.current() && !signal.aborted;
+            }, combined);
+            this.requireCurrent();
+            if (!dependencies.current() || result.prepared !== true || !Number.isInteger(result.packages) || result.packages < 0 || result.packages > PUBLIC_NPM_LIMITS.packages ||
+                !/^[0-9a-f]{64}$/.test(result.lockSha256) || !/^[0-9a-f]{64}$/.test(result.setSha256)) throw new Error("Public dependency preparation did not complete.");
+            context.audit({ event: "action", task: this.spec.id, kind: "public-dependencies-prepared", packages: result.packages, lockSha256: result.lockSha256, setSha256: result.setSha256 });
+            this.requireCurrent(); if (!dependencies.current()) throw new Error("Public dependency preparation is no longer current.");
+            return result;
+          } catch (error) { this.commandFailed = true; this.stop(); throw error; }
+          finally { context.state.running = false; }
+        } : undefined;
+        const toolchain = commands.toolchain ? { toolchain: commands.toolchain } : {};
+        const executionProfile = target ? { executionProfile: dependencies ? "wsl-public-lock" as const : "wsl-offline" as const } : {};
+        const execute = async (tool: CodingControllerToolContext, invoke: (context: CommandFlowContext) => ReturnType<typeof runCommandTool>) => {
+          this.requireCurrent();
+          const combined = AbortSignal.any([context.signal, tool.signal, this.lifetime.signal]);
+          const sequence = this.runner!.sequence;
+          const output = await invoke({ ...context, service, signal: combined,
+            isOver: () => combined.aborted || !this.current() || context.isOver(),
+            confirmer: { ...context.confirmer, ask: (question, askSignal) => tool.waiting(() => context.confirmer.ask(question,
+              askSignal ? AbortSignal.any([combined, askSignal]) : combined)) },
+          });
+          const exits = this.runner!.exitsAfter(sequence);
+          const observed = exits.length === 1 ? exits[0] : null;
+          if (observed && observed.exit.ended === "exit" && typeof observed.exit.code === "number" && !observed.exit.outputCut && !observed.exit.endLost && /^[0-9a-f]{64}$/.test(observed.checkKey)) {
+            return { result: output, success: observed.exit.code === 0, check: { key: observed.checkKey, passed: observed.exit.code === 0 } };
+          }
+          this.commandFailed = true;
+          this.commandStopped = !!observed && ["stopped-user", "stopped-task", "killswitch"].includes(observed.exit.ended);
+          this.stop();
+          return { result: output, success: false };
+        };
+        const runNode = (args: RunNodeArgs, tool: CodingControllerToolContext): Promise<CodingControllerCommandResult> => execute(tool, current => runNodeTool(args, current));
+        this.controller = facts.shells.length
+          ? await CustomCodingController.start({ ...controller, ...toolchain, ...executionProfile, ...(preparePublicDependencies ? { preparePublicDependencies } : {}),
+            commands: { target: service.binding.label, shells: facts.shells, ...(this.runner.nodeAvailable ? { node: true as const } : {}) },
+            runCommand: (args, tool) => execute(tool, current => runCommandTool(args, current)), ...(this.runner.nodeAvailable ? { runNode } : {}),
+          })
+          : await CustomCodingController.start({ ...controller, ...toolchain, commands: { target: service.binding.label, shells: [], node: true }, runNode });
+      }
+      this.requireCurrent();
+      result = await this.controller.run(this.spec.goal + handoffContext(this.spec.handoffSummary) + codingDraftContext(this.spec.priorCodingContext), this.lifetime.signal);
+    } catch (error) {
+      pipelineFailed = true;
+      // A failed factory may retain an owner without ever returning its workspace capability.
+      if (error instanceof CodingControllerCleanupError || error instanceof CodingPrivacyCleanupError ||
+          error instanceof WindowsCodingCleanupError || error instanceof CodingArtifactCleanupError ||
+          error instanceof CodingSeedCleanupError) this.cleanupFailed = true;
+      if (this.invalid) result = { success: false, stopped: true, summary: "The coding context changed, so I stopped this task." };
+      else if (signal.aborted || (this.lifetime.signal.aborted && !this.commandFailed)) result = { success: false, stopped: true, summary: "Stopped." };
+      else if (this.commandFailed) result = { success: false, summary: "A command was refused, stopped or could not be fully observed. The coding task stopped." };
+    } finally {
+      this.retiring();
+      let stopped = true;
+      try { await this.controller?.close(); } catch { this.cleanupFailed = true; stopped = false; }
+      try { await this.files?.close(); } catch { this.cleanupFailed = true; stopped = false; }
+      try { await this.runner?.stopAll("quit"); await this.workspace?.stop(); await Promise.all(this.stopProofs); }
+      catch { this.cleanupFailed = true; stopped = false; }
+      if (this.workspace && stopped && !this.cleanupFailed) {
+        try {
+          // This host-only seal cannot be inferred from a model result, idle event or Stop request.
+          await this.workspace.sealForReview?.();
+          const output = await this.workspace.exportReview(this.o.reviewBase);
+          const exits = this.runner?.exitsAfter(0).filter(item => item.exit.ended === "exit" && typeof item.exit.code === "number" && !item.exit.outputCut && !item.exit.endLost) ?? [];
+          const checks = { ran: exits.length, passed: exits.filter(item => item.exit.code === 0).length, failed: exits.filter(item => item.exit.code !== 0).length };
+          if (!this.current() && !this.lifetime.signal.aborted) this.invalidate();
+          const changed = this.invalid || signal.aborted || this.commandStopped || (this.lifetime.signal.aborted && !this.commandFailed);
+          await this.o.publish(output, changed ? "stopped" : result.success && !pipelineFailed && !this.commandFailed ? "done" : "failed", checks, result.summary);
+          published = true;
+        } catch (error) { if (error instanceof CodingPrivacyCleanupError) this.cleanupFailed = true; pipelineFailed = true; }
+      }
+      try { await this.workspace?.close(); } catch { this.cleanupFailed = true; }
+      if (!this.current() && !this.lifetime.signal.aborted) this.invalidate();
+      try { await Promise.all(this.stopProofs); } catch { this.cleanupFailed = true; }
+      if (this.watch) clearInterval(this.watch); this.watch = null;
+      signal.removeEventListener("abort", stop);
+      this.settled = true;
+      this.completed = result.success && !pipelineFailed && published && !this.cleanupFailed && !this.lifetime.signal.aborted && !this.invalid;
+      this.finishDisposed(!this.cleanupFailed);
+    }
+    if (this.cleanupFailed) return { success: false, summary: "The coding session could not be verified as closed. Further coding work is blocked." };
+    if (!published && this.workspace) return { success: false, ...(result.stopped ? { stopped: true } : {}), summary: "The coding task ended, but its review could not be published. The original folder is unchanged." };
+    if (this.invalid) return { success: false, stopped: true, summary: "The coding context changed, so I stopped this task." };
+    if (this.commandFailed) return { success: false, ...(this.commandStopped ? { stopped: true } : {}), summary: "A command was refused, stopped or could not be fully observed. The coding task stopped." };
+    if (pipelineFailed && result.success) return { success: false, summary: "The coding result could not be prepared for review. The original folder is unchanged." };
+    return { ...result, success: this.completed };
+  }
+
+  dispose(): Promise<void> {
+    if (!this.disposing) {
+      if (!this.settled) this.stop();
+      this.disposing = (async () => {
+        if (this.runPromise) await this.runPromise;
+        else { this.settled = true; this.finishDisposed(!this.cleanupFailed); }
+        if (this.cleanupFailed) throw new Error("The coding session could not be verified as closed.");
+      })();
+    }
+    return this.disposing;
+  }
+}

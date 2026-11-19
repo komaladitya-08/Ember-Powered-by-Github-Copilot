@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const electron = vi.hoisted(() => ({ made: [] as Record<string, unknown>[], workArea: { width: 1920, height: 1040 } }));
+const electron = vi.hoisted(() => ({ made: [] as Record<string, unknown>[], workArea: { width: 1920, height: 1040 }, listeners: new Map<string, Set<() => void>>() }));
 vi.mock("electron", () => ({
   nativeTheme: { shouldUseDarkColors: true },
   BrowserWindow: class {
@@ -35,6 +35,8 @@ vi.mock("electron", () => ({
   screen: {
     getPrimaryDisplay: () => ({ workAreaSize: electron.workArea }),
     getDisplayMatching: () => ({ workArea: { x: 0, y: 0, ...electron.workArea } }),
+    on: (event: string, fn: () => void) => { if (!electron.listeners.has(event)) electron.listeners.set(event, new Set()); electron.listeners.get(event)!.add(fn); },
+    off: (event: string, fn: () => void) => { electron.listeners.get(event)?.delete(fn); },
   },
 }));
 
@@ -45,7 +47,18 @@ const { createCommandWindow, createPromptWindow, setTextScale } = await import("
 const size = (o: Record<string, unknown>) => ({ width: o.width, height: o.height, minWidth: o.minWidth, minHeight: o.minHeight });
 
 describe("the command and prompt windows at each text size (review #57)", () => {
-  afterEach(() => { setTextScale(1); electron.workArea = { width: 1920, height: 1040 }; });
+  afterEach(() => { setTextScale(1); electron.workArea = { width: 1920, height: 1040 }; electron.listeners.clear(); });
+
+  it("refits a window and its minimum when the work area shrinks, and removes display listeners on close", () => {
+    const command = createCommandWindow("linux") as unknown as MockWindow;
+    electron.workArea = { width: 320, height: 200 };
+    for (const fn of electron.listeners.get("display-metrics-changed") ?? []) fn();
+    expect(command.bounds).toEqual({ x: 0, y: 0, width: 320, height: 200 });
+    expect(command.min).toEqual([320, 200]);
+    for (const fn of command.handlers.closed) fn();
+    expect(electron.listeners.get("display-metrics-changed")?.size).toBe(0);
+    expect(electron.listeners.get("display-removed")?.size).toBe(0);
+  });
 
   it("open at their usual size at the default text size", () => {
     createCommandWindow("linux");

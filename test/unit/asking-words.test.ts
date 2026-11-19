@@ -12,8 +12,6 @@ import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import type { Settings } from "../../app/main/settings";
 import type { TargetSummary } from "../../app/shared/targets";
 import type { ApprovalMode } from "../../app/shared/approvals";
-import { EXACT_ONLY, EXACT_ONLY_CLASSES } from "../../app/shared/commands-card";
-import { ALWAYS_ASK, type DangerClass } from "../../app/main/commands/types";
 
 const MODES: readonly (ApprovalMode | null)[] = [null, "interactive", "assisted", "autopilot"];
 const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
@@ -61,14 +59,14 @@ describe("“Ask me before every command” on a computer where commands run as 
 });
 
 describe("Apps & privacy says what Ember asks before in the mode in force (home-r10-1)", () => {
-  const hand = " in an app unless you turn on Interactive, when you agree or later in settings, and then still before anything risky there. It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it). A command it doesn't know runs, and it tells you. Assisted and Autopilot, if you choose them later in settings, ask less. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ";
+  const hand = " in an app unless you turn on Interactive, when you agree or later in settings, and then still before anything risky there. It asks before a command it knows is dangerous and before code it can't read. A command it doesn't know runs, and it tells you. Assisted and Autopilot, if you choose them later in settings, ask less. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ";
   const fold = (mode: ApprovalMode | null) => `${privacyFoldWords("It asks before acting", { screenImages: true, autonomy: mode })}${privacyFoldWords(hand, { screenImages: true, autonomy: mode })}`;
 
   it("says risky steps ask in Interactive, go to the check in Assisted, and don't ask in Autopilot", () => {
-    expect(fold("interactive")).toBe("It asks before acting on anything risky in an app, and before a command it knows is dangerous or code it can't read, except where you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system: it shows you that one first, with a few seconds to stop it. A command it doesn't know runs, and it tells you. For ordinary steps it tells you what it's doing instead (How Ember asks, below). It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
-    expect(fold("assisted")).toBe("It asks before acting on anything risky in an app, or before a command it knows is dangerous or code it can't read, unless Assisted's check finds the step in what you asked, or you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system: then it goes ahead and tells you. A command it doesn't know runs, and it tells you. For ordinary steps it tells you what it's doing instead (How Ember asks, below). It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
+    expect(fold("interactive")).toBe("It asks before acting on anything risky in an app, and before a command it knows is dangerous or code it can't read, even when you asked for it. A command it doesn't know runs, and it tells you. For ordinary steps it tells you what it's doing instead (How Ember asks, below). It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
+    expect(fold("assisted")).toBe("It asks before acting on anything risky in an app, or before a command it knows is dangerous or code it can't read, unless Assisted's check finds the step in what you asked: then it goes ahead and tells you. A command it doesn't know runs, and it tells you. For ordinary steps it tells you what it's doing instead (How Ember asks, below). It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
     expect(fold("autopilot")).toBe("It doesn't ask before acting, even on anything risky or hard to undo: Autopilot is on, so it tells you what it's doing as it goes and asks only where How Ember asks, below, says. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
-    expect(fold(null)).toBe("It asks before acting in an app. It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it). A command it doesn't know runs, and it tells you. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
+    expect(fold(null)).toBe("It asks before acting in an app. It asks before a command it knows is dangerous and before code it can't read. A command it doesn't know runs, and it tells you. It never lets the AI model type or see passwords. Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees. ");
   });
 
   it("words the hint under the apps Ember may act in for the mode in force", () => {
@@ -111,10 +109,10 @@ describe("the Commands intro, the Routines hint and the Connectors hint are true
     expect(text(page)).toContain(cc.commandsIntro(null));
     expect(page).toContain(`<p class="intro" id="commands-intro">${cc.commandsIntro(null)}</p>`);
     expect(cc.commandsIntro("interactive")).toBe(cc.COMMANDS_INTRO);
-    expect(cc.commandsIntro("assisted")).toBe("Ember runs commands in its own command window, where you can watch and stop them. Most run straight away, and one it doesn't know runs after it names it, with a few seconds to stop it. Before code it can't read or a dangerous command, one that deletes, publishes, touches secrets, changes the system, downloads and runs code or would keep running after you stop it, Assisted's check reads it against what you asked: if it finds it there, or you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system, Ember tells you first and gives you a few seconds to stop it; otherwise it asks.");
+    expect(cc.commandsIntro("assisted")).toBe("Ember runs commands in its own command window, where you can watch and stop them. Most run straight away, and one it doesn't know runs after it names it, with a few seconds to stop it. Before code it can't read or a dangerous command, one that deletes, publishes, touches secrets, changes the system, downloads and runs code or would keep running after you stop it, Assisted's check reads it against what you asked: if it finds it there, Ember tells you first and gives you a few seconds to stop it; otherwise it asks.");
     expect(cc.commandsIntro("autopilot")).toBe("Ember runs commands in its own command window, where you can watch and stop them. In Autopilot it asks before none of them: a dangerous one runs after a few seconds to stop it, what a command that touches secrets prints is kept from the AI model, and Ember says when one would keep running after you stop it. One you said no to, or ruled out in your request, is refused, and so is one that deletes, changes or reads something Ember can't name, such as a place held in a variable. It still asks wherever you or your organisation set commands to ask every time, in a distro Podman uses and in “Project work”, and it isn't in Autopilot on a computer reached over SSH whose administrator doesn't allow it.");
     // The owner's table of 2026-11-14: unknown commands run in every mode, and Autopilot lists no question it no longer puts.
-    expect(cc.commandsIntro("interactive")).toBe("Ember runs commands in its own command window, where you can watch and stop them. Most run straight away, and one it doesn't know runs after it names it, with a few seconds to stop it. It asks first before code it can't read and before a dangerous command, one that deletes, publishes, touches secrets, changes the system, downloads and runs code or would keep running after you stop it, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system: then it tells you first and gives you a few seconds to stop it.");
+    expect(cc.commandsIntro("interactive")).toBe("Ember runs commands in its own command window, where you can watch and stop them. Most run straight away, and one it doesn't know runs after it names it, with a few seconds to stop it. It asks first before code it can't read and before a dangerous command, one that deletes, publishes, touches secrets, changes the system, downloads and runs code or would keep running after you stop it.");
   });
 
   it("says what a routine's steps ask before, per mode, and that Assisted's check reads what you said, not the saved steps (r10-modes-copy-x10-1)", () => {
@@ -162,30 +160,15 @@ describe("How Ember asks, for an elevated Ember in Assisted (home-c10-3; tasks-a
   });
 });
 
-describe("no sentence promises a question about a dangerous command the user asked for exactly, in any mode (accessibility-c11-1)", () => {
-  // decideCommand's rule 10 announces such a command in every mode, with a few seconds to stop it (CLAUDE.md "Never").
-  const hand = " in an app unless you turn on Interactive, when you agree or later in settings, and then still before anything risky there. It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it). A command it doesn't know runs, and it tells you. Assisted and Autopilot, if you choose them later in settings, ask less. ";
-  const fold = (mode: ApprovalMode | null) => `${privacyFoldWords("It asks before acting", { screenImages: true, autonomy: mode })}${privacyFoldWords(hand, { screenImages: true, autonomy: mode })}`;
-  const ASKS_ABOUT = /\b(asks?|ask)\b[^.]*\b(delet|dangerous|hard to undo|risky|publish)/i;
-  const TRUE_OF_IT = /exactly|in an app\b/;
-
-  it.each(MODES)("says the exception wherever it says Ember asks before deleting or anything hard to undo (mode %s)", mode => {
-    if (mode === "autopilot") return;
-    // (Not the Routines hint: a command a routine's step names always asks, since the step isn't what the user said
-    // just now, so "still asks before anything risky" is true there.)
-    const said = [cc.commandsIntro(mode), grantsHint(mode), fold(mode), ...(mode === "interactive" ? [MODE_LINE.interactive!, AUTONOMY_CONSENT_TEXT] : [])];
-    for (const s of said) for (const sentence of s.split(/(?<=\.)\s+/)) {
-      if (ASKS_ABOUT.test(sentence)) expect(sentence, s).toMatch(TRUE_OF_IT);
-    }
+describe("Interactive asks before dangerous commands even when requested", () => {
+  it("says so in the mode's consent and commands card", async () => {
+    const { COMMANDS_CARD_ASKS } = await import("../../app/shared/commands-card");
+    expect(AUTONOMY_CONSENT_TEXT).toContain("even when you asked for it");
+    expect(COMMANDS_CARD_ASKS).toContain("Ember asks you before a dangerous command, even when you asked for it.");
+    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(6);
   });
 
-  it("no longer lists dangerous commands among what Interactive's card asks about every time, and its card asks again", () => {
-    expect(AUTONOMY_CONSENT_TEXT).not.toMatch(/every time before anything risky[^.]*dangerous commands/);
-    expect(AUTONOMY_CONSENT_TEXT).toContain("unless you asked for exactly that command");
-    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(5);
-  });
-
-  it("says an app's grant doesn't cover anything hard to undo, true in every mode", () => {
+  it("keeps an app grant's limits visible", () => {
     expect(describeEntry({ t: "2026-11-14T10:00:00Z", event: "confirm", kind: "click", app: "gedit", element: { role: "push button", name: "Save" }, answer: "always" } as never)?.why).toBe("From now on Ember may act in gedit without asking first, but that doesn't cover anything hard to undo.");
   });
 });
@@ -199,7 +182,7 @@ describe("Before Ember starts promises no question a mode doesn't put (Settled 2
     const hand = consentPoints({ service: "GitHub Copilot", kept: "kept 30 days", locked: false }).find(p => p.icon === "hand")!.text;
     for (const s of [handFull, hand]) {
       expect(s).not.toMatch(/always before anything hard to undo/);
-      expect(s).toMatch(/exactly that command/);
+      expect(s).toMatch(/command (it|I) knows? is dangerous/);
       expect(s).toMatch(/Assisted and Autopilot[^.]*ask less/);
     }
   });
@@ -210,16 +193,16 @@ describe("Before Ember starts promises no question a mode doesn't put (Settled 2
   });
 
   it("is a new version of the consent, and tells someone who agreed before what changed", async () => {
-    const { CONSENT_VERSION, consentChangesSince } = await import("../../app/shared/consent");
-    expect(CONSENT_VERSION).toBe(11);
-    expect(consentChangesSince(10)).toEqual(["I say plainly what I ask before: anything risky in an app, and a command I know is dangerous or code I can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system. A command I don't know runs, and I tell you, and Assisted and Autopilot, if you choose them later, ask less."]);
+    const { CONSENT_VERSION, CONSENT_CHANGES, consentChangesSince } = await import("../../app/shared/consent");
+    expect(CONSENT_VERSION).toBe(15);
+    expect(consentChangesSince(10)).toEqual(["I say plainly what I ask before: anything risky in an app, and a command I know is dangerous or code I can't read, even if you asked for it. A command I don't know runs, and I tell you, and Assisted and Autopilot, if you choose them later, ask less.", "In Interactive, I ask before a dangerous command even when you asked for it.", "If you choose Save projects, I encrypt project names, goals and session outcomes on this computer until you choose Forget saved projects or Forget everything. Opening a checkpoint never resumes work.", CONSENT_CHANGES[14], CONSENT_CHANGES[15]]);
   });
 });
 
 describe("the commands card is true in every approval mode, as root too (Settled 28: r10-modes-copy-y10-1; owner decision of 2026-11-14)", () => {
   const facts = { kind: "local" as const, privileged: true, windows: false, podman: false };
   const PRIVILEGED = "Commands here run as the administrator, so in Interactive Ember asks before every one, even one you asked for exactly. In Assisted, each goes ahead when a check finds it in what you asked for, and asks otherwise. In Autopilot, each runs after a few seconds to stop it.";
-  const MAIN = "Most commands run straight away, ones Ember doesn't know included. A command is dangerous if it deletes or overwrites data, pushes or publishes anywhere, shows passwords or keys, changes the system, downloads and runs code or would keep running after you stop Ember, and so is code Ember can't read. In Interactive, the default, Ember asks you before a dangerous command, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system: then it shows it first, with a few seconds to stop it. In Assisted, it goes ahead when a check finds the command in what you asked for, and asks otherwise. In Autopilot, it asks nothing and tells you as it goes.";
+  const MAIN = "Most commands run straight away, ones Ember doesn't know included. A command is dangerous if it deletes or overwrites data, pushes or publishes anywhere, shows passwords or keys, changes the system, downloads and runs code or would keep running after you stop Ember, and so is code Ember can't read. In Interactive, the default, Ember asks you before a dangerous command, even when you asked for it. In Assisted, it goes ahead when a check finds the command in what you asked for, and asks otherwise. In Autopilot, it asks nothing and tells you as it goes.";
   const ALWAYS = "In every mode, Ember doesn't run again a command you said no to in a task, and it asks before every command wherever your organisation, or your own “Ask me before every command” for that computer, says so.";
   const OUTPUT = "What a command prints goes to GitHub Copilot as part of the task. Ember hides passwords and keys it recognises, and never sees what you type into a command. In Autopilot, what a command that shows passwords or keys prints is kept from GitHub Copilot: only you see it, in the command window. If a command prints something that looks like instructions, Ember doesn't follow it, and in Interactive every further command in that task asks you first.";
 
@@ -241,7 +224,7 @@ describe("the commands card is true in every approval mode, as root too (Settled
     const card = commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts, stopKey: "Ctrl+Alt+X" });
     const shown = promptCopy.consentText({ feature: "commands", os: "linux", target: "local", targetLabel: "This computer", stopKey: "Ctrl+Alt+X", commands: { privileged: true } });
     expect(shown.body).toEqual(card.body);
-    expect(FEATURE_CONSENT_VERSION.commands).toBe(3);
+    expect(FEATURE_CONSENT_VERSION.commands).toBe(4);
   });
 });
 
@@ -249,8 +232,8 @@ describe("the three mode cards are true to the owner's table for commands (owner
   it("Interactive's card says commands Ember doesn't know run, names what is dangerous, and that code it can't read asks", async () => {
     const { AUTONOMY_CONSENT_TEXT: card } = await import("../../app/renderer/home/copy");
     expect(card).toContain("runs ordinary commands and ones it doesn't know,");
-    expect(card).toContain("It asks before a dangerous command too, one that deletes, publishes, changes the system, touches passwords or keys, downloads and runs code or keeps running after you stop Ember, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system: then it shows it first, with a few seconds to stop it. It asks before code it can't read, too.");
-    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(5);
+    expect(card).toContain("It asks before a dangerous command too, one that deletes, publishes, changes the system, touches passwords or keys, downloads and runs code or keeps running after you stop Ember, even when you asked for it. It asks before code it can't read, too.");
+    expect(FEATURE_CONSENT_VERSION.autonomy).toBe(6);
   });
 
   it("Assisted's card no longer says its check never clears a secrets command or one that outlives Stop", async () => {
@@ -288,34 +271,6 @@ describe("the three mode cards are true to the owner's table for commands (owner
     expect(readme).toContain("It asks only where you or your organisation set commands to ask every time, in a distro Podman uses and in **Project work**;");
     const bullet = claude.slice(claude.indexOf("**Autopilot**: it never asks"));
     expect(bullet.slice(0, bullet.indexOf("Everything else that would ask"))).toMatch(/in a distro Podman uses .* and in Project work .*the owner hasn't ruled on/);
-  });
-});
-
-describe("the exception for a dangerous command asked for exactly is said one way, true to what can go ahead (r11-copy-x11-1)", () => {
-  // Every class of danger, so that a new one fails to compile here until it is placed on one side or the other.
-  const ALL: Readonly<Record<DangerClass, true>> = { destroy: true, publish: true, "remote-delete": true, secret: true, system: true, escape: true, unclear: true, unknown: true };
-  const SAID: Readonly<Record<(typeof EXACT_ONLY_CLASSES)[number], string>> = { destroy: "deletes or overwrites data", "remote-delete": "deletes", publish: "publishes something", system: "changes the system" };
-
-  it("names exactly the dangerous classes that the user's own words can let go ahead, never ALWAYS_ASK's", () => {
-    // ("unknown" never asks at all: the owner's decision of 2026-11-14.)
-    const canGo = (Object.keys(ALL) as DangerClass[]).filter(c => !ALWAYS_ASK.has(c) && c !== "unknown");
-    expect([...EXACT_ONLY_CLASSES].sort()).toEqual(canGo.sort());
-    for (const c of EXACT_ONLY_CLASSES) expect(EXACT_ONLY).toContain(SAID[c]);
-    expect(EXACT_ONLY).not.toMatch(/password|key|download|keep running|can't read/);
-  });
-
-  it.each(MODES)("is said in those words wherever a card or line names it (mode %s)", async mode => {
-    const { COMMANDS_CARD_ASKS } = await import("../../app/shared/commands-card");
-    const { consentPoints } = await import("../../app/renderer/home/welcome-copy");
-    const { CONSENT_CHANGES } = await import("../../app/shared/consent");
-    const handPage = text(page.match(/<li data-icon="hand">([\s\S]*?)<\/li>/)![1]);
-    const lead = "It asks before acting";
-    const fold = `${privacyFoldWords(lead, { screenImages: true, autonomy: mode })}${privacyFoldWords(handPage.slice(lead.length), { screenImages: true, autonomy: mode })}`;
-    const places = [COMMANDS_CARD_ASKS, AUTONOMY_CONSENT_TEXT, MODE_LINE.interactive!, handPage, fold, CONSENT_CHANGES[11]!,
-      consentPoints({ service: "GitHub Copilot", kept: "kept 30 days", locked: false }).find(p => p.icon === "hand")!.text];
-    for (const s of places) for (const sentence of s.split(/(?<=\.)\s+/)) {
-      if (/asked for exactly/.test(sentence)) expect(sentence, s).toContain(EXACT_ONLY);
-    }
   });
 });
 
@@ -386,12 +341,12 @@ describe("Assisted's and Autopilot's cards promise the user's ruled-out words on
 });
 
 describe("Home's words for each mode read plainly and name where Autopilot still asks (home-r12-1, home-c12-1, accessibility-r12-3)", () => {
-  const fold = (mode: ApprovalMode | null) => privacyFoldWords(" in an app unless you turn on Interactive, when you agree or later in settings, and then still before anything risky there. It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system (it shows it first, with a few seconds to stop it). A command it doesn't know runs, and it tells you. Assisted and Autopilot, if you choose them later in settings, ask less.", { screenImages: true, autonomy: mode });
+  const fold = (mode: ApprovalMode | null) => privacyFoldWords(" in an app unless you turn on Interactive, when you agree or later in settings, and then still before anything risky there. It asks before a command it knows is dangerous and before code it can't read. A command it doesn't know runs, and it tells you. Assisted and Autopilot, if you choose them later in settings, ask less.", { screenImages: true, autonomy: mode });
 
   it("never splices “exactly that” into “only deletes…”: it says “exactly that command and it only deletes…” (home-r12-1)", () => {
     const said = [MODE_LINE.interactive!, fold("interactive"), fold("assisted"), fold(null), cc.commandsIntro("interactive"), cc.commandsIntro("assisted")];
     for (const s of said) expect(s, s).not.toMatch(/exactly that only/);
-    expect(MODE_LINE.interactive).toBe("Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system: then it tells you first.");
+    expect(MODE_LINE.interactive).toBe("Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying, including a dangerous command you asked for.");
   });
 
   it("says under Autopilot's name, and in its note, that it still asks before commands where you or your organisation set them to (home-c12-1)", async () => {

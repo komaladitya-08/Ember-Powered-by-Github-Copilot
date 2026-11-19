@@ -15,7 +15,7 @@ import { HandleLive, micOpen, questionOf } from "./live";
 import { LIVE_SETTLE_MS } from "../shared/held-live";
 import { mayRest } from "./rest";
 import { watchPixels } from "../shared/pixels";
-import { handleLine, pillLine } from "./line";
+import { handleLine, handleSummary, pillLine } from "./line";
 
 declare global { interface Window { emberHandle: HandleApi } }
 
@@ -166,9 +166,11 @@ const wordRows = (): HTMLElement[] => [...$("handle").querySelector<HTMLElement>
 function wordsClear(): boolean {
   const handleEl = $("handle");
   const end = handleEl.getBoundingClientRect().bottom - px(getComputedStyle(handleEl).paddingBottom);
+  const sentence = thoughtEl.getBoundingClientRect();
   return cardClear({
     sentence: { clientHeight: thoughtEl.clientHeight, scrollHeight: thoughtEl.scrollHeight, lineHeight: px(getComputedStyle(thoughtEl).lineHeight) },
     wordsEnd: end, rowsEnd: wordRows().map(el => el.getBoundingClientRect().bottom),
+    viewport: { top: sentence.top, bottom: sentence.bottom, height: window.innerHeight },
   });
 }
 /** Measured (a layout read) while it waits to be read: main told the first time all of it is in view on the shown card. */
@@ -188,6 +190,7 @@ function judgeWhole(): void {
 wholeEl.addEventListener("scroll", judgeWhole, { passive: true });
 // Fitted by main (or squeezed by a short work area): the question's sentence may show whole now, or no longer.
 window.addEventListener("resize", () => { paintWhole(); judgeWhole(); });
+document.body.addEventListener("scroll", () => { paintWhole(); judgeWhole(); }, { passive: true });
 document.fonts.addEventListener("loadingdone", judgeWhole);
 
 // ── An answer opened in full ("Read all") on the card: main told once its last line has been in view (all of it, or
@@ -284,8 +287,8 @@ api.onState(s => {
     // The pill: one line. An answer's title is the character's name, already shown above: the line shows what it said.
     const line = pillLine(s, name, idle);
     $("line").textContent = line;
-    // Hovering the pill shows the whole line (it is cut off with an ellipsis when long).
-    $("handle").title = line;
+    // The full line and the delegated tasks stay available when the pill has room only for an ellipsis.
+    $("handle").title = handleSummary(line, s.tasks);
     return;
   }
   announce(b, s.status ?? null, micNews);

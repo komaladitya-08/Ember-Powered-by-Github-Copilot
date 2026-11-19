@@ -56,23 +56,16 @@ describe("VaultRedactor (vault-3)", () => {
     expect(r.text("ending 1111")).toBe("ending 1111");
   });
 
-  it("never marks a security code, or any secret too short to hide, inside other text: where the mark lands would give it away (vault-3-x9-1)", () => {
+  it("refuses short secrets before they can be filled and keeps watching prior values", () => {
     const r = new VaultRedactor();
-    r.note("securityCode", "437");
-    // Any text that lists the numbers (a page's on purpose, a date, a price the model typed itself) would say which one it is.
-    const list = Array.from({ length: 1000 }, (_, i) => String(i).padStart(3, "0")).join(" ");
-    expect(r.text(list)).toBe(list);
-    for (const text of ["Pay $1,437.00 — order 54371, call 555-437-1200", "code 437 ok", "437"]) {
-      expect(r.text(text), text).toBe(text);
-      expect(r.holds(text), text).toBe(false);
+    r.note("password", PASSWORD);
+    for (const [part, value] of [["securityCode", "437"], ["securityCode", "8642"], ["password", "Ab1!x"]] as const) {
+      expect(() => r.note(part, value)).toThrow(/cannot be safely watched/);
     }
-    r.note("securityCode", "8642");
-    r.note("password", "Ab1!x");
-    expect(r.text("13 November 8642, xAb1!xy")).toBe("13 November 8642, xAb1!xy");
-    // Something was filled all the same (the extensions' gate and the client go by this), and a longer secret is still found.
-    expect(r.active).toBe(true);
-    r.note("password", "Ab1!xy");
-    expect(r.text("xAb1!xyz")).toBe(`x${VAULT_REDACTED}z`);
+    expect(r.text(`echo ${PASSWORD}`)).toBe(`echo ${VAULT_REDACTED}`);
+    const fresh = new VaultRedactor();
+    expect(() => fresh.note("securityCode", "437")).toThrow();
+    expect(fresh.active).toBe(false);
   });
 
   it("replaces a user name, an email or an address in any letter case and across white space, but only where it stands alone", () => {
@@ -256,7 +249,8 @@ describe("redactingClient: where text leaves for a model (vault-3)", () => {
     expect(main).toContain("redact: vaultRedactor,");
     expect(main).toContain("redact: text => vaultRedactor.text(text),");
     expect(main).toContain("entry => vaultRedactor.deep(entry));");
-    expect(main).toContain("filling: (part, value) => { vaultRedactor.note(part, value); extensionsRef?.vaultFilledNow(); },");
+    expect(main).toContain("filling: (part, value) => recordVaultFill(part, value, () => agent,");
+    expect(main).toContain("(p, v) => vaultRedactor.note(p, v), () => extensionsRef?.vaultFilledNow())");
     // Screen text passes it whole before it is cut short for a model (vault-3-x9-2).
     expect(main).toContain("setQuoteRedactor(text => vaultRedactor.text(text));");
     // So does a command's output, before its lines are cut (vault-3-y9-1), a pattern at a time at a run's end (merge

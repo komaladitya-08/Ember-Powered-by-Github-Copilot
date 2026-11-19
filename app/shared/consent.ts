@@ -20,13 +20,22 @@ import type { TargetId } from "./targets";
  * 10 (2026-11-13): the vault keeps something new on this computer: logins, cards and contact details the user gives
  * in Ember's Secure Form, sealed with the keyring, which only Autopilot fills in and no model sees (owner decision of
  * 2026-11-12, app/main/vault/).
+ * 12: Interactive now asks before dangerous commands even when the user asked for them.
+ * 13: explicit Save projects keeps an encrypted project/session checkpoint, with no automatic work resumption.
+ * 14: requested coding work copies a chosen project folder, may send files/output to the model, and offers explicit
+ * full-file review exports; connection-scoped grants/reviews and unverified private-copy cleanup are disclosed.
+ * 15: explicit Save coding draft encrypts complete captured files and bounded request/summary/check history;
+ * opening is inert, and using saved edits requires a newly chosen folder, import review and a new request.
+ * That new request may share the saved request and summary with its model as historical context.
+ * A separately enabled WSL public dependency set sends public npm names/versions to the public registry under normal
+ * exact-set approvals; project files/private credentials are excluded and command execution stays offline.
  * 11 (2026-11-14): "Before Ember starts" no longer says Ember always asks before anything hard to undo: it says what
  * asks (a risky step in an app; a dangerous command or code Ember can't read, unless the user asked for exactly that
  * command and it does no more than commands-card.ts EXACT_ONLY says, shown first with a few seconds to stop it), that a
  * command Ember doesn't know runs, announced (the owner's decision of 2026-11-14), and that Assisted and Autopilot ask
  * less (PLAN.md §10 Settled 28; first-run-r10-7, -r10-8, accessibility-c11-1, r11-copy-x11-1, -x11-3).
  */
-export const CONSENT_VERSION = 11;
+export const CONSENT_VERSION = 15;
 
 /**
  * What each bump of CONSENT_VERSION changed, in Ember's words, for someone who agreed to an earlier version: first run
@@ -34,6 +43,9 @@ export const CONSENT_VERSION = 11;
  * Ember starts" says (home-welcome.test.ts pairs every line with the full text's words). A bump adds its line here.
  */
 export const CONSENT_CHANGES: Readonly<Record<number, string>> = {
+  15: "If you choose Save coding draft, I encrypt complete captured files, the last request and summary, and historical check outcomes on this computer until you forget the draft or choose Forget everything. Opening a saved draft never resumes work. Using its edits requires a newly chosen folder, a new import review and a new request. When you start a new request from an imported draft, its saved request and summary may go to your connected model as historical context. If you separately enable public dependencies for a WSL coding project, I may send its locked public npm package names and versions to registry.npmjs.org after the normal approval decision for that exact set. I send no project files or private registry credentials there, and commands remain offline.",
+  14: "When you ask for coding work, I copy the project folder you chose and may send requested files and command output to your model, leaving the original unchanged. Exports keep all captured files, including unchanged files, until you remove them. Private copies I can't verify as removed may remain and block new coding work.",
+  13: "If you choose Save projects, I encrypt project names, goals and session outcomes on this computer until you choose Forget saved projects or Forget everything. Opening a checkpoint never resumes work.",
   2: "If you teach me your voice, I keep refining your voiceprint from requests I'm sure are yours, and I keep the words you correct.",
   3: "Listen once can open the microphone for one request while “Hey Ember” is off.",
   4: "In Project work, Send selected files shares your request and the contents of those files with the connected model.",
@@ -43,7 +55,8 @@ export const CONSENT_CHANGES: Readonly<Record<number, string>> = {
   8: "While one of my questions is up, anyone near the computer can answer it by voice, and for a few seconds after I ask, I listen for that answer without my name. With Voice Match on, only your voice can say yes.",
   9: "If you haven't agreed to Interactive yet, agreeing now turns it on unless you switch it off here or your organisation keeps it off, so I don't ask before ordinary steps in an app. Your other settings stay as they are.",
   10: "If you give me a login, a card or contact details in my Secure Form, I keep them in a vault on this computer, locked with your computer's keyring, until you forget them. Only Autopilot fills them in, and the AI model never sees them.",
-  11: "I say plainly what I ask before: anything risky in an app, and a command I know is dangerous or code I can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system. A command I don't know runs, and I tell you, and Assisted and Autopilot, if you choose them later, ask less.",
+  12: "In Interactive, I ask before a dangerous command even when you asked for it.",
+  11: "I say plainly what I ask before: anything risky in an app, and a command I know is dangerous or code I can't read, even if you asked for it. A command I don't know runs, and I tell you, and Assisted and Autopilot, if you choose them later, ask less.",
 };
 
 /** The changes since the version the user agreed to (`agreed`), oldest first: none for a first agreement (0) or a current one. */
@@ -82,8 +95,9 @@ export function consentChangesSince(agreed: number): string[] {
  * `commands` 3 (2026-11-14): its card for a computer whose commands run as root says Assisted's check may clear
  * one the request was about, where 2 said every such command asks there (tasks-approvals-r12-1). `assisted` 5: its
  * card says the check may clear a command that runs as root or an administrator, which 4 left out (integ-x-4).
+ * `autonomy` 6 and `commands` 4: their cards say Interactive asks before dangerous commands the user requested.
  */
-export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 3, memory: 4, routines: 1, extensions: 5, autonomy: 5, provider: 1, updates: 1, assisted: 5, autopilot: 4 } as const;
+export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 4, memory: 4, routines: 1, extensions: 5, autonomy: 6, provider: 1, updates: 1, assisted: 5, autopilot: 4 } as const;
 
 /**
  * A first-use consent card (§8.4): its exact text, and a hash of it that the yes must carry back. Shown in Ember's

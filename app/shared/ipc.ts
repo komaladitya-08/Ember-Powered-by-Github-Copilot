@@ -140,6 +140,30 @@ export const IPC = {
   projectRunCommand: "project:run-command",
   projectWorkspace: "project:workspace",
   projectForgot: "project:forgot",
+  codingState: "coding:state",
+  codingChooseWorkspace: "coding:choose-workspace",
+  codingClearWorkspace: "coding:clear-workspace",
+  codingStateChanged: "coding:state-changed",
+  projectSessionsState: "projects:sessions-state",
+  projectSessionsAction: "projects:sessions-action",
+  projectSessionsCheckpoint: "projects:sessions-checkpoint",
+  projectCodingWorkspaceState: "projects:coding-workspace-state",
+  projectCodingWorkspaceChoose: "projects:coding-workspace-choose",
+  projectCodingWorkspaceForget: "projects:coding-workspace-forget",
+  projectCodingExecutionChoose: "projects:coding-execution-choose",
+  codingDraftsState: "coding-drafts:state",
+  codingDraftSave: "coding-drafts:save",
+  codingDraftOpen: "coding-drafts:open",
+  codingDraftForget: "coding-drafts:forget",
+  codingDraftForgetAll: "coding-drafts:forget-all",
+  codingDraftFolderChoose: "coding-drafts:folder-choose",
+  codingDraftImport: "coding-drafts:import",
+  projectCodingPublicDependenciesChoose: "projects:coding-public-dependencies-choose",
+  codingResultsState: "coding:results-state",
+  codingResultReview: "coding:result-review",
+  codingResultExport: "coding:result-export",
+  codingResultForget: "coding:result-forget",
+  codingResultContinue: "coding:result-continue",
   /** Long-term memory (docs/MEMORY.md): what Ember remembers, and forgetting one fact or all of it. */
   memoryList: "memory:list",
   memoryChanged: "memory:changed",
@@ -456,6 +480,9 @@ export type ConversationContext =
   | { kind: "usage"; currentTokens: number; tokenLimit?: number }
   | { kind: "compacting" };
 
+/** Coding's independently authorised workspace; a branch can be unavailable for a non-Git folder. */
+export interface CodingWorkspaceState { folder: string | null; branch: string | null; running: boolean; available?: boolean; error?: string }
+
 export interface EmberHomeApi {
   getStatus(): Promise<Status>;
   updateSettings(patch: SettingsPatch): Promise<Settings>;
@@ -465,6 +492,30 @@ export interface EmberHomeApi {
   /** Reads the setup check again (Check again), a probe that waits between tries included; returns the new report. */
   recheckSetup(): Promise<EnvReport>;
   agentStatus(): Promise<AgentStatus>;
+  codingState(): Promise<CodingWorkspaceState>;
+  codingChooseWorkspace(): Promise<CodingWorkspaceState>;
+  codingClearWorkspace(): Promise<CodingWorkspaceState>;
+  onCodingState(fn: (s: CodingWorkspaceState) => void): () => void;
+  projectSessionsState(): Promise<import("./project-sessions").ProjectSessionsState>;
+  projectSessionsAction(input: unknown): Promise<import("./project-sessions").ProjectSessionsState>;
+  projectSessionsCheckpoint(action: "save" | "open" | "forget"): Promise<{ state: import("./project-sessions").ProjectSessionsState; message: string }>;
+  projectCodingWorkspaceState(projectId: string): Promise<import("./project-coding").ProjectCodingWorkspaceState>;
+  projectCodingWorkspaceChoose(projectId: string): Promise<import("./project-coding").ProjectCodingWorkspaceState>;
+  projectCodingWorkspaceForget(projectId: string): Promise<import("./project-coding").ProjectCodingWorkspaceState>;
+  projectCodingExecutionChoose(projectId: string, targetId: string): Promise<import("./project-coding").ProjectCodingWorkspaceState>;
+  codingDraftsState(): Promise<import("./coding-drafts").CodingDraftsState>;
+  codingDraftSave(resultId: string, name: string): Promise<import("./coding-drafts").CodingDraftsState>;
+  codingDraftOpen(id: string): Promise<import("./coding-drafts").CodingDraftView>;
+  codingDraftForget(id: string): Promise<import("./coding-drafts").CodingDraftsState>;
+  codingDraftForgetAll(): Promise<import("./coding-drafts").CodingDraftsState>;
+  codingDraftFolderChoose(id: string, projectId: string): Promise<import("./coding-drafts").CodingDraftFolderChoice>;
+  codingDraftImport(id: string, projectId: string): Promise<import("./coding-drafts").CodingDraftImportResult>;
+  projectCodingPublicDependenciesChoose(projectId: string, enabled: boolean): Promise<import("./project-coding").ProjectCodingWorkspaceState>;
+  codingResultsState(projectId: string): Promise<import("./project-coding").CodingResultSummary[]>;
+  codingResultReview(id: string): Promise<import("./project-coding").CodingResultReview>;
+  codingResultExport(id: string): Promise<{ ok: boolean; message: string }>;
+  codingResultForget(id: string): Promise<{ ok: boolean; message: string }>;
+  codingResultContinue(id: string, projectId: string, request: string): Promise<{ ok: boolean; message: string }>;
   projectPick(): Promise<ProjectSelection>;
   projectRemove(name: string): Promise<ProjectSelection>;
   projectExport(kind: "answer" | "diff"): Promise<{ message: string }>;

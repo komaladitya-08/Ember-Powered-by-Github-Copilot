@@ -194,7 +194,7 @@ describe("AgentHost's TaskManager without a window system (§2.6, critique integ
     const { host } = makeHost({ targets: t.agent, taskBase: taskBase().base });
     await host.start(TOKEN, "stored");
     expect(host.tasks).toBeNull();
-    expect(conductor().config.tools.map((x: any) => x.name)).toEqual(["set_appearance", "describe_screen", "start_task", "show_me", "set_reminder", "list_reminders", "cancel_reminder"]);
+    expect(conductor().config.tools.map((x: any) => x.name)).toEqual(["set_appearance", "describe_screen", "start_task", "create_project", "select_project", "list_projects", "show_me", "set_reminder", "list_reminders", "cancel_reminder"]);
     expect(await tool(conductor(), "start_task").handler({ goal: "tidy my desktop" }, {})).toMatch(/cannot operate applications in this session \(no desktop access\)/);
     await host.ask("how do I change the wallpaper");
     expect(await tool(conductor(), "show_me").handler({ goal: "how do I change the wallpaper" }, {})).toBe("Ember can't point at things in this session (no desktop access). Explain the steps in words instead.");

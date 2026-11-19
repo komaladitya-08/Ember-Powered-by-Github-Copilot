@@ -14,6 +14,7 @@ Version:        %{ember_version}
 # 1 unless rpm.sh is given another (EMBER_RPM_RELEASE: CI builds Release 2 to test an upgrade).
 Release:        %{?ember_release}%{!?ember_release:1}%{?dist}
 Summary:        A cursor companion that works visibly in your apps, powered by GitHub Copilot
+# Windows also carries the optional TypeScript offline WSL tool archive (Apache-2.0), with its exact licence.
 # Ember and Electron are MIT; bundled are Chromium (BSD-3-Clause and others, with FFmpeg under
 # LGPL-2.1-or-later: LICENSES.chromium.html), sharp, detect-libc and sherpa-onnx (Apache-2.0; its
 # WebAssembly also holds ONNX Runtime and piper-phonemize (MIT), Protocol Buffers and RE2 (BSD-3-Clause),
@@ -33,7 +34,10 @@ Summary:        A cursor companion that works visibly in your apps, powered by G
 # The texts are in /opt/ember: THIRD_PARTY_NOTICES, LICENSE, LICENSES.chromium.html. stage.mjs fails if
 # a bundled package's licence, or a library one declares it bundles, is missing here
 # (scripts/package/licences.mjs).
-License:        MIT AND Apache-2.0 AND BSD-3-Clause AND ISC AND LGPL-2.1-or-later AND LGPL-3.0-or-later AND GPL-3.0-or-later AND BSD-2-Clause AND MPL-1.1 AND MPL-2.0 AND Zlib AND IJG AND FTL AND libpng-2.0 AND libtiff AND HPND-sell-variant AND OFL-1.1
+# The optional pinned Windows coding Node carries ICU's Unicode-3.0 notice in its complete Node LICENSE.
+# Windows TypeScript also carries its exact Unicode-DFS-2016, W3C-20150513 and CC-BY-4.0 notices
+# and the publisher's unchanged W3C Community Final Specification Agreement in ThirdPartyNoticeText.txt.
+License:        MIT AND Apache-2.0 AND BSD-3-Clause AND ISC AND LGPL-2.1-or-later AND LGPL-3.0-or-later AND GPL-3.0-or-later AND BSD-2-Clause AND MPL-1.1 AND MPL-2.0 AND Zlib AND IJG AND FTL AND libpng-2.0 AND libtiff AND HPND-sell-variant AND OFL-1.1 AND Unicode-3.0 AND Unicode-DFS-2016 AND W3C-20150513 AND CC-BY-4.0
 URL:            https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot
 Source0:        ember-%{version}-staged.tar
 ExclusiveArch:  x86_64

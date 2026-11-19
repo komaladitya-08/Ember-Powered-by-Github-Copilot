@@ -1,0 +1,33 @@
+# Coding review artifact stores
+
+The result registry shares account, project, epoch, retention, preview and metadata rules across physical stores.
+Linux resources and the draft [Windows file-only resources](EXPERIMENTAL-WINDOWS-PROJECT-RESOURCES.md) select
+their respective stores. The Windows store supplies no command runtime, package grant or command-writer proof.
+
+`coding-artifact-store.ts` defines host-only physical capabilities. An artifact contains exactly `changes.patch` and `review.json`, with a combined 64 MiB bound. Registry limits remain 32 visible results, 64 tracked physical artifacts, 256 KiB patch previews and bounded metadata. Native references never enter project schemas, result previews or IPC.
+
+The Linux store preserves descriptor-relative traversal, mount receipts, owner/mode checks, hashes and legacy adoption of a stopped backend's existing review directory. The Windows store never obtains cleanup authority from a directory string. It creates a fresh owner/SYSTEM-only NTFS root, retains its creator and parent capabilities, and mints an opaque producer reference. A valid claim transfers that reference once to the registry; forged, cross-store and reused references cannot confer authority. Store-minted immutable receipts bind the two exact file identities, sizes and hashes.
+
+Fresh roots enter the cleanup ledger before any asynchronous operation. Incomplete exports and refused claimed artifacts retain exact cleanup receipts; unrelated or changed objects are retained rather than recursively deleted. Unclaimed producers remain the producer's responsibility until claim, explicit discard or store close. The Windows resource owner retires its unclaimed producers on Forget and account/project invalidation. Unknown handle close or disposition completion is terminal, preserves a typed cleanup failure and prevents further native admissions; known deletion refusals remain tracked for safe retry. Completed explicit user exports leave private cleanup ownership and survive result Forget/reset.
+
+Linux resources capture source references at intake. Passing the same reference to registration preserves the original path/identity receipt; it never attests a replacement folder found at that path later. A removed or rebound source can retain its review preview, but export fails closed. Explicit `null` means the intake source boundary was unavailable and must not be recaptured. Undefined preserves legacy host callers' publication capture; the production Linux resource owner always passes its captured reference or explicit null.
+
+Host-only continuation primitives read an exact claimed artifact file under a separate byte bound and compare two store-minted source references against the current native source identity. Reads verify the complete artifact before copying bytes and again before returning an independent Buffer; a failure zeroes partial output, and successful bytes belong to the caller. Unknown, foreign, removed or replaced source capabilities do not match. Revocation and unverified handle cleanup reject rather than returning a match. These primitives grant no model or IPC authority by themselves; the separate reviewed-continuation flow admits a fresh request and fresh copied workspace.
+
+The Windows store reuses the [verified native file foundation](EXPERIMENTAL-WINDOWS-CODING-FILES.md): handle-relative no-reparse access, NTFS volume/file identity, one-link ordinary files, protected private ACLs, retained parent pins, fresh writes and hash readback. Export pins the selected destination and its ancestry, rejects source/private/protected aliases, creates a fresh child and commits only after the current authority and exact files are rechecked. It changes no source or host tree ACLs. Artifact roots never grant an LPAC package access.
+
+The dedicated `experimental-windows-artifacts.yml` workflow runs common registry contracts, Windows ownership fault tests and actual file-only integrations on Windows Server 2022 and 2025. Configured Windows failures remain failures; only non-Windows platforms skip native cases. Existing native filesystem success does not establish these new artifact operations, command isolation or Windows client acceptance.
+
+Local Node 22 validation passes global TypeScript, nine-file ESLint, and 113 focused tests with two existing platform cases skipped. That includes the original Linux registry/resource compatibility suites, shared registry contracts, 16 Linux producer/intake/cleanup cases and 20 Windows ownership fault cases. Linux collects all 25 native artifact cases and skips them by platform; this supplies no Windows runtime pass evidence.
+
+At PR #216 head 725908a6, [run 43797660501](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43797660501) passed 29/29 unit cases and 25/25 native cases on both Server 2022 and Server 2025, with no skips. The first run passed 24/25 native cases on each; its sole failure was a fixture word search matching artifact in its own permitted source-path label. Exact public-field checks repaired that assertion without changing storage or native guards.
+
+The continuation foundation adds four native read/source-comparison cases. At `d2f4c8fe`, [run 43800317740](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43800317740) passed 36/36 units and 29/29 native cases on each Server version, with zero skips. This verifies those file-only host primitives; Windows command/runtime and client acceptance remain separate.
+
+The Windows file-only resource integration now supplies backend selection, original source receipt handoff,
+baseline/proposed capture, an awaited controller/file-broker seal and explicit review/export/Forget. At product
+`60ec77d1`, [run 43818240422](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43818240422)
+passed 410 portable and native artifact/review/resource checks across both Server images, without skips. Actual
+Home continuation has its separate [acceptance evidence](WINDOWS-CONDUCTOR-ACCEPTANCE.md). Real command
+quiescence and package access revocation remain future command-backend work. No directory-fsync crash durability,
+automatic apply/copyback or Windows laptop compatibility claim is made here.

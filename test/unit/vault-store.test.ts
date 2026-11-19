@@ -143,7 +143,7 @@ describe("what the vault keeps", () => {
     expect(formWords("login", "github.com", true, "Firefox")).toEqual({
       title: "Login for github.com",
       where: "Asked in Firefox. Ember fills it in only on github.com, in any browser.",
-      lead: "Ember keeps it locked with your computer's keyring and uses it only in Autopilot. It never shows it to you again, and the AI model never sees it.",
+      lead: "Ember keeps it locked with your computer's keyring and uses it only in Autopilot. It never shows it to you again, and the AI model never sees it. Passwords shorter than six characters cannot be kept for filling; enter those yourself after stopping all Ember tasks.",
     });
     expect(formWords("card", "github.com", true, null).where).toBe("Ember fills it in only on github.com, in any browser.");
     expect(formWords("contact", "Thunderbird", false, "Firefox")).toMatchObject({ title: "Contact details for Thunderbird", where: "Ember fills them in only in Thunderbird." });

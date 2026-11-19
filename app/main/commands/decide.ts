@@ -4,7 +4,7 @@
  * the administrator's "ask", the user's "ask every", a tainted task and carried text ask even for ordinary commands;
  * an ordinary command runs; a program, or a tool's verb or option, Ember has no row for (class "unknown") is announced
  * by name with its Stop countdown and never asks for that alone (the owner's decision of 2026-11-14: only dangerous
- * commands ask); a dangerous one the user's own words named exactly announces; everything else asks. The
+ * commands ask); dangerous commands ask even when the user's own words named them exactly. The
  * card's lines (§3.8.4) come in their fixed order. `reason` goes to the audit journal, which keeps it, so it never
  * holds a path or the command's text (only `command` and `cwd` are reduced to sizes there). Pure.
  */
@@ -126,22 +126,6 @@ export function decideCommand(i: DecideInput): CommandDecision {
       requested: m ? { intent: m.intent, announce: m.announce } : { intent: UNKNOWN_ANNOUNCED, announce: names.length ? `Running ${joinList(names)}, which I don't know.` : "Running a program I don't know." },
       unasked: false, armMs: 0,
     };
-  }
-  // 10. The user's own words asked for exactly this. Never a line judged as its written-out form (a `[[ … ]]`
-  // test as `[ … ]`: unroll.ts): what it does behind a test asks, as every `[[ … ]]` did (commands-b7-2).
-  if (!policyAsk && i.userWords.trim() !== "" && (cls as Partial<ClassificationExtra>).writtenOut !== true) {
-    const extra = cls as Partial<ClassificationExtra>;
-    const m = matchIntent({ ...cls, findings: F }, i.userWords, {
-      os: i.facts.os, home: i.facts.home, cwd: typeof extra.cwd === "string" ? extra.cwd : "", ember: i.facts.ember,
-      downloaded: new Set<string>(), ...(i.facts.wsl ? { wsl: { mountRoot: i.facts.wsl.mountRoot, windows: i.facts.wsl.windows } } : {}),
-      git: i.git,
-    });
-    if (m) {
-      return {
-        verdict: "announce", reason: `The user's own words asked for this (${m.intent}).`, classes, rules: findingRules,
-        says: [...findingLines(F), ...windowsLine], requested: { intent: m.intent, announce: m.announce }, unasked: false, armMs: 0,
-      };
-    }
   }
   // 4-8 and 11: it asks.
   const windows = i.facts.os === "win32" || i.binding.shellOs === "win32";

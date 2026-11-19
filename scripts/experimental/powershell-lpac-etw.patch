@@ -1,0 +1,95 @@
+--- a/src/Microsoft.PowerShell.CoreCLR.Eventing/DotNetCode/Eventing/EventProvider.cs
++++ b/src/Microsoft.PowerShell.CoreCLR.Eventing/DotNetCode/Eventing/EventProvider.cs
+@@ -23,0 +24,6 @@
++        /// <summary>Native registration status; nonzero means this provider cannot produce ETW audit events.</summary>
++        public uint RegistrationStatus { get; private set; }
++
++        /// <summary>Whether this instance registered a live ETW handle.</summary>
++        public bool IsRegistrationAvailable => RegistrationStatus == 0 && _regHandle != 0;
++
+@@ -45 +51,2 @@
+-            EventTooBig = 2
++            EventTooBig = 2,
++            RegistrationUnavailable = 3
+@@ -104,0 +112,10 @@
++                // An independently queried process token, not an environment switch or a caller assertion,
++                // confines this experimental recovery to a restricted AppContainer denied ETW registration.
++                if (status == 5 && IsAppContainerProcess())
++                {
++                    RegistrationStatus = status;
++                    _regHandle = 0;
++                    _enabled = 0;
++                    return;
++                }
++
+@@ -106,0 +124,55 @@
++        }
++
++        private static bool IsAppContainerProcess()
++        {
++            IntPtr token = IntPtr.Zero;
++            bool observed = false;
++            try
++            {
++                if (OpenProcessToken(GetCurrentProcess(), 0x8, out token))
++                {
++                    observed = GetTokenInformation(token, 29, out uint value, 4, out uint returned)
++                        && returned == 4 && value == 1;
++                }
++            }
++            catch
++            {
++                // A failed or unsupported token observation retains the original registration failure.
++                observed = false;
++            }
++            finally
++            {
++                if (token != IntPtr.Zero)
++                {
++                    try { if (!CloseHandle(token)) observed = false; }
++                    catch { observed = false; }
++                }
++            }
++
++            return observed;
++        }
++
++        [DllImport("kernel32.dll", ExactSpelling = true)]
++        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
++        private static extern IntPtr GetCurrentProcess();
++
++        [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true)]
++        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
++        [return: MarshalAs(UnmanagedType.Bool)]
++        private static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
++
++        [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true)]
++        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
++        [return: MarshalAs(UnmanagedType.Bool)]
++        private static extern bool GetTokenInformation(IntPtr token, int kind, out uint value, uint size, out uint returned);
++
++        [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
++        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
++        [return: MarshalAs(UnmanagedType.Bool)]
++        private static extern bool CloseHandle(IntPtr handle);
++
++        private bool RegistrationUnavailable()
++        {
++            if (RegistrationStatus == 0) return false;
++            t_returnCode = WriteEventErrorCode.RegistrationUnavailable;
++            return true;
+@@ -439,0 +512,2 @@
++            if (RegistrationUnavailable()) return false;
++
+@@ -507,0 +582,2 @@
++            if (RegistrationUnavailable()) return false;
++
+@@ -565,0 +642,2 @@
++            if (RegistrationUnavailable()) return false;
++
+@@ -602,0 +681,2 @@
++            if (RegistrationUnavailable()) return false;
++
+@@ -737,0 +818,2 @@
++            if (RegistrationUnavailable()) return false;
++

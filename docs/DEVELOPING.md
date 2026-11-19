@@ -4,7 +4,9 @@ This guide gets a development copy of Ember running. §1–§9 cover RHEL 8.4 (a
 Ember's first platform; §10 covers Windows 10 and 11, §11 macOS 13 and later, §12 the platform layer the three share,
 §13 CI, and §14 working on SSH, WSL and commands. What §5 says about using Ember holds on every OS, with that OS's
 shortcuts (README.md has the table). What users and administrators see of commands, WSL and other computers is in
-[COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md).
+[COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md). The optional isolated WSL coding backend,
+its offline tools, explicit public-lock dependency preparation and separate native qualification gate are documented in
+[WSL-CODING-BACKEND.md](WSL-CODING-BACKEND.md).
 
 ## 1. Log in to "GNOME on Xorg"
 
@@ -115,6 +117,38 @@ row should be green on RHEL 8.4 with GNOME on Xorg. If `npm ci` reports that Ele
 
 Each test run works in a temporary folder of its own (`ember-run-…`), which it removes at the end with vitest's module
 cache (test/temp-folder.ts).
+
+The Projects session board receives a renderer-only review bridge from `mountProjectCoding()`. It reuses that board's
+result fetch and review panel, correlating exact project/task IDs and pinning result/source identity across the wait.
+No title match, folder reread or extra IPC grants access. `test/unit/session-review-mapping.test.ts` covers mapping;
+`EMBER_UIUX_TEST=1 EMBER_CHROMIUM_PATH=/usr/bin/chromium npm run test:integration -- test/integration/session-coding-review-renderer.test.ts`
+drives both actual boards, including focus, replacement, Forget and account/project retirement with fixture preload replies.
+After `npm run build`, the existing `home-panes-renderer.test.ts` case matching `built named-session review action`
+checks the actual Home HTML/CSS at 600/1000 px in light/dark, Larger text, contrast, forced colours and Calm. Set
+`EMBER_UI_EVIDENCE` to a scratch directory outside the repository to keep its board and review-panel screenshots.
+
+Host-owned coding adapters may explicitly select `scopedCoding.mode: "files-only"` with a guarded `platform.files`
+broker. The Host captures that restricted authority with the request's project/folder grant before any wait, starts
+the file worker without a local command service, and tells the conductor that coding commands and tests are
+unavailable. Results remain private-copy reviews with zero executed checks; a mixed coding/app request still waits
+for successful completion and verified worker cleanup before its next part. An omitted mode preserves the existing
+command-backed path, including its local service, policy context, original permission words and presenter. Missing
+command support never selects file-only work automatically. The Windows development candidate now connects this
+Host seam to its explicit native copied-file resources through `project-coding-backend.ts`; Linux retains the command
+backend. The legacy native SDK prototype remains disabled by `codingAvailable()`.
+The Host also supplies the selected mode as trusted conductor metadata: a file-only `start_coding` tool describes
+private-copy edits/review and unavailable commands/tests, while omitted or command mode preserves the existing
+description. No model tool argument selects or upgrades that mode.
+
+The isolated command port receives the exact shell captured in the policy-stamped request alongside its command
+bytes and working directory. Each backend must execute that grammar or reject it before admitting work. The Linux
+workspace advertises and accepts only Bash; a missing or different shell cannot fall back to Bash. This contract
+does not enable Windows command execution, which remains unavailable in the file-only backend.
+
+`npm test -- test/unit/scoped-coding-host.test.ts --maxWorkers=1` checks both Host paths and their captured request
+authority. `npm run test:integration -- test/integration/scoped-coding-host-file-only.test.ts` exercises the real
+conductor and custom SDK file controller on disposable Linux fixtures without a local command service; it does not
+claim Windows storage, package or desktop coverage.
 
 After building, CI also runs the Ask, conversation, first-run (home-first-run-renderer: Copilot, own provider, failures, models), memory, sign-out and forget, microphone, speech-consent, status-race (home-status-race-renderer: a late or failed startup status, microphone and consent recovery after a retry), reminders/desk, natural-voice, integrations, panes and vault (vault-form-renderer: the Secure Form; home-vault-renderer: Apps & privacy's list; `EMBER_VAULT_SHOTS=<folder>` saves their pictures) renderer journeys with
 `EMBER_BROWSER_TEST=1 EMBER_CONVERSATION_TEST=1 EMBER_FIRST_RUN_TEST=1 EMBER_MEMORY_TEST=1 EMBER_MIC_RECIPIENT_TEST=1 EMBER_SPEECH_CONSENT_TEST=1 EMBER_SIGNOUT_FORGET_TEST=1 EMBER_STATUS_RACE_TEST=1 EMBER_UIUX_TEST=1 EMBER_VOICE_UI_TEST=1`
@@ -416,6 +450,35 @@ background, with a card just above Ember's handle (in its corner). The card is w
 - it lists the task's plan as the task goes;
 - when the task ends, it shows what it found or made: a list, a few facts, a small table or a saved file, kept for a
   minute.
+
+For independent work delegated in the same request, the conductor can use `wait_for_tasks` to combine the results
+in its current reply. The read-only wait accepts one to eight current-request task IDs and at most 20 seconds.
+`TaskManager.observeSettlement` keeps card status, the post-disposal `cleanupComplete` witness and `handoffSafe`
+separate; `dependentSuccess` requires all three positive facts. Ordinary desktop disposal is best effort and does not
+certify cleanup even when its promise fulfills; its terminal summary remains available with cleanup unknown. The
+strong deferred desktop path certifies only its existing positive disconnect and tool-drain checks. Scoped coding uses
+its own settled cleanup witness. A false handoff witness does not negate positively confirmed cleanup. The Host
+captures exact task, project, target and request identities, retires waits on
+Stop/new intake/Forget/provider changes, and rechecks source and project authority before returning summaries.
+Project/session receipts come from original delegation; a checkpoint restored under the same project ID, an absent
+session or a project selected later in the same turn cannot adopt earlier work into the join. Metadata-free guides
+retain their original request's project without creating a session record or computer grant.
+Summaries are bounded untrusted observations; the wait consumes no reports, starts no worker and schedules no future
+turn. `task-wait*.test.ts`, `conductor-agent.test.ts` and `project-session-host.test.ts` cover settlement and lifecycle
+races. `node scripts/run-integration.mjs test/integration/conductor-wait-runtime.test.ts` exercises the real pinned SDK
+with a local scripted model and inert workers whose disposal is held until both cards finish. It verifies the same
+request receives both observations and a combined answer; it does not establish live-provider or desktop acceptance.
+
+When two to eight tasks delegated during the same request's initial conductor turn outlive that turn, the host can deliver one
+automatic combined completion after every task is terminal and its cleanup attempt settles. The separate hardened
+model session has no tools and uses the existing 30-second one-shot limit; it cannot start, retry or replan work.
+Unknown cleanup is stated explicitly. A settled foreground join suppresses a duplicate combined completion, and
+individual task reports remain available. New intake, Stop, Forget or a captured account, provider, model, approval,
+project, target or coding-source change retires pending synthesis and publication. The response adds an assistant
+entry without inventing a user message. Its bubble waits behind existing answers, guides and notices; result speech
+appends behind existing speech when allowed.
+`task-completion*.test.ts` and `test/integration/conductor-completion-runtime.test.ts` cover the accepted-run lifecycle,
+including a genuine 20-second join timeout, held disposal and a tool-free real-SDK completion without another request.
 
 The bubble beside your cursor stays for your conversation, for guides, and for a task while it uses your mouse; a
 task in the background doesn't speak there, but its questions still do. It works through the app's accessibility interface, so
@@ -1211,11 +1274,10 @@ a wake carries is the speakers' where the recognizer reads it in what their stre
 now, and your own “Hey Ember, allow it.” over a video's talk is taken as before, 7 of 8). A request said without the
 name in a follow-up window while other sound plays, or in a follow-up or a conversation where nothing can tell, and one
 said after your “Hey Ember” and a pause while other sound is known to play (your own too: Ember can't tell your second
-breath over music from a video's, so a command you name then asks in Interactive, and memory doesn't keep it as yours;
+breath over music from a video's, so memory doesn't keep it as yours;
 say it in one breath with the name to have it count: r12-voice-x12-3), is heard and sent as ever (held for its rest
 too when it trails off, “…, um.”, with its mark: r12-voice-x12-1, r12-voice-x12-4), but never counts as your own words
-for a command (`heardOverSound`, `heardUnchecked`): a video's “Delete the old reports folder.” then asks in Interactive rather than
-being announced as you asked, and memory doesn't keep it as yours (voice-listening-r12-2). Assisted's check still reads
+for a command (`heardOverSound`, `heardUnchecked`): a video's “Delete the old reports folder.” doesn't count as your own words, and memory doesn't keep it as yours. Dangerous commands ask in Interactive even when you requested them (voice-listening-r12-2). Assisted's check still reads
 it, as it reads every unchecked spoken request, so it may still go ahead there when the check finds the step in it
 (r12-voice-x12-2). The first
 time something said then without the name isn't heard, the status line says “Music or a video is playing: say “Ember”
@@ -1930,7 +1992,7 @@ The vault (app/main/vault/, owner decision of 2026-11-12, PLAN.md §2 "Approvals
 details the user gives Ember in its own **Secure Form**, each bound to one destination.
 
 - **What it keeps.** Three kinds of entry (app/shared/vault.ts): a login (user name, password), a card (name on the
-  card, number, expiry, security code) and contact details (name, email, phone, address). A destination is one app, by
+  card, number, expiry) and contact details (name, email, phone, address); security codes are not requested. A destination is one app, by
   its program name folded (`vaultAppKey`: "Firefox", "firefox.desktop" and "firefox.exe" are one), or one site, by its
   origin (`siteOrigin`: scheme, host and port as the URL parser gives them, so a look-alike host is another site).
   One entry of a kind for a destination, 200 entries at most.
@@ -1995,11 +2057,9 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
   its month and year however written ("08/2029", "8/29", "2029-08"; never a part of a longer date), white space of
   any length (an address's lines joined by commas too) and, for the parts
   that aren't secret, any letter case; such a part is replaced only where it stands alone ("ada", never inside
-  "adamant"), a password or card number wherever it stands. A secret shorter than six characters (a card's security
-  code, a very short password) is not looked for in other text at all: a mark in place of three digits tells anyone
-  who knows the text around it which three they are, on any page for the rest of the run, so such a value is kept
-  by its field alone, which is secret from the fill on (never read, black in every picture); a page that repeats a
-  security code outside its field is not covered. Text cut short in the middle of a value
+  "adamant"), a password or card number wherever it stands. A secret shorter than six characters (including card
+  security codes) is refused before filling: a redaction mark could reveal it in predictable text. Existing entries
+  remain readable, but those values are never sent to a field. Users enter them after Ember stops working. Text cut short in the middle of a value
   before it gets there isn't recognised, so screen text is redacted whole before it is cut: every title, name and
   text quoted for a model goes through perception/elements.ts's quoting (`quoteUntrusted`, `serializeElements`,
   the worker's `list_windows` and a click's landing place, Assisted's description of a step), which main hands the
@@ -2025,7 +2085,7 @@ details the user gives Ember in its own **Secure Form**, each bound to one desti
   and task card show the person of their own screen (an element's name).
 - **The leak test.** test/unit/vault-leak.test.ts fills every kind of entry through the worker's real path, by
   accessibility and as keys, on each OS's keys and words, into a pretend app that repeats everything it is given
-  but the card's security code (test/fixtures/vault/), then looks for the canary values in everything a model is handed, the audit log, the
+  (test/fixtures/vault/). It checks that no security code reaches the app, then looks for the canary values in everything a model is handed, the audit log, the
   logs at debug level, settings.json, every other file in the data folder, Home's answers, the announcements and
   the clipboard, and checks every filled field is black in every picture. test/integration/vault-leak.test.ts does
   the same on the real runtime with the scripted model (its own record of every request; it runs anywhere), and
@@ -2397,6 +2457,92 @@ An Electron child that a suite starts leaves Electron from the main message loop
 never with `app.exit()` straight from `ready` or `app.whenReady()`: "ready" comes before that loop runs, and an exit
 there goes through the C runtime's `exit()` while Chromium is still launching its GPU process, which on Windows crashes
 with 0xC0000005 now and then, more often during a theme change (electron/electron#55011).
+
+The separate `experimental-windows-files` and `experimental-windows-artifacts` workflows exercise ordinary fixed-drive
+NTFS fixtures on Server 2022 and 2025 without driving the desktop. Run the sealed-review suite on Windows with:
+
+```bash
+node scripts/run-integration.mjs test/integration/windows-coding-review-native.test.ts
+```
+
+The Windows file foundation captures a complete privacy-scanned baseline at intake, then permanently retires ordinary
+file leases before a separate host-only baseline/proposal/current review. Its host must attest that the controller
+and file broker finished closing. The review retains the original intake source identity, creates only fresh native
+artifacts, and transfers an opaque producer capability before registry publication. Account or privacy revocation
+still cancels sealed reads; missing or replaced source folders remain unknown/conflicting. Export reports retained
+temporary data until the host awaits the copy's verified close; only that proof permits a complete-cleanup claim.
+Only explicit `.git` and `node_modules` exclusions are supported; excluded dependencies are unavailable. Windows name
+folding also matches mixed-case spellings of those top-level roots; omission receipts retain their
+canonical names. Folded duplicate names are refused before omission. File tools disclose the excluded roots and refuse
+to recreate or inspect them through another casing. Review-enabled copies are bounded to
+10 MiB per tree, 4 MiB per file and 10,000 entries. These file primitives establish no command runtime or
+descendant-stop proof; the separate controller/product checks below supply their own evidence.
+
+The separate `experimental-windows-controller` workflow checks the trusted SDK control plane on Server 2022 and
+2025. It starts the pinned SDK with a synthetic model and no real credentials, tests private NTFS storage and
+files-only tools, and includes disposable native-tool/plugin-hook positive controls so execution refusals are real
+checks. Run its suite on Windows with:
+
+```bash
+node scripts/run-integration.mjs test/integration/windows-controller-private-native.test.ts --maxWorkers=1
+```
+
+`PrivateControllerRuntime` uses native protected TokenUser/SYSTEM directories on Windows for its cwd, home, SDK state
+and temporary data. Their handles stay pinned during SDK use. Only after awaited SDK exit does a separate controller
+adapter audit and delete SDK-created descendants, with the same exact native identities held throughout cleanup.
+The fixed directories require TokenUser ownership and an exact protected DACL. Descendants permit only TokenUser or
+the actual captured token's default owner (which can differ for an elevated token), with exact TokenUser/SYSTEM
+full-control ACEs and explicit or inherited flags. No owner is injected, no administrator SID is special-cased, and
+no source, host or SDK-descendant ACL is changed to pass cleanup. The copy/artifact native guards are unchanged.
+Unknown prior state, failed SDK shutdown or uncertain native cleanup retains the private owner and blocks further
+admission. Its typed cleanup failure also survives startup before a custom controller receives its runtime, so a
+worker cannot claim safe retirement after that failure.
+
+The files-only product candidate connects that controller, native files/review/export and Host lifecycle. Commands,
+tests and dependency installation remain unavailable; current consent version 14 covers copied-folder reviews and
+retention. At `0f70a7f7`, [run 43812314219](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43812314219)
+passed 97 portable cases, three native controller cases including the actual SDK contract and one real Electron
+two-fresh-session journey on each Server 2022/2025 image, zero skips. The journey retained the normal OS sandbox,
+absent Node globals and normal exit, with mock provider and picker answers. Native continuation at `7eabd077` also
+passed [run 43813240393](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43813240393),
+410 cases across both images with zero skips. The actual Home three-session continuation at `fac7c0a3` also passed
+[run 43812927368](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43812927368): per
+image, 97 portable, three native controller and one real Electron case, zero skips/failures. Electron completed in
+16.393/15.970 seconds with the normal OS sandbox, sender guards and unforced exit `0`. Continuation read `43`, produced
+`44` against baseline/current `41`, survived predecessor Forget and preserved completed `42`/`44` exports after global
+erasure. Public #223 is `7eabd077` with the same production source and `canContinue: true`; its exact-head native
+matrix above is green while ordinary CI is blocked by the known Windows LPAC child-launch case.
+See [current progress](CONDUCTOR-PROGRESS.md) for exact scope and remaining software,
+live-provider and physical Windows acceptance. These candidate results do not authorise a merge or release.
+
+The independent `packaged-controller` job builds the normal Windows ZIP, extracts it, checks unchanged fuses and
+packaged debugging/development-provider guards, and runs the ordinary packaged launch/window/handover smoke. The
+provider guard requires the real startup authentication source to be `none` with an empty synthetic profile. Shell
+launch preserves Windows' real `HOME`, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA`; only Ember's profile, GitHub config
+and credential environment are isolated. Paired run `43816454071` showed that redirecting the OS profile broke
+jump-list registration. One Server image also reported the documented mute fallback; the owner of that chord was
+not identified. The explicit smoke option accepts only the exact Windows mute fallback with no missing IDs or no
+unavailable events. Missing, extra or malformed shortcut receipts still fail, and ordinary smoke runs remain strict
+without that option. The separate SDK/native helper keeps its own isolated home and profile. A separate
+fixed test bundle then uses the extracted `Ember.exe`'s supported Node mode with the shipped SDK, Koffi and native
+runtime to edit a private NTFS copy and verify disposal. This is packaged dependency/ABI proof, separate from the
+development Home/preload/IPC journey; it does not automate packaged Home or establish a live account session.
+
+Build with `npm run package:win`, then run on Windows x64:
+
+```powershell
+$env:EMBER_PACKAGED_WINDOWS_CODING_TEST = "1"
+node scripts/run-integration.mjs test/integration/windows-packaged-coding-native.test.ts --maxWorkers=1
+```
+
+The dedicated job treats missing Windows/archive prerequisites as failures. A successful job retains only its original
+Windows ZIP for three days; no fixture, profile or private review is uploaded. At `4db67491`,
+[run 43817687919](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/43817687919) passed
+this packaged case on both Server 2022 and 2025 (about 15.2/13.1 seconds). Both completed the fixed shipped-dependency
+edit and verified SDK-child/controller/copy cleanup. Server 2025 used only the exact registered mute fallback with
+no missing IDs; Server 2022 held all defaults. The ordinary launch smoke's forced cleanup is not a native shutdown
+receipt; only the separate helper's actual stopped-child/native cleanup supplies that narrower proof. This remains
+separate from packaged Home-to-Host, live-account and physical Windows client acceptance.
 
 ### 10.4 The accessibility helper (UI Automation)
 
@@ -2960,6 +3106,32 @@ To start a run by hand: **Actions › ci › Run workflow**, or `gh workflow run
 The Windows and macOS runners can't show everything (§10.3, §11.3): what they can't, a suite prints as "not
 testable on this runner: <reason>", and PLAN.md §9 item 7 keeps it for a real machine.
 
+### 13.1 Historical Windows compatibility experiments
+
+`coding-boundary`, `experimental-windows-node-lpac`, `experimental-powershell-etw` and
+`experimental-windows-lpac-trace` retain their pull-request path triggers and automatically run portable lifecycle,
+binding, privacy and workflow contracts. Their Windows native jobs run only through **Actions › the named workflow ›
+Run workflow**, after those portable checks pass. Manual runs retain the same images, pins, native assertions,
+Stop/cleanup requirements, privacy filters and time limits. A portable pass or an unrequested native job is not a
+native compatibility pass.
+
+These older experiments require positive descendant launch, stock Node LPAC execution or PowerShell startup and
+commands. Those capabilities are outside the supported bundled-Node, root-only product contract. The main-target
+`fb88ec25` runs remain failed evidence: [coding-boundary 44021821226](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44021821226),
+[stock Node 44021821247](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44021821247),
+[PowerShell ETW 44021821439](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44021821439)
+and [LPAC trace 44021821366](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44021821366).
+Their earlier detailed observations remain in [the isolated-command proof](ISOLATED-WINDOWS-COMMAND-PROOF.md),
+[stock Node proof](WINDOWS-NODE-LPAC-PROOF.md), [ETW experiment](EXPERIMENTAL-POWERSHELL-ETW.md) and
+[native fixture/trace evidence](WINDOWS-LPAC-EXPERIMENT.md). Moving native scheduling does not repair or certify them.
+
+The separate required `windows-node-product` matrix still checks the actual native, source Home and packaged Home
+journeys on both Server images. Its exact source/artifact binding, complete reports, refusal/Stop/privacy/cleanup
+assertions, aggregate and release dependency remain unchanged. No shell, stock-Node fallback, child or broader
+capability is enabled by this scheduling split. Repository rulesets were empty when inspected, but the main-branch
+protection read returned HTTP 403; required-status settings remain unknown and were not changed. Verify those settings
+before merging rather than assuming that a skipped compatibility job satisfies a required check.
+
 ## 14. Working on SSH, WSL and commands
 
 What users and administrators see is in [COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md); this section is for changing the
@@ -3490,3 +3662,26 @@ the cache's version that runs when `ps` shows it; where `ps` isn't read, on Wind
 installed from the zip, which shares the single-instance lock, or any older one when the cache holds another version).
 Tests in
 `test/unit/npm-install-rollback.test.ts` inject filesystem errors without downloading or running a release.
+
+### Explicit encrypted coding drafts
+
+Home's coding review offers **Save coding draft…**. Consent 15 covers keeping complete captured baseline,
+proposal and current-source files (unchanged files included), the actual last request/result summary and historical
+checks, encrypted with a random envelope key sealed by the system keyring. `basic_text` and unavailable keyrings
+refuse retention. There are at most eight drafts per account/service library and 32 MiB of complete canonical
+review JSON per draft; oversize or privacy-refused data is never partially saved. Names and context have no
+plaintext index. Files live under the private user-data `coding-drafts` directory.
+
+**Refresh saved drafts** and **Open** are explicit, inert reads. They start no task, restore no source/command
+permission and send no content to the model. To use edits, choose a folder again for that opened draft and prepare
+an import. A fresh source capture is compared with the saved changes in the fixed trusted worker; unrelated
+current files are preserved and conflicts/unknown or late-changing source refuse import. Only a clean import
+becomes a new private review. Review it, then type a new request; saved request/summary may then go to the model
+as quoted historical context, with all task permissions and required checks established anew. No source folder
+is overwritten and no old SDK session, source identity, task or continuation capability is restored.
+
+**Forget saved draft** and **Forget all saved drafts** revoke corresponding pending reads/imports before erasure
+is acknowledged. They do not delete separately imported reviews or exported copies. **Forget everything** also
+clears those private reviews and drains all draft/import operations. Account changes and quit close decrypted
+views without automatically deleting encrypted drafts; both account/service library and exact credential-holder
+identity must match on Open. Unknown worker/artifact cleanup stays blocked and is reported as incomplete.

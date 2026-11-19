@@ -11,7 +11,6 @@ import type { Settings } from "../../main/settings";
 import type { CommandMode } from "../../main/commands/types";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { ApprovalMode } from "../../shared/approvals";
-import { EXACT_ONLY } from "../../shared/commands-card";
 
 export const COMPUTERS_HEADING = "Computers";
 /** The section's intro: the page's own (Linux's, and macOS's), and Windows', the only OS with WSL (review #198). */
@@ -22,14 +21,13 @@ export function computersIntro(os: OS | undefined): string {
   return os === "win32" ? COMPUTERS_INTRO_WINDOWS : COMPUTERS_INTRO;
 }
 export const COMMANDS_HEADING = "Commands";
-export const COMMANDS_INTRO = `Ember runs commands in its own command window, where you can watch and stop them. Most run straight away, and one it doesn't know runs after it names it, with a few seconds to stop it. It asks first before code it can't read and before a dangerous command, one that deletes, publishes, touches secrets, changes the system, downloads and runs code or would keep running after you stop it, unless you asked for exactly that command and it ${EXACT_ONLY}: then it tells you first and gives you a few seconds to stop it.`;
+export const COMMANDS_INTRO = `Ember runs commands in its own command window, where you can watch and stop them. Most run straight away, and one it doesn't know runs after it names it, with a few seconds to stop it. It asks first before code it can't read and before a dangerous command, one that deletes, publishes, touches secrets, changes the system, downloads and runs code or would keep running after you stop it.`;
 /** The section's intro where the organisation turned commands off everywhere they could run (home-r12-2). */
 export const COMMANDS_OFF_INTRO = "Ember runs commands in its own command window, where you can watch and stop them. Your organisation has turned commands off, so none run.";
 /**
  * The section's intro in the approval mode in force (null: below Interactive; `off`: COMMANDS_OFF_INTRO), true in each (home-c10-2) and to the
  * owner's table of 2026-11-14: an ordinary command and one Ember doesn't know run in every mode; a dangerous one (and
- * code Ember can't read) asks in Interactive, except one the user's own words asked for exactly that does no more than
- * commands-card.ts EXACT_ONLY says (commands/decide.ts rule 10; accessibility-c11-1, r11-copy-x11-1); Assisted's check may clear any of
+ * code Ember can't read) asks in Interactive even when the user requested it; Assisted's check may clear any of
  * them it finds in the user's words (commands/review.ts notReviewable); Autopilot asks none of them, keeps a secrets
  * command's output from the model, names what Stop won't reach and refuses what the user said no to or ruled out, and
  * only the organisation's and the user's own "ask every command" still ask, and every command in a distro Podman uses and
@@ -38,7 +36,7 @@ export const COMMANDS_OFF_INTRO = "Ember runs commands in its own command window
 export function commandsIntro(mode: ApprovalMode | null, off = false): string {
   // The organisation turned commands off wherever they could run (a lockdown too): nothing runs, in any mode (home-r12-2).
   if (off) return COMMANDS_OFF_INTRO;
-  if (mode === "assisted") return `Ember runs commands in its own command window, where you can watch and stop them. Most run straight away, and one it doesn't know runs after it names it, with a few seconds to stop it. Before code it can't read or a dangerous command, one that deletes, publishes, touches secrets, changes the system, downloads and runs code or would keep running after you stop it, Assisted's check reads it against what you asked: if it finds it there, or you asked for exactly that command and it ${EXACT_ONLY}, Ember tells you first and gives you a few seconds to stop it; otherwise it asks.`;
+  if (mode === "assisted") return `Ember runs commands in its own command window, where you can watch and stop them. Most run straight away, and one it doesn't know runs after it names it, with a few seconds to stop it. Before code it can't read or a dangerous command, one that deletes, publishes, touches secrets, changes the system, downloads and runs code or would keep running after you stop it, Assisted's check reads it against what you asked: if it finds it there, Ember tells you first and gives you a few seconds to stop it; otherwise it asks.`;
   if (mode === "autopilot") return "Ember runs commands in its own command window, where you can watch and stop them. In Autopilot it asks before none of them: a dangerous one runs after a few seconds to stop it, what a command that touches secrets prints is kept from the AI model, and Ember says when one would keep running after you stop it. One you said no to, or ruled out in your request, is refused, and so is one that deletes, changes or reads something Ember can't name, such as a place held in a variable. It still asks wherever you or your organisation set commands to ask every time, in a distro Podman uses and in “Project work”, and it isn't in Autopilot on a computer reached over SSH whose administrator doesn't allow it.";
   return COMMANDS_INTRO;
 }

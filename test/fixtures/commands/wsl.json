@@ -1836,12 +1836,12 @@
   },
   {
    "cmd": "rm -r build",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "delete the build folder"
   },
   {
    "cmd": "git push origin feature-x",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "push feature-x to origin"
   },
   {
@@ -1854,7 +1854,7 @@
   },
   {
    "cmd": "apt-get install -y ripgrep",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "install ripgrep"
   },
   {
@@ -1867,7 +1867,7 @@
   },
   {
    "cmd": "rm -rf build/",
-   "verdict": "announce",
+   "verdict": "ask",
    "words": "delete build/"
   },
   {

@@ -53,6 +53,17 @@ const EMBER_SIZE = 60;
 const GAP = 8;
 /** A box asked for that is still loading after this long isn't shown (the user has moved on: their keys went elsewhere). */
 const LATE_MS = 1500;
+/** Closed, text-free observations of existing Ask window actions; never input to a window decision. */
+export type AskWindowObservation = Readonly<{
+  /** 1 request completed, 2 loading stopped, 3 ready, 4 revealed, 5 hidden, 6 renderer gone. */
+  stage: 1 | 2 | 3 | 4 | 5 | 6;
+  /** 0 not applicable, 1 not wanted, 2 within the existing limit, 3 late, 4 stale window. */
+  decision: 0 | 1 | 2 | 3 | 4;
+  /** 0 unknown, 1 launcher, 2 hotkey, 3 menu, 4 settings, 5 test, 6 open. */
+  sourceCode: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+  wanted: boolean;
+  loaded: boolean;
+}>;
 /**
  * After the box is shown, how long a blur is the keyboard still being handed over, not the user clicking away.
  * The handle and the overlay finish loading and call showInactive in this window, and Windows takes a tool window's
@@ -346,7 +357,19 @@ export class AskWindow {
     windowId?: (w: BrowserWindow) => number; floating?: FloatingWindow; os?: OS; onKeyboard?: () => void; textScale?: () => number;
     settleMs?: number; onHide?: () => void; bubble?: () => Box | null; shape?: (w: BrowserWindow, rects: readonly Box[]) => boolean;
     onBounds?: (b: Box | null) => void; cards?: () => readonly Box[];
+    onObservation?: (observation: AskWindowObservation) => void;
   } = {}) {}
+
+  /** Only the host's optional observer is fallible here: no window calls, clocks, text or identifiers. */
+  private observe(stage: AskWindowObservation["stage"], decision: AskWindowObservation["decision"] = 0): void {
+    try {
+      const observer = this.o.onObservation;
+      if (!observer) return;
+      const sourceCode = this.source === "launcher" ? 1 : this.source === "hotkey" ? 2 : this.source === "menu" ? 3
+        : this.source === "settings" ? 4 : this.source === "test" ? 5 : this.source === "open" ? 6 : 0;
+      observer(Object.freeze({ stage, decision, sourceCode, wanted: this.wanted, loaded: this.loaded }));
+    } catch { /* Observing an action must never change it or replace its error. */ }
+  }
 
   /** Tells main where the box is now (null: closed), when that changed. */
   private tellBounds(): void {
@@ -455,17 +478,19 @@ export class AskWindow {
       this.keepClear();
     });
     // A crashed ask box is rebuilt on the next Ctrl+Alt+Space.
-    win.webContents.on("render-process-gone", () => { if (this.win === win) this.hide(); if (!win.isDestroyed()) win.destroy(); if (this.win === win) this.win = null; });
+    win.webContents.on("render-process-gone", () => { if (this.win === win) this.hide(); if (!win.isDestroyed()) win.destroy(); if (this.win === win) this.win = null; this.observe(6); });
     // Once it has loaded (isLoading() is still true during "did-finish-load", so the context waited for the next
     // update and the first box opened from the menu never showed "Ember will see: …").
-    win.webContents.on("did-stop-loading", () => { if (this.win === win) this.sendContext(); });
+    win.webContents.on("did-stop-loading", () => { if (this.win === win) { this.sendContext(); this.observe(2); } });
     const query: Record<string, string> = { ...(opaque ? { opaque: "1" } : {}), ...(this.o.os ? { os: this.o.os } : {}) };
     void win.loadURL(pageUrl(path.join(appDir, "renderer", "ask", "index.html"), query));
     win.once("ready-to-show", () => {
-      if (this.win !== win) return;
+      if (this.win !== win) { this.observe(3, 4); return; }
       this.loaded = true;
-      if (this.wanted && Date.now() - this.wantedAt <= LATE_MS) this.reveal(win);
+      const decision = !this.wanted ? 1 : Date.now() - this.wantedAt <= LATE_MS ? 2 : 3;
+      if (decision === 2) this.reveal(win);
       else this.wanted = false;
+      this.observe(3, decision);
     });
     return win;
   }
@@ -489,6 +514,7 @@ export class AskWindow {
     // Said once the box is up: a log line written before it would hold up the keyboard.
     this.o.onReveal?.(this.source);
     this.tellBounds();
+    this.observe(4);
   }
 
   /**
@@ -530,9 +556,10 @@ export class AskWindow {
     this.up = up;
     // The compositor came or went since the box was made: it is made again, opaque or not.
     if (this.win && !this.win.isDestroyed() && this.builtOpaque !== this.opaque) { this.win.destroy(); this.win = null; }
-    if (!this.win || this.win.isDestroyed()) { this.build(bounds); return; }
+    if (!this.win || this.win.isDestroyed()) { this.build(bounds); this.observe(1); return; }
     this.win.setBounds(bounds);
     if (this.loaded) this.reveal(this.win);
+    this.observe(1);
   }
 
   /**
@@ -677,7 +704,7 @@ export class AskWindow {
     this.openingUntil = 0;
     this.keyboardAt = 0;
     this.menuSettle = false;
-    if (!this.win || this.win.isDestroyed()) return;
+    if (!this.win || this.win.isDestroyed()) { this.observe(5); return; }
     this.win.hide();
     // A hidden always-on-top box on X11 can stay mapped and steal a click into the app beneath (that click then
     // looks like the box opening by itself). While hidden it takes no pointer.
@@ -686,6 +713,7 @@ export class AskWindow {
     // What was left in the field is selected now, while nothing can be typed in it, so typing replaces it when the box
     // opens again (selected as it opened, it took the letters typed first: review #78).
     if (!this.win.webContents.isLoading()) this.win.webContents.send(IPC.askHidden);
+    this.observe(5);
   }
 
   /**

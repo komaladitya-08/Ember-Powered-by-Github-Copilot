@@ -9,6 +9,7 @@
  */
 
 import crypto from "node:crypto";
+import { copyPriorCodingDraftContext } from "./coding-draft-context";
 import type { TaskWindow } from "./task-controls";
 import { TASK_READING_LEASE_MS, TASK_STOPPING, type TaskCard } from "../../shared/overlay";
 import type { Logger } from "../logger";
@@ -21,6 +22,7 @@ import { friendlyError, type ServiceKind } from "./presenter";
 import type { PlanStep, TaskHand, ViewDoc } from "../../shared/view";
 import { STATUS_WORDS, summarizeActivity, type StepGroup, type TaskActivity, type TaskEntry } from "../../shared/activity";
 import { ActivityLog, type ActivityEvent } from "./activity";
+import type { TaskWaitObservation } from "./task-wait";
 
 export type TaskStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 /** Why a stopped task stopped (Task.endedBy). */
@@ -69,7 +71,7 @@ export interface TaskUpdate { plan?: PlanStep[]; hand?: TaskHand; view?: ViewDoc
  * What the TaskManager uses of a worker (§2.6): a stand-in that refuses a task (its target can't be used) needs
  * nothing more.
  */
-export type WorkerLike = Pick<Worker, "run" | "steer" | "dispose" | "sessionId">;
+export type WorkerLike = Pick<Worker, "run" | "steer" | "dispose" | "sessionId"> & { cleanupComplete?: () => boolean; handoffSafe?: () => boolean };
 
 export interface TaskManagerDeps {
   log: Logger;
@@ -88,6 +90,8 @@ export interface TaskManagerDeps {
    * already (view-schema.ts). Its card says which rev it shows (TaskCard.viewRev).
    */
   onView?: (taskId: string, view: ViewDoc | null) => void;
+  /** Update a completed result before its card, history, audit and announcement are produced. */
+  beforeFinish?: (task: Task) => void;
   onFinished?: (task: Task) => void;
   /** A finished card went: the user closed it (`byUser`), or its time was up. */
   onRemoved?: (task: Task, byUser: boolean) => void;
@@ -187,6 +191,11 @@ const AWAY_POLL_MS = 5000;
 
 /** How a task was asked for (TaskManager.start's options). */
 export interface StartOptions {
+  codingWorkspace?: TaskSpec["codingWorkspace"];
+  codingCompletion?: true;
+  handoffSummary?: string;
+  priorCodingContext?: TaskSpec["priorCodingContext"];
+  deferHandoff?: true;
   target?: WindowTarget & { app?: string };
   mode?: "do" | "guide";
   userWords?: string;
@@ -268,6 +277,8 @@ export function taskOutcome(t: Pick<Task, "title" | "status" | "result" | "ended
 }
 
 export class TaskManager {
+  private settlements = new WeakMap<Task, { cleanup: "pending" | "complete" | "unknown"; handoffSafe: boolean }>();
+  private waitListeners = new Set<() => void>();
   private tasks = new Map<string, Task>();
   private queue: { task: Task; spec: TaskSpec }[] = [];
   private running = new Map<string, { worker: WorkerLike; abort: AbortController }>();
@@ -283,6 +294,8 @@ export class TaskManager {
   private cutOff: string | null = null;
   /** Running tasks told to stop that are still winding down: their cards say so at once (a press that shows nothing gets pressed again). */
   private stopping = new Set<string>();
+  /** Cleanup has not confirmed that a coding or mixed-task worker stopped; keep its execution slot until it does. */
+  private slowCleanup = new Set<string>();
   /** Each task's activity, from when it starts to run (kept for ACTIVITY_KEPT finished tasks after their cards go). */
   private logs = new Map<string, { log: ActivityLog; task: Task }>();
   /** What each task was asked with, so a failed one can be tried again from its card. */
@@ -311,6 +324,7 @@ export class TaskManager {
     if (left <= 0 || elapsed > Math.max(c.left, c.whole ?? 0)) { this.dropView(c.task); return; }
     const id = c.task.id;
     this.tasks.set(id, c.task);
+    this.settlements.set(c.task, { cleanup: "unknown", handoffSafe: false });
     if (c.spec) this.specs.set(id, c.spec);
     if (c.log) this.logs.set(id, { log: c.log, task: c.task });
     this.expiry.set(id, { remaining: left, since: Date.now(), timer: null, ...(c.whole !== undefined ? { whole: c.whole } : {}), ...(c.away ? { away: true } : {}) });
@@ -415,18 +429,20 @@ export class TaskManager {
    * absent: this computer), and `where` its card's badge when that isn't this computer. `commandWords`: TaskSpec's.
    */
   start(goal: string, opts: StartOptions = {}): Task {
+    if (opts.priorCodingContext) opts = { ...opts, priorCodingContext: copyPriorCodingDraftContext(opts.priorCodingContext) };
     const id = `${++this.n}-${crypto.randomUUID().slice(0, 8)}`;
     // (Said while it waits behind others at work: one that starts at once says "Working…" at once.)
     const task: Task = { id, goal, title: titleOf(goal), status: "queued", detail: opts.mode === "guide" ? "Starts when another guide ends" : "Starts when another task ends", result: null, started: Date.now(), finished: null,
       ...(opts.targetId ? { targetId: opts.targetId } : {}), ...(opts.where ? { where: opts.where } : {}) };
     this.tasks.set(id, task);
+    this.settlements.set(task, { cleanup: "pending", handoffSafe: false });
     const target = { ...(opts.target ?? this.d.currentWindow() ?? {}) };
     // Legacy callers supply the user's request as the goal. Materialise that fallback once: later goals contain
     // model-authored steering and must never become authority on a retry. Commands never used that fallback.
     this.specs.set(id, { goal, opts: { ...opts, target, userWords: opts.userWords ?? goal,
       ...(opts.userWords === undefined && opts.commandWords === undefined ? { commandWords: "", typedOnly: true } : {}),
       ...(opts.agreed ? { agreed: [...opts.agreed] } : {}) } });
-    this.queue.push({ task, spec: { id, goal, target, mode: opts.mode ?? "do", ...(opts.userWords !== undefined ? { userWords: opts.userWords } : {}),
+    this.queue.push({ task, spec: { id, goal, target, mode: opts.mode ?? "do", ...(opts.codingWorkspace ? { codingWorkspace: opts.codingWorkspace } : {}), ...(opts.codingCompletion ? { codingCompletion: true } : {}), ...(opts.handoffSummary ? { handoffSummary: opts.handoffSummary } : {}), ...(opts.priorCodingContext ? { priorCodingContext: opts.priorCodingContext } : {}), ...(opts.deferHandoff ? { deferHandoff: true } : {}), ...(opts.userWords !== undefined ? { userWords: opts.userWords } : {}),
       ...(opts.agreed?.length ? { agreed: opts.agreed } : {}), ...(opts.screen ? { screen: opts.screen } : {}), ...(opts.targetId ? { targetId: opts.targetId } : {}),
       ...(opts.commandWords !== undefined ? { commandWords: opts.commandWords } : {}), ...(opts.typedOnly ? { typedOnly: true } : {}), ...(opts.partWay ? { partWay: true } : {}),
       ...(opts.checkWords !== undefined ? { checkWords: opts.checkWords } : {}) } });
@@ -441,6 +457,35 @@ export class TaskManager {
 
   get(id: string): Task | undefined {
     return this.tasks.get(id);
+  }
+
+  /** Exact task identity, separate from the card's earlier finish and non-consuming reports. */
+  observeSettlement(task: Task): TaskWaitObservation {
+    if (this.closed || this.tasks.get(task.id) !== task) return { id: task.id, status: "missing", cleanup: "unknown", handoffSafe: false, summary: "" };
+    const observed = this.settlements.get(task);
+    return { id: task.id, status: task.status, cleanup: observed?.cleanup ?? "unknown", handoffSafe: observed?.handoffSafe === true,
+      summary: observed?.cleanup !== "pending" ? task.result?.summary ?? "" : "" };
+  }
+
+  /** Registration precedes a waiter's snapshot. Listener faults never change a task or its cleanup. */
+  subscribeSettlement(listener: () => void): () => void {
+    this.waitListeners.add(listener);
+    return () => { this.waitListeners.delete(listener); };
+  }
+
+  private notifySettlement(): void {
+    for (const listener of [...this.waitListeners]) try { listener(); } catch { /* Read-only observation cannot change scheduling. */ }
+  }
+
+  private settled(task: Task, cleanup: "complete" | "unknown", handoffSafe = false): void {
+    this.settlements.set(task, { cleanup, handoffSafe: cleanup === "complete" && handoffSafe });
+    this.notifySettlement();
+  }
+
+  private cleanupComplete(worker: WorkerLike, disposed: boolean): boolean {
+    if (!disposed) return false;
+    try { return worker.cleanupComplete?.() === true; }
+    catch (err) { this.d.log.error("task.cleanup_check_failed", { err }); return false; }
   }
 
   /** What a task did and is doing (null before it ran, or once it is no longer kept). */
@@ -580,6 +625,7 @@ export class TaskManager {
     const q = this.queue.findIndex(x => x.task.id === id);
     if (q >= 0) {
       const [{ task }] = this.queue.splice(q, 1);
+      this.settled(task, "complete"); // No worker was admitted for this queued task.
       if (this.cutOff) this.finish(task, "failed", { success: false, summary: this.cutOff });
       else this.finish(task, "cancelled", { success: false, summary: "Stopped before it started." }, "stop");
       return;
@@ -676,6 +722,7 @@ export class TaskManager {
    */
   close(keep = false): void {
     this.closed = true;
+    this.notifySettlement();
     for (const id of new Set([...this.expiry.keys(), ...this.readers.keys()])) this.forgetCardTime(id);
     if (keep) return;
     for (const t of this.tasks.values()) this.dropView(t);
@@ -768,6 +815,7 @@ export class TaskManager {
       // Its worker couldn't be made: the task fails now (closable, said plainly) rather than waiting for ever with a
       // Stop that does nothing, and what queued behind it gets its turn.
       this.d.log.error("task.error", { id: task.id, err });
+      this.settled(task, "unknown");
       this.finish(task, "failed", { success: false, summary: task.mode === "do" ? "I couldn't start this task. Try again; if it keeps happening, restart Ember." : "I couldn't start this. Ask again; if it keeps happening, restart Ember." });
       this.pump();
       return;
@@ -791,6 +839,43 @@ export class TaskManager {
       try { settingsKey = typeof key === "function" ? key() : key; } catch { /* named none: it may be taken */ }
       result = { success: false, summary: friendlyError(err instanceof Error ? err.message : String(err), undefined, { provider: this.d.provider, settingsKey }) };
     }
+    // Mixed work must not begin its second part while the first worker can still act. Keep the first task stoppable
+    // and its slot occupied until disposal completes; a failed cleanup is never a successful handoff, even on Stop.
+    if (spec.deferHandoff || spec.codingWorkspace) {
+      const sessionId = worker.sessionId;
+      let disposed = false;
+      const slow = setTimeout(() => { this.slowCleanup.add(task.id); this.publish(); }, 5000);
+      slow.unref?.();
+      try {
+        await worker.dispose();
+        disposed = true;
+      } catch (err) {
+        this.d.log.error("task.dispose_failed", { id: task.id, err });
+      } finally {
+        clearTimeout(slow);
+        this.slowCleanup.delete(task.id);
+      }
+      this.running.delete(task.id);
+      let safe = false;
+      if (disposed && result.success && !abort.signal.aborted) {
+        try { safe = worker.handoffSafe?.() === true; }
+        catch (err) { this.d.log.error("task.handoff_check_failed", { id: task.id, err }); }
+      }
+      this.settled(task, this.cleanupComplete(worker, disposed) ? "complete" : "unknown", safe);
+      try {
+        if (!disposed) this.finish(task, "failed", { success: false, summary: spec.deferHandoff ? "I couldn't confirm the first part stopped, so the next part didn't start." : "I couldn't confirm that the coding task stopped." });
+        else if (abort.signal.aborted && this.cutOff) this.finish(task, "failed", { success: false, summary: this.cutOff });
+        else if (spec.deferHandoff && !abort.signal.aborted && result.success && !safe) {
+          this.finish(task, "failed", { ...result, success: false, summary: `${result.summary} I couldn't confirm every step finished, so the next part didn't start.`.trim() });
+        }
+        else this.finish(task, abort.signal.aborted || result.stopped ? "cancelled" : result.success ? "done" : "failed", result,
+          abort.signal.aborted ? "stop" : result.expired ? "expired" : result.declined ? "declined" : result.tookOver ? "took-over" : "stop");
+      } finally {
+        if (disposed && sessionId) this.deleteLater(sessionId);
+        this.pump();
+      }
+      return;
+    }
     this.running.delete(task.id);
     try {
       if (abort.signal.aborted && this.cutOff) this.finish(task, "failed", { success: false, summary: this.cutOff });
@@ -800,21 +885,28 @@ export class TaskManager {
         abort.signal.aborted ? "stop" : result.expired ? "expired" : result.declined ? "declined" : result.tookOver ? "took-over" : "stop");
     } finally {
       // Whatever a listener did, the worker lets go and the queue moves on (review #79).
+      let disposed = false, safe = false;
       try {
         const sessionId = worker.sessionId;
         await worker.dispose();
-        if (sessionId) {
-          const timer = setTimeout(() => {
-            this.toDelete.delete(sessionId);
-            void this.d.deleteSession(sessionId).catch(err => this.d.log.warn("task.delete_failed", { sessionId, err }));
-          }, this.d.keepMs ?? 0);
-          timer.unref?.();
-          this.toDelete.set(sessionId, timer);
-        }
+        disposed = true;
+        if (result.success && !abort.signal.aborted) try { safe = worker.handoffSafe?.() === true; }
+        catch (err) { this.d.log.error("task.handoff_check_failed", { id: task.id, err }); }
+        if (sessionId) this.deleteLater(sessionId);
       } finally {
+        this.settled(task, this.cleanupComplete(worker, disposed) ? "complete" : "unknown", safe);
         this.pump();
       }
     }
+  }
+
+  private deleteLater(sessionId: string): void {
+    const timer = setTimeout(() => {
+      this.toDelete.delete(sessionId);
+      void this.d.deleteSession(sessionId).catch(err => this.d.log.warn("task.delete_failed", { sessionId, err }));
+    }, this.d.keepMs ?? 0);
+    timer.unref?.();
+    this.toDelete.set(sessionId, timer);
   }
 
   private finish(task: Task, status: TaskStatus, result: WorkerResult, endedBy?: StopCause): void {
@@ -831,12 +923,16 @@ export class TaskManager {
     // Only a failure (or a question that went unanswered) can be tried again: what it was asked with goes for the rest.
     if (!retryable(task)) this.specs.delete(task.id);
     task.result = result;
+    // A continuation can publish a new card synchronously: the first card must already have a coherent outcome.
+    task.detail = detailOf(result.summary);
+    task.finished = Date.now();
+    // A handoff failure must be part of the result before the card, audit and notifications are written.
+    try { this.d.beforeFinish?.(task); } catch (err) { this.d.log.error("task.before_finish_failed", { id: task.id, err }); }
     // finish_task's view takes the live view's place (one rev on, so the card draws only what changed); without one,
     // the live view stays as the result.
     if (result.view) this.showView(task, task.view ? { ...result.view, rev: task.view.rev + 1 } : result.view);
     // The card shows a card's worth; the whole summary goes to the conversation (task.result).
     task.detail = detailOf(result.summary);
-    task.finished = Date.now();
     this.unreported.push(task);
     this.d.log.info("task.finished", { id: task.id, status, ms: task.finished - task.started });
     // The card first: the screen shows how it went even when its record or a listener fails (review #79).
@@ -879,6 +975,7 @@ export class TaskManager {
   }
 
   private publish(): void {
+    this.notifySettlement();
     if (this.closed) return;
     this.keepLogs();
     const cards: TaskCard[] = [...this.tasks.values()].map(t => {
@@ -889,7 +986,7 @@ export class TaskManager {
         title: t.title,
         // A task whose question waits for the user is waiting for them (its card says so), not working.
         status: t.status === "cancelled" ? "stopped" : t.status === "running" && log?.asking && !stopping ? "waiting" : t.status,
-        detail: stopping ? TASK_STOPPING : t.detail,
+        detail: this.slowCleanup.has(t.id) ? "Waiting to confirm the task has stopped…" : stopping ? TASK_STOPPING : t.detail,
         actions: t.status === "running" || t.status === "queued"
           ? [{ id: `task:${t.id}:stop`, label: "Stop" }]
           : retryable(t) && this.specs.has(t.id) && this.retryOpen()

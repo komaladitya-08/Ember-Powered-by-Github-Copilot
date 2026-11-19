@@ -329,7 +329,7 @@ export class Confirmer {
     if (!m || !this.current || Number(m[1]) !== this.current.n) return false;
     if (!this.current.q.options.some(o => o.id === m[2])) return false;
     if (this.lapsed(this.current)) return false;
-    if (this.now() - this.current.shownAt < this.armOf(this.current.q) || this.blocked()) return false;
+    if ((m[2] !== "deny" && this.now() - this.current.shownAt < this.armOf(this.current.q)) || this.blocked()) return false;
     if (!this.allowedFrom(this.current, m[2], via, proof)) return false;
     this.channels.set(this.current.q, { via });
     this.finish(this.current, m[2]);
@@ -345,7 +345,7 @@ export class Confirmer {
     const m = /^q(\d+):(.+)$/.exec(actionId);
     const c = this.current;
     if (!m || !c || Number(m[1]) !== c.n || !c.q.options.some(o => o.id === m[2]) || this.lapsed(c)) return "gone";
-    if (this.now() - c.shownAt < this.armOf(c.q) || this.blocked()) return "not-yet";
+    if ((m[2] !== "deny" && this.now() - c.shownAt < this.armOf(c.q)) || this.blocked()) return "not-yet";
     return this.allowedFrom(c, m[2], "bubble", undefined) ? null : "not-yet";
   }
 
@@ -547,7 +547,7 @@ export class Confirmer {
    */
   private keyRefusal(p: Pending, option: string): KeyRefusal | null {
     if (this.current !== p) return null;
-    if (this.now() - p.shownAt < this.armOf(p.q)) return "not-yet";
+    if (option !== "deny" && this.now() - p.shownAt < this.armOf(p.q)) return "not-yet";
     if (this.blocked()) return "busy";
     if (option === "deny") return null;
     if (p.whole && (!p.whole.seen || this.now() - p.whole.seenAt < this.armOf(p.q))) return "too-soon";

@@ -8,12 +8,64 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 const dir = path.resolve("sidecar/uia");
 const read = (name: string) => fs.readFileSync(path.join(dir, name));
 const ps1 = read("ember_uia.ps1").toString("latin1");
 const cs = read("ember_uia.cs").toString("latin1");
 const protocol = read("PROTOCOL.md").toString("utf8");
+
+/** Remove only the exact optional observer; the original bootstrap remains subject to its existing size bound. */
+const startupObserver = "# Optional external-harness startup milestones only; never screen data or stdout.\nfunction Observe-Startup([int]$Stage) {\n  try {\n    if ($env:EMBER_UIA_STARTUP_OBSERVE -ceq '1' -and $Stage -ge 1 -and $Stage -le 17) {\n      $bytes = [Text.Encoding]::ASCII.GetBytes('EMBER_UIA_STARTUP_V1:' + $Stage.ToString([Globalization.CultureInfo]::InvariantCulture) + \"`n\")\n      $err = [Console]::OpenStandardError(); $err.Write($bytes, 0, $bytes.Length); $err.Flush()\n    }\n  } catch { <# Observation must not replace a bootstrap operation or its error. #> }\n}\n\n";
+const startupCalls = [
+  "  Observe-Startup 1\n",
+  "  Observe-Startup 2\n",
+  "  Observe-Startup 3\n",
+  "  Observe-Startup 4\n",
+  "  Observe-Startup 5\n",
+  "        Observe-Startup 6\n",
+  "        Observe-Startup 8\n",
+  "        Observe-Startup 9\n",
+  "        Observe-Startup 10\n",
+  "        Observe-Startup 11\n",
+  "        Observe-Startup 12\n",
+  "    Observe-Startup 13\n",
+  "    Observe-Startup 14\n",
+  "  Observe-Startup 15\n",
+  "  Observe-Startup 16\n",
+  "  Observe-Startup 17\n"
+];
+function removeOnce(source: string, fragment: string): string {
+  expect(source.indexOf(fragment)).toBeGreaterThanOrEqual(0);
+  expect(source.lastIndexOf(fragment)).toBe(source.indexOf(fragment));
+  return source.replace(fragment, "");
+}
+const filesystemPaths = [
+  ["$source = [IO.Path]::Combine($PSScriptRoot, 'ember_uia.cs')", "$source = Join-Path $PSScriptRoot 'ember_uia.cs'"],
+  ["$dll = [IO.Path]::Combine($cache, ('ember_uia-' + $hash + '.dll'))", "$dll = Join-Path $cache ('ember_uia-' + $hash + '.dll')"],
+  ["$tmp = [IO.Path]::Combine($cache, ('ember_uia-' + $hash + '.' + $PID + '.tmp'))", "$tmp = Join-Path $cache ('ember_uia-' + $hash + '.' + $PID + '.tmp')"],
+] as const;
+const utilityInitialization = "  $utilityModule = [IO.Path]::Combine($PSHOME, 'Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1')\n  Import-Module -Name $utilityModule -ErrorAction Stop\n  Observe-Startup 29\n";
+let utilityBaseline = removeOnce(ps1, utilityInitialization);
+utilityBaseline = removeOnce(utilityBaseline, "  Observe-Startup 30\n");
+utilityBaseline = utilityBaseline.replace("$Stage -ge 1 -and $Stage -le 30", "$Stage -ge 1 -and $Stage -le 28");
+let filesystemBaseline = utilityBaseline;
+for (const [literal, previous] of filesystemPaths) {
+  expect(filesystemBaseline.indexOf(literal)).toBeGreaterThanOrEqual(0);
+  expect(filesystemBaseline.lastIndexOf(literal)).toBe(filesystemBaseline.indexOf(literal));
+  filesystemBaseline = filesystemBaseline.replace(literal, previous);
+}
+let initialHashBaseline = removeOnce(filesystemBaseline, "  Observe-Startup 26\n");
+initialHashBaseline = removeOnce(initialHashBaseline, "  if ($ObserveSource) { Observe-Startup 27 }\n");
+initialHashBaseline = removeOnce(initialHashBaseline, "  if ($ObserveSource) { Observe-Startup 28 }\n");
+initialHashBaseline = removeOnce(initialHashBaseline, ", [switch]$ObserveSource");
+initialHashBaseline = removeOnce(initialHashBaseline, " -ObserveSource");
+initialHashBaseline = initialHashBaseline.replace("$Stage -ge 1 -and $Stage -le 28", "$Stage -ge 1 -and $Stage -le 17");
+let bootstrap = removeOnce(initialHashBaseline, startupObserver);
+for (const call of startupCalls) bootstrap = removeOnce(bootstrap, call);
+bootstrap = removeOnce(bootstrap, "; Observe-Startup 7");
+
 
 /** The C# with comments, string and character literals blanked out, so prose can mention any feature. */
 function code(source: string): string {
@@ -73,8 +125,74 @@ describe("the UI Automation bridge's files", () => {
   });
 });
 
+describe("optional UIA startup observations", () => {
+  it("loads only the exact system utility manifest before the unchanged Add-Type operations", () => {
+    expect(createHash("sha256").update(utilityBaseline).digest("hex")).toBe("e766d3750e179bd90014b53aa419dc448d0760dd58ec26b4d1feef9334294279");
+    expect(ps1).toContain(utilityInitialization);
+    expect(ps1.indexOf(utilityInitialization)).toBeLessThan(ps1.indexOf("  Add-Type -AssemblyName"));
+    expect([...ps1.matchAll(/Import-Module[^\r\n]*/g)].map(match => match[0])).toEqual(["Import-Module -Name $utilityModule -ErrorAction Stop"]);
+    expect(ps1).toContain("  Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase\n  Observe-Startup 30\n");
+    expect(ps1).toContain("$Stage -ge 1 -and $Stage -le 30");
+  });
+
+  it("constructs only literal filesystem paths without asking a PowerShell provider to join them", () => {
+    expect(createHash("sha256").update(filesystemBaseline).digest("hex")).toBe("b58237c47d148591cf9e098c079ed95dc8b1a6e98f68aa4a2e1c008ac2a48ece");
+    expect(ps1).not.toMatch(/\bJoin-Path\b/);
+    for (const [literal] of filesystemPaths) expect(ps1).toContain(literal);
+    expect(ps1).toContain("[IO.Path]::GetFullPath($env:EMBER_UIA_CACHE)");
+    expect(ps1).toContain("if ($cache) {");
+  });
+
+  it("keeps the source read, SHA chain and formatting at the same observed boundaries", () => {
+    expect(createHash("sha256").update(initialHashBaseline).digest("hex")).toBe("40e52fdc822d76e94882b95d2d13321735e012ab5e3236e2676cf3c7ceb2c607");
+    expect(ps1).toContain("$source = [IO.Path]::Combine($PSScriptRoot, 'ember_uia.cs')\n  Observe-Startup 26\n  $hash = Get-Sha256 ([IO.File]::ReadAllBytes($source)) -ObserveSource");
+    expect(ps1).toContain("function Get-Sha256([byte[]]$Bytes, [switch]$ObserveSource) {\n  if ($ObserveSource) { Observe-Startup 27 }\n  $digest = [Security.Cryptography.SHA256]::Create().ComputeHash($Bytes)\n  if ($ObserveSource) { Observe-Startup 28 }\n  ([BitConverter]::ToString($digest) -replace '-', '').ToLowerInvariant()");
+    const calls = [...ps1.matchAll(/Get-Sha256 ([^\r\n]+)/g)].map(match => match[1]);
+    expect(calls).toHaveLength(3);
+    expect(calls.filter(call => call.includes("-ObserveSource"))).toEqual(["([IO.File]::ReadAllBytes($source)) -ObserveSource"]);
+    expect(ps1).toContain("$Stage -ge 1 -and $Stage -le 30");
+  });
+
+  it("conserves the original bootstrap outside the exact observer and filesystem path replacements", () => {
+    expect(createHash("sha256").update(bootstrap).digest("hex")).toBe("8b05f55c3c9d6f4e7aae239b0e73ce49c1175e54a09e04f459a512973a359c75");
+    expect(startupObserver.split("\n").filter(line => line.trim()).length).toBeLessThanOrEqual(10);
+    expect(startupObserver).toContain("$env:EMBER_UIA_STARTUP_OBSERVE -ceq '1'");
+    expect(startupObserver).toContain("$Stage -ge 1 -and $Stage -le 17");
+    expect(startupObserver).toContain("[Console]::OpenStandardError()");
+    expect(startupObserver).toContain("'EMBER_UIA_STARTUP_V1:'");
+    expect(startupObserver).toContain("} catch {");
+    expect(startupObserver).not.toMatch(/Write-Output|OpenStandardOutput|Write-Host|\$input|OpenStandardInput/);
+    expect([...ps1.matchAll(/Observe-Startup ([0-9]+)\b/g)].map(match => Number(match[1])).sort((a, b) => a - b)).toEqual([...Array.from({ length: 17 }, (_, i) => i + 1), 26, 27, 28, 29, 30]);
+  });
+
+  it("keeps default core transport bytes and its ready Write before the optional best-effort callback and stdin read", () => {
+    const begins = cs.indexOf("  // ---- core begins"), ends = cs.indexOf("  // ---- core ends");
+    let core = cs.slice(begins, ends);
+    core = removeOnce(core, "Action readyWritten = null").replace("Run(TextReader input, JObj ready, )", "Run(TextReader input, JObj ready)");
+    core = removeOnce(core, "      if (readyWritten != null) { try { readyWritten(); } catch (Exception) { /* Optional observation never changes transport. */ } }\n");
+    expect(createHash("sha256").update(core).digest("hex")).toBe("3233f3c0797ab6f34123c20d91675967aae3f47fc810693d0d9c51a80f8236ac");
+    const observed = cs.slice(cs.indexOf("internal int Run(TextReader"), cs.indexOf("    private void Handle("));
+    expect(observed.indexOf("Write(Json.Write(ready));")).toBeLessThan(observed.indexOf("readyWritten();"));
+    expect(observed.indexOf("readyWritten();")).toBeLessThan(observed.indexOf("input.ReadLine()"));
+    const write = cs.slice(cs.indexOf("    private void Write(string line)"), cs.indexOf("    private void ExitProcess("));
+    expect(write.indexOf("output.Write(bytes, 0, bytes.Length);")).toBeLessThan(write.indexOf("output.Flush();"));
+  });
+
+  it("opts into closed C# stderr milestones only, without changing the ready payload or stdin operation", () => {
+    const observer = cs.slice(cs.indexOf("  internal static class StartupObservation"), cs.indexOf("  public static class Bridge"));
+    expect(observer).toContain('Environment.GetEnvironmentVariable("EMBER_UIA_STARTUP_OBSERVE") == "1"');
+    expect(observer).toContain("!Enabled() || stage < 18 || stage > 25");
+    expect(observer).toContain("Console.OpenStandardError()");
+    expect(observer).toContain("catch (Exception)");
+    expect(observer).not.toMatch(/OpenStandardOutput|Console\.Write|OpenStandardInput|Process\.|Native\.|AutomationElement/);
+    expect(cs).toContain("if (StartupObservation.Enabled()) readyWritten = delegate () { StartupObservation.Mark(25); };");
+    expect([...cs.matchAll(/StartupObservation\.Mark\(([0-9]+)\)/g)].map(match => Number(match[1])).sort((a, b) => a - b)).toEqual([18, 19, 20, 21, 22, 23, 24, 25]);
+    expect(cs).toContain("new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false, false), false, 1 << 16)");
+  });
+});
+
 describe("the bridge's bootstrap (ember_uia.ps1)", () => {
-  const lines = ps1.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith("#"));
+  const lines = bootstrap.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith("#"));
 
   it("is only a bootstrap: it compiles or loads the bridge and hands over to Run()", () => {
     expect(lines[0]).toBe("Set-StrictMode -Version Latest");

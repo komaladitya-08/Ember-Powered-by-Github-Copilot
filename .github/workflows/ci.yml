@@ -40,6 +40,10 @@ jobs:
     # 40, not 25: at d41898c the integration step (the speech tests among them) took 16 min 24 s, and the job ran
     # out of time 2 min 43 s into the renderer journeys with nothing failing (install-docs-r10-1).
     timeout-minutes: 40
+    env:
+      # Missing kernel/toolchain support must fail the configured coding proofs rather than silently skip them.
+      EMBER_REQUIRE_CODING_ISOLATION: "1"
+      EMBER_TEST_CODING_NODE: "/usr/lib/ember-coding-test-node/bin/node"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -48,6 +52,25 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Trusted Node and namespaces for isolated coding proofs
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap xvfb dbus-x11
+          # setup-node may place its authenticated download in a runner-writable cache. The tested sandbox accepts
+          # only root-owned, non-writable tool ancestors, so keep a fresh copy before running repository code.
+          # The hosted image deliberately makes /opt writable, including its root; fixing only /opt/node is not enough.
+          # https://github.com/actions/runner-images/blob/ubuntu24/20261111.370/images/ubuntu/scripts/build/configure-system.sh
+          coding_node_source="$(readlink -f "$(command -v node)")"
+          sudo install -d -m 755 -o root -g root /usr/lib/ember-coding-test-node /usr/lib/ember-coding-test-node/bin
+          sudo install -m 755 -o root -g root "$coding_node_source" /usr/lib/ember-coding-test-node/bin/node
+          # Fixed paths and metadata only: distinguish an ancestor/asset problem from native namespace denial early.
+          printf '%s\n' 'coding.ci_stage=trusted_asset_metadata'
+          stat -c 'coding.asset uid=%u mode=%a links=%h %n' / /usr /usr/lib /usr/lib/ember-coding-test-node /usr/lib/ember-coding-test-node/bin /usr/lib/ember-coding-test-node/bin/node /usr/bin/bwrap
+          /usr/lib/ember-coding-test-node/bin/node --version
+          printf '%s\n' 'coding.ci_stage=namespace_probe'
+          /usr/lib/ember-coding-test-node/bin/node scripts/ci/coding-userns-preflight.mjs
+          # Tests select this isolated-command asset explicitly. Keep setup-node's writable npm prefix for npm setup.
       # The release's notes link the README at the tag: fail the tag's run at once if it says this version isn't out,
       # or if GitHub would refuse the notes, which the release job finds only after every other job.
       - name: The tagged README describes this version and its notes fit a release (docs/DEVELOPING.md §15 step 1)
@@ -59,7 +82,10 @@ jobs:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm test
+      - name: Fixed C witness model and bounded compiler outcome
+        run: npm test -- test/unit/windows-node-asset-enforcement-c.test.ts --maxWorkers=1
+      - name: Remaining unit tests
+        run: npm test -- --exclude test/unit/windows-node-asset-enforcement-c.test.ts
       - name: Kill switch real-time deadline (isolated from parallel unit tests)
         run: npm run test:integration -- test/integration/killswitch-deadline.test.ts
       - name: The npm launcher's package files (packages/npm, published by npm.yml)
@@ -78,6 +104,20 @@ jobs:
         env:
           EMBER_VOICE_TEST: "1"
       - run: npm run build
+      - name: Real Electron project coding, approvals, review, export and Forget
+        timeout-minutes: 5
+        env:
+          EMBER_ELECTRON_CODING_TEST: "1"
+        run: |
+          node node_modules/electron/install.js
+          # Chromium chooses an existing adjacent helper before CHROME_DEVEL_SANDBOX. Point that exact
+          # location at the fresh root-owned helper, as the Linux package does; keep the normal sandbox on.
+          # /usr/lib has trusted ancestors; the hosted image's /opt may be writable by ordinary users.
+          sudo install -d -m 755 -o root -g root /usr/lib/ember-test-electron
+          sudo install -m 4755 -o root -g root node_modules/electron/dist/chrome-sandbox /usr/lib/ember-test-electron/chrome-sandbox
+          ln -sfn /usr/lib/ember-test-electron/chrome-sandbox node_modules/electron/dist/chrome-sandbox
+          test "$(stat -Lc '%u:%g:%a' node_modules/electron/dist/chrome-sandbox)" = "0:0:4755"
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- test/integration/project-coding-electron.test.ts
       - name: Conversation, Ask, memory, first-run and local inventory renderer journeys
         env:
           EMBER_BROWSER_TEST: "1"
@@ -93,7 +133,7 @@ jobs:
         run: |
           browser_path="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"
           test -n "$browser_path"
-          EMBER_CHROMIUM_PATH="$browser_path" npm run test:integration -- test/integration/ask-renderer.test.ts test/integration/home-conversation-renderer.test.ts test/integration/home-streaming-renderer.test.ts test/integration/home-memory-renderer.test.ts test/integration/home-signout-forget-renderer.test.ts test/integration/home-mic-recipient-renderer.test.ts test/integration/home-speech-consent-renderer.test.ts test/integration/reminders-desk-renderer.test.ts test/integration/home-natural-voice-renderer.test.ts test/integration/home-first-run-renderer.test.ts test/integration/home-integrations-renderer.test.ts test/integration/home-panes-renderer.test.ts test/integration/home-status-race-renderer.test.ts test/integration/vault-form-renderer.test.ts test/integration/home-vault-renderer.test.ts
+          EMBER_CHROMIUM_PATH="$browser_path" npm run test:integration -- test/integration/ask-renderer.test.ts test/integration/prompt-clarification-renderer.test.ts test/integration/home-conversation-renderer.test.ts test/integration/home-streaming-renderer.test.ts test/integration/home-memory-renderer.test.ts test/integration/home-signout-forget-renderer.test.ts test/integration/home-mic-recipient-renderer.test.ts test/integration/home-speech-consent-renderer.test.ts test/integration/reminders-desk-renderer.test.ts test/integration/home-natural-voice-renderer.test.ts test/integration/home-first-run-renderer.test.ts test/integration/home-integrations-renderer.test.ts test/integration/project-sessions-renderer.test.ts test/integration/project-coding-renderer.test.ts test/integration/session-coding-review-renderer.test.ts test/integration/project-coding-runtime.test.ts test/integration/project-coordination-runtime.test.ts test/integration/home-panes-renderer.test.ts test/integration/home-status-race-renderer.test.ts test/integration/vault-form-renderer.test.ts test/integration/home-vault-renderer.test.ts
       - run: npm run build:lab
       - name: The built-in GitHub App client id starts a sign-in (GitHub answers with a device code, never printed)
         run: node scripts/check-client-id.mjs
@@ -147,11 +187,29 @@ jobs:
           key: voice-models-ryan-el8-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
       - run: node scripts/voice/prepare.mjs --voice ryan
       - name: Speech on RHEL 8's glibc, on both builds (WebAssembly, then sherpa-onnx's C API, which the packages use)
+        id: speech
         env:
           EMBER_VOICE_TEST: "1"
+          EMBER_SYNTHETIC_TAIL_CAPTURE: "1"
         run: |
           EMBER_VOICE_BACKEND=wasm npm run test:integration -- test/integration/voice.test.ts
           EMBER_KITTEN_TEST=1 EMBER_SHERPA_CAPI="$(node scripts/voice/fetch-capi.mjs)" npm run test:integration -- test/integration/voice.test.ts
+      - name: Preserve fixed synthetic refusal-tail failure evidence
+        if: failure() && !cancelled() && steps.speech.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: synthetic-refusal-tail-el8
+          if-no-files-found: ignore
+          retention-days: 3
+          path: |
+            ${{ runner.temp }}/ember-synthetic-refusal-tail/facts.json
+            ${{ runner.temp }}/ember-synthetic-refusal-tail/synthetic-tail-user.f32le
+            ${{ runner.temp }}/ember-synthetic-refusal-tail/synthetic-tail-readout.f32le
+            ${{ runner.temp }}/ember-synthetic-refusal-tail/synthetic-tail-mic.f32le
+            ${{ runner.temp }}/ember-synthetic-refusal-tail/synthetic-tail-asr-1.f32le
+            ${{ runner.temp }}/ember-synthetic-refusal-tail/synthetic-tail-asr-2.f32le
+            ${{ runner.temp }}/ember-synthetic-refusal-tail/synthetic-tail-asr-3.f32le
+            ${{ runner.temp }}/ember-synthetic-refusal-tail/synthetic-tail-asr-4.f32le
       - run: npm run build
       - name: Launch smoke test as a normal user (sandbox on)
         run: |
@@ -462,6 +520,34 @@ jobs:
           path: dist/eval/
           retention-days: 30
 
+  windows-node-product:
+    name: Windows Node product
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'windows'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/windows-node-product.yml
+
+  windows-wsl-coding-home:
+    name: Windows WSL coding Home
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'windows'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/wsl-coding-home.yml
+    with:
+      required-ci: true
+
+  windows-coding-draft-product:
+    name: Windows encrypted coding draft Home
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'windows'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/windows-coding-draft-product.yml
+    with:
+      required-ci: true
+
   windows:
     name: Windows (unit tests, build, smoke, UI Automation, zip)
     if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'windows'
@@ -515,7 +601,10 @@ jobs:
           cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
-      - run: npm test
+      - name: Fixed C witness model and bounded compiler outcome
+        run: npm test -- test/unit/windows-node-asset-enforcement-c.test.ts --maxWorkers=1
+      - name: Remaining unit tests
+        run: npm test -- --exclude test/unit/windows-node-asset-enforcement-c.test.ts
       - name: Kill switch real-time deadline (isolated from parallel unit tests)
         run: npm run test:integration -- test/integration/killswitch-deadline.test.ts
       - run: npm run build
@@ -568,6 +657,8 @@ jobs:
           EMBER_WIN32_TEST: "1"
           EMBER_UIA_TEST: "1"
           EMBER_WINSYS_TEST: "1"
+      # Unsupported descendant-launch / PowerShell experiments retain their exact assertions and failing status in
+      # coding-boundary.yml. The required windows-node-product job proves the supported root-only Node contract.
       # The speech models go inside the app, so one download carries everything Ember runs on the computer (network-
       # restricted PCs never need github.com for voice).
       - name: Speech models to bundle (cached; verified by SHA-256)
@@ -580,6 +671,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/voice/prepare.mjs --voice ryan
       - name: "Speech on sherpa-onnx's native addon: the real recognizers on the voice clips, then the voice and speech processes in Electron (native Kitten picked, WebAssembly ASR and neural-unavailable fallback compared; latency printed)"
+        id: speech
         if: ${{ !cancelled() }}
         run: |
           node scripts/run-integration.mjs test/integration/voice.test.ts
@@ -587,6 +679,22 @@ jobs:
         env:
           EMBER_VOICE_TEST: "1"
           EMBER_KITTEN_TEST: "1"
+          EMBER_SYNTHETIC_NO_CAPTURE: "1"
+      # Only the fixed public Ryan "No." fixture and its existing recognizer inputs, never microphone audio or text.
+      - name: Preserve fixed synthetic No polarity failure evidence
+        if: ${{ failure() && !cancelled() && steps.speech.outcome == 'failure' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: synthetic-no-polarity-${{ runner.os }}-${{ runner.arch }}
+          if-no-files-found: ignore
+          retention-days: 3
+          path: |
+            ${{ runner.temp }}/ember-synthetic-no-polarity/facts.json
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-mic.f32le
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-asr-1.f32le
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-asr-2.f32le
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-asr-3.f32le
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-asr-4.f32le
       - name: Node runtimes for computers reached over SSH (cached; verified by SHA-256), carried in the package
         if: ${{ !cancelled() }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -598,11 +706,13 @@ jobs:
         run: node scripts/package/runtimes.mjs
       - name: Stage Ember (Ember.exe with its own version resource and icon) and zip it
         # Runs after a failed integration step too (the job stays failed): the package's checks don't depend on it.
+        # This desktop/speech regression ZIP is separate from the authenticated Node product ZIP used by release.
         if: ${{ !cancelled() }}
         run: |
           # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
           node scripts/package/remote-parts.mjs
-          node scripts/package/stage.mjs --with-models --with-runtimes
+          node scripts/package/wsl-coding-tools.mjs
+          node scripts/package/stage.mjs --with-models --with-runtimes --with-wsl-coding-tools
           node scripts/package/archive.mjs
       - name: "The packaged Ember: its fuses, plain Node kept, NODE_OPTIONS ignored, --inspect refused, its files"
         if: ${{ !cancelled() }}
@@ -738,7 +848,10 @@ jobs:
           cache: npm
       - run: npm install -g npm@11.6.2
       - run: npm ci
-      - run: npm test
+      - name: Fixed C witness model and bounded compiler outcome
+        run: npm test -- test/unit/windows-node-asset-enforcement-c.test.ts --maxWorkers=1
+      - name: Remaining unit tests
+        run: npm test -- --exclude test/unit/windows-node-asset-enforcement-c.test.ts
       - name: Kill switch real-time deadline (isolated from parallel unit tests)
         run: npm run test:integration -- test/integration/killswitch-deadline.test.ts
       - id: build
@@ -791,6 +904,7 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: node scripts/voice/prepare.mjs --voice ryan
       - name: "Speech on sherpa-onnx's native addon: the real recognizers on the voice clips, then the voice and speech processes in Electron (native picked, CoreML timed against the CPU, WebAssembly compared; latency printed)"
+        id: speech
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           node scripts/run-integration.mjs test/integration/voice.test.ts
@@ -798,6 +912,22 @@ jobs:
         env:
           EMBER_VOICE_TEST: "1"
           EMBER_KITTEN_TEST: "1"
+          EMBER_SYNTHETIC_NO_CAPTURE: "1"
+      # Only the fixed public Ryan "No." fixture and its existing recognizer inputs, never microphone audio or text.
+      - name: Preserve fixed synthetic No polarity failure evidence
+        if: ${{ failure() && !cancelled() && steps.speech.outcome == 'failure' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: synthetic-no-polarity-${{ runner.os }}-${{ runner.arch }}
+          if-no-files-found: ignore
+          retention-days: 3
+          path: |
+            ${{ runner.temp }}/ember-synthetic-no-polarity/facts.json
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-mic.f32le
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-asr-1.f32le
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-asr-2.f32le
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-asr-3.f32le
+            ${{ runner.temp }}/ember-synthetic-no-polarity/synthetic-no-asr-4.f32le
       - name: Node runtimes for computers reached over SSH (cached; verified by SHA-256), carried in the package
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -1105,11 +1235,12 @@ jobs:
     name: Publish the release (v* tags, after every other job passed)
     # docs/DEVELOPING.md §15. Only a v* tag gets here, and only once every platform's checks and packages are green.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [checks, el8, voice-e2e, package, eval, windows, macos, macos-x64]
+    needs: [checks, el8, voice-e2e, package, eval, windows, windows-node-product, windows-wsl-coding-home, windows-coding-draft-product, macos, macos-x64]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1117,6 +1248,11 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
+      - name: Require remote safety checks for this exact tag and commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EMBER_ARM64_RUNNER: ${{ vars.EMBER_ARM64_RUNNER }}
+        run: node scripts/package/release-gate.mjs remote "$GITHUB_REF_NAME" "$(git rev-parse HEAD)"
       - name: "Release files: ember-packages"
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -1125,7 +1261,7 @@ jobs:
       - name: "Release files: ember-windows"
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ember-windows
+          name: ember-windows-node-product-windows-2022
           path: dist/release
       - name: "Release files: ember-macos"
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -1152,7 +1288,14 @@ jobs:
       - name: Publish the release with its files and SHA256SUMS
         env:
           GH_TOKEN: ${{ github.token }}
+          EMBER_ARM64_RUNNER: ${{ vars.EMBER_ARM64_RUNNER }}
         run: |
+          set -euo pipefail
+          node scripts/package/release-gate.mjs remote "$GITHUB_REF_NAME" "$(git rev-parse HEAD)"
+          live_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME" --jq .sha)
+          if [ "$live_sha" != "$(git rev-parse HEAD)" ]; then
+            echo "::error::The release tag moved after the checks"; exit 1
+          fi
           v="${GITHUB_REF_NAME#v}"
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "Ember $v" --notes-file dist/release-notes.md dist/release/*

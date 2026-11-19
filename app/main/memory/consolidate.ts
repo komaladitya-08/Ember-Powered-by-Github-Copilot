@@ -2,15 +2,15 @@
  * Ember's memory upkeep while the user isn't asking anything: Letta's "sleep-time compute" (Lin et al., arXiv
  * 2504.13171), the part that needs no model. Incremental remembering leaves the graph messy (one person under two
  * names, the same fact said three ways, observations nobody ever needed), so this pass merges entities that share a
- * name, folds near-duplicate facts together, and forgets what has gone stale, keeping the graph under MAX_FACTS.
+ * name, folds identical facts together, and forgets what has gone stale, keeping the graph under MAX_FACTS.
  *
  * What the user told Ember is never dropped for age or disuse; only `forget` (theirs) removes it, or the cap when the
  * graph is full of nothing else. Pure over the graph it is given.
  */
 
 import { setImmediate } from "node:timers/promises";
-import { DUPLICATE, MAX_FACTS, type Fact, type MemoryGraph } from "./graph";
-import { nameKey, negated, terms, termSimilarity } from "./text";
+import { factIdentity, MAX_FACTS, type Fact, type MemoryGraph } from "./graph";
+import { nameKey } from "./text";
 
 /** Closed facts older than this are forgotten (days). */
 export const HISTORY_DAYS = 180;
@@ -74,33 +74,19 @@ function* consolidationSteps(graph: MemoryGraph, o: ConsolidateOptions): Generat
     }
   }
 
-  // Near-duplicate open facts about the same entities: the stronger one stays and takes the other's uses.
+  // Identical open facts about the same ordered entities and relation: the stronger one stays and takes the other's uses.
   const open = graph.allFacts(true).sort((a, b) => b.confidence - a.confidence || b.uses - a.uses || a.createdAt.localeCompare(b.createdAt));
-  const wordSets: Set<string>[] = [];
-  const polarity: boolean[] = [];
+  const kept = new Map<string, Fact>();
   for (const f of open) {
-    wordSets.push(new Set(terms(f.text)));
-    polarity.push(negated(f.text));
     yield;
-  }
-  const gone = new Set<string>();
-  for (let i = 0; i < open.length; i++) {
-    yield;
-    const a = open[i];
-    if (gone.has(a.id)) continue;
-    let keep = graph.fact(a.id)!;
-    for (let j = i + 1; j < open.length; j++) {
-      if (j % 64 === 0) yield;
-      const b = open[j];
-      if (gone.has(b.id) || b.entities.length !== keep.entities.length || !b.entities.every(id => keep.entities.includes(id))) continue;
-      if (polarity[i] !== polarity[j] || termSimilarity(wordSets[i], wordSets[j]) < DUPLICATE) continue;
-      keep = { ...keep, uses: keep.uses + b.uses, source: keep.source === "user" || b.source !== "user" ? keep.source : "user" };
-      graph.forgetFact(b.id);
-      gone.add(b.id);
-      report.mergedFacts++;
-      yield;
-    }
-    graph.replaceFact(keep);
+    const key = factIdentity(f);
+    const keep = kept.get(key);
+    if (!keep) { kept.set(key, f); continue; }
+    const merged = { ...keep, uses: keep.uses + f.uses, source: keep.source === "user" || f.source !== "user" ? keep.source : "user" as const };
+    graph.forgetFact(f.id);
+    graph.replaceFact(merged);
+    kept.set(key, merged);
+    report.mergedFacts++;
   }
 
   // Stale: old history, and unsure guesses nobody needed.

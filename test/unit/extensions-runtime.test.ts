@@ -1384,6 +1384,25 @@ describe("ExtensionsService", () => {
     expect(said).toHaveLength(1);
   });
 
+  it.each([false, true])("refuses private coding copies, review files and cleanup receipts through the actual MCP hook (autopilot=%s)", async autopilot => {
+    const roots = ["/tmp/ember-coding-123", "/private/tmp/ember-coding-123"];
+    const said: string[] = [];
+    const s = await installed({ emberPaths: roots, autopilot: () => autopilot, announce: words => { said.push(words); return true; } });
+    const ext = s.forSession()!; shown(ext);
+    for (const root of roots) {
+      expect(await call(ext, "fake-lookup", { q: `${root}/process-1-ABCdef/copies/private/src/app.ts` })).toEqual({ permissionDecision: "deny", permissionDecisionReason: EMBER_DATA_REFUSED });
+      expect(await call(ext, "fake-post_message", { path: `${root}/process-1-ABCdef/cleanup-complete.json`, content: "{}" })).toEqual({ permissionDecision: "deny", permissionDecisionReason: EMBER_DATA_REFUSED });
+      expect(await call(ext, "fake-lookup", { path: `file://${root}/process-1-ABCdef/reviews/result/review.json` })).toEqual({ permissionDecision: "deny", permissionDecisionReason: EMBER_DATA_REFUSED });
+      expect(await call(ext, "fake-lookup", { path: `file://localhost${root.replaceAll("ember-coding-123", "ember%2Dcoding%2D123")}/process-1-ABCdef/copies/private/src/app.ts` })).toEqual({ permissionDecision: "deny", permissionDecisionReason: EMBER_DATA_REFUSED });
+    }
+    expect(await call(ext, "fake-post_message", { source: "/tmp", destination: "/home/u/backup" })).toEqual({ permissionDecision: "deny", permissionDecisionReason: EMBER_DATA_HELD });
+    expect(await call(ext, "fake-lookup", { q: "/tmp/ember-coding-*/process-1-ABCdef/copies/*" })).toEqual({ permissionDecision: "deny", permissionDecisionReason: EMBER_DATA_REFUSED });
+    expect(asked).toEqual([]); expect(said).toEqual([]);
+    expect(await call(ext, "fake-lookup", { q: "/tmp/ordinary.txt" })).toEqual({ permissionDecision: "allow" });
+    expect(await call(ext, "fake-lookup", { q: "local-plugin-data.txt" })).toEqual({ permissionDecision: "allow" });
+    await s.stopPart().stop();
+  });
+
   it("refuses in Autopilot an extension's move of the folder that holds Ember's data, a pattern that reaches it and a path out of its own folder, without asking or announcing (integ-y-1)", async () => {
     const said: string[] = [];
     const s = await installed({ home: "/home/u", autopilot: () => true, announce: words => { said.push(words); return true; } });

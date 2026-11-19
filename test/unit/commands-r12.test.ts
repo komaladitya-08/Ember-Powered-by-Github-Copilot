@@ -687,7 +687,6 @@ describe("an announcement's heading says whether the user asked (accessibility-r
     const named = decide("cargo watch -x test", { words: "run cargo watch -x test" });
     expect(heading(named, named.says)).toBe(ANNOUNCE_HEADING);
     const asked = decide("rm -rf build", { words: "delete the build folder" });
-    expect(asked.verdict).toBe("announce");
-    expect(heading(asked, asked.says)).toBe(ANNOUNCE_HEADING);
+    expect(asked.verdict).toBe("ask");
   });
 });

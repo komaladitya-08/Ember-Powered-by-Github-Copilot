@@ -1,0 +1,397 @@
+/** Coding folders belong to a selected project. Reviewing or exporting a result never executes a task. */
+import { CODING_REVIEW_PATCH_LIMIT, type CodingResultReview, type CodingResultSummary, type ProjectCodingWorkspaceState } from "../../shared/project-coding";
+import { STATUS_WORDS } from "../../shared/activity";
+import { ipcErrorText, sessionReviewChanged } from "./copy";
+import { codingSessionReview, sameCodingSessionReview, type CodingSessionReviewIdentity, type ProjectSessionReviews } from "./session-reviews";
+import { mountCodingDrafts, type CodingDraftControls } from "./coding-drafts";
+
+export function mountProjectCoding(): ProjectSessionReviews {
+  const root = document.getElementById("project-coding")!;
+  const legacyWorkspace = document.getElementById("coding-workspace");
+  if (legacyWorkspace) legacyWorkspace.hidden = true;
+  const find = <T extends HTMLElement>(id: string) => root.querySelector<T>(`#project-coding-${id}`)!;
+  const folder = find<HTMLParagraphElement>("folder");
+  const stateText = find<HTMLParagraphElement>("state");
+  const choose = find<HTMLButtonElement>("choose");
+  const forget = find<HTMLButtonElement>("forget");
+  const executionGroup = find<HTMLDivElement>("execution");
+  const executionSelect = find<HTMLSelectElement>("execution-select");
+  const executionChoose = find<HTMLButtonElement>("execution-choose");
+  const executionState = find<HTMLParagraphElement>("execution-state");
+  const executionDetail = find<HTMLParagraphElement>("execution-detail");
+  const publicDependenciesGroup = find<HTMLElement>("public-dependencies");
+  const publicDependenciesOn = find<HTMLInputElement>("public-dependencies-on");
+  const publicDependenciesDetail = find<HTMLParagraphElement>("public-dependencies-detail");
+  const status = find<HTMLParagraphElement>("status");
+  const results = find<HTMLOListElement>("results");
+  const review = find<HTMLElement>("review");
+  const reviewTitle = find<HTMLHeadingElement>("review-title");
+  const reviewSummary = find<HTMLParagraphElement>("review-summary");
+  const reviewSource = find<HTMLParagraphElement>("review-source");
+  const changes = find<HTMLUListElement>("changes");
+  const limitations = find<HTMLUListElement>("limitations");
+  const previewMessage = find<HTMLParagraphElement>("preview-message");
+  const patch = find<HTMLPreElement>("patch");
+  const exportReview = find<HTMLButtonElement>("export");
+  const continueReview = find<HTMLButtonElement>("continue");
+  const continueForm = find<HTMLFormElement>("continue-form");
+  const continueRequest = find<HTMLTextAreaElement>("continue-request");
+  const continueSend = find<HTMLButtonElement>("continue-send");
+  const continueCancel = find<HTMLButtonElement>("continue-cancel");
+  const closeReview = find<HTMLButtonElement>("close");
+  let projectId: string | null = null;
+  let workspace: ProjectCodingWorkspaceState | null = null;
+  let summaries: CodingResultSummary[] = [];
+  let opened: CodingResultReview | null = null;
+  let ready = false;
+  let pending = false;
+  let generation = 0;
+  let readEpoch = 0;
+  let initialEpoch = 0;
+  let reviewEpoch = 0;
+  let actionEpoch = 0;
+  let pendingSessionRead: { owner: number; project: string; action: number } | null = null;
+  let reviewOrigin: HTMLButtonElement | null = null;
+  let openedSessionIdentity: CodingSessionReviewIdentity | null = null;
+  let resultsCurrent = false;
+  const reviewListeners = new Set<() => void>();
+  let releaseSessionFocus: (() => void) | null = null;
+  const forgotten = new Set<string>();
+  let drawn = "";
+  let executionDrawn = "";
+  let executionSelected = "";
+  let drafts: CodingDraftControls | null = null;
+  let dependencyGesture: { owner: number; project: string; target: string; folder: string | null } | null = null;
+
+  const plain = (tag: string, text: string, className = "") => {
+    const node = document.createElement(tag);
+    node.textContent = text;
+    node.className = className;
+    return node;
+  };
+  const counts = (result: CodingResultSummary) => `${result.files} changed ${result.files === 1 ? "file" : "files"} · ${result.conflicts} ${result.conflicts === 1 ? "conflict" : "conflicts"} · Checks: ${result.checks.ran} run, ${result.checks.passed} passed, ${result.checks.failed} failed`;
+  const clearContinuation = () => { continueForm.hidden = true; continueRequest.value = ""; continueReview.setAttribute("aria-expanded", "false"); };
+  const clearReview = () => { releaseSessionFocus?.(); reviewEpoch++; opened = null; reviewOrigin = null; openedSessionIdentity = null; clearContinuation(); review.hidden = true; reviewTitle.textContent = ""; patch.textContent = ""; changes.replaceChildren(); limitations.replaceChildren(); reviewSummary.textContent = ""; reviewSource.textContent = ""; previewMessage.textContent = ""; };
+  const current = (owner: number, id: string) => generation === owner && projectId === id;
+  const continuationAvailable = () => ready && !!opened && opened.projectId === projectId && workspace?.projectId === projectId && workspace.available && workspace.canContinue !== false && workspace.folder?.valid === true;
+  const validContinuationRequest = () => !!continueRequest.value.trim() && continueRequest.value.length <= 2000;
+  const controls = () => {
+    choose.disabled = pending || !workspace?.canChoose;
+    forget.disabled = pending || !workspace?.folder || !workspace.canChoose;
+    const execution = workspace?.execution, candidate = execution?.choices.find(choice => choice.id === executionSelect.value);
+    executionSelect.disabled = pending || !ready || !execution?.canSelect;
+    executionChoose.disabled = executionSelect.disabled || !candidate?.selectable || (candidate.id === execution?.selected && candidate.canPrepare !== true);
+    executionChoose.textContent = candidate?.canPrepare === true && candidate.id === execution?.selected ? "Check environment" : "Use selection";
+    publicDependenciesOn.disabled = pending || !ready || !execution?.publicDependencies?.canChange;
+    exportReview.disabled = pending || !opened || opened.projectId !== projectId || !ready;
+    continueReview.disabled = pending || !continuationAvailable();
+    continueRequest.disabled = pending || !continuationAvailable();
+    continueCancel.disabled = pending;
+    continueSend.disabled = pending || continueForm.hidden || !continuationAvailable() || !validContinuationRequest();
+    for (const button of results.querySelectorAll<HTMLButtonElement>("button")) button.disabled = !ready || (pending && !button.dataset.forgetResult);
+    drafts?.changed();
+  };
+  const render = () => {
+    root.hidden = false;
+    folder.textContent = !projectId ? "Create or select a project above to choose its coding folder." : workspace?.folder ? `${workspace.folder.label}: ${workspace.folder.path}${workspace.folder.valid ? "" : " (folder unavailable)"}` : "No coding folder selected for this project.";
+    stateText.textContent = !projectId ? "Each project keeps its own folder choice and coding reviews." : !ready ? "Connect Ember to manage coding folders and review results." : workspace?.message || (workspace?.available ? "Coding work uses a private copy. Your original project stays unchanged." : "Coding work is currently unavailable. You can prepare a folder when Choose folder is available.");
+    const execution = workspace?.execution;
+    executionGroup.hidden = !execution;
+    const publicDependencies = execution?.publicDependencies;
+    publicDependenciesGroup.hidden = !publicDependencies;
+    publicDependenciesOn.checked = publicDependencies?.enabled === true;
+    publicDependenciesDetail.textContent = publicDependencies?.message ?? "";
+    if (execution) {
+      const signature = JSON.stringify({ selected: execution.selected, choices: execution.choices.map(({ id, label, selectable }) => ({ id, label, selectable })) });
+      if (signature !== executionDrawn) {
+        const draft = executionSelected === execution.selected && execution.choices.some(choice => choice.id === executionSelect.value) ? executionSelect.value : execution.selected;
+        executionDrawn = signature; executionSelected = execution.selected;
+        const options = execution.choices.map(choice => {
+          const option = document.createElement("option"); option.value = choice.id; option.textContent = choice.label; option.disabled = !choice.selectable; return option;
+        });
+        if (!execution.choices.some(choice => choice.id === execution.selected)) {
+          const absent = document.createElement("option"); absent.value = execution.selected; absent.textContent = "Selected environment is unavailable"; absent.disabled = true; options.unshift(absent);
+        }
+        executionSelect.replaceChildren(...options); executionSelect.value = draft;
+      }
+      const selected = execution.choices.find(choice => choice.id === execution.selected);
+      executionState.textContent = `Selected: ${selected?.label ?? "Unavailable environment"}. ${selected?.ready ? "Ready." : "Not ready."} ${execution.message}`;
+      const candidate = execution.choices.find(choice => choice.id === executionSelect.value);
+      executionDetail.textContent = candidate?.id !== execution.selected ? `${candidate?.message ?? "Choose an available environment."} Use selection to save this choice.` : selected?.message ?? "Choose an available environment. The saved choice has not changed.";
+    } else {
+      executionDrawn = ""; executionSelected = ""; executionSelect.replaceChildren(); executionState.textContent = ""; executionDetail.textContent = "";
+    }
+    const signature = JSON.stringify(summaries);
+    if (signature !== drawn) {
+      drawn = signature;
+      const focused = results.contains(document.activeElement) && document.activeElement instanceof HTMLElement ? document.activeElement.dataset.resultControl : undefined;
+      results.replaceChildren();
+      if (!summaries.length) results.append(plain("li", projectId ? "No coding results for this project yet." : "Select a project to see its coding results.", "hint"));
+      for (const result of summaries) {
+        const item = document.createElement("li");
+        item.append(plain("h4", result.title), plain("p", `${STATUS_WORDS[result.status]} · ${counts(result)}${result.patchComplete ? "" : " · Patch has limitations"}`, "hint"));
+        item.append(plain("p", `From ${result.sourcePath}`, "hint"));
+        if (result.message) item.append(plain("p", result.message));
+        const button = document.createElement("button");
+        button.type = "button"; button.className = "btn quiet small"; button.textContent = "Review result";
+        button.setAttribute("aria-label", `Review result: ${result.title}`);
+        button.dataset.resultControl = result.id;
+        button.addEventListener("click", () => { if (!button.disabled) void openResult(result.id); });
+        const discard = document.createElement("button");
+        discard.type = "button"; discard.className = "btn quiet small"; discard.textContent = "Forget result";
+        discard.setAttribute("aria-label", `Forget private result: ${result.title}`);
+        discard.dataset.resultControl = `forget:${result.id}`; discard.dataset.forgetResult = result.id;
+        discard.addEventListener("click", () => { if (!discard.disabled) void forgetResult(result.id); });
+        const actions = document.createElement("div"); actions.className = "agent-actions"; actions.append(button, discard);
+        item.append(actions); results.append(item);
+      }
+      if (focused) [...results.querySelectorAll<HTMLButtonElement>("[data-result-control]")].find(button => button.dataset.resultControl === focused)?.focus({ preventScroll: true });
+    }
+    controls();
+    for (const listener of reviewListeners) listener();
+  };
+  const load = async (sessionRead?: NonNullable<typeof pendingSessionRead>): Promise<boolean> => {
+    const ownsPending = !!sessionRead && pendingSessionRead === sessionRead && current(sessionRead.owner, sessionRead.project) && actionEpoch === sessionRead.action;
+    if (!projectId || !ready || pending && !ownsPending) return false;
+    const id = projectId, owner = generation, ticket = ++readEpoch;
+    resultsCurrent = false; render();
+    const replies = await Promise.allSettled([window.ember.projectCodingWorkspaceState(id), window.ember.codingResultsState(id)]);
+    if (!current(owner, id) || ticket !== readEpoch || sessionRead && (!ownsPending || pendingSessionRead !== sessionRead || actionEpoch !== sessionRead.action)) return false;
+    if (replies[0].status === "fulfilled" && replies[0].value.projectId === id) workspace = replies[0].value;
+    if (replies[1].status === "fulfilled") {
+      resultsCurrent = true;
+      summaries = replies[1].value.filter(result => result.projectId === id && !forgotten.has(result.id));
+      if (opened && (!summaries.some(result => result.id === opened!.id) || openedSessionIdentity && !sessionIdentityCurrent(openedSessionIdentity))) clearReview();
+    }
+    if (replies.some(reply => reply.status === "rejected")) status.textContent = "Couldn't refresh coding work. Reopen Projects to try again.";
+    render();
+    return replies[1].status === "fulfilled";
+  };
+  const selectProject = (id: string | null) => {
+    if (projectId === id) return;
+    generation++; readEpoch++; initialEpoch++; actionEpoch++; forgotten.clear();
+    projectId = id; workspace = null; summaries = []; resultsCurrent = false; pending = false; drawn = "";
+    status.textContent = ""; clearReview(); render();
+    void load();
+  };
+  const folderAction = async (kind: "choose" | "forget") => {
+    if (!projectId || pending) return;
+    const id = projectId, owner = generation, action = ++actionEpoch;
+    clearContinuation();
+    status.textContent = kind === "choose" ? "Choose a coding folder in the folder picker." : "Forgetting this project's folder choice…";
+    readEpoch++; pending = true; render();
+    try {
+      const next = kind === "choose" ? await window.ember.projectCodingWorkspaceChoose(id) : await window.ember.projectCodingWorkspaceForget(id);
+      if (!current(owner, id) || action !== actionEpoch || next.projectId !== id) return;
+      workspace = next; status.textContent = next.message;
+    } catch (error) { if (current(owner, id) && action === actionEpoch) status.textContent = ipcErrorText(error); }
+    finally { if (current(owner, id) && action === actionEpoch) { pending = false; render(); } }
+  };
+  const executionAction = async () => {
+    const candidate = workspace?.execution?.choices.find(choice => choice.id === executionSelect.value);
+    if (!projectId || pending || !ready || !workspace?.execution?.canSelect || !candidate?.selectable || (candidate.id === workspace.execution.selected && candidate.canPrepare !== true)) return;
+    const id = projectId, owner = generation, action = ++actionEpoch, targetId = candidate.id;
+    clearContinuation(); readEpoch++; pending = true; status.textContent = "Saving this project's command environment…"; render();
+    try {
+      const next = await window.ember.projectCodingExecutionChoose(id, targetId);
+      if (!current(owner, id) || action !== actionEpoch || next.projectId !== id) return;
+      workspace = next; status.textContent = next.execution?.message ?? next.message;
+    } catch (error) { if (current(owner, id) && action === actionEpoch) status.textContent = ipcErrorText(error); }
+    finally { if (current(owner, id) && action === actionEpoch) { pending = false; render(); } }
+  };
+  const sessionIdentityCurrent = (identity: CodingSessionReviewIdentity) => {
+    const currentIdentity = codingSessionReview(identity.projectId, { kind: "coding", taskId: identity.taskId, status: "done" }, summaries);
+    return !!currentIdentity && sameCodingSessionReview(identity, currentIdentity) && !forgotten.has(identity.id);
+  };
+  const openResult = async (id: string, session?: { identity: CodingSessionReviewIdentity; origin: HTMLButtonElement; resolveOrigin: () => HTMLButtonElement | null }) => {
+    if (!projectId || pending || !ready) return;
+    if (session && (!session.resolveOrigin() || !sessionIdentityCurrent(session.identity))) return;
+    if (session) clearReview();
+    const project = projectId, owner = generation, focused = document.activeElement, ticket = ++reviewEpoch, action = ++actionEpoch;
+    const sessionRead = session ? { owner, project, action } : undefined;
+    if (sessionRead) pendingSessionRead = sessionRead;
+    let focusReview = false, focusIntent = !!session && focused === session.origin;
+    const logicalOrigin = (target: EventTarget | null) => target instanceof Node && !!session?.resolveOrigin()?.contains(target);
+    const movedFocus = (event: FocusEvent) => { if (event.target !== document.body && !logicalOrigin(event.target)) focusIntent = false; };
+    const movedPointer = (event: PointerEvent) => { if (!logicalOrigin(event.target)) focusIntent = false; };
+    const releaseFocus = () => {
+      document.removeEventListener("focusin", movedFocus, true); document.removeEventListener("pointerdown", movedPointer, true);
+      if (releaseSessionFocus === releaseFocus) releaseSessionFocus = null;
+    };
+    if (session) { document.addEventListener("focusin", movedFocus, true); document.addEventListener("pointerdown", movedPointer, true); releaseSessionFocus = releaseFocus; }
+    status.textContent = "Loading this coding review…";
+    readEpoch++; pending = true; render();
+    try {
+      const result = await window.ember.codingResultReview(id);
+      if (!current(owner, project) || action !== actionEpoch || ticket !== reviewEpoch || forgotten.has(id) || result.projectId !== project || result.id !== id) return;
+      // A notification alone does not change a result's identity. Observe the current tuple after the review reply.
+      const fresh = !sessionRead || await load(sessionRead);
+      if (!current(owner, project) || action !== actionEpoch || ticket !== reviewEpoch || forgotten.has(id) || result.projectId !== project || result.id !== id) return;
+      if (session && (!fresh || !session.resolveOrigin() || !sessionIdentityCurrent(session.identity) || !sameCodingSessionReview(session.identity, result))) {
+        clearReview(); status.textContent = sessionReviewChanged(); return;
+      }
+      clearContinuation();
+      opened = result;
+      reviewOrigin = session?.origin ?? null;
+      openedSessionIdentity = session?.identity ?? null;
+      reviewTitle.textContent = result.title;
+      reviewSummary.textContent = `${STATUS_WORDS[result.status]} · ${counts(result)}`;
+      reviewSource.textContent = `From ${result.sourcePath}`;
+      changes.replaceChildren(...result.changes.slice(0, 200).map(change => {
+        const item = document.createElement("li");
+        item.append(plain("b", `${change.kind}: ${change.path}`));
+        const reasons = [...change.conflicts, ...change.patchUnsupported];
+        for (const reason of reasons.slice(0, 20)) item.append(plain("p", reason, "hint"));
+        if (reasons.length > 20) item.append(plain("p", "More details are available in the exported review.", "hint"));
+        return item;
+      }));
+      const notes = [...result.limitations];
+      if (result.changes.length > 200) notes.unshift("The preview shows the first 200 changed paths. Export the review to keep the complete result.");
+      if ((result.textPatch?.length ?? 0) > CODING_REVIEW_PATCH_LIMIT) notes.unshift("The patch preview is shortened. Export the review to keep the complete result.");
+      limitations.replaceChildren(...notes.slice(0, 50).map(note => plain("li", note)));
+      limitations.hidden = notes.length === 0;
+      patch.textContent = result.textPatch?.slice(0, CODING_REVIEW_PATCH_LIMIT) ?? "";
+      patch.hidden = !result.textPatch;
+      previewMessage.textContent = result.previewMessage || (result.textPatch ? "Text patch preview. Export a review to keep this result." : "A text patch isn't available for this result. Review the changed paths and limitations.");
+      review.hidden = false;
+      status.textContent = "Review ready. Export it to keep a copy.";
+      focusReview = session ? focusIntent : document.activeElement === focused && results.contains(focused);
+    } catch (error) { if (current(owner, project) && action === actionEpoch) status.textContent = ipcErrorText(error); }
+    finally {
+      releaseFocus();
+      if (pendingSessionRead === sessionRead) pendingSessionRead = null;
+      if (current(owner, project) && action === actionEpoch) {
+        pending = false; render();
+        if (focusReview && opened?.id === id && !review.hidden) reviewTitle.focus({ preventScroll: session === undefined });
+        if (session && !resultsCurrent) void load();
+      }
+    }
+  };
+  const forgetResult = async (id: string) => {
+    if (!projectId || !ready || forgotten.has(id) || !summaries.some(result => result.id === id)) return;
+    const project = projectId, owner = generation, action = ++actionEpoch;
+    releaseSessionFocus?.();
+    const focused = document.activeElement instanceof HTMLElement && document.activeElement.dataset.forgetResult === id;
+    readEpoch++; forgotten.add(id); summaries = summaries.filter(result => result.id !== id);
+    if (opened?.id === id) clearReview();
+    pending = true; status.textContent = "Forgetting this private coding review…"; render();
+    if (focused) (results.querySelector<HTMLButtonElement>("[data-forget-result]") ?? root.querySelector<HTMLElement>("h3"))?.focus({ preventScroll: true });
+    try {
+      const reply = await window.ember.codingResultForget(id);
+      if (current(owner, project) && action === actionEpoch) status.textContent = reply.message;
+    } catch (error) { if (current(owner, project) && action === actionEpoch) status.textContent = ipcErrorText(error); }
+    finally { if (current(owner, project) && action === actionEpoch) { pending = false; render(); void load(); } }
+  };
+  drafts = mountCodingDrafts({
+    context: () => ({ projectId, generation, ready, pending, workspace, result: opened }),
+    workspaceChanged: state => { if (state.projectId === projectId && ready) { workspace = state; render(); } },
+    imported: async id => {
+      const project = projectId, owner = generation;
+      if (!project || !ready) return;
+      await load();
+      if (current(owner, project) && summaries.some(result => result.id === id)) await openResult(id);
+    },
+  });
+  choose.addEventListener("click", () => { if (!choose.disabled) void folderAction("choose"); });
+  forget.addEventListener("click", () => { if (!forget.disabled) void folderAction("forget"); });
+  executionSelect.addEventListener("change", render);
+  executionChoose.addEventListener("click", () => { if (!executionChoose.disabled) void executionAction(); });
+  const captureDependencyGesture = () => {
+    dependencyGesture = projectId && workspace?.execution ? { owner: generation, project: projectId, target: workspace.execution.selected, folder: workspace.folder?.path ?? null } : null;
+  };
+  publicDependenciesGroup.addEventListener("pointerdown", captureDependencyGesture);
+  publicDependenciesOn.addEventListener("keydown", event => { if (event.key === " ") captureDependencyGesture(); });
+  publicDependenciesOn.addEventListener("change", () => {
+    const gesture = dependencyGesture; dependencyGesture = null;
+    if (gesture && (!current(gesture.owner, gesture.project) || workspace?.execution?.selected !== gesture.target || (workspace.folder?.path ?? null) !== gesture.folder)) {
+      status.textContent = "The project or its coding environment changed. Choose this setting again."; render(); return;
+    }
+    if (!projectId || publicDependenciesOn.disabled || !workspace?.execution?.publicDependencies) return;
+    const project = projectId, owner = generation, action = ++actionEpoch, enabled = publicDependenciesOn.checked;
+    readEpoch++; pending = true; status.textContent = "Updating public dependency downloads for this project…"; render();
+    void window.ember.projectCodingPublicDependenciesChoose(project, enabled).then(state => {
+      if (current(owner, project) && action === actionEpoch && state.projectId === project) { workspace = state; status.textContent = state.execution?.publicDependencies?.message ?? state.message; }
+    }).catch(error => { if (current(owner, project) && action === actionEpoch) status.textContent = ipcErrorText(error); }).finally(() => {
+      if (current(owner, project) && action === actionEpoch) { pending = false; render(); void load(); }
+    });
+  });
+  closeReview.addEventListener("click", () => {
+    const id = opened?.id, control = reviewOrigin?.dataset.sessionControl;
+    const origin = openedSessionIdentity && sessionIdentityCurrent(openedSessionIdentity)
+      ? [...document.querySelectorAll<HTMLButtonElement>("#project-sessions [data-session-control]")].find(button => button.dataset.sessionControl === control && !button.disabled) : null;
+    clearReview(); status.textContent = ""; controls();
+    (origin ?? [...results.querySelectorAll<HTMLButtonElement>("[data-result-control]")].find(button => button.dataset.resultControl === id))?.focus({ preventScroll: true });
+  });
+  continueReview.addEventListener("click", () => {
+    if (continueReview.disabled || !opened) return;
+    continueForm.hidden = false; continueReview.setAttribute("aria-expanded", "true"); controls();
+    continueRequest.focus({ preventScroll: true });
+  });
+  continueCancel.addEventListener("click", () => {
+    if (continueCancel.disabled) return;
+    clearContinuation(); controls(); continueReview.focus({ preventScroll: true });
+  });
+  continueRequest.addEventListener("input", controls);
+  continueForm.addEventListener("submit", event => {
+    event.preventDefault();
+    if (!opened || !projectId || continueSend.disabled || !continuationAvailable() || !validContinuationRequest()) { controls(); return; }
+    const id = opened.id, project = projectId, owner = generation, ticket = reviewEpoch, action = ++actionEpoch, request = continueRequest.value;
+    const stillOpen = () => current(owner, project) && action === actionEpoch && ticket === reviewEpoch && opened?.id === id && !forgotten.has(id);
+    status.textContent = "Sending your new coding request…"; readEpoch++; pending = true; render();
+    void window.ember.codingResultContinue(id, project, request).then(reply => {
+      if (!stillOpen()) return;
+      status.textContent = reply.message;
+      if (reply.ok) clearContinuation();
+    }).catch(error => { if (stillOpen()) status.textContent = ipcErrorText(error); }).finally(() => {
+      if (current(owner, project) && action === actionEpoch) { pending = false; render(); }
+    });
+  });
+  exportReview.addEventListener("click", () => {
+    if (!opened || !projectId || exportReview.disabled) return;
+    const id = opened.id, project = projectId, owner = generation, action = ++actionEpoch;
+    status.textContent = "Choose a folder for the exported review.";
+    pending = true; render();
+    void window.ember.codingResultExport(id).then(reply => {
+      if (current(owner, project) && action === actionEpoch && !forgotten.has(id)) status.textContent = reply.message;
+    }).catch(error => { if (current(owner, project) && action === actionEpoch) status.textContent = ipcErrorText(error); }).finally(() => {
+      if (current(owner, project) && action === actionEpoch) { pending = false; render(); }
+    });
+  });
+  window.addEventListener("ember-project-changed", event => {
+    const detail = (event as CustomEvent<{ projectId?: unknown }>).detail;
+    if (detail && (detail.projectId === null || typeof detail.projectId === "string")) { initialEpoch++; selectProject(detail.projectId); }
+  });
+  window.ember.onConversationForgotten(() => { initialEpoch++; generation++; readEpoch++; actionEpoch++; forgotten.clear(); projectId = null; workspace = null; summaries = []; pending = false; drawn = ""; status.textContent = ""; clearReview(); render(); });
+  let statusEpoch = 0;
+  const agentState = (phase: string | undefined) => {
+    const nextReady = phase === "ready";
+    if (ready !== nextReady) { generation++; readEpoch++; actionEpoch++; forgotten.clear(); pending = false; clearReview(); workspace = null; summaries = []; }
+    ready = nextReady; render(); void load();
+  };
+  window.ember.onAgentStatus(next => { statusEpoch++; agentState(next.phase); });
+  const statusTicket = statusEpoch;
+  void window.ember.agentStatus().then(next => { if (statusTicket === statusEpoch) agentState(next?.phase); }).catch(() => undefined);
+  const refreshResults = () => { resultsCurrent = false; render(); void load(); };
+  window.ember.onTasks(refreshResults);
+  window.ember.onConversation(refreshResults);
+  const initialTicket = initialEpoch;
+  void window.ember.projectSessionsState().then(state => { if (initialTicket === initialEpoch) selectProject(state.selectedProjectId); }).catch(() => undefined);
+  render();
+  return {
+    forSession: (project, session) => {
+      if (!ready || project !== projectId) return null;
+      const identity = codingSessionReview(project, session, summaries);
+      if (!identity || forgotten.has(identity.id)) return null;
+      const owner = generation;
+      return {
+        // Background metadata refresh does not revoke a navigation intent. openResult still requires its own fresh tuple before display.
+        key: JSON.stringify(identity), disabled: pending,
+        open: (origin, resolveOrigin) => {
+          if (!origin.isConnected || !current(owner, project) || !sessionIdentityCurrent(identity)) return;
+          void openResult(identity.id, { identity, origin, resolveOrigin });
+        },
+      };
+    },
+    onChange: listener => { reviewListeners.add(listener); },
+  };
+}

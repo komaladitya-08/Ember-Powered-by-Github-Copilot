@@ -80,14 +80,6 @@ export const TOKEN_SHAPES: readonly RegExp[] = TOKEN_PATTERNS.filter(re => re !=
  */
 const VAULT_VALUE = /(vault\.azure\.net\/secrets\/[^"]{0,200}"(?:[^{}]|\{[^{}]{0,4000}\}){0,4000}?"value"\s{0,8}:\s{0,8}")(?:[^"\\]|\\.)*(?=")/g;
 const VAULT_VALUE_FIRST = /("value"\s{0,8}:\s{0,8}")(?:[^"\\]|\\.)*(?="(?:\s{0,8},\s{0,8}"\w{1,40}"\s{0,8}:\s{0,8}(?:"(?:[^"\\]|\\.){0,200}"|[\w.+-]{1,40})){0,3}\s{0,8},\s{0,8}"id"\s{0,8}:\s{0,8}"[^"]{0,200}vault\.azure\.net\/secrets\/)/g;
-/**
- * Text a value pattern can't match without, whole: a pass whose text lacks any of it is the text as it was, the same
- * bytes, without the pattern's search (UNGUARDED_PASSES is the proof's other side).
- */
-const VALUE_NEEDS: ReadonlyMap<RegExp, readonly string[]> = new Map([
-  [VAULT_VALUE, ["vault.azure.net/secrets/", '"value"']],
-  [VAULT_VALUE_FIRST, ["vault.azure.net/secrets/", '"value"']],
-]);
 
 /** Patterns whose first group is kept and whose value is hidden. */
 /** The words before `_KEY` that say the key is a secret one (`SECRET_KEY`, `API_KEY`, `SIGNING_KEY`: r10-commands-y10-6). */
@@ -99,6 +91,18 @@ const SECRET_KEY_WORDS =
  * digit among them, to the value's end (`created_at`, `id`, `on` and `D` are not: r10-commands-y10-6).
  */
 const KEY_SHAPED = String.raw`["']?(?:(?:Basic|Bearer|Token|Digest|Negotiate|basic|bearer|token)[ \t]+|(?=[A-Za-z+/=_.-]{0,255}\d)(?=[0-9+/=_.-]{0,255}[A-Za-z])[A-Za-z0-9+/=_.-]{8,}(?![^\s"',;}\]]))`;
+
+/** The unchanged environment assignment pattern always requires a literal equals sign. */
+const ENVIRONMENT_ASSIGNMENT = new RegExp(String.raw`((?<![A-Za-z0-9_.-])(?!(?:OLD)?PWD=|(?:LOW|HIGH|BAND|ALL|RENDER)_PASS=|(?:[A-Za-z0-9_]{0,64}_)?(?:PUBLIC|SORT|PRIMARY|FOREIGN|public|sort|primary|foreign)_(?:KEY|key)=)(?:(?:(?:[A-Za-z0-9_]{0,64}_)?(?:PASS|PASSPHRASE|PW|PWD|pass|passphrase|pw|pwd)|[A-Za-z0-9_]{0,64}_(?:AUTH|auth)|(?:[A-Za-z0-9_]{0,64}_)?(?:${SECRET_KEY_WORDS})_(?:KEY|key))=["']?|(?:[A-Za-z0-9_]{0,64}_)?(?:KEY|key|AUTH|auth)=["']?(?=${KEY_SHAPED})))(?![$%{<*[])(?:(?:Basic|Bearer|Token|Digest|Negotiate|basic|bearer|token)[ \t]+)?[^\s"',;]+`, "g");
+/**
+ * Text a value pattern can't match without, whole: a pass whose text lacks any of it is the text as it was, the same
+ * bytes, without the pattern's search (UNGUARDED_PASSES is the proof's other side).
+ */
+const VALUE_NEEDS: ReadonlyMap<RegExp, readonly string[]> = new Map([
+  [VAULT_VALUE, ["vault.azure.net/secrets/", '"value"']],
+  [VAULT_VALUE_FIRST, ["vault.azure.net/secrets/", '"value"']],
+  [ENVIRONMENT_ASSIGNMENT, ["="]],
+]);
 
 const VALUE_PATTERNS: readonly RegExp[] = [
   /(aws_secret_access_key\s*[=:]\s*)\S+/gi,
@@ -148,7 +152,7 @@ const VALUE_PATTERNS: readonly RegExp[] = [
   // KEY, and AUTH or KEY alone, only when its value looks like a key (8 or more letters and digits, both) or a scheme's
   // credential: `SORT_KEY=created_at`, `PRIMARY_KEY=id`, `?key=abc` and `AUTH=on` are ordinary facts, and memory refused
   // them as secrets (r10-commands-y10-6). PUBLIC_, SORT_, PRIMARY_ and FOREIGN_KEY are never hidden.
-  new RegExp(String.raw`((?<![A-Za-z0-9_.-])(?!(?:OLD)?PWD=|(?:LOW|HIGH|BAND|ALL|RENDER)_PASS=|(?:[A-Za-z0-9_]{0,64}_)?(?:PUBLIC|SORT|PRIMARY|FOREIGN|public|sort|primary|foreign)_(?:KEY|key)=)(?:(?:(?:[A-Za-z0-9_]{0,64}_)?(?:PASS|PASSPHRASE|PW|PWD|pass|passphrase|pw|pwd)|[A-Za-z0-9_]{0,64}_(?:AUTH|auth)|(?:[A-Za-z0-9_]{0,64}_)?(?:${SECRET_KEY_WORDS})_(?:KEY|key))=["']?|(?:[A-Za-z0-9_]{0,64}_)?(?:KEY|key|AUTH|auth)=["']?(?=${KEY_SHAPED})))(?![$%{<*[])(?:(?:Basic|Bearer|Token|Digest|Negotiate|basic|bearer|token)[ \t]+)?[^\s"',;]+`, "g"),
+  ENVIRONMENT_ASSIGNMENT,
   // The same names as YAML and JSON print them (`docker compose config`'s `DB_PASS: hunter2`, `"REDIS_AUTH": "abc"`):
   // at a line's start, after a list's `- `, or after `{`, `[` or `,`, so prose keeps its words; a bare lower-case `key:`,
   // `pass:` or `auth:` (a selector's key, a field) needs a prefix (r10-commands-x10-5).
@@ -217,6 +221,8 @@ const MYSQL_CLIENT = String.raw`${COMMAND_START}(?:${CLIENT_NAME}(?:\.[eE][xX][e
 const HTPASSWD_OPTIONS = String.raw`(?=(?:[ \t]+-[A-Za-z]+(?:[ \t]+\d+)?)*?[ \t]+-[A-Za-z]*b)(?:[ \t]+-[A-Za-z]+(?:[ \t]+\d+)?)+`;
 /** A word that is no shell operator (`>`, `<`, `|`). */
 const HTPASSWD_WORD = String.raw`(?![<>|])\S+`;
+/** MySQL's password option requires a literal `-p`; skip its command/folder lookbehinds when that option is absent. */
+const MYSQL_PASSWORD = new RegExp(String.raw`(${MYSQL_CLIENT}${ARGS}[ \t]+-p)(["']?)(${OPTION_VALUE})\2`, "g");
 /**
  * Programs whose short option carries a password (safety-privacy-c5-2): each pattern's first group is kept, its second is
  * the value's quote and its third the value, which is hidden. `mysql -pWint3r!Sh0p` and `mysql -p'…'` (attached; a
@@ -225,7 +231,7 @@ const HTPASSWD_WORD = String.raw`(?![<>|])\S+`;
  * output: no file), `openssl … -k …` and `-pass pass:…`, `net use \\srv\share … /user:admin …`, and `echo '…' | sudo -S`.
  */
 const OPTION_PASSWORDS: readonly RegExp[] = [
-  new RegExp(String.raw`(${MYSQL_CLIENT}${ARGS}[ \t]+-p)(["']?)(${OPTION_VALUE})\2`, "g"),
+  MYSQL_PASSWORD,
   new RegExp(String.raw`(\b(?:curl|wget)${ARGS}[ \t]+(?:-u|--user)(?:[ \t]+|=)["']?[^\s"':|;&]*:)(["']?)(${OPTION_VALUE})\2`, "g"),
   new RegExp(String.raw`(\b(?:docker|podman|nerdctl|buildah|helm)${ARGS}[ \t]+login${ARGS}[ \t]+(?:-p|--password)[ \t]+)(["']?)(${OPTION_VALUE})\2`, "g"),
   new RegExp(String.raw`(\b(?:mongo|mongosh|mongodump|mongorestore|mongoexport|mongoimport)${ARGS}[ \t]+-p[ \t]*)(["']?)(${OPTION_VALUE})\2`, "g"),
@@ -389,15 +395,15 @@ export function redactSecrets(text: string): string {
 
 /**
  * redactSecrets's passes, in order: each reads and replaces in the whole text it is given, as redactSecrets folds them.
- * A pass can match across lines (a private key block, a list's `\n- ` separator), so the text is never cut into
- * slices but by KEY_VALUE's own pass, which cuts it only where no match can cross (keyValueSteps, integ-x-3); a caller
+ * A pass can match across lines (a private key block, a list's `\n- ` separator), so only KEY_VALUE has its own
+ * bounded recognition and value scans (keyValueSteps, integ-x-3); a caller
  * that must keep Ember's main thread free between passes runs them one at a time (redactSecretsYielding) and gets the
  * same bytes, since it is the same list (merge review integ-y-2).
  */
 const passes = (guarded: boolean): readonly ((text: string) => string)[] => [
   ...TOKEN_PATTERNS.map(re => (re === PRIVATE_KEY ? hidePrivateKeys : (t: string) => t.replace(re, SECRET_HIDDEN))),
   ...VALUE_PATTERNS.map(re => (t: string) => (guarded && !(VALUE_NEEDS.get(re) ?? []).every(n => t.includes(n)) ? t : t.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN))),
-  ...OPTION_PASSWORDS.map(re => (t: string) => t.replace(re, (_m, keep: string, quote: string, _value: string, after?: string) => `${keep}${quote}${SECRET_HIDDEN}${quote}${typeof after === "string" ? after : ""}`)),
+  ...OPTION_PASSWORDS.map(re => (t: string) => (guarded && re === MYSQL_PASSWORD && !t.includes("-p") ? t : t.replace(re, (_m, keep: string, quote: string, _value: string, after?: string) => `${keep}${quote}${SECRET_HIDDEN}${quote}${typeof after === "string" ? after : ""}`))),
   ...LIST_PASSWORDS.map(re => (t: string) => t.replace(re, (...m) => {
     const g = m[m.length - 1] as { keep: string; value: string; q?: string; option?: string };
     const [match, at, whole] = [String(m[0]), m[m.length - 3] as number, m[m.length - 2] as string];
@@ -408,9 +414,9 @@ const passes = (guarded: boolean): readonly ((text: string) => string)[] => [
   t => t.replace(URL_CREDENTIALS, `://${SECRET_HIDDEN}@`),
   hideKeyValues,
 ];
-/** redactSecrets's passes (above), each value pattern checked first for the text it can't match without (VALUE_NEEDS). */
+/** redactSecrets's passes (above), with necessary-text checks before Azure, environment assignment and MySQL searches. */
 export const REDACT_PASSES: readonly ((text: string) => string)[] = passes(true);
-/** The same passes without VALUE_NEEDS's check: what REDACT_PASSES must equal byte for byte (commands-redact.test.ts). */
+/** The same passes without necessary-text checks: what REDACT_PASSES must equal byte for byte (commands-redact.test.ts). */
 export const UNGUARDED_PASSES: readonly ((text: string) => string)[] = passes(false);
 
 /**
@@ -431,82 +437,135 @@ function hideKeyValues(text: string): string {
   return runSteps(keyValueSteps(text));
 }
 
-/** The most text KEY_VALUE reads in one step (integ-x-3: on 4 MiB of output one whole-text pass held Ember's main
- * thread 358 ms, longer than Stop's 300 ms). */
+/** The work between key-value steps (integ-x-3: one whole 4 MiB regex pass held Ember's main thread 358 ms,
+ * longer than Stop's 300 ms). Search, whitespace, values, output and bounded regex searches all count. */
 export const KEY_VALUE_SLICE = 256 * 1024;
 /** How far before its `=` or `:` (and the spaces before it) a KEY_VALUE match can start: the secret word (at most 13),
  * its suffix (at most 256) and a quote and a bracket, with room to spare. */
 const KEY_REACH = 300;
-const SPACES_AFTER = /[\s"'>]*/y;
-const VALUE_RUN = /[^\s"',;]*/y;
-const CUT = /[,;\s]/g;
-const OPS_PER_STEP = 65_536;
+const KEY_SPACE = /\s/;
+const KEY_VALUE_CHAR = /[^\s"',;]/;
+const KEY_NAME_CHAR = /[A-Za-z0-9_.-]/;
+const KEY_NAME = /(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)/i;
+const KEY_NAME_MAX = 13;
 
 /**
- * KEY_VALUE's replace in steps of at most `slice` characters, a step yielded between them, with the same bytes as
- * `text.replace(KEY_VALUE, …)` over the whole text (integ-x-3). Every match holds an `=` or `:`, starts at most
- * KEY_REACH before it and its spaces and ends where its value does, so only the spans around them are read (none, in
- * output with neither). A match never holds a `,` or a `;`, nor a run of spaces with no `=`, `:` or `>` before it and
- * no `=` or `:` after it, so a span is cut only after one of those: what each piece matches is what the whole did.
+ * The exact whole-text KEY_VALUE replacement, with bounded work between yields. Every match has an operator and a
+ * key within KEY_REACH of its preceding whitespace. At each operator, the unchanged regex sees only that bounded
+ * prefix, the actual delimiter, one representative of its following \s* run, an optional quote and the first value
+ * character. Nothing else in the regex depends on those whitespace runs or the rest of the value. Original offsets
+ * supply all output; a separate consumed floor preserves global-regex non-overlap even for already-hidden values.
+ * Unlike delimiter-based cuts, this also yields when no safe cut exists in a multi-megabyte merged span.
  */
 export function* keyValueSteps(text: string, slice = KEY_VALUE_SLICE): Generator<void, string, void> {
-  const spans: [number, number][] = [];
-  const op = /[=:]/g;
-  let runStart = -1, runEnd = -1;
-  let ops = 0;
-  for (let m = op.exec(text); m; m = op.exec(text)) {
-    // Finding the spans is a step every OPS_PER_STEP signs too (4 MiB of `a=1 ` holds a million).
-    if (++ops % OPS_PER_STEP === 0) yield;
-    const o = m.index;
-    let s = o;
-    while (s > 0 && /\s/.test(text[s - 1])) s--;
-    s = Math.max(0, s - KEY_REACH);
-    SPACES_AFTER.lastIndex = o + 1;
-    SPACES_AFTER.exec(text);
-    const k = SPACES_AFTER.lastIndex;
-    if (!(k >= runStart && k < runEnd)) {
-      VALUE_RUN.lastIndex = k;
-      VALUE_RUN.exec(text);
-      runStart = k;
-      runEnd = VALUE_RUN.lastIndex;
+  // No KEY_VALUE match can exist without one whole secret name. Overlap retains names across scan boundaries;
+  // bounded scans yield even for plain JSON with hundreds of thousands of non-secret ':' operators.
+  const stride = Number.isFinite(slice) && slice > 0 ? Math.max(1, Math.min(KEY_VALUE_SLICE, Math.floor(slice))) : KEY_VALUE_SLICE;
+  let named = false;
+  for (let from = 0; from < text.length; from += stride) {
+    named = KEY_NAME.test(text.slice(from, from + stride + KEY_NAME_MAX - 1));
+    if (from + stride < text.length) yield;
+    if (named) break;
+  }
+  if (!named) return text;
+  // A paused generator must not share lastIndex with another redaction or the public whole-text regex.
+  const re = new RegExp(KEY_VALUE.source, KEY_VALUE.flags);
+  const chunks: string[] = [], pieces: string[] = [];
+  const flush = (): void => {
+    if (pieces.length) {
+      chunks.push(pieces.join(""));
+      pieces.length = 0;
     }
-    const e = Math.max(k, runEnd);
-    const last = spans[spans.length - 1];
-    if (last && s <= last[1]) last[1] = Math.max(last[1], e);
-    else spans.push([s, e]);
-  }
-  const replace = (piece: string): string => piece.replace(KEY_VALUE, (m, keep: string, _suffix: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN));
-  let out = "";
-  let at = 0;
-  let first = true;
-  for (const [s, e] of spans) {
-    out += text.slice(at, s);
-    let from = s;
-    while (from < e) {
-      const to = e - from <= slice ? e : cutAfter(text, from + slice, e);
-      if (!first) yield;
-      first = false;
-      out += replace(text.slice(from, to));
-      from = to;
+  };
+  let outputAt = 0, consumed = 0, cursor = 0, previous = -1, work = 0;
+  while (cursor < text.length) {
+    while (cursor < text.length && text[cursor] !== "=" && text[cursor] !== ":") {
+      cursor++;
+      if (++work >= slice) { work = 0; flush(); yield; }
     }
-    at = e;
+    if (cursor === text.length) break;
+    const operator = cursor;
+    let before = operator;
+    while (before > consumed && KEY_SPACE.test(text[before - 1])) {
+      before--;
+      if (++work >= slice) { work = 0; flush(); yield; }
+    }
+    // Key/suffix/quote syntax cannot cross a prior operator. KEY_VALUE has no left-context assertion, so clipping
+    // before its maximum possible key reach cannot introduce a match at an artificial boundary.
+    const start = Math.max(consumed, previous + 1, before - KEY_REACH);
+    // Only the trailing ASCII key run, before an optional quote/bracket, can contain this operator's secret name.
+    // An older URL's /secrets/ elsewhere in the prefix says nothing about the current `https:` or `"value":` key.
+    // This is only a necessary check; KEY_VALUE still decides every match with its original suffix and case rules.
+    let nameEnd = before;
+    const lastKeyChar = text[nameEnd - 1];
+    if (nameEnd - start >= 2 && lastKeyChar === "]" && (text[nameEnd - 2] === '"' || text[nameEnd - 2] === "'")) nameEnd -= 2;
+    else if (nameEnd > start && (lastKeyChar === '"' || lastKeyChar === "'")) nameEnd--;
+    let nameStart = nameEnd;
+    while (nameStart > start && KEY_NAME_CHAR.test(text[nameStart - 1])) {
+      nameStart--;
+      if (++work >= slice) { work = 0; flush(); yield; }
+    }
+    const possibleName = KEY_NAME.test(text.slice(nameStart, nameEnd));
+    work += (nameEnd - nameStart) * KEY_REACH;
+    if (!possibleName) {
+      cursor = operator + 1;
+      previous = operator;
+      if (work >= slice) { work = 0; flush(); yield; }
+      continue;
+    }
+    const prefix = text.slice(start, before);
+    const arrow = text[operator] === "=" && text[operator + 1] === ">";
+    let valueAt = operator + (arrow ? 2 : 1);
+    let tail = text.slice(operator, valueAt);
+    const spaces = valueAt;
+    while (valueAt < text.length && KEY_SPACE.test(text[valueAt])) {
+      valueAt++;
+      if (++work >= slice) { work = 0; flush(); yield; }
+    }
+    if (valueAt > spaces) tail += " ";
+    if (text[valueAt] === '"' || text[valueAt] === "'") tail += text[valueAt++];
+    if (valueAt < text.length) tail += text[valueAt];
+    const candidate = prefix + tail;
+    re.lastIndex = 0;
+    const match = re.exec(candidate);
+    // Each bounded search can try every prefix position and its bounded suffix. Charge that work as well as scans.
+    work += candidate.length * KEY_REACH;
+    if (match && match.index + match[1].search(/[=:]/) === prefix.length) {
+      // If => has no valid following value, the original regex backtracks to '=' with '>' as its value.
+      const valueStart = arrow && match.index + match[1].length === prefix.length + 1 ? operator + 1 : valueAt;
+      let end = valueStart;
+      while (end < text.length && KEY_VALUE_CHAR.test(text[end])) {
+        end++;
+        if (++work >= slice) { work = 0; flush(); yield; }
+      }
+      consumed = end;
+      if (!text.startsWith("[secret", valueStart)) {
+        while (outputAt < valueStart) {
+          const to = Math.min(valueStart, outputAt + KEY_VALUE_SLICE);
+          pieces.push(text.slice(outputAt, to));
+          work += to - outputAt;
+          outputAt = to;
+          if (work >= slice) { work = 0; flush(); yield; }
+        }
+        pieces.push(SECRET_HIDDEN);
+        outputAt = end;
+        work += SECRET_HIDDEN.length;
+      }
+      cursor = end;
+    } else cursor = operator + 1;
+    previous = operator;
+    if (work >= slice) { work = 0; flush(); yield; }
   }
-  return at === 0 && spans.length === 0 ? text : out + text.slice(at);
-}
-
-/** The first place at or after `want` (before `end`; else `end`) that no KEY_VALUE match crosses (keyValueSteps). */
-function cutAfter(text: string, want: number, end: number): number {
-  CUT.lastIndex = want;
-  for (let m = CUT.exec(text); m && m.index < end; m = CUT.exec(text)) {
-    const i = m.index;
-    if (text[i] === "," || text[i] === ";") return i + 1;
-    let a = i, b = i;
-    while (a > 0 && /\s/.test(text[a - 1])) a--;
-    while (b < end && /\s/.test(text[b])) b++;
-    if (!(a > 0 && /[=:>]/.test(text[a - 1])) && !(b < text.length && /[=:]/.test(text[b]))) return b;
-    CUT.lastIndex = b;
+  if (!chunks.length && !pieces.length) return text;
+  while (outputAt < text.length) {
+    const to = Math.min(text.length, outputAt + KEY_VALUE_SLICE);
+    pieces.push(text.slice(outputAt, to));
+    work += to - outputAt;
+    outputAt = to;
+    if (work >= slice) { work = 0; flush(); yield; }
   }
-  return end;
+  flush();
+  return chunks.join("");
 }
 
 /** Runs steps to their end at once: what the synchronous functions return. */

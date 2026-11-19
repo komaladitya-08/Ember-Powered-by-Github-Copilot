@@ -21,6 +21,8 @@ import { kittenSpec } from "../../app/voice/tts-spec";
 import { matchView } from "../../app/renderer/home/match-copy";
 import { COMPOSER_THINKING } from "../../app/renderer/home/copy";
 import { spokenAnswer } from "../../app/shared/spoken-answer";
+import { syntheticNoCapture, SYNTHETIC_NO_MAX_SAMPLES, type SyntheticNoCapture } from "../fixtures/synthetic-no-capture";
+import { syntheticRefusalTailCapture, type SyntheticRefusalTailCapture } from "../fixtures/synthetic-refusal-tail-capture";
 import type { VoiceMatchStatus } from "../../app/shared/ipc";
 import { Enrolment, VoiceGate, type EnrolState, type Printer } from "../../app/voice/match";
 import { VOICE_MATCH_THRESHOLD, printFeatures, similarity, unit } from "../../app/voice/voiceprint";
@@ -255,11 +257,14 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
    * `speakers`: the session feeds the speakers' stream (it runs on forSpeakers()); `conversation`: conversations are on,
    * as by default in Ember (a wake's request opens one); `backend`: the recognizers to run on instead.
    */
-  const session = (o: { speakers?: boolean; conversation?: boolean; backend?: typeof backend } = {}) => {
+  const session = (o: { speakers?: boolean; conversation?: boolean; backend?: typeof backend; onUtterance?: (event: Extract<VoiceEvent, { type: "utterance" }>, engine: VoiceEngine) => void } = {}) => {
     const events: (VoiceEvent & { at: number })[] = [];
     let t = 0;
     const b = o.backend ?? (o.speakers ? forSpeakers() : backend);
-    const engine = new VoiceEngine(b, e => { if (e.type !== "speech") events.push({ ...e, at: t }); }, { now: () => t, ...(o.conversation ? { conversation: true } : {}) });
+    const engine = new VoiceEngine(b, e => {
+      if (e.type !== "speech") events.push({ ...e, at: t });
+      if (e.type === "utterance") try { o.onUtterance?.(e, engine); } catch { /* Optional fixed-fixture evidence cannot change the engine event. */ }
+    }, { now: () => t, ...(o.conversation ? { conversation: true } : {}) });
     const hear = (mic: Float32Array, o: { speakers?: Float32Array; onFrame?: (frame: number) => void } = {}) => {
       for (let i = 0, k = 0; i + 512 <= mic.length; i += 512, k++) {
         o.onFrame?.(k);
@@ -788,11 +793,21 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
       return inRoom(cat(silence(0.5), raw.slice(a, b).map(x => x * level), silence(2)));
     };
     /** What the window did with `audio`, and what the recognizer wrote the request as there (`written`). */
-    const asked = (audio: Float32Array) => {
-      const s = session();
+    const asked = (audio: Float32Array, capture?: SyntheticNoCapture) => {
+      const s = session(capture ? { onUtterance: (event, engine) => {
+        const early = Object.getOwnPropertyDescriptor(engine, "early");
+        capture.emitted(event.text, early && "value" in early ? early.value !== null : null);
+      } } : {});
       const written: string[] = [];
       const transcribe = backend.transcribe;
-      backend.transcribe = (x, purpose) => { const w = transcribe.call(backend, x, purpose); if (purpose !== "keyword") written.push(w); return w; };
+      backend.transcribe = (x, purpose) => {
+        let input: Float32Array | undefined;
+        try { if (capture && purpose === "request" && x.length <= SYNTHETIC_NO_MAX_SAMPLES) input = x.slice(); } catch { /* Optional evidence only. */ }
+        const w = transcribe.call(backend, x, purpose);
+        if (purpose !== "keyword") written.push(w);
+        try { capture?.decoded(input, purpose, w); } catch { /* Evidence faults preserve the original decoder result. */ }
+        return w;
+      };
       try {
         s.engine.questionUp(true);
         s.engine.answerWindow(8000);
@@ -815,12 +830,20 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
       const writtenAs: string[] = [];
       let answered = false;
       for (let take = 0; take < 16 && !answered; take++) {
-        const { events, written } = asked(said(text));
+        const audio = said(text);
+        // The only permitted audio source is this public synthesized literal, never another control or a microphone.
+        const capture = text === "No." && answer === "deny" ? syntheticNoCapture(audio, {
+          enabled: process.env.EMBER_SYNTHETIC_NO_CAPTURE, runnerTemp: process.env.RUNNER_TEMP,
+        }) : undefined;
+        const { events, written } = asked(audio, capture);
         const u = sent(events);
         answered = written.some(w => spokenAnswer(w) !== null);
         writtenAs.push(...written);
         expect(u.map(e => e.window), `${text} written as ${JSON.stringify(written)}`).toEqual(answered ? ["answer"] : []);
-        for (const e of u) expect(spokenAnswer(e.text), `${text} heard as “${e.text}”`).toBe(answer);
+        for (const e of u) {
+          try { expect(spokenAnswer(e.text), `${text} heard as “${e.text}”`).toBe(answer); }
+          catch (error) { try { capture?.failed(); } catch { /* Preserve the same polarity assertion. */ } throw error; }
+        }
         // No conversation opens after it: what is said next needs the name again.
         expect(events.some(e => e.type === "listening" && e.window === "conversation"), text).toBe(false);
       }
@@ -845,19 +868,31 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
     };
     const own = voiced("To allow, press Control Alt Y; for not now, press Control Alt N.", 0.03);
     const stop = 0.5 + own.length / 16000 - 0.1;
+    let refusalEvidence: SyntheticRefusalTailCapture | undefined;
     /** What the window did, and what the recognizer wrote the requests heard there as (`written`: heardWritten). */
-    const heardWritten = (speech: Float32Array | null, on: number, window: "answer" | "follow-up" = "answer") => {
+    const heardWritten = (speech: Float32Array | null, on: number, window: "answer" | "follow-up" = "answer", fixture?: string) => {
       const mic = new Float32Array(at(stop + Math.max(0, on) + 3));
       mic.set(own, at(0.5));
       if (speech) for (let i = 0; i < speech.length; i++) mic[at(stop + on) + i] += speech[i];
-      const s = session();
+      const capture = fixture && speech && !refusalEvidence ? syntheticRefusalTailCapture(speech, own, { text: fixture, on, window, stop },
+        { enabled: process.env.EMBER_SYNTHETIC_TAIL_CAPTURE, runnerTemp: process.env.RUNNER_TEMP, backend: process.env.EMBER_VOICE_BACKEND }) : undefined;
+      const s = session({ onUtterance: (event, engine) => { capture?.emitted(event.text, engine); } });
       const written: string[] = [];
       const transcribe = backend.transcribe;
-      backend.transcribe = (x, purpose) => { const w = transcribe.call(backend, x, purpose); if (purpose !== "keyword") written.push(w); return w; };
+      backend.transcribe = (x, purpose) => {
+        let input: number | undefined;
+        try { input = capture?.input(x, purpose, s.engine); } catch { /* Evidence cannot change recognition. */ }
+        const w = transcribe.call(backend, x, purpose);
+        if (purpose !== "keyword") written.push(w);
+        try { capture?.decoded(input, w); } catch { /* Evidence cannot change recognition. */ }
+        return w;
+      };
       try {
         s.engine.questionUp(true);
         const asks = Math.round(at(0.5) / 512), stops = Math.round(at(stop) / 512);
-        s.hear(inRoom(mic), { onFrame: k => {
+        const audio = inRoom(mic);
+        try { capture?.microphone(audio); } catch { /* Evidence cannot change the original engine input. */ }
+        s.hear(audio, { onFrame: k => {
           if (k === asks) s.engine.selfSpeaking(true);
           if (k !== stops) return;
           s.engine.selfSpeaking(false);
@@ -865,19 +900,25 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1" && process.env.EM
         } });
         s.end();
       } finally { backend.transcribe = transcribe; }
+      // Keep only the first bad literal trial; successful trials and positive-answer controls never write evidence.
+      if (capture && sent(s.events).some(event => spokenAnswer(event.text) === "allow")) refusalEvidence ??= capture;
       return { events: s.events, written };
     };
-    const heard = (speech: Float32Array | null, on: number, window: "answer" | "follow-up" = "answer") => heardWritten(speech, on, window).events;
+    const heard = (speech: Float32Array | null, on: number, window: "answer" | "follow-up" = "answer", fixture?: string) => heardWritten(speech, on, window, fixture).events;
     // Begun under Ember's voice or right as it ends: only its end can be heard ("Do it."), so it is asked for again,
     // never allowed. (On 64a6405 these came out as "Do it." or "Allow it." and allowed, 28 of 180 between -0.6 and 0.6 s.)
     const taken: string[] = [];
     for (const text of ["Don't do it.", "No, don't do it.", "Don't allow it.", "Do not allow it."]) {
       const speech = voiced(text, 0.1);
       for (const on of [-0.1, 0, 0.1, 0.2]) for (const window of ["answer", "follow-up"] as const) {
-        for (const e of sent(heard(speech, on, window))) if (spokenAnswer(e.text) === "allow") taken.push(`${text} at ${on} s in ${window}: “${e.text}”`);
+        for (const e of sent(heard(speech, on, window, text))) if (spokenAnswer(e.text) === "allow") taken.push(`${text} at ${on} s in ${window}: “${e.text}”`);
       }
     }
-    expect(taken).toEqual([]);
+    try { expect(taken).toEqual([]); }
+    catch (error) {
+      try { refusalEvidence?.failed(); } catch { /* Preserve the identical original assertion even if observation fails. */ }
+      throw error;
+    }
     // Begun after a moment's quiet (a turn's gap): heard whole, though it starts in the tail. (On 64a6405 nothing
     // begun within 0.4 s of "stopped" was heard whole.) Phrases this voice is written right in nearly every time: its
     // "Allow it." often comes out "Lollet", and a lone "Okay." now and then "Oh, today.".

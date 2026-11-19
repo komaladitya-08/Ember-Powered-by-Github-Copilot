@@ -68,8 +68,7 @@ describe("a program Ember doesn't know (commands-closed A)", () => {
 
   it("announces a program the user's own words name whole, and asks when they don't, hold it back or say no (commands-closed)", () => {
     const d = decide("dropdb scratch", { words: "drop the scratch database with dropdb" });
-    expect(d.verdict).toBe("announce");
-    expect(d.requested?.announce).toBe("Running dropdb scratch, as you asked.");
+    expect(d.verdict).toBe("ask");
     expect(decide("kafka-topics --list", { words: "use kafka-topics to list the topics" }).verdict).toBe("announce");
     for (const words of ["run dropdbx", "drop it with dropdb tomorrow", "don't use dropdb", "drop the scratch database", "run the db tool"]) {
       expect(decide("dropdb scratch", { words }).verdict, words).toBe("ask");
@@ -93,9 +92,8 @@ describe("the user's own words for a program Ember doesn't know (commands-closed
     expect(decide("rails db:drop", { words: "run rails tests" }).verdict).toBe("ask");
     expect(decide("dropdb prod", { words: "run dropdb on the test database" }).verdict).toBe("ask");
     const d = decide("rails db:drop", { words: "run rails db:drop" });
-    expect(d.verdict).toBe("announce");
-    expect(d.requested?.announce).toBe("Running rails db:drop, as you asked.");
-    expect(decide("dropdb prod", { words: "run dropdb on prod" }).requested?.announce).toBe("Running dropdb prod, as you asked.");
+    expect(d.verdict).toBe("ask");
+    expect(decide("dropdb prod", { words: "run dropdb on prod" }).verdict).toBe("ask");
   });
 });
 
@@ -106,7 +104,7 @@ describe("the operands the user's own words must name for a program Ember doesn'
     }
     // The port is the user's to give as well (modes-y9-7): unsaid, it asks.
     expect(decide("dropdb -p 5433 production", { words: "run dropdb on production" }).verdict).toBe("ask");
-    expect(decide("dropdb -p 5433 production", { words: "run dropdb -p 5433 on production" }).requested?.announce).toBe("Running dropdb production, as you asked.");
+    expect(decide("dropdb -p 5433 production", { words: "run dropdb -p 5433 on production" }).verdict).toBe("ask");
   });
 
   it("asks when the words name the operand only inside a longer name, or only after a while (commands-closed-y9-3)", () => {
@@ -115,9 +113,9 @@ describe("the operands the user's own words must name for a program Ember doesn'
       expect(decide("dropdb prod", { words }).verdict, words).toBe("ask");
     }
     for (const words of ["run dropdb on prod", "run dropdb prod while I get a coffee", "run dropdb on prod, not on prod-copy"]) {
-      expect(decide("dropdb prod", { words }).verdict, words).toBe(words.includes("not") ? "ask" : "announce");
+      expect(decide("dropdb prod", { words }).verdict, words).toBe("ask");
     }
-    expect(decide("rails db:drop", { words: "run rails db drop" }).verdict).toBe("announce");
+    expect(decide("rails db:drop", { words: "run rails db drop" }).verdict).toBe("ask");
   });
 });
 

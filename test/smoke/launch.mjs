@@ -12,25 +12,34 @@
 // and cleanup never fails the test. --forbid <event> (repeatable) fails the run when the first instance logged that
 // event by the time the second launch has handed over: CI's Windows job forbids "shortcut.unavailable", since the
 // runner has nothing else holding Ember's shortcuts (it proves Electron registers Super as the Windows key).
+// --expect-auth-source <source> additionally requires main's genuine auth.token.source startup log, including when
+// no model request occurs. The packaged Windows guard proof expects none with a development-provider canary set.
+// --allow-shortcut-fallback mute explicitly accepts only Windows' exact documented mute fallback receipt: the
+// default Super+Alt+M taken, fallback mute held, and no missing IDs. All other unavailable/malformed events fail.
 // --folder <name> starts the development build from a copy of dist/app in a folder of that name (the rest of the
 // repository linked beside it), and checks that the settings window's page loaded there, by its title on Chromium's
 // debugging port: a % in the name made every window blank once (review #200).
-// usage: node test/smoke/launch.mjs [--exe <path> | --folder <name>] [--forbid <event>]...
+// usage: node test/smoke/launch.mjs [--exe <path> | --folder <name>] [--forbid <event>]... [--expect-auth-source <source>] [--allow-shortcut-fallback mute]
 import { spawn, spawnSync } from "node:child_process";
 import { cpSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
+import { consentVersion } from "../../scripts/consent-version.mjs";
 
 const argv = process.argv.slice(2);
-const USAGE = "usage: node test/smoke/launch.mjs [--exe <path> | --folder <name>] [--forbid <event>]...";
+const USAGE = "usage: node test/smoke/launch.mjs [--exe <path> | --folder <name>] [--forbid <event>]... [--expect-auth-source <source>] [--allow-shortcut-fallback mute]";
 const exeArg = argv.includes("--exe") ? argv[argv.indexOf("--exe") + 1] : process.env.EMBER_SMOKE_EXE;
 if (argv.includes("--exe") && !exeArg) { console.error(USAGE); process.exit(2); }
 const folder = argv.includes("--folder") ? argv[argv.indexOf("--folder") + 1] : null;
 if (argv.includes("--folder") && (!folder || folder.startsWith("--") || exeArg)) { console.error(USAGE); process.exit(2); }
 const forbidden = argv.flatMap((a, i) => (a === "--forbid" ? [argv[i + 1]] : []));
 if (forbidden.some(e => !e || e.startsWith("--"))) { console.error(USAGE); process.exit(2); }
+const expectedAuth = argv.includes("--expect-auth-source") ? argv[argv.indexOf("--expect-auth-source") + 1] : null;
+if (argv.includes("--expect-auth-source") && !/^[a-z-]{1,40}$/.test(expectedAuth ?? "")) { console.error(USAGE); process.exit(2); }
+const allowedFallback = argv.includes("--allow-shortcut-fallback") ? argv[argv.indexOf("--allow-shortcut-fallback") + 1] : null;
+if (argv.includes("--allow-shortcut-fallback") && allowedFallback !== "mute") { console.error(USAGE); process.exit(2); }
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const userData = mkdtempSync(path.join(tmpdir(), "ember-smoke-"));
 /** --folder: <tmp>/<name>/ember holds a copy of dist/app, and links to everything else in the repository. */
@@ -52,8 +61,14 @@ const env = { ...process.env, EMBER_USER_DATA: userData, EMBER_LOG_STDOUT: "1" }
 const windowMs = Number(process.env.EMBER_SMOKE_TIMEOUT_MS) || (process.platform === "linux" ? 30_000 : 60_000);
 /** The OS whose launcher entry the run requires (its own; the unit test's stand-in names another). */
 const os = process.env.EMBER_SMOKE_PLATFORM || process.platform;
+if (allowedFallback && os !== "win32") { console.error("The explicit mute fallback receipt is supported only for Windows smoke tests."); process.exit(2); }
 // Set up, as after onboarding (the consent version is shared/consent.ts's): a launcher's --ask opens the box only then.
-writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: 11, at: new Date().toISOString() } }));
+writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: consentVersion, at: new Date().toISOString() } }));
+
+const exactMuteFallback = entry => os === "win32" && entry.msg === "shortcut.unavailable" &&
+  Array.isArray(entry.taken) && entry.taken.length === 1 && entry.taken[0] === "Super+Alt+M" &&
+  Array.isArray(entry.fallback) && entry.fallback.length === 1 && entry.fallback[0] === "mute" &&
+  Array.isArray(entry.missing) && entry.missing.length === 0;
 
 function launch(name, extra = []) {
   const debug = copied && name === "first" ? ["--remote-debugging-port=0"] : [];
@@ -68,6 +83,9 @@ function launch(name, extra = []) {
   const launcher = { tasks: undefined, dock: false };
   /** The log lines of forbidden events, as the app wrote them. */
   const forbiddenLines = [];
+  const authSources = [];
+  let muteFallbackHeld = false;
+  let invalidFallback = false;
   const said = { stdout: "", stderr: "" };
   let failed = null;
   let buf = "";
@@ -85,7 +103,12 @@ function launch(name, extra = []) {
         if (msg === "launcher.tasks") launcher.tasks = entry.ok;
         if (msg === "launcher.dock") launcher.dock = true;
         if (msg === "app.start_failed") failed ??= line.trim();
-        if (forbidden.includes(msg)) forbiddenLines.push(line.trim());
+        if (msg === "auth.token" && typeof entry.source === "string") authSources.push(entry.source);
+        if (msg === "shortcut.unavailable" && allowedFallback) {
+          if (exactMuteFallback(entry)) muteFallbackHeld = true;
+          else { invalidFallback = true; failed ??= "shortcut.unavailable was outside the exact permitted Windows mute fallback receipt"; }
+        }
+        if (forbidden.includes(msg) && !(msg === "shortcut.unavailable" && allowedFallback && exactMuteFallback(entry))) forbiddenLines.push(line.trim());
       } catch { /* not a log line */ }
     }
   });
@@ -94,7 +117,7 @@ function launch(name, extra = []) {
     if (process.env.EMBER_SMOKE_VERBOSE) process.stderr.write(`[${name}] ${d}`);
   });
   child.on("error", err => { failed ??= `couldn't start ${command}: ${err.message}`; });
-  return { name, child, events, asked, launcher, forbiddenLines, said, failed: () => failed };
+  return { name, child, events, asked, launcher, forbiddenLines, authSources, said, muteFallbackHeld: () => muteFallbackHeld, invalidFallback: () => invalidFallback, failed: () => failed };
 }
 
 const exited = inst => inst.child.exitCode !== null || inst.child.signalCode !== null;
@@ -174,11 +197,18 @@ try {
   if (!second.events.includes("instance.handover")) throw new Error("second instance did not hand over");
   await waitFor(first, () => first.events.includes("instance.second"), 10_000, "first instance to receive second-instance");
   console.log("ok   second launch handed over and the first instance focused its window");
+  if (allowedFallback && first.invalidFallback()) throw new Error("shortcut.unavailable was outside the exact permitted Windows mute fallback receipt");
+  if (expectedAuth) {
+    await waitFor(first, () => first.authSources.length > 0, windowMs, "the first instance to report its auth source");
+    if (first.authSources.some(source => source !== expectedAuth)) throw new Error(`the first instance used an unexpected auth source (expected ${expectedAuth})`);
+    console.log(`ok   the first instance used auth source ${expectedAuth}`);
+  }
   // Checked once the first instance has finished starting (it answered the second launch).
   if (forbidden.length) {
     if (first.forbiddenLines.length) throw new Error(`the first instance logged ${first.forbiddenLines.join("\n")}`);
-    console.log(`ok   the first instance logged none of ${forbidden.join(", ")}`);
+    console.log(allowedFallback ? "ok   the first instance logged no unexpected forbidden events" : `ok   the first instance logged none of ${forbidden.join(", ")}`);
   }
+  if (allowedFallback && first.muteFallbackHeld()) console.log("ok   the first instance held the documented mute fallback");
   // Ask Ember in the OS's own launcher (D-45b), set up as Ember starts: Linux's is the desktop entry's action, which the
   // package job checks.
   if (os === "win32") {
@@ -195,6 +225,7 @@ try {
   await waitFor(third, () => exited(third), windowMs, "the third instance to exit", { exitOk: true });
   if (third.child.exitCode !== 0) throw new Error(`third instance ${exitText(third)}`);
   await waitFor(first, () => first.asked.count > 0, 10_000, "the first instance to open the ask box for a start with --ask");
+  if (allowedFallback && first.invalidFallback()) throw new Error("shortcut.unavailable was outside the exact permitted Windows mute fallback receipt");
   console.log("ok   a start with --ask handed over and the first instance opened its ask box");
   ok = true;
 } catch (err) {

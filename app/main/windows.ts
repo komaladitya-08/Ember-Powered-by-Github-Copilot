@@ -32,10 +32,7 @@ function contentBackground(): string {
 /** The settings window, which zooms by keys on Windows and Linux (zoomByKeys). */
 export function createHomeWindow(os: OS): BrowserWindow {
   const win = new BrowserWindow({
-    width: 760,
-    height: 640,
-    minWidth: 420,
-    minHeight: 420,
+    ...scaledSize({ width: 760, height: 640, minWidth: 420, minHeight: 420 }, 1, screen.getPrimaryDisplay().workAreaSize),
     title: "Ember",
     show: false,
     backgroundColor: contentBackground(),
@@ -51,6 +48,7 @@ export function createHomeWindow(os: OS): BrowserWindow {
       spellcheck: false,
     },
   });
+  watchWorkArea(win, { minWidth: 420, minHeight: 420 }, () => 1);
   win.once("ready-to-show", () => win.show());
   zoomByKeys(win.webContents, os);
   void win.loadURL(pageUrl(path.join(appDir, "renderer", "home", "index.html")));
@@ -132,7 +130,24 @@ export function setTextScale(scale: number): void {
 /** Keeps `win` growing and shrinking with the text while it is open. */
 function sizeForText(win: BrowserWindow, min: { minWidth: number; minHeight: number } | null): void {
   sizedForText.set(win, min);
+  watchWorkArea(win, min, () => textScaleNow);
   win.on("closed", () => sizedForText.delete(win));
+}
+
+/** Keep a window and its minimum size inside its current display when displays or work areas change. */
+function watchWorkArea(win: BrowserWindow, min: { minWidth: number; minHeight: number } | null, scale: () => number): void {
+  const fit = () => {
+    if (win.isDestroyed()) return;
+    try {
+      const now = win.getBounds(), area = screen.getDisplayMatching(now).workArea;
+      const least = min && scaledSize(min, scale(), area);
+      if (least) win.setMinimumSize(least.minWidth, least.minHeight);
+      win.setBounds(rescaledBounds(now, 1, 1, area, least ? { width: least.minWidth, height: least.minHeight } : undefined));
+    } catch { /* A destroyed or temporarily unavailable display is retried on the next change. */ }
+  };
+  screen.on("display-metrics-changed", fit);
+  screen.on("display-removed", fit);
+  win.on("closed", () => { screen.off("display-metrics-changed", fit); screen.off("display-removed", fit); });
 }
 
 /**
@@ -140,7 +155,15 @@ function sizeForText(win: BrowserWindow, min: { minWidth: number; minHeight: num
  * work area. At the default size it is the usual size.
  */
 const forText = <T extends Record<string, number>>(size: T): T =>
-  textScaleNow === 1 ? size : scaledSize(size, textScaleNow, screen.getPrimaryDisplay().workAreaSize);
+  scaledSize(size, textScaleNow, screen.getPrimaryDisplay().workAreaSize);
+
+/**
+ * The always-on-top level for a window that asks. Windows: Electron puts a "floating" window behind the taskbar's
+ * window, and where that window is not itself on top the asking window leaves the always-on-top band while Electron
+ * still says it is on top (the command window on the hosted Windows Server 2022 and 2025 images: Home covered its card).
+ * "pop-up-menu" is the lowest level Electron leaves where Windows put it.
+ */
+export function onTopLevel(os: OS): "floating" | "pop-up-menu" { return os === "win32" ? "pop-up-menu" : "floating"; }
 
 /** The command window's smallest size at the default text size. */
 const COMMAND_MIN = { minWidth: 480, minHeight: 280 };
@@ -253,7 +276,7 @@ export function createPromptWindow(os: OS, hooks: { takeKeyboard?: (win: Browser
     webPreferences: webPreferences("prompt"),
   });
   sizeForText(win, null);
-  win.setAlwaysOnTop(true, "floating");
+  win.setAlwaysOnTop(true, onTopLevel(os));
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
   closeWhenGone(win);
   void win.loadURL(pageUrl(path.join(appDir, "renderer", "prompt", "index.html")));
@@ -304,7 +327,7 @@ export function createVaultWindow(os: OS, kind: VaultKind, hooks: { takeKeyboard
     webPreferences: webPreferences("vault"),
   });
   sizeForText(win, null);
-  win.setAlwaysOnTop(true, "floating");
+  win.setAlwaysOnTop(true, onTopLevel(os));
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
   closeWhenGone(win);
   try {

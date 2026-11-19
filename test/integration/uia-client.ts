@@ -132,6 +132,26 @@ export function bridgeEnv(base: NodeJS.ProcessEnv, extra: Record<string, string>
   return { ...env, ...extra };
 }
 
+/** Only complete, bounded diagnostic lines from the stderr already captured by the client. */
+function startupStage(stderr: unknown): number {
+  const prefix = "EMBER_UIA_STARTUP_V1:";
+  if (typeof stderr !== "string" || stderr.length > 128 * 1024 || Buffer.byteLength(stderr, "utf8") > 128 * 1024) return 0;
+  let stage = 0;
+  let at = 0;
+  while (at < stderr.length) {
+    const end = stderr.indexOf("\n", at);
+    const line = stderr.slice(at, end < 0 ? undefined : end);
+    if (line.includes("EMBER_UIA_STARTUP") || (end < 0 && prefix.startsWith(line))) {
+      const match = /^EMBER_UIA_STARTUP_V1:([1-9]|[12][0-9]|30)\r?$/.exec(line);
+      if (end < 0 || !match || match[0].length !== line.length) return 0;
+      stage = Number(match[1]);
+    }
+    if (end < 0) break;
+    at = end + 1;
+  }
+  return stage;
+}
+
 /** A running bridge. */
 export class UiaBridge {
   readonly child: ChildProcessWithoutNullStreams;
@@ -146,8 +166,10 @@ export class UiaBridge {
   private next = 1;
   private readonly pending = new Map<number, (answer: BridgeAnswer) => void>();
   private readonly noise: string[] = [];
+  private readonly observeStartup: boolean;
 
   constructor(script: string, env: NodeJS.ProcessEnv) {
+    this.observeStartup = env.EMBER_UIA_STARTUP_OBSERVE === "1";
     this.child = spawn(POWERSHELL, bridgeArgs(script), { stdio: ["pipe", "pipe", "pipe"], windowsHide: true, env });
     this.child.stderr.setEncoding("utf8");
     // Writing to a bridge that has already exited fails with EPIPE; its exit is what the tests look at.
@@ -185,6 +207,12 @@ export class UiaBridge {
         if (first) reject(new Error(`the bridge exited (${code}) before it was ready; stdout: ${this.noise.join(" | ").slice(0, 1000)}; stderr: ${this.stderr.slice(0, 2000)}`));
       });
     });
+  }
+
+  /** Last observed startup stage, or zero when disabled, incomplete or malformed; never exposes stderr. */
+  get startupStage(): number {
+    if (!this.observeStartup) return 0;
+    try { return startupStage(this.stderr); } catch { return 0; }
   }
 
   /** Lines on stdout that weren't JSON (there should be none). */

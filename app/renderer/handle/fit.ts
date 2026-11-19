@@ -36,6 +36,8 @@ export interface CardRoom {
   /** Where the words' rows may end (the top row's content box, above the buttons), and where each shown one ends. */
   wordsEnd: number;
   rowsEnd: readonly number[];
+  /** The sentence's visible position when the card itself can scroll. */
+  viewport?: { top: number; bottom: number; height: number };
 }
 
 /**
@@ -49,6 +51,8 @@ export function cardClear(r: CardRoom): boolean {
   if (![clientHeight, scrollHeight, r.wordsEnd].every(Number.isFinite)) return false;
   const line = Number.isFinite(lineHeight) && lineHeight > 0 ? lineHeight : 20;
   if (clientHeight < Math.min(scrollHeight, 2 * line) - 1) return false;
+  if (r.viewport && (![r.viewport.top, r.viewport.bottom, r.viewport.height].every(Number.isFinite) ||
+      r.viewport.top < 0 || r.viewport.bottom > r.viewport.height)) return false;
   return r.rowsEnd.every(end => Number.isFinite(end) && end <= r.wordsEnd + 1);
 }
 

@@ -33,5 +33,6 @@ export function otherSide(p: HandlePosition | undefined): HandlePosition {
 export function handleCorner(p: HandlePosition | undefined, size: { width: number; height: number },
   workArea: { x: number; y: number; width: number; height: number }, margin = HANDLE_MARGIN): { x: number; y: number } {
   const x = sideOf(p) === "left" ? workArea.x + margin : workArea.x + workArea.width - size.width - margin;
-  return { x, y: workArea.y + workArea.height - size.height - margin };
+  return { x: Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - size.width)),
+    y: Math.max(workArea.y, workArea.y + workArea.height - size.height - margin) };
 }

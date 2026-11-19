@@ -11,7 +11,10 @@
  */
 
 import { createHash } from "node:crypto";
+import { types } from "node:util";
+import { copyNodeArgv, nodeInvocationDisplay, nodeInvocationSha256 } from "./node-invocation";
 import { COMMANDS_IPC } from "../../shared/commands";
+import { COMMAND_CARD_OBSERVATION_RANGES, type CommandCardObservationData } from "../../shared/command-card-observation";
 import { SHORTCUTS, type OS } from "../../shared/shortcuts";
 import { parseTargetId } from "../../shared/targets";
 import type { Logger } from "../logger";
@@ -115,8 +118,12 @@ export interface Rect { x: number; y: number; width: number; height: number }
  */
 export function placeOnDisplay(bounds: Rect, area: Rect): Rect | null {
   const cx = bounds.x + bounds.width / 2, cy = bounds.y + bounds.height / 2;
-  if (cx >= area.x && cx < area.x + area.width && cy >= area.y && cy < area.y + area.height) return null;
   const width = Math.min(bounds.width, area.width), height = Math.min(bounds.height, area.height);
+  if (cx >= area.x && cx < area.x + area.width && cy >= area.y && cy < area.y + area.height) {
+    const x = Math.max(area.x, Math.min(bounds.x, area.x + area.width - width));
+    const y = Math.max(area.y, Math.min(bounds.y, area.y + area.height - height));
+    return x === bounds.x && y === bounds.y && width === bounds.width && height === bounds.height ? null : { x, y, width, height };
+  }
   return { x: area.x + Math.round((area.width - width) / 2), y: area.y + Math.round((area.height - height) / 2), width, height };
 }
 
@@ -197,8 +204,32 @@ const isSha = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{6
 const isN = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
 const str = (v: unknown, max: number, min = 0) => typeof v === "string" && v.length >= min && v.length <= max;
 
+/** Own data only: a diagnostic may neither read accessors nor become an approval-bearing seen report. */
+function observationField(value: unknown, key: string): unknown {
+  if (!value || typeof value !== "object" || types.isProxy(value)) return undefined;
+  const field = Object.getOwnPropertyDescriptor(value, key);
+  return field && Object.hasOwn(field, "value") ? field.value : undefined;
+}
+function commandCardObservation(value: unknown): { n: number; data: CommandCardObservationData } | null {
+  if (!isObj(value) || types.isProxy(value)) return null;
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== 2 || !keys.includes("n") || !keys.includes("diagnostic")) return null;
+  const n = observationField(value, "n"), data = observationField(value, "diagnostic");
+  if (!isN(n) || !isObj(data) || types.isProxy(data)) return null;
+  const fields = Reflect.ownKeys(data);
+  if (fields.length !== Object.keys(COMMAND_CARD_OBSERVATION_RANGES).length || fields.some(key => typeof key !== "string" || !Object.hasOwn(COMMAND_CARD_OBSERVATION_RANGES, key))) return null;
+  const out: Record<string, number> = {};
+  for (const [key, [minimum, maximum]] of Object.entries(COMMAND_CARD_OBSERVATION_RANGES)) {
+    const field = observationField(data, key);
+    if (typeof field !== "number" || !Number.isInteger(field) || field < minimum || field > maximum) return null;
+    out[key] = field;
+  }
+  return { n, data: out as unknown as CommandCardObservationData };
+}
+
 /** What an approval binds to (§3.9.1, R-cmd-1): sha256Hex(`${target}\0${shell}\0${cwd}\0${command}`). */
-export function cardSha256(c: Pick<CommandCard, "target" | "shell" | "cwd" | "command">): string {
+export function cardSha256(c: Pick<CommandCard, "target" | "shell" | "cwd" | "command" | "kind" | "argv">): string {
+  if (c.kind === "node") return nodeInvocationSha256(c.target, c.cwd, copyNodeArgv(c.argv));
   return createHash("sha256").update(`${c.target}\0${c.shell}\0${c.cwd}\0${c.command}`, "utf8").digest("hex");
 }
 
@@ -209,8 +240,14 @@ export function cardSha256(c: Pick<CommandCard, "target" | "shell" | "cwd" | "co
  */
 export function validCard(c: unknown): c is CommandCard {
   if (!isObj(c)) return false;
+  let invocationValid: boolean;
+  try {
+    invocationValid = c.kind === "node"
+      ? c.target === "local" && c.shell === undefined && c.command === nodeInvocationDisplay(copyNodeArgv(c.argv))
+      : c.kind === undefined && c.argv === undefined && ["bash", "zsh", "sh", "powershell", "cmd"].includes(c.shell as string);
+  } catch { return false; }
   return isRunId(c.runId) && str(c.target, 200) && parseTargetId(c.target as string) !== null && str(c.targetLabel, 200, 1) && (c.login === undefined || str(c.login, 255))
-    && ["bash", "zsh", "sh", "powershell", "cmd"].includes(c.shell as string) && str(c.cwd, 4096) && str(c.command, 64 * 1024)
+    && invocationValid && str(c.cwd, 4096) && str(c.command, 64 * 1024)
     && (c.command as string).length > 0 && isSha(c.sha256) && str(c.taskId, 200) && str(c.taskTitle, 1000)
     && ["ask", "announce", "run"].includes(c.mode as string) && Array.isArray(c.says) && c.says.length <= 64
     && c.says.every(l => str(l, 4000)) && typeof c.unasked === "boolean" && typeof c.armMs === "number" && Number.isFinite(c.armMs) && c.armMs >= 0
@@ -272,6 +309,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
   /** The card on screen; `retry` counts the answers from its buttons that weren't taken (the page re-enables them). */
   let card: { n: number; card: CommandCard; shownAt: number; retry: number } | null = null;
   let view: SeenMsg | null = null;
+  // No identifiers or text are retained by the observer. Caps apply before even a logger that throws or re-enters.
+  let observedCards = 0, observationCard = 0, observationSamples = 0, observationTotal = 0, observationKey = "";
   const queue: Announcement[] = [];
   /** The runs whose countdown ended because the window couldn't show it to the end, until the flow asks (announceGone). */
   const goneRuns = new Set<string>();
@@ -454,7 +493,11 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       // On the display the user is on (a card always; otherwise when it comes up from hidden), and on every workspace
       // while a card or countdown is up, so its Allow or Stop is where the bubble is (review #272).
       if (onTop || hidden) p.placeNearUser?.();
-      if (onTop) { w.setAlwaysOnTop(true, "floating"); p.setOnAllWorkspaces?.(true); }
+      // Windows: Electron puts a "floating" window behind the taskbar's window, and where that window is not itself on
+      // top the command window leaves the always-on-top band while Electron still says it is on top: on the hosted
+      // Windows Server 2022 and 2025 images Home then covered the second card and its Allow could not be clicked.
+      // "pop-up-menu" is the lowest level Electron leaves where Windows put it.
+      if (onTop) { w.setAlwaysOnTop(true, o.os === "win32" ? "pop-up-menu" : "floating"); p.setOnAllWorkspaces?.(true); }
       if (hidden) w.showInactive();
       if (onTop || raise) w.moveTop();
     });
@@ -640,6 +683,24 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
 
     o.ipc.on(COMMANDS_IPC.cardSeen, (e, raw) => {
       if (disposed || !owns(e?.sender)) { refused(COMMANDS_IPC.cardSeen); return; }
+      // Valid old reports take their original path even with an invalid/accessor-bearing optional diagnostic.
+      const oldN = observationField(raw, "n"), oldSeen = observationField(raw, "seen"), oldInView = observationField(raw, "inView");
+      if (!isN(oldN) || typeof oldSeen !== "boolean" || typeof oldInView !== "boolean") {
+        const observation = commandCardObservation(raw);
+        if (!observation || pageDown || !card || card.n !== observation.n || !observationCard || observationSamples >= 16 || observationTotal >= 64) return;
+        const data = observation.data;
+        const host = view?.n === card.n ? 1 | (view.seen ? 2 : 0) | (view.inView ? 4 : 0) : 0;
+        // Source is provenance, not a state change; a measurement/render alternation must not flood the log.
+        const key = `${data.model}:${data.ui}:${data.geometry}:${data.arm}:${data.capped}:${host}`;
+        if (key === observationKey) return;
+        observationKey = key; observationSamples++; observationTotal++;
+        const fields = { schema: 1, card: observationCard, sample: observationSamples,
+          source: data.source, model: data.model, ui: data.ui, geometry: data.geometry, arm: data.arm,
+          capped: data.capped || observationCard >= 40 || observationSamples >= 16 || observationTotal >= 64 ? 1 : 0, host };
+        try { o.log.info("commands.card_observation", fields); }
+        catch { /* Passive storage cannot change the card, its view, any timer or an answer. */ }
+        return;
+      }
       if (!isObj(raw) || !isN(raw.n) || typeof raw.inView !== "boolean" || typeof raw.seen !== "boolean") return;
       // From a page that crashed (sent before it went): only the page loaded again says what is in view.
       if (pageDown) return;
@@ -709,6 +770,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       // The same question shown again: it comes back up as it was (its arm time and what the page saw stay; the page
       // keeps its own state for the same card, so it wouldn't report "seen" again).
       if (card && card.n === n && card.card.sha256 === c.sha256) { reveal(); push(); return; }
+      observationCard = observedCards < 40 ? ++observedCards : 0;
+      observationSamples = 0; observationKey = "";
       // One card at a time: a new question replaces the one shown (its "seen" doesn't carry over).
       card = { n, card: c, shownAt: Date.now(), retry: 0 };
       view = null;

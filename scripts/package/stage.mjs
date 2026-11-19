@@ -24,7 +24,10 @@
 // SSH target can be set up, so staging stops unless --allow-missing-remote-parts.
 // --with-runtimes: the Node runtimes Ember sends to computers reached over SSH go in resources/remote-parts/runtime (from
 // node scripts/package/runtimes.mjs, each checked against remote-runtime.json), so it never downloads one.
-// usage: node scripts/package/stage.mjs [--allow-missing-sidecar] [--allow-missing-remote-parts] [--with-models] [--with-runtimes]
+// --with-windows-node-toolchain: Windows x64 only; stage the exact offline coding Node, licence and producer receipt
+// from .cache/windows-node-toolchain into resources/coding/windows-node-x64. This does not enable command execution.
+// --with-wsl-coding-tools: stage the authenticated offline TypeScript archive and exact Apache-2.0 licence.
+// usage: node scripts/package/stage.mjs [--allow-missing-sidecar] [--allow-missing-remote-parts] [--with-models] [--with-runtimes] [--with-windows-node-toolchain] [--with-wsl-coding-tools]
 //   (after npm run build and node scripts/package/remote-parts.mjs)
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
@@ -36,13 +39,16 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { specLicenceIds, suppliedLicence, uncoveredLicences } from "./licences.mjs";
 import { EMBER_FUSES, flipFuses, fuseMismatches } from "./fuses.mjs";
-import { layoutFor, npmInvocation, prodPackageDirs, REMOTE_PARTS_DIR, RUNTIME_BUNDLE, selectPackages } from "./layout.mjs";
+import { copilotToolAsset, layoutFor, npmInvocation, prodPackageDirs, REMOTE_PARTS_DIR, RUNTIME_BUNDLE, selectPackages } from "./layout.mjs";
 import { writeIco, writeIconset } from "./icon.mjs";
 import { exeResourceMismatches, readExeResources, rewriteExeResources } from "./exe-resources.mjs";
 import { finishMacBundle } from "./mac-bundle.mjs";
 import { stageParts } from "./remote-parts.mjs";
+import { stageWindowsNodeToolchain, verifyWindowsNodeToolchain, WINDOWS_NODE_TOOLCHAIN_DIRECTORY } from "./windows-node-toolchain.mjs";
+import { prepareWindowsNodeElectronCopyFilter } from "./windows-node-toolchain-copy.mjs";
+import { WSL_CODING_TOOLS, WSL_CODING_TOOLS_DIRECTORY, verifyWslCodingTools, stageWslCodingTools } from "./wsl-coding-tools.mjs";
 
-const FLAGS = ["--allow-missing-sidecar", "--allow-missing-remote-parts", "--with-models", "--with-runtimes"];
+const FLAGS = ["--allow-missing-sidecar", "--allow-missing-remote-parts", "--with-models", "--with-runtimes", "--with-windows-node-toolchain", "--with-wsl-coding-tools"];
 const flags = process.argv.slice(2);
 const unknown = flags.filter(f => !FLAGS.includes(f));
 if (unknown.length) { console.error(`unknown option ${unknown[0]}\nusage: node scripts/package/stage.mjs [${FLAGS.join("] [")}]`); process.exit(2); }
@@ -51,6 +57,20 @@ const withModels = flags.includes("--with-models");
 
 const layout = layoutFor(process.platform, process.arch);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const withWslCoding = flags.includes("--with-wsl-coding-tools");
+const wslCodingSource = path.join(root, "dist/wsl-coding-tools", WSL_CODING_TOOLS.filename);
+if (withWslCoding) {
+  if (layout.target !== "win32-x64") throw new Error("The optional WSL coding helper supports Windows x64 only.");
+  // Authentication and positive source close happen before replacing any existing staged package.
+  verifyWslCodingTools(wslCodingSource);
+}
+const withWindowsNode = flags.includes("--with-windows-node-toolchain");
+const windowsNodeSource = path.join(root, ".cache/windows-node-toolchain");
+if (withWindowsNode) {
+  if (layout.target !== "win32-x64") throw new Error("The pinned coding Node toolchain supports Windows x64 only.");
+  // Check before replacing any existing package. No runtime credential, network download or host Node fallback.
+  verifyWindowsNodeToolchain(windowsNodeSource, "producer");
+}
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const out = path.join(root, "dist/package");
 const app = path.join(out, layout.appDir);
@@ -127,17 +147,20 @@ const capiLibs = layout.voiceNative ? Object.entries(CAPI_RELEASE.libs).map(([fi
   return { file, bytes };
 }) : [];
 
-// Only this script's folders are replaced; built packages beside them stay until rebuilt.
-for (const d of [layout.appDir, "voice-models"]) fs.rmSync(path.join(out, d), { recursive: true, force: true });
-fs.mkdirSync(out, { recursive: true });
-
 // 1. Electron itself, as Ember. Requiring the package gives its executable (downloading it if npm ci didn't);
 //    its dist folder is that path less layout.electronExe. macOS copies the whole Electron.app bundle, keeping the
 //    frameworks' symlinks as they are.
 const electronExe = createRequire(import.meta.url)("electron");
 const electronDist = layout.electronExe.split("/").reduce(d => path.dirname(d), electronExe);
 if (path.join(electronDist, layout.electronExe) !== path.normalize(electronExe)) throw new Error(`Electron's executable isn't where ${layout.target} has it: ${electronExe}`);
-fs.cpSync(path.join(electronDist, layout.electronSource), app, { recursive: true, verbatimSymlinks: true });
+const electronSource = path.join(electronDist, layout.electronSource);
+// Development assets are authenticated and omitted even without the release flag. Only the producer stages release assets.
+const electronCopyFilter = layout.target === "win32-x64" ? prepareWindowsNodeElectronCopyFilter(electronSource) : null;
+// Only this script's folders are replaced; built packages beside them stay until rebuilt.
+for (const d of [layout.appDir, "voice-models"]) fs.rmSync(path.join(out, d), { recursive: true, force: true });
+fs.mkdirSync(out, { recursive: true });
+if (electronCopyFilter) fs.cpSync(electronSource, app, { recursive: true, verbatimSymlinks: true, filter: electronCopyFilter });
+else fs.cpSync(path.join(electronDist, layout.electronSource), app, { recursive: true, verbatimSymlinks: true });
 for (const [from, to] of layout.renames) renameRetrying(path.join(app, from), path.join(app, to));
 for (const f of layout.remove) fs.rmSync(path.join(app, f), { force: true });
 // Electron's licences go inside the app folder (on Linux and Windows they already are).
@@ -174,6 +197,10 @@ if (wrongFuses.length) throw new Error(`the staged binary's fuses didn't take: $
 // 2. The app: its package.json, the build, and production dependencies only.
 const appDir = path.join(resources, "app");
 fs.mkdirSync(appDir, { recursive: true });
+if (withWindowsNode) {
+  fs.mkdirSync(path.join(resources, "coding"), { recursive: true });
+  stageWindowsNodeToolchain(windowsNodeSource, path.join(resources, WINDOWS_NODE_TOOLCHAIN_DIRECTORY));
+}
 const { name, version, description, license, author, main } = pkg;
 fs.writeFileSync(path.join(appDir, "package.json"), JSON.stringify({ name, productName: "Ember", version, description, license, author, main, type: pkg.type, dependencies: pkg.dependencies }, null, 2) + "\n");
 fs.copyFileSync(path.join(root, "LICENSE"), path.join(appDir, "LICENSE"));
@@ -192,6 +219,8 @@ for (const src of prod) {
     recursive: true,
     filter: s => {
       const r = path.relative(src, s);
+      // The SDK uses these shipped helpers, plugin manifests and skill Markdown at runtime for native coding tools.
+      if (copilotToolAsset(src, r)) return true;
       // Nested node_modules are copied on their own.
       if (/(^|[\\/])node_modules([\\/]|$)/.test(r)) return false;
       if (isNotice(src, r)) return true;
@@ -200,13 +229,12 @@ for (const src of prod) {
     },
   });
 }
-// Inside the platform builds: koffi's musl build or link-time files, libvips's headers, and the Copilot runtime's
-// helpers for its own built-in tools (search, browser plugin, skills). Ember's sessions turn every built-in tool off
-// (app/main/agent/session-config.ts), and the runtime runs without them (checked: the conductor integration test
-// against a runtime pruned like this).
+// Inside the platform builds, remove only unused architecture builds, link-time files and libvips's headers.
+// The Copilot runtime's search helpers, plugins and skills remain for the coding session.
 for (const p of layout.prune) fs.rmSync(path.join(appDir, "node_modules", p), { recursive: true, force: true });
 
 // 3. The accessibility sidecar files (main.ts looks for them under resources/ when packaged).
+if (withWslCoding) stageWslCodingTools(wslCodingSource, path.join(resources, WSL_CODING_TOOLS_DIRECTORY));
 for (const s of sidecars) {
   fs.mkdirSync(path.dirname(path.join(resources, s.to)), { recursive: true });
   fs.copyFileSync(path.join(root, s.from), path.join(resources, s.to));
@@ -291,6 +319,8 @@ fs.writeFileSync(path.join(app, layout.noticesDir, "THIRD_PARTY_NOTICES"), [
   `--- Ember's LICENSE ---\n${fs.readFileSync(path.join(root, "LICENSE"), "utf8").trim()}`,
   `Electron ${electronVersion}: MIT (LICENSE beside this file). Chromium and the libraries in it, among them FFmpeg\n(LGPL-2.1-or-later): LICENSES.chromium.html beside this file.`,
   `Inter 4.1 (the typeface of Ember's windows, ${fonts}): OFL-1.1\n\n--- LICENSE.txt ---\n${fs.readFileSync(path.join(root, "assets/fonts/LICENSE.txt"), "utf8").trim()}`,
+  ...(withWindowsNode ? [`Offline coding Node 22.23.5 and its bundled dependencies: ${path.posix.relative(layout.noticesDir, `${layout.resourcesDir}/${WINDOWS_NODE_TOOLCHAIN_DIRECTORY}/LICENSE`)}. The exact producer receipt accompanies it; this fork supplies no shell, networking, child processes or dependency installation.`] : []),
+  ...(withWslCoding ? [`TypeScript ${WSL_CODING_TOOLS.version}: Apache-2.0. Authenticated offline WSL coding tool asset; its exact LICENSE.txt and ThirdPartyNoticeText.txt accompany the archive in ${WSL_CODING_TOOLS_DIRECTORY}. The publisher's complete third-party notices include MIT, Unicode-DFS-2016, W3C-20150513, CC-BY-4.0 and the W3C Community Final Specification Agreement. Shipping assets does not enable the unqualified WSL command capability.`] : []),
   ...(layout.voiceNative ? [capiNotice(path.posix.relative(layout.noticesDir, `${layout.resourcesDir}/${layout.voiceNative}`))] : []),
   ...sections,
 ].join(`\n\n${"=".repeat(78)}\n\n`) + "\n");

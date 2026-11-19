@@ -52,7 +52,7 @@ describe("Apps & privacy › Vault", () => {
     const c = { tasks: 2, facts: 5, reminders: 1, routines: 3 };
     expect(signOutScope(c)).toContain("3 routines. It also forgets what you saved in the vault.");
     expect(signOutScope({ ...c, kept: true })).toContain("Forget everything in Memory removes it. It also forgets what you saved in the vault.");
-    expect(forgetEverythingScope(c)).toContain("if you keep one. It also forgets what you saved in the vault. 2 tasks, 1 reminder and 3 routines stay as they are");
+    expect(forgetEverythingScope(c)).toContain("if you keep one. It also forgets what you saved in the vault. It also removes project records and all saved project checkpoints on this computer. 2 tasks, 1 reminder and 3 routines stay as they are");
     expect(signOutScope({ ...c, facts: null })).toMatch(/It also forgets what you saved in the vault\. Ember couldn't count everything right now/);
   });
 });

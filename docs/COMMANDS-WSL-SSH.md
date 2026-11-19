@@ -154,9 +154,9 @@ program is not a danger (accessibility-c12-1).
 
 ### 2.4 What asks first
 
-This section says what asks in Interactive, the default. Where you asked for exactly that command it may run with a
-few seconds to stop it instead (§2.5), in Assisted Ember's check may let it go ahead (§2.5a), and in Autopilot it runs,
-announced, but where you or your organisation set commands to ask every time (§2.5b).
+This section says what asks in Interactive, the default, even when you requested the command. In Assisted Ember's
+check may let it go ahead (§2.5a); in Autopilot it runs, announced, except where you or your organisation set commands
+to ask every time (§2.5b).
 
 Ember stops and asks before a command that:
 
@@ -672,132 +672,17 @@ to the same thing (`find build -delete` after `rm -rf build`), is refused withou
 announcement. A card nobody answered isn't put up again until you next say something to that task. Ask again, in a new
 request, to have it run after all.
 
-### 2.5 When you asked for exactly that
+### 2.5 Command announcements and Stop
 
-If your own words for this task asked for that kind of operation on that computer and that object, a dangerous command
-runs without a question, after an announcement: "delete build/" covers `rm -r build`, "push my branch to GitHub" covers
-`git push origin <that branch>`, "submit my changelist" covers `p4 submit -c <n>`. The bubble shows the announcement
-("Pushing feature-x to origin, as you asked.", naming a path in the home folder from ~ as the card does: "Deleting
-~/proj/build, as you asked.", with "It starts in 4 seconds. Ctrl+Alt+X stops everything at once." and
-**Stop**), the command window shows "About to run this, as you asked" with the command, what it does and the model's
-reason, "Starts in 4 s.", "Or press Ctrl+Alt+X to stop everything." and **Stop** (a program Ember doesn't know that
-your words didn't name, and an ordinary command carrying text from another window, are headed "About to run this"
-instead). While another app holds the stop
-chord, both name its fallback (Ctrl+Alt+Shift+X); while another app holds that too,
-neither the bubble nor the command window names it: **Stop** is the way, as the spoken "Press Stop to cancel."
-says. When Ember speaks (**Speak replies, questions and results out loud** set to Always, the default, or a screen
-reader running with it on When a screen reader runs), Ember says it and adds how to cancel it: "Say 'Ember, stop' to
-cancel." only where Ember can tell its own voice from yours (Linux with speaker rejection on and parec installed);
-elsewhere it names the stop chord ("Press Windows key, Alt, X to cancel."), because its own microphone would hear it say
-the phrase and stop everything. There it never says "Ember, stop" or "Hey Ember" out loud at all (it says "the stop
-phrase" and "the wake phrase"; the bubble still shows them). When the command runs in WSL, or on this computer while
-your words named another, the spoken announcement starts with where it runs, as the bubble's badge does ("In Ubuntu
-(WSL): …", "On this computer: …"). **Stop** in either place, the stop chord or "Ember, stop" within those 4 seconds
-cancels it. While a screen reader runs, the countdown is 15 seconds instead, so there is time to hear it and act. If
-the command window's page crashes during the countdown, the command doesn't run; one announced while the page loads
-again counts down once it is back. When the page crashes or the window closes during a countdown, Ember tells you the
-command window couldn't show it to the end, not that you stopped it. The audit log records it as requested by you.
+In Interactive, a dangerous command asks even when you requested it. An unknown command with no identified danger,
+or an ordinary local command carrying text from another window, is announced with a few seconds to stop it. Assisted
+may announce a command its check clears (§2.5a); Autopilot announces commands it runs without asking (§2.5b).
 
-Only what you typed or said counts, never the model's words, text on the screen, a file or a command's output; a
-task that didn't start from your own words always asks. What you said counts only where Ember can tell your voice from
-what your speakers play (Linux with speaker rejection on and parec installed): on Windows, on macOS and on Linux
-without it, a call, a video or Ember's own voice could say the same words, so a dangerous command you asked for by
-voice asks ("You asked by voice. Ember can't tell your voice from what your speakers play, so it checks first.");
-typed words still count. Your words have to ask for it: "delete build/", "please delete
-build/", "Ember, delete build/", "can you delete build/?" and "I want to delete build/" do; a question ("should I delete build/?", "how do I push
-my branch?"), something already done ("I pushed my branch"), a maybe ("I might delete build/ later") and words about
-something else ("fix the script that deletes build/") don't, so the command asks. Nor do words that hold the step
-back, since the announcement runs it now: a condition ("delete src/ only if I say so", "if the build fails, delete
-src/", "once the tests pass", "when I tell you", "in case the tests fail", "each time the tests pass"), a later time
-("tomorrow", "next week", "in 5 minutes", "in 1h", "at 5pm", "at 5.30pm", "at the end of the task", "first thing
-Monday", "Monday"), a deadline ("before Friday", "before the release", "ahead of the demo"; "before you run the tests",
-"before rebuilding", "before npm install", "before I run make", "before we start" and "before that" only put your steps
-in order, and "as we did before" says how), a step that keeps a copy of what a deletion or discard throws
-away asked for first ("back up then delete the build folder", "commit my changes and delete build/", "make a backup
-and then delete …"; Ember can't tell it was done), the same asked for after the deletion ("delete the build folder
-but copy it first", "(back it up first)", "; back it up first", "but keep a copy", "but make a backup"), any step
-asked for first there ("but list it first"), a later clause that narrows it ("but only the logs", "but just the
-object files"), words that say where the thing came from ("that the CI made", "from yesterday") or that send it to
-the trash, the bin or a stash ("but move it to the trash", "by moving it to trash", "but stash a copy"), asking to be asked first ("ask me first", "check
-with me", "wait for my ok", "show me the command first", "let me see the command", "run it by me", "on my go", "hold
-off", "I'll say when") or asking how ("explain how to delete build/ and delete src/"); "tell me if it worked", "say if it
-worked", "let me know when it's done", "let me see the output", "if you can", "as soon as possible", "if it exists" and a time or
-a condition of another step of yours said after it ("delete build/ now, I'll rebuild later", "then run the tests once
-it's gone") hold nothing back, but the step itself said again with a time does ("delete build/, but run the command
-tomorrow", "… start the cleanup tomorrow"), and so does "wait, then delete build/". So do words that say not to, or
-that keep or leave something out ("don't delete build/", "delete everything but build/", "delete dist/ and keep
-build/", "instead of", "other than"), since the step may be on what you meant to keep. Only what the verb you
-asked with acts on counts, in its own part of the sentence: "kill 5678, 1234 is my editor" doesn't cover `kill 1234`,
-"stop apache and check nginx" doesn't cover stopping nginx, and "delete my old branches, main stays" (or "main and
-develop stay") doesn't cover deleting main, so those ask. Nor does a name you use only to place, describe or say
-something else of: "delete node_modules in the frontend folder" doesn't cover `rm -r frontend`, and neither do "the
-backup of the build folder", "the branches merged into main", "the children of 1234", "the process that 1234 started",
-"stop apache because nginx wants port 80", "stop apache, nginx serves the site", "kill 5678, 1234 my editor", "the
-build logs", "the process blocking 1234", "whatever is blocking 1234", "the services that depend on nginx", "the
-parent process for pid 1234" or "the branches based on main". Nor is a file whose contents you name to copy from the one
-to overwrite: "overwrite config.yml with the contents of config.yml.bak" and "save the contents of notes.txt to out.txt"
-never cover writing over config.yml.bak or notes.txt. "delete build/, dist/ and the cache folder" covers all three, and so do the same verb
-said again ("delete build/ and delete dist/", "delete build/. Delete dist/ too.") and a list after a colon ("delete
-these folders: build/ and dist/"), a thing after "then" or a sentence that only adds one ("stop apache, then nginx",
-"stop apache. nginx too.", "then nginx right away", "and dist/ on my machine"; "then nginx back up" or "and nginx on 80"
-asks, since that is another verb's), and "it" for the one thing you just said is hung ("1234 is hung, kill it", "nginx is
-stuck, restart it"), when "it" is all the verb acts on ("kill it already", "kill it for good", "restart it to fix it";
-"kill whatever is blocking it" asks), but never another verb ("stop apache and restart nginx" doesn't cover restarting
-apache). A pull request you numbered anywhere in your words keeps `gh pr merge` without a number asking ("look at pull
-request 45. merge the pr"), since that merges the current branch's; "check pr 45, then merge the pr" covers
-`gh pr merge 45`. A folder you place a name
-in is where it must be: "delete the build folder in dist" covers `rm -r dist/build`, never `rm -r build`, and so do
-"the build folder, which is in dist", "(the one in dist)", "from dist", "the build folder of dist", "… for dist", "… at
-dist/", "in dist, delete the build folder" and "dist's build folder"; "in my home folder" means the home folder, and "at the
-root", "at this point", "at your convenience" and "of mine" name no folder. A place is read from all your words,
-wherever it stands: "the build folder at the root of frontend/" and "at the top of the frontend repo"
-are frontend's, "…, but only the one in frontend", "…, the frontend one" and "… in the folder called frontend" are
-too, and so is a folder you say to go into first or name before the thing ("cd into frontend and delete the build
-folder", "at the root of frontend, delete the build folder"). A place Ember can't check a path against always asks:
-beside something ("next to frontend", "near src", "above frontend", "by the src folder"), up from here ("up one
-level", "in the folder above", "in ..") or on another computer or service, said before or after ("on the
-server", "on staging", "on the remote", "off the server", "over ssh", "remotely"; "on this computer" and "on my
-laptop" place nothing, and straight after the name "on the desktop" and "on my desktop" are
-the Desktop folder). Ember reads places loosely, so a folder named for something else in the same words ("run the
-tests in frontend and delete the build folder") asks too. A name written without a folder is the one in the folder
-the task works in, so a command that changes folder first asks unless your words named a folder the file is in: after
-"delete the build folder", `cd .. && rm -rf build` and `cd frontend && rm -rf build` ask; after "delete the build
-folder in frontend", `cd frontend && rm -rf build` is announced. A word before a deleted path's name, or between it
-and "folder", that names nothing in the path describes another one, so it asks: "delete the production build folder"
-(or the staging, frontend, other, remote, shared, release or debug one, or "the build output folder") never covers `rm
--rf build`, nor `rm -rf staging/build`, which "delete the staging build folder" covers; a word that only says what it
-is like ("the old, stale, whole, entire, generated, empty or huge build folder") doesn't. Anything broader than what you named asks: a force flag, a
-wildcard, a folder outside the one you named, another branch, remote, changelist, package or computer. Name a folder
-as a folder: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, but plain "delete
-build" asks before `rm -r build`, because it doesn't say build is a folder (it covers only `rm build`). The
-first word in what you said that names the folder must say so too: "before you build, delete the build folder" and
-"the build is broken, delete the build folder" ask, because their first "build" isn't the folder.
-
-**When your words name another computer.** If your words for the task also name a computer other than the one the task
-runs on, even without a place word ("build-01 delete build/" while Ember works on this computer), or a place that
-looks like a computer Ember doesn't know ("delete build/ on prod-db", "at deploy@10.0.0.5", "from the server web-2",
-"ssh prod-db and …", "prod-db: …": a name with a dot, a hyphen or a digit, or `user@host`, after on, in, at, inside,
-over, via, into, onto, from or ssh, or first in the request before a colon or a comma), nothing in that task runs on
-an announcement: every dangerous command asks, and the card's first line says where it runs ("It looks like you named
-another computer (prod-db), but this runs on this computer.", "You also named build-01, but this runs on this
-computer."). Ordinary commands still run. Everyday places ("on the desktop", "in my home folder", "on line 12", "in
-main.ts", "in 5 minutes") don't count, nor do dates and number ranges ("on 2026-10-22,", "from 10-20"). Nor does a
-folder or a branch the computer shows: "in my-app" (or inside, into) when my-app is a folder where the task works or
-one of the folders it is in, and "on feature-x" when feature-x is the branch the task's folder is on; the command then
-announces only if it acts on what is directly in that folder ("delete build/ in my-app" covers `rm -r my-app/build`,
-not `rm -r build` elsewhere, nor `my-app/packages/core/build`). When the computer can't say, it asks. A name in quotes, backticks, guillemets or brackets,
-written with any kind of dash, with a port or a folder after it ("prod-db:22", "deploy@prod-db:/srv"), or after a word
-such as server, host or machine ("on the server prod-db", "ssh to prod-db") counts too. On a Windows PC where WSL
-isn't on in Ember (or isn't installed, or your organisation turned it off), "WSL", "Linux" and "the Linux side" don't
-move a task, so "search for how to install Python on Linux" works here as before; but for dangerous commands they
-count as another computer: "in WSL, delete build/" asks, and its card says "You also named WSL, but this runs on this
-computer."
-
-These **always ask, even when you asked for them**: secrets (anything in §2.4's secrets item), downloading and
-running code, commands that keep running after Ember stops, and anything Ember can't read with certainty. Every
-command also asks when it runs as root or as an administrator, when **Ask me before every command** or your
-organisation's policy says so, in a Podman distro, after a step in this task came up that you didn't ask for, and
-when the command may carry text Ember read in another app.
+The command window shows the command, what Ember found, a countdown and **Stop**. The bubble shows what it is doing.
+The stop shortcut or “Ember, stop” also cancels it. If both the shortcut and its fallback are held by another app,
+neither the bubble nor the command window names it: **Stop** is the way, as the spoken "Press Stop to cancel." says.
+With a screen reader the countdown is 15 seconds rather than 4.
+If the command window closes or its page crashes before the countdown is fully shown, the command does not run.
 
 ### 2.5a When Ember checked it against what you asked (Assisted)
 
@@ -1152,6 +1037,21 @@ starts it just to read one). A command in WSL may start Windows programs and rea
 (`/mnt/c`); it is judged like any other command, and the card adds "This can reach your Windows files." when it does.
 `wsl.exe`'s own options (another user, `--shutdown`, `--unregister`, `--export`…) and changes to `.wslconfig` or
 `/etc/wsl.conf` ask.
+
+### 3.5 Public dependencies for a copied project
+
+The Projects public-dependency path is under development and remains subject to Windows isolation verification.
+Where it is available, select a WSL coding environment and explicitly enable **Download public dependencies for this
+project**. This project preference grants no package approval and is not saved in a draft or imported project context.
+Both the initial lockfile and later dependency changes follow the normal approval mode for their exact public npm
+package set before any download: Interactive asks, Assisted checks the original request, and Autopilot announces,
+subject to your own or your organisation's ask-every setting and any prior refusal.
+
+Preparation sends the locked public package names and versions to `registry.npmjs.org`; it sends no project files or
+private registry credentials. It does not execute package code. Commands and their child processes remain offline;
+an install uses `npm ci --offline` in the private copy and follows its own command decision. Private registries and
+arbitrary download addresses are unavailable. Changing the project preference does not upgrade an already accepted
+request, and turning it back on does not revive a retired request.
 
 ## 4. Other computers over SSH
 

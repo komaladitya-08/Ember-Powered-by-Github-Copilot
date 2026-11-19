@@ -6,13 +6,18 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { COMMANDS_IPC } from "../../app/shared/commands";
 import { COMMANDS_EXTRA_IPC, type AnswerMsg, type OutputMsg, type Snapshot, type WindowView } from "../../app/renderer/command/model";
 import { ANNOUNCE_SCREEN_READER_MS, MAX_TABS, WAITING_MS, awaitsTyping, cardSha256, placeOnDisplay, createCommandWindowController, createCommandWindowPort, outcomeOf, typedPieces, validCard } from "../../app/main/commands/window";
-import { statusLine } from "../../app/renderer/command/copy";
+import { statusLine, headerLine } from "../../app/renderer/command/copy";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../../app/main/targets/types";
 import type { CommandCard, RunExit, RunningCommand } from "../../app/main/commands/types";
-import type { Logger } from "../../app/main/logger";
+import { createLogger, type Logger } from "../../app/main/logger";
+import { readCommandCardObservationLog } from "../fixtures/command-card-observation-log";
+import { Confirmer, type Question } from "../../app/main/agent/confirm";
 
 type Handler = (event: { sender: WebContentsLike }, ...args: unknown[]) => unknown;
 
@@ -54,7 +59,8 @@ class FakeWindow implements BrowserWindowLike {
   isDestroyed() { return this.destroyed; }
   isAlwaysOnTop() { return this.onTop; }
   isFocused() { return this.focused; }
-  setAlwaysOnTop(flag: boolean) { this.onTop = flag; this.calls.push(`top:${flag}`); }
+  level: string | undefined;
+  setAlwaysOnTop(flag: boolean, level?: string) { this.onTop = flag; this.level = level; this.calls.push(`top:${flag}`); }
   setBounds() { /* not used */ }
   setContentProtection() { /* windows.ts sets it */ }
   on(event: string, fn: () => void) { this.handlers.set(event, [...(this.handlers.get(event) ?? []), fn]); }
@@ -111,12 +117,12 @@ class FakeRun implements RunningCommand {
   finish(e: Partial<RunExit> = {}) { this.end({ code: 0, signal: null, ended: "exit", ms: 3200, ...e }); }
 }
 
-function setup(o: { keyHint?: () => string | null; screenReader?: () => boolean; stopKey?: () => string | null; textScale?: () => number } = {}) {
+function setup(o: { keyHint?: () => string | null; screenReader?: () => boolean; stopKey?: () => string | null; textScale?: () => number; os?: "linux" | "win32" | "darwin" } = {}) {
   const ipc = new FakeIpc();
   const windows: FakeWindow[] = [];
   const ctl = createCommandWindowController({
     create: () => { const w = new FakeWindow(); windows.push(w); return w; },
-    ipc, log, os: "linux", keyHint: o.keyHint ?? (() => "Ctrl+Alt+Y allow · Ctrl+Alt+N not now"),
+    ipc, log, os: o.os ?? "linux", keyHint: o.keyHint ?? (() => "Ctrl+Alt+Y allow · Ctrl+Alt+N not now"),
     ...(o.screenReader ? { screenReader: o.screenReader } : {}),
     ...(o.stopKey ? { stopKey: o.stopKey } : {}),
     ...(o.textScale ? { textScale: o.textScale } : {}),
@@ -132,6 +138,75 @@ function setup(o: { keyHint?: () => string | null; screenReader?: () => boolean;
 
 beforeEach(() => { vi.useFakeTimers(); logs.length = 0; });
 afterEach(() => { vi.useRealTimers(); });
+
+describe("a command card's answer through the Confirmer", () => {
+  function bridge(armMs: number, blocked = () => false) {
+    const window = setup();
+    const command = card({ target: "local", targetLabel: "This computer", kind: "node", shell: undefined,
+      argv: ["--test", "test.cjs"], cwd: "\\work", command: 'Node arguments: ["--test","test.cjs"]', armMs });
+    let showing = 0;
+    const confirmer = new Confirmer(() => undefined, { now: Date.now, armMs, gapMs: 0, blocked,
+      panelReady: n => window.ctl.cardReady(n), onChange: next => {
+        if (showing && (!next || next.n !== showing)) window.ctl.hideCard(showing);
+        if (next?.question.panel?.kind === "command") {
+          showing = next.n; window.ctl.showCard(next.n, next.question.panel.card);
+        }
+      } });
+    const taken: boolean[] = [];
+    window.ctl.onAnswer(answer => {
+      const accepted = confirmer.answer(`q${answer.n}:${answer.answer}`, "panel", { sha256: answer.sha256 });
+      taken.push(accepted); return accepted;
+    });
+    const question: Question = { title: "May I run a command?", prompt: "Run the copied Node test?", armMs,
+      options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }],
+      panel: { kind: "command", card: command } };
+    const answer = confirmer.ask(question);
+    let result: string | null | undefined;
+    void answer.then(value => { result = value; });
+    const send = (choice: "once" | "deny") => window.ipc.send(COMMANDS_IPC.answer, window.page(), { n: 1, answer: choice, sha256: command.sha256 });
+    const snapshot = () => window.ipc.invoke(COMMANDS_IPC.state, window.page()) as Snapshot;
+    return { ...window, confirmer, answer, taken, send, snapshot, result: () => result,
+      close: () => { confirmer.cancelAll(); window.ctl.dispose(); } };
+  }
+
+  it.each([500, 1500])("takes Not now before a %i ms arm delay without granting a run", async armMs => {
+    const b = bridge(armMs);
+    try {
+      b.send("deny"); await Promise.resolve();
+      expect({ taken: b.taken, answer: b.result(), retry: b.snapshot().state.card?.retry ?? 0 })
+        .toEqual({ taken: [true], answer: "deny", retry: 0 });
+      expect(b.snapshot().state.tabs).toEqual([]);
+      expect(b.snapshot().state.card).toBeNull();
+      await expect(b.answer).resolves.toBe("deny");
+    } finally { b.close(); }
+  });
+
+  it.each([500, 1500])("still refuses Allow before a %i ms arm delay", async armMs => {
+    const b = bridge(armMs);
+    try {
+      b.seen(1); b.send("once"); await Promise.resolve();
+      expect(b.taken).toEqual([]); expect(b.result()).toBeUndefined();
+      expect(b.snapshot().state.card?.retry).toBe(1);
+      expect(b.snapshot().state.tabs).toEqual([]);
+    } finally { b.close(); }
+  });
+
+  it("still refuses Not now while Ember borrows the mouse, then takes it after borrowing ends", async () => {
+    let blocked = true;
+    const b = bridge(1500, () => blocked);
+    try {
+      b.send("deny"); await Promise.resolve();
+      expect(b.taken).toEqual([false]); expect(b.result()).toBeUndefined();
+      expect(b.snapshot().state.card?.retry).toBe(1);
+      expect(b.snapshot().state.tabs).toEqual([]);
+      blocked = false;
+      b.send("deny"); await Promise.resolve();
+      expect(b.taken).toEqual([false, true]);
+      await expect(b.answer).resolves.toBe("deny");
+      expect(b.snapshot().state.tabs).toEqual([]);
+    } finally { b.close(); }
+  });
+});
 
 describe("the command window's sender checks", () => {
   it("takes every page message only from its own window's page (critique integration-5)", async () => {
@@ -368,6 +443,15 @@ describe("one card at a time", () => {
     expect(ctl.cardReady(1)).toBe(true);
     ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "once", sha256: SHA });
     expect(answers).toEqual([{ n: 1, answer: "once", sha256: SHA }]);
+  });
+
+  it("keeps a card above the user's other windows on Windows, at a level Electron doesn't put behind the taskbar (hosted Windows Node packaged run of 9aa42e32)", () => {
+    for (const [os, level] of [["win32", "pop-up-menu"], ["linux", "floating"], ["darwin", "floating"]] as const) {
+      const { ctl, win } = setup({ os });
+      ctl.showCard(1, card());
+      expect(win().level, os).toBe(level);
+      ctl.dispose();
+    }
   });
 
   it("brings the window up without taking the keyboard, on top while the card shows, and lets it go after", () => {
@@ -1239,6 +1323,8 @@ describe("where the window comes up (review #272)", () => {
     const area = { x: 1920, y: 0, width: 1600, height: 900 };
     expect(placeOnDisplay({ x: 580, y: 300, width: 760, height: 480 }, area)).toEqual({ x: 2340, y: 210, width: 760, height: 480 });
     expect(placeOnDisplay({ x: 2000, y: 100, width: 760, height: 480 }, area)).toBeNull();
+    expect(placeOnDisplay({ x: 3000, y: 100, width: 760, height: 480 }, area)).toEqual({ x: 2760, y: 100, width: 760, height: 480 });
+    expect(placeOnDisplay({ x: -20, y: -10, width: 800, height: 600 }, { x: 0, y: 0, width: 640, height: 480 })).toEqual({ x: 0, y: 0, width: 640, height: 480 });
     expect(placeOnDisplay({ x: -3000, y: 0, width: 2000, height: 1200 }, { x: 0, y: 0, width: 1280, height: 720 })).toEqual({ x: 0, y: 0, width: 1280, height: 720 });
     // Negative coordinates are real displays (left of the primary on Windows and macOS).
     expect(placeOnDisplay({ x: 100, y: 100, width: 760, height: 480 }, { x: -1600, y: -200, width: 1600, height: 900 })).toEqual({ x: -1180, y: 10, width: 760, height: 480 });
@@ -1258,5 +1344,120 @@ describe("where the window comes up (review #272)", () => {
     ctl.attach(card(), new FakeRun("0123456789abcdef"));
     expect(win().calls).toContain("place");
     expect(win().calls).not.toContain("workspaces:true");
+  });
+});
+
+
+describe("direct Node command cards", () => {
+  const argv = ["tool.js", "", "a b", "$(echo literal)", "\u202e\n"];
+  async function nodeCard() {
+    const { nodeInvocationDisplay } = await import("../../app/main/commands/node-invocation");
+    return card({ target: "local", targetLabel: "This computer", login: undefined, kind: "node", shell: undefined, argv,
+      cwd: "/work", command: nodeInvocationDisplay(argv) });
+  }
+  it("binds exact structured argv and displays Node without claiming a shell", async () => {
+    const c = await nodeCard(); expect(validCard(c)).toBe(true); expect(headerLine(c)).toBe("On this computer · Node · in /work");
+    expect(validCard({ ...c, shell: "bash" })).toBe(false); expect(validCard({ ...c, target: "ssh:other" })).toBe(false);
+    expect(validCard({ ...c, argv: ["tool.js", "a b"] })).toBe(false); expect(validCard({ ...c, cwd: "/other" })).toBe(false);
+    expect(validCard({ ...c, command: "node tool.js" })).toBe(false); expect(validCard({ ...c, kind: undefined })).toBe(false);
+  });
+  it("requires the entire Node card to be seen and its exact current hash before Allow", async () => {
+    const c = await nodeCard(), h = setup(); h.ctl.showCard(21, c);
+    vi.advanceTimersByTime(1000);
+    h.ipc.send(COMMANDS_IPC.answer, h.page(), { n: 21, answer: "once", sha256: c.sha256 }); expect(h.answers).toHaveLength(0);
+    h.seen(21); h.ipc.send(COMMANDS_IPC.answer, h.page(), { n: 21, answer: "once", sha256: SHA }); expect(h.answers).toHaveLength(0);
+    h.ipc.send(COMMANDS_IPC.answer, h.page(), { n: 21, answer: "once", sha256: c.sha256 }); expect(h.answers).toEqual([{ n: 21, answer: "once", sha256: c.sha256 }]);
+  });
+});
+
+describe("bounded diagnostic-only command-card observations", () => {
+  const data = { schema: 1, source: 1, model: 7, ui: 27, geometry: 503, arm: 2, capped: 0 };
+  const observations = () => logs.filter(line => line.msg === "commands.card_observation");
+  const send = (h: ReturnType<typeof setup>, n: number, fields: object = data) => h.ipc.send(COMMANDS_IPC.cardSeen, h.page(), { n, diagnostic: fields });
+
+  it("logs only a fixed numeric projection and cannot mark a card seen or permit an answer", () => {
+    const h = setup(), c = card(); h.ctl.showCard(9001, c); vi.advanceTimersByTime(1000);
+    const before = h.page().states().length; send(h, 9001);
+    expect(h.ctl.cardReady(9001)).toBe(false); expect(h.page().states()).toHaveLength(before);
+    h.ipc.send(COMMANDS_IPC.answer, h.page(), { n: 9001, answer: "once", sha256: c.sha256 }); expect(h.answers).toEqual([]);
+    expect(observations()).toEqual([{ level: "info", msg: "commands.card_observation", fields: { schema: 1, card: 1, sample: 1,
+      source: 1, model: 7, ui: 27, geometry: 503, arm: 2, capped: 0, host: 0 } }]);
+    expect(JSON.stringify(observations())).not.toMatch(/9001|rm -r|deploy|Clean the build|sha256|runId|taskId/);
+    h.seen(9001); send(h, 9001);
+    expect(h.ctl.cardReady(9001)).toBe(true); expect(observations()[1].fields).toMatchObject({ host: 7, card: 1, sample: 2 });
+  });
+  it("preserves the valid old seen report and never touches an invalid optional diagnostic accessor", () => {
+    const h = setup(); h.ctl.showCard(9, card()); let reads = 0;
+    h.ipc.send(COMMANDS_IPC.cardSeen, h.page(), { n: 9, seen: true, inView: true, get diagnostic() { reads++; throw new Error("PRIVATE"); } });
+    expect(reads).toBe(0); expect(h.ctl.cardReady(9)).toBe(true); expect(observations()).toEqual([]);
+  });
+  it("ignores hostile, malformed and stale standalone observations without reading private accessors", () => {
+    const h = setup(); h.ctl.showCard(9, card()); let reads = 0;
+    const trap = () => { reads++; throw new Error("PRIVATE"); };
+    const values: unknown[] = [new Proxy({}, { get: trap, ownKeys: trap, getOwnPropertyDescriptor: trap }),
+      { n: 9, get diagnostic() { return trap(); } }, { n: 9, diagnostic: new Proxy({}, { get: trap, ownKeys: trap, getOwnPropertyDescriptor: trap }) },
+      { n: 9, diagnostic: { ...data, get arm() { return trap(); } } }, { n: 8, diagnostic: data }, { n: 9, diagnostic: { ...data, secret: "PRIVATE" } },
+      { n: 9, diagnostic: { ...data, [Symbol("PRIVATE")]: 1 } }, { n: 9, diagnostic: { ...data, schema: 2 } },
+      { n: 9, diagnostic: { ...data, model: 128 } }, { n: 9, diagnostic: { ...data, ui: -1 } }, { n: 9, diagnostic: { ...data, geometry: 512 } },
+      { n: 9, diagnostic: { ...data, source: "PRIVATE" } }, { n: 9, diagnostic: { ...data, arm: 0.5 } }];
+    for (const value of values) expect(() => h.ipc.send(COMMANDS_IPC.cardSeen, h.page(), value)).not.toThrow();
+    expect(reads).toBe(0); expect(observations()).toEqual([]); expect(h.ctl.cardReady(9)).toBe(false);
+  });
+  it("retains ownership, current-card, page-down and disposal fences", () => {
+    const h = setup(); h.ctl.showCard(9, card());
+    h.ipc.send(COMMANDS_IPC.cardSeen, new FakeContents(99999), { n: 9, diagnostic: data });
+    h.win().crash(); send(h, 9); expect(observations()).toEqual([]);
+    h.ipc.invoke(COMMANDS_IPC.state, h.page()); send(h, 9); expect(observations()).toHaveLength(1);
+    h.ctl.hideCard(9); send(h, 9, { ...data, arm: 1 }); expect(observations()).toHaveLength(1);
+    h.ctl.showCard(10, card()); h.ctl.dispose(); send(h, 10); expect(observations()).toHaveLength(1);
+  });
+  it("deduplicates provenance-only changes and preserves a genuine same-card re-show's counters", () => {
+    const h = setup(), c = card(); h.ctl.showCard(55, c);
+    send(h, 55); send(h, 55, { ...data, source: 2 }); h.ctl.showCard(55, c); send(h, 55);
+    expect(observations()).toHaveLength(1);
+    send(h, 55, { ...data, ui: 15 }); expect(observations()[1].fields).toMatchObject({ card: 1, sample: 2 });
+    h.ctl.showCard(56, c); send(h, 56); expect(observations()[2].fields).toMatchObject({ card: 2, sample: 1, host: 0 });
+  });
+  it("caps changes per card and across the controller without dropping a later legitimate seen report", () => {
+    const h = setup(), c = card();
+    for (let n = 1; n <= 6; n++) {
+      h.ctl.showCard(n, c);
+      for (let i = 0; i < 20; i++) send(h, n, { ...data, model: i });
+    }
+    expect(observations()).toHaveLength(64);
+    expect(observations().filter(line => (line.fields as { card: number }).card === 1)).toHaveLength(16);
+    expect(observations()[15].fields).toMatchObject({ capped: 1 }); expect(observations().at(-1)?.fields).toMatchObject({ capped: 1 });
+    h.seen(6); expect(h.ctl.cardReady(6)).toBe(true);
+  });
+  it("retires last known state at the host ordinal cap through the actual Logger and failure reader", () => {
+    const profile = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "ember-card-ordinal-")));
+    let restoreLog = () => {};
+    try {
+      const logger = createLogger({ dir: path.join(profile, "logs") }).child("command-window");
+      const spy = vi.spyOn(log, "info").mockImplementation((msg, fields) => logger.info(msg, fields));
+      restoreLog = () => { spy.mockRestore(); };
+      const h = setup();
+      for (let ordinal = 1; ordinal <= 39; ordinal++) { h.ctl.showCard(9000 + ordinal, card()); send(h, 9000 + ordinal); }
+      expect(readCommandCardObservationLog(profile)).toMatchObject({ known: 1, card: 39, capped: 0 });
+      h.ctl.showCard(9040, card()); send(h, 9040);
+      expect(readCommandCardObservationLog(profile)).toMatchObject({ known: 0, card: 0, capped: 1 });
+      h.ctl.showCard(9041, card()); send(h, 9041);
+      expect(readCommandCardObservationLog(profile)).toMatchObject({ known: 0, card: 0, capped: 1 });
+      expect(h.ctl.cardReady(9041)).toBe(false);
+      h.ipc.send(COMMANDS_IPC.cardSeen, h.page(), { n: 9041, seen: true, inView: true });
+      expect(h.ctl.cardReady(9041)).toBe(true); h.ctl.dispose();
+    } finally { restoreLog(); fs.rmSync(profile, { recursive: true, force: true }); }
+  });
+  it("bounds host card ordinals without logging incoming identifiers", () => {
+    const h = setup(); for (let n = 1; n <= 45; n++) { h.ctl.showCard(9000 + n, card()); send(h, 9000 + n); }
+    expect(observations()).toHaveLength(40); expect(observations().at(-1)?.fields).toMatchObject({ card: 40, capped: 1 });
+    expect(JSON.stringify(observations())).not.toContain("900");
+  });
+  it("consumes its cap before a failing or reentrant logger and leaves approval state untouched", () => {
+    const h = setup(); h.ctl.showCard(1, card()); let writes = 0;
+    const spy = vi.spyOn(log, "info").mockImplementation(() => { writes++; send(h, 1); throw new Error("PRIVATE log failure"); });
+    try { for (let i = 0; i < 30; i++) expect(() => send(h, 1, { ...data, model: i })).not.toThrow(); }
+    finally { spy.mockRestore(); }
+    expect(writes).toBe(16); expect(h.ctl.cardReady(1)).toBe(false); h.seen(1); expect(h.ctl.cardReady(1)).toBe(true);
   });
 });

@@ -10,6 +10,7 @@
  */
 
 import type { CommandCard } from "../../main/commands/types";
+import { COMMAND_CARD_OBSERVATION_BITS as OBSERVATION, type CommandCardObservationData } from "../../shared/command-card-observation";
 import {
   ALLOW_LABEL, announceHeading, ANSWER_RETRY_HINT, CLOSE_LABEL, COPIED_LABEL, COPY_OUTPUT_LABEL, EMPTY_TEXT, LEGEND_MIXED, LEGEND_RTL, LEGEND_TOKENS,
   KEEP_OPEN_LABEL, NOT_NOW_LABEL, STOP_AND_CLOSE_LABEL, STOP_LABEL, askHeading, cardLines, closeHeading, closeLine, countdownText, headerLine, isRiskyCard,
@@ -17,7 +18,7 @@ import {
 } from "./copy";
 import { shouldFocusTerminal } from "./keys";
 import {
-  INITIAL_MODEL, allowAnswer, allowEnabled, allowHint, pendingLines, reduce, sameAnnouncement, type CardMetrics, type CommandsApi, type Effect, type PageEvent, type TabView,
+  INITIAL_MODEL, allowAnswer, allowEnabled, allowHint, judgeMetrics, pendingLines, reduce, sameAnnouncement, type CardMetrics, type CommandsApi, type Effect, type PageEvent, type TabView,
   type WindowView,
 } from "./model";
 import { breaksLine, legendFor, segmentLabel, visibleText } from "./visible";
@@ -112,9 +113,13 @@ interface AskEls {
   hint: HTMLElement; keys: HTMLElement; actions: HTMLElement; card: CommandCard & { n: number }; sent: boolean;
   /** The card's retry count this page last saw: a higher one gives the buttons back (review #271). */
   retry: number;
+  /** Numeric geometry belongs only to this exact n:sha DOM and measured text size. Zero is unmeasured. */
+  observationGeometry: number;
+  observationTextSize: string;
 }
 let ask: AskEls | null = null;
 let armTimer: ReturnType<typeof setTimeout> | null = null;
+let observationCard = "", observationLast = "", observationCount = 0, observationTotal = 0;
 
 function buildAsk(card: CommandCard & { n: number; retry?: number }): AskEls {
   const root = el("section", "card ask");
@@ -150,7 +155,8 @@ function buildAsk(card: CommandCard & { n: number; retry?: number }): AskEls {
   const actions = el("div", "actions");
   actions.append(hint, row, keys);
   root.append(actions);
-  const els: AskEls = { key: `${card.n}:${card.sha256}`, root, block, allow, deny, hint, keys, actions, card, sent: false, retry: card.retry ?? 0 };
+  const els: AskEls = { key: `${card.n}:${card.sha256}`, root, block, allow, deny, hint, keys, actions, card, sent: false, retry: card.retry ?? 0,
+    observationGeometry: 0, observationTextSize: "" };
   allow.addEventListener("click", e => {
     if (!e.isTrusted || ask !== els || els.sent) return;
     const a = allowAnswer(els.card, model.card, Date.now());
@@ -197,14 +203,19 @@ function measureCard(): void {
   const r = b.getBoundingClientRect();
   // The card's buttons stay over the bottom of the card area: what they cover isn't in view.
   const clip = clipOf(b);
-  clip.bottom = Math.min(clip.bottom, ask.actions.getBoundingClientRect().top);
+  const actionsTop = ask.actions.getBoundingClientRect().top;
+  clip.bottom = Math.min(clip.bottom, actionsTop);
   const metrics: CardMetrics = {
     scrollTop: b.scrollTop, scrollHeight: b.scrollHeight, clientHeight: b.clientHeight, scrollWidth: b.scrollWidth, clientWidth: b.clientWidth,
     top: r.top, bottom: r.bottom, left: r.left, right: r.right, viewWidth: window.innerWidth, viewHeight: window.innerHeight,
     clip, visible: document.visibilityState === "visible", textSize: document.documentElement.dataset.textSize ?? "default",
   };
+  try {
+    ask.observationGeometry = measuredObservation(metrics, actionsTop);
+    ask.observationTextSize = metrics.textSize ?? "default";
+  } catch { ask.observationGeometry = 0; ask.observationTextSize = ""; /* Preserve the original measurement/report. */ }
   dispatch({ type: "card-metrics", n: ask.card.n, metrics });
-  paintAllow();
+  paintAllow(1);
 }
 const cardResize = new ResizeObserver(() => measureCard());
 // The block moving in or out of view for any reason (the card area scrolled, an announcement put above it, the layout
@@ -213,8 +224,46 @@ const cardVisible = new IntersectionObserver(() => measureCard(), { threshold: [
 // And when main sets the text size (once the page has loaded, and whenever it changes): "seen" holds at one size only.
 new MutationObserver(() => measureCard()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-text-size"] });
 
+/** Existing metrics only, judged by the same pure predicate; no extra layout read, timer or observer. */
+function measuredObservation(metrics: CardMetrics, actionsTop: number): number {
+  const values = [metrics.scrollTop, metrics.scrollHeight, metrics.clientHeight, metrics.scrollWidth, metrics.clientWidth, metrics.top, metrics.bottom, metrics.left, metrics.right,
+    metrics.viewWidth, metrics.viewHeight, actionsTop, ...(metrics.clip ? [metrics.clip.top, metrics.clip.bottom, metrics.clip.left, metrics.clip.right] : [])];
+  if (!values.every(Number.isFinite)) return 0;
+  const { fits, atEnd, onScreen } = judgeMetrics(metrics), c = metrics.clip;
+  const inClip = !c || metrics.top >= c.top - 1 && metrics.left >= c.left - 1 && metrics.bottom <= c.bottom + 1 && metrics.right <= c.right + 1;
+  const inViewport = metrics.top >= -1 && metrics.left >= -1 && metrics.bottom <= metrics.viewHeight + 1 && metrics.right <= metrics.viewWidth + 1;
+  const g = OBSERVATION.geometry;
+  return g.known | (fits ? g.fits : 0) | (atEnd ? g.atEnd : 0) | (onScreen ? g.onScreen : 0) | (metrics.visible ? g.visible : 0)
+    | (inClip ? g.inClip : 0) | (inViewport ? g.inViewport : 0) | (metrics.clientHeight > 0 && metrics.clientWidth > 0 ? g.positive : 0) | (metrics.bottom <= actionsTop + 1 ? g.sticky : 0);
+}
+
+/** Best effort, numeric-only, state-change-only. Its standalone variant cannot update host seen/inView. */
+function observeCard(source: 1 | 2, now: number, on: boolean): void {
+  try {
+    if (!ask || observationTotal >= 64) return;
+    if (observationCard !== ask.key) { observationCard = ask.key; observationLast = ""; observationCount = 0; }
+    if (observationCount >= 16) return;
+    const card = model.card?.n === ask.card.n && model.card.sha256 === ask.card.sha256 ? model.card : null;
+    const m = OBSERVATION.model, u = OBSERVATION.ui;
+    const modelFlags = (card ? m.present : 0) | (card?.fits ? m.fits : 0) | (card?.atEnd ? m.atEnd : 0) | (card?.seen ? m.seen : 0) | (card?.inView ? m.inView : 0) | (ask.sent ? m.sent : 0) | (ask.retry > 0 ? m.retry : 0);
+    const ui = u.commandPresent | u.allowPresent | (ask.allow.disabled ? u.allowDisabled : u.allowEnabled) | (ask.deny.disabled ? 0 : u.denyEnabled);
+    if (!card || ask.observationTextSize !== (document.documentElement.dataset.textSize ?? "default")) {
+      ask.observationGeometry = 0; ask.observationTextSize = "";
+    }
+    const geometry = ask.observationGeometry;
+    const deadline = card ? card.shownAt + card.armMs : NaN;
+    const arm = card && Number.isFinite(now) && Number.isFinite(deadline) ? (on || now >= deadline ? 2 : 1) : 0;
+    const capped = observationCount + 1 >= 16 || observationTotal + 1 >= 64 ? 1 : 0;
+    const key = `${modelFlags}:${ui}:${geometry}:${arm}:${capped}`; // source provenance alone never creates another record.
+    if (key === observationLast) return;
+    observationLast = key; observationCount++; observationTotal++;
+    const diagnostic: CommandCardObservationData = { schema: 1, source, model: modelFlags, ui, geometry, arm, capped };
+    api.cardSeen({ n: ask.card.n, diagnostic });
+  } catch { /* A failed observation is never retried and changes no approval, timer, hint or action. */ }
+}
+
 /** Allow, its hint and the key hint, from the model only. */
-function paintAllow(): void {
+function paintAllow(source: 1 | 2 = 2): void {
   if (!ask) return;
   const now = Date.now();
   const on = allowEnabled(model.card, now);
@@ -231,6 +280,7 @@ function paintAllow(): void {
     const wait = model.card.shownAt + model.card.armMs - now;
     if (wait > 0) armTimer = setTimeout(paintAllow, wait + 5);
   }
+  observeCard(source, now, on);
 }
 
 // ───── The announcement ─────

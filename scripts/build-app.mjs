@@ -4,15 +4,27 @@
 //   as plain Node)
 // and the remote agent into dist/remote: ember-remote.cjs (plain Node, run on computers reached over SSH) and
 // meta.json (esbuild's metafile, which the agent's bundle test checks).
-import { build } from "esbuild";
+import { build, buildSync } from "esbuild";
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { stageWindowsNodeToolchainDevelopment } from "./package/windows-node-toolchain-dev.mjs";
 
 const root = new URL("../", import.meta.url);
 const out = new URL("dist/app/", root);
 const remoteOut = new URL("dist/remote/", root);
-const common = { bundle: true, sourcemap: true, logLevel: "info", absWorkingDir: fileURLToPath(root) };
+// Development Electron uses its own resources directory. The supported Windows coding workflow stages strictly first.
+const windowsNodeDevelopment = stageWindowsNodeToolchainDevelopment({ required: false });
+if (windowsNodeDevelopment.status === "staged" || windowsNodeDevelopment.status === "verified") {
+  console.log(`Pinned Windows coding Node development resources ${windowsNodeDevelopment.status} (${windowsNodeDevelopment.files} files).`);
+}
+// A fixed trusted worker program embedded in the app, with no runtime path/source fallback or project-code loader.
+const privacyWorker = buildSync({ entryPoints: ["app/main/agent/coding-privacy-worker.ts"], absWorkingDir: fileURLToPath(root),
+  bundle: true, platform: "node", format: "cjs", target: "node22", write: false, logLevel: "silent" }).outputFiles[0].text;
+const draftWorker = buildSync({ entryPoints: ["app/main/agent/coding-draft-worker.ts"], absWorkingDir: fileURLToPath(root),
+  bundle: true, platform: "node", format: "cjs", target: "node22", write: false, logLevel: "silent" }).outputFiles[0].text;
+const common = { bundle: true, sourcemap: true, logLevel: "info", absWorkingDir: fileURLToPath(root),
+  define: { __EMBER_CODING_PRIVACY_WORKER_SOURCE__: JSON.stringify(privacyWorker), __EMBER_CODING_DRAFT_WORKER_SOURCE__: JSON.stringify(draftWorker) } };
 
 const pages = ["home", "overlay", "handle", "ask", "mic", "desk", "command", "prompt", "vault"];
 
@@ -51,6 +63,9 @@ const remote = build({
 
 await Promise.all([
   remote,
+  // Credential-free Linux guest. Commands enter the private bwrap rootfs through framed stdio only.
+  build({ ...common, entryPoints: ["app/wsl-coding/main.ts"], outfile: "dist/app/wsl-coding.cjs",
+    platform: "node", format: "cjs", target: "node22" }),
   build({
     ...common,
     entryPoints: ["app/main/main.ts"],

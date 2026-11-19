@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { LEVEL_MS, LEVEL_STEPS, LevelMeter, NO_LEVEL, envelope, levelForOverlay, levelStep, readLevel, rms, voiceAt } from "../../app/shared/level";
 import { DONE_RING_MS, RING_TICKS, meterBars, presenceOf, ticksLit } from "../../app/shared/presence";
-import { handleLine } from "../../app/renderer/handle/line";
+import { handleLine, handleSummary } from "../../app/renderer/handle/line";
 import { FINISH_SETUP, handleIdle } from "../../app/shared/setup-attention";
-import { IDLE_BUBBLE, type TaskCard } from "../../app/shared/overlay";
+import { IDLE_BUBBLE, TASK_STOPPING, type TaskCard } from "../../app/shared/overlay";
 
 const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
 const bubble = (mood: typeof IDLE_BUBBLE.mood, visible = true) => ({ ...IDLE_BUBBLE, visible, mood });
@@ -169,9 +169,9 @@ describe("the presence ring's styles (software compositing; Calm)", () => {
 describe("the handle's line (review #5)", () => {
   const task = (status: TaskCard["status"]): TaskCard => ({ id: status, title: status, status, detail: "" });
   it("says the most urgent true thing: a task that needs you, why Ember can't answer, work under way", () => {
-    expect(handleLine({ idle: "Ready", setup: "Fix “Screen reading”", tasks: [task("waiting"), task("running")] })).toBe("1 task needs you");
+    expect(handleLine({ idle: "Ready", setup: "Fix “Screen reading”", tasks: [task("waiting"), task("running")] })).toBe("Needs you: waiting");
     expect(handleLine({ idle: "Not connected", tasks: [task("running")] })).toBe("Not connected");
-    expect(handleLine({ idle: "Ready", setup: "Fix “Screen reading”", tasks: [task("running"), task("queued")] })).toBe("Working on 2 tasks…");
+    expect(handleLine({ idle: "Ready", setup: "Fix “Screen reading”", tasks: [task("running"), task("queued")] })).toBe("1 working · 1 queued");
     expect(handleLine({ idle: "Ready", setup: "Fix “Screen reading”", tasks: [task("failed"), task("failed")] })).toBe("2 tasks failed");
   });
 
@@ -180,6 +180,30 @@ describe("the handle's line (review #5)", () => {
     expect(handleLine({ idle: "Ready", setup: null, mic: "error", tasks: [] })).toBe("Microphone problem");
     expect(handleLine({ idle: "Ready", tasks: [] })).toBe("Ready");
     expect(handleLine({ tasks: [] })).toBe("Ready");
+  });
+
+  it("names a single delegated task and distinguishes waiting its turn from working", () => {
+    const delegated: TaskCard = { id: "delegated", title: "Review\n the project", status: "queued", detail: "" };
+    expect(handleLine({ tasks: [delegated] })).toBe("Waiting its turn: Review the project");
+    delegated.status = "running";
+    expect(handleLine({ tasks: [delegated] })).toBe("Working: Review the project");
+    delegated.detail = TASK_STOPPING;
+    expect(handleLine({ tasks: [delegated] })).toBe("Stopping: Review the project");
+    delegated.detail = "";
+    delegated.status = "waiting";
+    expect(handleLine({ idle: "Offline", tasks: [delegated] })).toBe("Needs you: Review the project");
+    delegated.status = "done";
+    expect(handleLine({ tasks: [delegated] })).toBe("Ready");
+    expect(handleSummary("Ready", [delegated])).toBe("Ready");
+  });
+
+  it("keeps every active task available in plain hover text without presenting queued work as running", () => {
+    const running: TaskCard = { id: "one", title: "Check <tests>", status: "running", detail: "", where: "on build-01" };
+    const queued: TaskCard = { id: "two", title: "Review changes", status: "queued", detail: "" };
+    const tasks = [running, queued, { ...running, id: "ended", title: "Old task", status: "done" as const }];
+    expect(handleSummary(handleLine({ tasks }), tasks)).toBe("1 working · 1 queued\nWorking: Check <tests> (on build-01)\nWaiting its turn: Review changes");
+    expect(handleLine({ tasks: [queued, { ...queued, id: "three" }] })).toBe("2 tasks queued");
+    expect(handleLine({ idle: "Offline", tasks })).toBe("Offline");
   });
 
   it("says setup needs finishing while first run isn't done, not \"Not connected\", which reads like the network (first-run-8)", () => {

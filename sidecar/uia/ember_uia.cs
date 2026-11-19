@@ -821,9 +821,10 @@ namespace Ember.Uia
     }
 
     /// <summary>Writes the ready line, then serves until stdin closes.</summary>
-    internal int Run(TextReader input, JObj ready)
+    internal int Run(TextReader input, JObj ready, Action readyWritten = null)
     {
       Write(Json.Write(ready));
+      if (readyWritten != null) { try { readyWritten(); } catch (Exception) { /* Optional observation never changes transport. */ } }
       while (true)
       {
         string line;
@@ -1102,6 +1103,29 @@ namespace Ember.Uia
 
   // ---- core ends
 
+  /// <summary>Optional external-harness milestones; never stdout, screen data or a bridge decision.</summary>
+  internal static class StartupObservation
+  {
+    internal static bool Enabled()
+    {
+      try { return Environment.GetEnvironmentVariable("EMBER_UIA_STARTUP_OBSERVE") == "1"; }
+      catch (Exception) { return false; }
+    }
+
+    internal static void Mark(int stage)
+    {
+      try
+      {
+        if (!Enabled() || stage < 18 || stage > 25) return;
+        byte[] bytes = Encoding.ASCII.GetBytes("EMBER_UIA_STARTUP_V1:" + stage.ToString(CultureInfo.InvariantCulture) + "\n");
+        Stream stderr = Console.OpenStandardError();
+        stderr.Write(bytes, 0, bytes.Length);
+        stderr.Flush();
+      }
+      catch (Exception) { /* Observation must not replace an existing operation or error. */ }
+    }
+  }
+
   /// <summary>The entry point that ember_uia.ps1 calls: <c>[Ember.Uia.Bridge]::Run()</c>.</summary>
   public static class Bridge
   {
@@ -1115,13 +1139,17 @@ namespace Ember.Uia
     /// </summary>
     public static int Run()
     {
+      StartupObservation.Mark(18);
       Stream stdout;
       try { stdout = Console.OpenStandardOutput(); }
       catch (Exception) { return 1; }
+      StartupObservation.Mark(19);
       try
       {
         // Before anything touches UI Automation: a DPI-unaware client gets virtualised (scaled) bounds.
+        StartupObservation.Mark(20);
         string dpi = Dpi.Setup();
+        StartupObservation.Mark(21);
         string processDpi = Dpi.DescribeProcess();
         HandleTable handles = new HandleTable(20000);
         Pool pool = new Pool(64, Dpi.ThreadInit);
@@ -1130,8 +1158,13 @@ namespace Ember.Uia
         server.Hung = Win.IsHung;
         server.Terminate = Win.Terminate;
         Methods.Init(server, dpi, processDpi);
+        StartupObservation.Mark(22);
         TextReader stdin = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false, false), false, 1 << 16);
-        return server.Run(stdin, new JObj().Add("ready", true).Add("version", Version).Add("dpi", dpi).Add("processDpi", processDpi));
+        StartupObservation.Mark(23);
+        Action readyWritten = null;
+        if (StartupObservation.Enabled()) readyWritten = delegate () { StartupObservation.Mark(25); };
+        StartupObservation.Mark(24);
+        return server.Run(stdin, new JObj().Add("ready", true).Add("version", Version).Add("dpi", dpi).Add("processDpi", processDpi), readyWritten);
       }
       catch (Exception e)
       {
@@ -3063,6 +3096,9 @@ namespace Ember.Uia
         AutomationElement top = focused;
         for (int i = 0; i < 64 && !c.Abandoned; i++)
         {
+          // An owned dialog can appear under its owner in the UIA tree. Keep a positive cached match for the
+          // request's native foreground window instead of walking past it to the owner.
+          if (c.Window != IntPtr.Zero && Props.Hwnd(top) == c.Window) break;
           AutomationElement parent = TreeWalker.ControlViewWalker.GetParent(top, request);
           if (parent == null || IsDesktop(parent, desktop)) break;
           top = parent;

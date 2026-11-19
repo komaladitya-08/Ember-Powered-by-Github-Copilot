@@ -9,6 +9,7 @@
 import type { CommandCard } from "../../main/commands/types";
 import type { CommandTabView, CommandWindowState } from "../../shared/commands";
 import type { OS } from "../../shared/shortcuts";
+import type { CommandCardObservationMsg } from "../../shared/command-card-observation";
 import { READ_ALL_HINT } from "./copy";
 
 /**
@@ -108,7 +109,7 @@ export interface CommandsApi {
   answer(a: AnswerMsg): void;
   stop(runId: string): void;
   input(runId: string, data: string): void;
-  cardSeen(m: SeenMsg): void;
+  cardSeen(m: SeenMsg | CommandCardObservationMsg): void;
   close(runId: string): void;
   size(s: { cols: number; rows: number }): void;
   /** The answer to closing while commands run: stop them and close, or keep the window open. */

@@ -1,0 +1,80 @@
+name: experimental-windows-artifacts
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/experimental-windows-artifacts.yml"
+      - "app/main/agent/coding-artifact-store.ts"
+      - "app/main/agent/coding-result-registry.ts"
+      - "app/main/agent/coding-result-export.ts"
+      - "app/main/agent/coding-project-scope.ts"
+      - "app/main/agent/coding-platform.ts"
+      - "app/main/agent/linux-coding-artifact-store.ts"
+      - "app/main/agent/windows-coding-artifact-store.ts"
+      - "app/main/agent/windows-coding-copy.ts"
+      - "app/main/agent/windows-coding-review.ts"
+      - "app/main/agent/windows-file-only-workspace.ts"
+      - "app/main/agent/windows-coding-resources.ts"
+      - "app/main/agent/windows-coding-continuation-seed.ts"
+      - "app/main/agent/project-coding-backend.ts"
+      - "app/main/agent/windows-scoped-coding-files.ts"
+      - "app/main/agent/coding-privacy*.ts"
+      - "app/main/agent/scoped-coding-files.ts"
+      - "app/main/agent/windows-coding-native.ts"
+      - "app/main/agent/windows-coding-policy.ts"
+      - "test/integration/windows-coding-artifacts-native.test.ts"
+      - "test/integration/windows-coding-review-native.test.ts"
+      - "test/integration/windows-coding-resources-native.test.ts"
+      - "test/unit/windows-coding-review.test.ts"
+      - "test/unit/windows-coding-sealed-copy.test.ts"
+      - "test/unit/windows-file-only-workspace.test.ts"
+      - "test/unit/windows-coding-resources.test.ts"
+      - "test/unit/windows-coding-continuation-seed.test.ts"
+      - "test/unit/project-coding-backend.test.ts"
+      - "test/unit/coding-artifact-registry.test.ts"
+      - "test/unit/windows-coding-artifact-store.test.ts"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: experimental-windows-artifacts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-artifacts:
+    name: Native Windows private artifacts (${{ matrix.image }})
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.image }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Shared registry contract and native artifact ownership faults
+        run: npm test -- test/unit/coding-artifact-registry.test.ts test/unit/windows-coding-artifact-store.test.ts test/unit/windows-coding-review.test.ts test/unit/windows-coding-sealed-copy.test.ts test/unit/windows-file-only-workspace.test.ts test/unit/windows-coding-resources.test.ts test/unit/windows-coding-continuation-seed.test.ts test/unit/project-coding-backend.test.ts --maxWorkers=1
+      # File-only proof: no command runtime, command-writer lease or package grant is established.
+      - name: Exact private artifacts, opaque ownership, explicit export and Forget
+        timeout-minutes: 8
+        run: node scripts/run-integration.mjs test/integration/windows-coding-artifacts-native.test.ts
+      # Separate captures after controller/broker closure; no command process exists.
+      - name: Sealed Windows baseline, proposal, original-source comparison and opaque review ownership
+        timeout-minutes: 8
+        run: node scripts/run-integration.mjs test/integration/windows-coding-review-native.test.ts
+      - name: Native project ownership, copied edits, publication, Forget and fresh storage lifecycle
+        timeout-minutes: 5
+        run: node scripts/run-integration.mjs test/integration/windows-coding-resources-native.test.ts
+        env:
+          EMBER_WINDOWS_CODING_RESOURCES_TEST: "1"

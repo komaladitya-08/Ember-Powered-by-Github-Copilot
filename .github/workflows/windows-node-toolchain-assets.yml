@@ -1,0 +1,68 @@
+name: Windows Node toolchain assets
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/windows-node-toolchain-assets.yml'
+      - 'app/shared/windows-node-toolchain.json'
+      - 'scripts/package/windows-node-toolchain.*'
+      - 'scripts/package/stage.mjs'
+      - 'packaging/rpm/ember.spec'
+      - 'test/unit/windows-node-toolchain-package.test.ts'
+      - 'test/integration/windows-node-toolchain-package.test.ts'
+permissions:
+  contents: read
+jobs:
+  integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read # Read only the fixed existing producer artifact; this job publishes nothing.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.23.5'
+          cache: npm
+      - run: npm ci
+      - name: Read the fixed reviewed producer artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api repos/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/artifacts/14289217635/zip > "$RUNNER_TEMP/windows-node-producer.zip"
+      - name: Authenticate the archive and extract only its exact four members
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, stat, zipfile
+          source = pathlib.Path(os.environ['RUNNER_TEMP']) / 'windows-node-producer.zip'
+          with source.open('rb') as input_file:
+              archive_sha256 = hashlib.file_digest(input_file, 'sha256').hexdigest()
+          if source.stat().st_size != 38425334 or archive_sha256 != 'cbbbf6c641c41bda8ece457c28a54b9bc4121a068dc376725bcf0e3ac24a2f62':
+              raise RuntimeError('The fixed producer archive is unavailable or changed.')
+          manifest = json.loads(pathlib.Path('app/shared/windows-node-toolchain.json').read_text())
+          expected = {item['source']: item for item in manifest['files']}
+          destination = pathlib.Path('.cache/windows-node-toolchain')
+          with zipfile.ZipFile(source) as archive:
+              entries = archive.infolist()
+              if len(entries) != 4 or {entry.filename for entry in entries} != set(expected):
+                  raise RuntimeError('The producer member set changed.')
+              destination.mkdir(parents=True)
+              for entry in entries:
+                  pin = expected[entry.filename]
+                  if entry.is_dir() or entry.flag_bits & 1 or stat.S_ISLNK(entry.external_attr >> 16) or entry.file_size != pin['bytes']:
+                      raise RuntimeError('A producer member is unsupported.')
+                  body = archive.read(entry)
+                  if len(body) != pin['bytes'] or hashlib.sha256(body).hexdigest() != pin['sha256']:
+                      raise RuntimeError('A producer member changed.')
+                  with (destination / entry.filename).open('xb') as output:
+                      output.write(body)
+          PY
+      - name: Portable packaging and licence checks
+        run: npx vitest run test/unit/windows-node-toolchain-package.test.ts test/unit/licences.test.ts test/unit/packaging.test.ts --no-file-parallelism
+      - name: Real pinned-artifact staging and tamper checks (no executable launch)
+        env:
+          EMBER_WINDOWS_NODE_ASSET_TEST: '1'
+          EMBER_WINDOWS_NODE_ASSET_SOURCE: ${{ github.workspace }}/.cache/windows-node-toolchain
+        run: node scripts/run-integration.mjs test/integration/windows-node-toolchain-package.test.ts

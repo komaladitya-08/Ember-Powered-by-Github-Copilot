@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "issuer": "ember-windows-node-toolchain-v1",
+  "platform": "win32",
+  "arch": "x64",
+  "version": "22.23.5",
+  "sourceCommit": "60553651579ec33ca1aef9e1eedab2c3855f1f7e",
+  "sourceArchiveSha256": "6cce7c58bf058700c643944903d60a325e8c9ceede1f5c2c088b435f2ada091a",
+  "producerCommit": "b75c944dec58973d157542e2d4d2db3720667982",
+  "producerRun": 43991252195,
+  "producerArtifact": 14289217635,
+  "scope": "offline-root-only-node",
+  "compatibility": {
+    "moduleResolutionFlags": ["--preserve-symlinks", "--preserve-symlinks-main"],
+    "testIsolationFlag": "--experimental-test-isolation=none",
+    "implicitArguments": false,
+    "shell": false,
+    "children": false,
+    "network": false,
+    "dependencyInstallation": false
+  },
+  "files": [
+    { "source": "source-node.exe", "name": "node.exe", "bytes": 120220672, "sha256": "a4ed4d41331cd7886a67aedf1ecc1e8b389f8a48b5f862464eabd123c62ca8d1", "ship": true },
+    { "source": "LICENSE", "name": "LICENSE", "bytes": 145485, "sha256": "c738ae413cf561f174e34f6961f8ca458aae2369a73640dda6234c629b98bcc4", "ship": true },
+    { "source": "build-receipt.json", "name": "build-receipt.json", "bytes": 7669, "sha256": "cb5f649e1f17a1d025cf98ccc99f65a28e1068934cb1c9c59171341e20584916", "ship": true },
+    { "source": "bootstrap.exe", "name": "bootstrap.exe", "bytes": 2560, "sha256": "70ea391b8bfac53cf1b5ad54c59e215beac1fdec235cf4f980de441ce242c99e", "ship": false }
+  ]
+}

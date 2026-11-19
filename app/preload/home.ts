@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import { EXTENSIONS_IPC, IPC, PROVIDER_IPC, type EmberExtensionsApi, type EmberHomeApi, type EmberProviderApi, type Presence, type ReminderRow, type UpdateStatus, type RoutineRow, type SignInProgress, type Status, type VoiceStatus, type VoiceWord } from "../shared/ipc";
+import { EXTENSIONS_IPC, IPC, PROVIDER_IPC, type CodingWorkspaceState, type EmberExtensionsApi, type EmberHomeApi, type EmberProviderApi, type Presence, type ReminderRow, type UpdateStatus, type RoutineRow, type SignInProgress, type Status, type VoiceStatus, type VoiceWord } from "../shared/ipc";
 import type { Settings } from "../main/settings";
 import type { ConversationTurnChange, HistoryProblemKind } from "../shared/conversation";
 import type { AgentStatus, AnswerStream, TranscriptEntry } from "../main/agent/host";
@@ -24,6 +24,30 @@ const api: EmberHomeApi = {
   applyFix: fix => ipcRenderer.invoke(IPC.applyFix, fix),
   recheckSetup: () => ipcRenderer.invoke(IPC.recheckSetup),
   agentStatus: () => ipcRenderer.invoke(IPC.agentStatus),
+  codingState: () => ipcRenderer.invoke(IPC.codingState),
+  codingChooseWorkspace: () => ipcRenderer.invoke(IPC.codingChooseWorkspace),
+  codingClearWorkspace: () => ipcRenderer.invoke(IPC.codingClearWorkspace),
+  onCodingState: fn => listen<CodingWorkspaceState>(IPC.codingStateChanged, fn),
+  projectSessionsState: () => ipcRenderer.invoke(IPC.projectSessionsState),
+  projectCodingWorkspaceState: projectId => ipcRenderer.invoke(IPC.projectCodingWorkspaceState, projectId),
+  projectCodingWorkspaceChoose: projectId => ipcRenderer.invoke(IPC.projectCodingWorkspaceChoose, projectId),
+  projectCodingWorkspaceForget: projectId => ipcRenderer.invoke(IPC.projectCodingWorkspaceForget, projectId),
+  projectCodingExecutionChoose: (projectId, targetId) => ipcRenderer.invoke(IPC.projectCodingExecutionChoose, projectId, targetId),
+  codingDraftsState: () => ipcRenderer.invoke(IPC.codingDraftsState),
+  codingDraftSave: (resultId, name) => ipcRenderer.invoke(IPC.codingDraftSave, resultId, name),
+  codingDraftOpen: id => ipcRenderer.invoke(IPC.codingDraftOpen, id),
+  codingDraftForget: id => ipcRenderer.invoke(IPC.codingDraftForget, id),
+  codingDraftForgetAll: () => ipcRenderer.invoke(IPC.codingDraftForgetAll),
+  codingDraftFolderChoose: (id, projectId) => ipcRenderer.invoke(IPC.codingDraftFolderChoose, id, projectId),
+  codingDraftImport: (id, projectId) => ipcRenderer.invoke(IPC.codingDraftImport, id, projectId),
+  projectCodingPublicDependenciesChoose: (projectId, enabled) => ipcRenderer.invoke(IPC.projectCodingPublicDependenciesChoose, projectId, enabled),
+  codingResultsState: projectId => ipcRenderer.invoke(IPC.codingResultsState, projectId),
+  codingResultReview: id => ipcRenderer.invoke(IPC.codingResultReview, id),
+  codingResultExport: id => ipcRenderer.invoke(IPC.codingResultExport, id),
+  codingResultForget: id => ipcRenderer.invoke(IPC.codingResultForget, id),
+  codingResultContinue: (id, projectId, request) => ipcRenderer.invoke(IPC.codingResultContinue, id, projectId, request),
+  projectSessionsAction: input => ipcRenderer.invoke(IPC.projectSessionsAction, input),
+  projectSessionsCheckpoint: action => ipcRenderer.invoke(IPC.projectSessionsCheckpoint, action),
   projectPick: () => ipcRenderer.invoke(IPC.projectPick),
   projectRemove: name => ipcRenderer.invoke(IPC.projectRemove, name),
   projectExport: kind => ipcRenderer.invoke(IPC.projectExport, kind),

@@ -144,9 +144,10 @@ async function inspectSoon(inspect: CommandGateInput["inspect"], paths: string[]
 /**
  * Gate 2 for a command (§3.16): freshness and epoch; the stamp belongs to this spec; this machine's commands mode; its
  * own classification with its own facts and real paths (a refusal denies; root asks without a yes); then every finding
- * the stamp doesn't cover asks, carrying this machine's card lines and rules. A finding is covered when the stamp
- * names its rule and its class (never for an always-ask class: secret, escape, unclear), or, after the user's yes, its
- * rule (the PC resends with the rules a needs_confirm carried once the user said yes to them, §3.8.3 step 13). A
+ * the stamp doesn't cover asks, carrying this machine's card lines and rules. A dangerous finding is covered when
+ * its rule is named and the user approved it, or an allowed mode cleared it. A permitted Assisted check additionally
+ * requires its class and cannot clear an always-ask class (secret, escape, unclear). The PC resends with the rules
+ * a needs_confirm carried once the user said yes to them (§3.8.3 step 13). A
  * finding inside a script the command runs (read only here) is covered only after a yes, by its own `in-script:` rule
  * id. An approval older than 120 s counts as none. Autopilot's announcement on the stamp (`announced`, as fresh, and
  * only with `autopilotOk`) covers root and what a yes would cover of a finding, as a stamp the PC's Assisted check
@@ -229,8 +230,8 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   const tamper = tampers as Classification["refuse"] | null;
   if (tamper) return { status: "deny", reason: line(tamper.says) || GATE_WORDS.mismatch };
   const findings = [...standingFindings(cls.findings, byPath), ...handed];
-  // Secrets, escapes and what can't be classified always ask (D4.4): a stamp naming one without the user's yes (a
-  // "run" or "announce" no PC should send) covers nothing of it.
+  // A bare run or announcement never covers a dangerous finding: old peers may still send one after an exact request.
+  // Secrets, escapes and what can't be classified always ask in Assisted; Autopilot may announce them instead.
   // A script's finding (read only here: the PC never saw it) is covered only by the user's yes to a question that
   // carried it, under its own rule id: the PC's rule for `rm -r build` (announced or approved) never covers the same
   // rule inside the script it runs.
@@ -241,14 +242,14 @@ export async function gateCommand(i: CommandGateInput): Promise<CommandGate> {
   const agreed = (f: Finding) => approval !== null || (told && askedOfFinding(f) !== "organisation");
   const covered = (f: Finding) => (f.widening.includes(IN_SCRIPT)
     ? agreed(f) && stamp.rules.includes(ruleOf(f))
-    : stamp.rules.includes(f.rule) && (agreed(f) || (!writtenOut && stamp.classes.includes(f.cls) && !ALWAYS_ASK.has(f.cls))));
+    : stamp.rules.includes(f.rule) && (agreed(f) || (cleared && stamp.verdict === "announce" && !writtenOut && stamp.classes.includes(f.cls) && !ALWAYS_ASK.has(f.cls))));
   // A program Ember doesn't know is no danger, here as on the PC (the owner's decision of 2026-11-14).
   const extra = findings.filter(f => f.cls !== "unknown" && !covered(f));
   if (extra.length || asks.length) {
     const rules = [...new Set([...extra.map(ruleOf), ...(refusedAutopilot ? [NO_AUTOPILOT_RULE] : []), ...(refusedCheck ? [NO_CHECK_RULE] : []), ...(refusedAutonomy ? [NO_AUTONOMY_RULE] : [])])].slice(0, 64);
     return {
       status: "needs_confirm",
-      reason: extra.length ? GATE_WORDS.disagree : asks[0],
+      reason: extra.some(f => !stamp.rules.includes(ruleOf(f))) ? GATE_WORDS.disagree : asks[0] ?? GATE_WORDS.approvalMissing,
       says: [...new Set([...asks, ...extra.map(f => f.says)].map(line))].slice(0, SAYS_MAX),
       ...(rules.length ? { rules } : {}),
     };

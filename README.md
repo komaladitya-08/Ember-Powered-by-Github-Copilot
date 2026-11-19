@@ -14,6 +14,34 @@ Ember runs on:
 
 Ember's desk, a private display where Ember can work out of your way, is Linux-only.
 
+### Projects and delegated sessions (development branch)
+
+In **Projects → Projects & sessions**, create a named project and ask the conductor to plan or delegate work.
+Desktop tasks appear as named sessions with live status, outcomes and individual Stop controls. For ordered desktop
+work, the conductor can start a sequence of two to eight named sessions: a later session begins only after the
+previous session succeeds and its tools have finished shutting down. Stop or steering retires the remaining steps. Selecting another
+project does not reassign work already requested. The cursor companion names a single active task and distinguishes
+working sessions from queued ones. Projects and session records last for this run unless you choose **Save projects**. This keeps an encrypted local
+checkpoint until **Forget saved projects** or **Forget everything**. Save again to retain later progress.
+**Open saved projects** restores records and ordered goals, with interrupted sessions stopped; it never resumes work.
+**Review remaining steps** prepares an editable new request. Review and Send it to request work again with current
+permissions. Quitting or signing out clears the live board.
+
+This development branch adds project coding through custom file tools and isolated commands on Linux x64 with a
+verified system Node.js 22.12+ and Bubblewrap. Choose a project's coding folder, ask for work, then review/export the
+private-copy result; the original folder is unchanged. Each session starts again from that folder; exports retain
+its independent result. Source/dependency limits and exclusions are shown in Projects
+and retained in the review. Existing compatible dependencies may be copied read-only; npm, Git, compilers and network
+installs are not supplied. Folder choices and unexported coding reviews last for the current connection. This remains
+a limited offline coding environment, with deterministic local-model verification rather than live-provider acceptance.
+**Forget result** removes one private review while preserving project history and copies you already exported.
+
+Windows/macOS coding and the legacy native-SDK coding path remain unavailable. The Windows command prototype still
+has native compatibility failures under investigation in CI. Selected-file
+review and patch drafting are separate existing features. See the [progress and remaining work](docs/CONDUCTOR-PROGRESS.md),
+[product research](docs/COMPANION_RESEARCH.md), [experimental coding exports](docs/CODING-RESULT-EXPORT.md) and
+[Windows acceptance checks](docs/WINDOWS-CONDUCTOR-ACCEPTANCE.md).
+
 ## What you need
 
 - A **GitHub account with Copilot** (for Copilot Business or Enterprise, your organisation must also turn on the
@@ -243,9 +271,7 @@ has its own card that says what it means, and a mode is in use only once you agr
   It asks every time before anything risky: sending, posting, sharing, deleting, overwriting, paying, installing,
   signing out, changing security settings or answering a dialog's question. It asks before a dangerous command too:
   one that deletes, publishes, touches passwords or keys, changes the system or runs as an administrator, downloads
-  and runs code or would keep running after you stop it, and before code it can't read. If you asked for exactly that
-  command and it only deletes or overwrites data, publishes something or changes the system, and Ember isn't running
-  as an administrator, it tells you instead and gives you 4 seconds to stop it.
+  and runs code or would keep running after you stop it, and before code it can't read, even if you asked for it.
 - **Assisted** is Interactive with a check: before Ember asks, a lighter AI model reads the step against what you
   asked, in your own words. When it matches, Ember goes ahead and tells you, a risky step or a dangerous command
   included, a command as root or an administrator too, and an extension's tool that changes or sends something;
@@ -467,10 +493,10 @@ other side** in the handle's menu. The task cards go with it, and on Linux Ember
 The AI model never types or sees a password or a card number. In Autopilot, when a task comes to a
 sign-in, a card or a contact field, Ember asks you once in its own **Secure Form**, keeps what you give it in its
 vault on this computer (locked with your computer's keyring, and bound to that one app or site) and fills it in there
-itself from then on. It fills nothing in your computer's own password prompts, and nothing in any other mode.
+itself from then on. Card security codes and passwords shorter than six characters cannot be filled safely; enter them yourself after stopping all Ember tasks. It fills nothing in your computer's own password prompts, and nothing in any other mode.
 
-- What it filled is hidden from then on in everything Ember reads, sends to the model, logs and records, and blacked
-  out of its screenshots.
+- Ember redacts filled values from text it sends to the model or writes to logs and records, and hides recognised
+  instances in screenshots. It cannot recognise every transformation or a value drawn without accessibility information.
 - Once Ember has filled something, it uses no extension until you start it again: what an extension reads could
   hold what was filled.
 - **Settings › Apps & privacy › Vault** lists what is kept (never the values) with **Forget**; Sign out and Forget
@@ -488,13 +514,8 @@ it means.
 - **Commands** run in Ember's own **Ember commands** window, never in your terminal, where you can watch and stop
   them. Most run straight away; one Ember doesn't know runs too, after it names it and gives you 4 seconds to stop
   it. In Interactive, the default, Ember stops and asks before anything that deletes or overwrites data, pushes or
-  publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code. When you asked for
-  exactly that yourself ("delete build/", "can you delete build/?", but not a question, a how-to or something already
-  done) and it only deletes or overwrites data, publishes something or changes the system, it says so and gives you 4
-  seconds to stop it instead; one that touches passwords or keys or downloads and runs code still asks. Assisted and
-  Autopilot ask less (**How Ember asks**, above). Asked for by voice, such a command asks instead on Windows, on
-  macOS and on Linux without parec, where Ember can't tell your voice from what your speakers play, and wherever you
-  said it without Ember's name while other sound plays. It reads a shell
+  publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code, even if you asked for
+  it. Assisted and Autopilot ask less (**How Ember asks**, above). It reads a shell
   script before running it: in Interactive a script that does any of that asks, and so does one it can't read in full,
   as most real build and install scripts are. It never runs a command that would read or change its own safety
   settings, records or programs, or press keys in its own windows.

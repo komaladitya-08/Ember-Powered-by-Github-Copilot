@@ -223,7 +223,7 @@ describe.skipIf(!available && !required)("the UI Automation bridge on a real Win
 
   it("starts with a ready line and Per-Monitor-V2 DPI awareness, compiling into the cache the first time", async () => {
     const start = Date.now();
-    const first = new UiaBridge(SCRIPT, bridgeEnv(process.env, { EMBER_UIA_CACHE: cache }));
+    const first = new UiaBridge(SCRIPT, bridgeEnv(process.env, { EMBER_UIA_CACHE: cache, EMBER_UIA_STARTUP_OBSERVE: "1" }));
     try {
       const ready = await first.ready;
       coldMs = Date.now() - start;
@@ -249,14 +249,18 @@ describe.skipIf(!available && !required)("the UI Automation bridge on a real Win
     expect(firstExit.code).toBe(0);
     expect(firstExit.lineMs, "the exit line").not.toBeNull();
     expect(firstExit.ms).toBeLessThan(2000);
+    expect(first.startupStage).toBe(25);
     expect(first.strayLines).toEqual([]);
   });
 
   it("starts again quickly from its cached build", async () => {
     const start = Date.now();
-    bridge = new UiaBridge(SCRIPT, bridgeEnv(process.env, { EMBER_UIA_CACHE: cache }));
+    const env = bridgeEnv(process.env, { EMBER_UIA_CACHE: cache });
+    delete env.EMBER_UIA_STARTUP_OBSERVE;
+    bridge = new UiaBridge(SCRIPT, env);
     await bridge.ready;
     const warmMs = Date.now() - start;
+    expect(bridge.startupStage).toBe(0);
     expect(warmMs, `cold ${coldMs} ms, warm ${warmMs} ms`).toBeLessThan(Math.max(coldMs, 1));
     expect(warmMs).toBeLessThan(10_000);
   });
@@ -521,6 +525,12 @@ describe.skipIf(!available && !required)("the UI Automation bridge on a real Win
     const inside = await ui().call<{ nodes: RawNode[] }>("snapshot", { handle: dialog.h, deadlineMs: 2000 });
     const ok = inside.nodes.find(n => n.controlType === "Button" && n.name === "OK");
     expect(ok, shown(inside.nodes)).toBeTruthy();
+    expect(dialog.owner).toBe(main().hwnd);
+    expect(await ui().call("perform", { handle: ok!.h, op: "focus", deadlineMs: 2000 })).toEqual({ ok: true });
+    const focused = await ui().call<{ element: RawNode | null; window: number | null; hwnd: number | null }>("focused", { deadlineMs: 2000 });
+    expect(focused.element).toMatchObject({ runtimeId: ok!.runtimeId, hasKeyboardFocus: true });
+    expect(focused.window).toBeGreaterThan(0);
+    expect(focused.hwnd).toBe(dialog.hwnd);
     expect(await ui().call("perform", { handle: ok!.h, op: "invoke", deadlineMs: 2000 })).toEqual({ ok: true });
     await waitFor("the dialog to close", async () => {
       const { windows } = await ui().call<{ windows: UiaWindow[] }>("topWindows", { pid: main().pid, deadlineMs: 2000 });

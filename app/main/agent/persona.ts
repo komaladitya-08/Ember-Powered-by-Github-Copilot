@@ -106,6 +106,10 @@ export function emberSections(identity: string, tools: string, closing: string):
  * The conductor's system prompt on an OS (`words`, default Linux's: the prompt as before the port), promising what
  * `caps` allows (default nothing: today's prompt).
  */
-export function emberSystemMessage(words: PlatformWords = PLATFORM_WORDS.linux, caps: PromptCaps = NO_CAPS): SystemMessageCustomizeConfig {
-  return { mode: "customize", sections: emberSections(`${identity(words, caps)}\n\n${TONE}`, toolRules(words, caps), CLOSING) };
+export function emberSystemMessage(words: PlatformWords = PLATFORM_WORDS.linux, caps: PromptCaps = NO_CAPS, coding = false): SystemMessageCustomizeConfig {
+  const base = identity(words, caps);
+  const intro = coding ? base.replace("You help in two ways:", "You help in three ways:\n- Coding: use the selected project workspace to develop, test and review code.")
+    .replace(NO_COMMANDS, "You can hand coding work to the selected project workspace. You do not edit files or run commands yourself.")
+    .replace(COMMANDS_OFF, "You can hand coding work to the selected project workspace; its command permissions still apply. You do not edit files or run commands yourself.") : base;
+  return { mode: "customize", sections: emberSections(`${intro}\n\n${TONE}`, toolRules(words, caps), CLOSING) };
 }

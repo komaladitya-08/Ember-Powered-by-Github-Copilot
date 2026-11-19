@@ -212,9 +212,9 @@ const CLOSE_ID = "conn:close";
 const CARD_UNSHOWN = "Ember couldn't show the card that asks you first, so nothing changed.";
 
 /** Ember's own paths on this computer (§3.6.2): its data, its install, the administrator's policy folder. */
-export function emberPathsOf(o: { os: OS; userData: string; resourcesPath: string; packaged: boolean; env: NodeJS.ProcessEnv }): string[] {
+export function emberPathsOf(o: { os: OS; userData: string; resourcesPath: string; packaged: boolean; env: NodeJS.ProcessEnv; emberPaths?: readonly string[] }): string[] {
   const p = o.os === "win32" ? pathWin32 : pathPosix;
-  const out = [o.userData];
+  const out = [o.userData, ...(o.emberPaths ?? [])];
   if (o.packaged) out.push(o.os === "darwin" ? p.resolve(o.resourcesPath, "..", "..") : p.dirname(o.resourcesPath));
   if (o.os === "linux") {
     out.push("/opt/ember", "/etc/ember");
@@ -417,6 +417,8 @@ export interface TargetsDepsExtra {
 
 /** What the runtime offers main beyond TargetsRuntime (an extension of the contract). */
 export interface TargetsRuntimeExtra {
+  /** Ask a model's clarification through Ember's own window; null means it was cancelled or unavailable. */
+  codingClarify(request: { question: string; choices?: string[]; allowFreeform?: boolean }, signal: AbortSignal): Promise<{ answer: string; wasFreeform: boolean } | null>;
   /** The existing command flow for Home project work, always on this computer. */
   localProjectCommands(): CommandService | null;
   /** Under a question shown in a window of Ember's own, how to reach that window from the keyboard (target-copy's panelHint). */
@@ -553,7 +555,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   const promptWindow = parts.promptWindow({ create: deps.windows.prompt, ipc: deps.ipc, log: log.child("prompt-window"), os: deps.os, notify: deps.notify });
 
   // ── This computer's commands ──
-  const emberPaths = emberPathsOf({ os: deps.os, userData: deps.userData, resourcesPath: deps.resourcesPath, packaged: deps.packaged, env: parts.env });
+  const emberPaths = emberPathsOf({ os: deps.os, userData: deps.userData, resourcesPath: deps.resourcesPath, packaged: deps.packaged, env: parts.env, emberPaths: deps.emberPaths });
   const emberPids = (): number[] => [...new Set([...safeList(deps.emberPids), ...safeList(parts.ownPids), ...safeList(parts.wslHelpers.pids)].filter(p => Number.isInteger(p) && p > 0))];
   let extraPath: string[] = [];
   try { extraPath = deps.extraPath(); } catch (err) { log.warn("targets.extra_path_failed", { err }); }
@@ -2056,6 +2058,21 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       const r = await turnOnLinuxAccessibility(svc.runner, name);
       log.info("targets.wsl_a11y_fix", { ok: r.ok });
       return r;
+    },
+    codingClarify: async (request, signal) => {
+      if (disposed || signal.aborted) return null;
+      const id = `coding-question-${crypto.randomUUID()}`;
+      const dismiss = () => promptWindow.dismiss(id);
+      signal.addEventListener("abort", dismiss, { once: true });
+      try {
+        if (signal.aborted) return null;
+        const result = await promptWindow.ask({ id, kind: "clarification", question: request.question,
+          ...(request.choices ? { choices: request.choices } : {}), allowFreeform: request.allowFreeform !== false });
+        if (signal.aborted || !result.ok || typeof result.value !== "string") return null;
+        return { answer: result.value, wasFreeform: result.choice === undefined };
+      } finally {
+        signal.removeEventListener("abort", dismiss);
+      }
     },
     dispose: async () => {
       if (disposed) return;

@@ -604,8 +604,6 @@ export function bzip2Kernel() {
   return { decodeBlock, decodeTwo, unrleStart, unrle, unrleDone, finish };
 }
 
-export type Bzip2Kernel = ReturnType<typeof bzip2Kernel>;
-
 /** Block magic (pi) and end-of-stream magic (sqrt pi), as 48-bit numbers. */
 const BLOCK_MAGIC = 0x314159265359;
 const END_MAGIC = 0x177245385090;

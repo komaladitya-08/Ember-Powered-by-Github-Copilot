@@ -25,7 +25,7 @@ const box = (o: Partial<SecretBox> = {}): SecretBox => ({
 const GITHUB: VaultDestination = { site: "https://github.com" };
 const MAIL: VaultDestination = { app: "thunderbird" };
 
-async function make(o: { box?: Partial<SecretBox> } = {}) {
+async function make(o: { box?: Partial<SecretBox>; filling?: (part: string, value: string) => void | Promise<void> } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-vault-use-"));
   dirs.push(dir);
   const file = path.join(dir, VAULT_FILE);
@@ -36,6 +36,7 @@ async function make(o: { box?: Partial<SecretBox> } = {}) {
   const service = new VaultService({
     store, form: { ask: async () => "cancelled", stop: () => {} },
     allowed: () => state.allowed, consented: () => state.consented, autopilot: () => state.autopilot,
+    ...(o.filling ? { filling: o.filling } : {}),
     appName: k => k, log: { info: note, warn: note, error: note, debug: note } as never,
   });
   expect((await store.add("login", GITHUB, { user: "ada", password: CANARY })).ok).toBe(true);
@@ -44,6 +45,19 @@ async function make(o: { box?: Partial<SecretBox> } = {}) {
 }
 
 describe("using a vault entry for a fill (vault-2)", () => {
+  it("waits for the async fill barrier and hands nothing over if it fails", async () => {
+    let release!: () => void;
+    const ready = new Promise<void>(resolve => { release = resolve; });
+    const h = await make({ filling: async () => ready });
+    let filled = false;
+    const pending = h.service.use("login", "password", GITHUB, async () => { filled = true; return "done"; });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(filled).toBe(false);
+    release();
+    expect(await pending).toEqual({ ok: true, result: "done" });
+    const blocked = await make({ filling: async () => { throw new Error("coding did not stop"); } });
+    expect(await blocked.service.use("login", "password", GITHUB, async () => { throw new Error("must not fill"); })).toEqual({ ok: false, why: "off" });
+  });
   it("hands the part to the one call that fills, and to nothing else: not its answer, not a log line", async () => {
     const h = await make();
     const got: string[] = [];
@@ -53,6 +67,19 @@ describe("using a vault entry for a fill (vault-2)", () => {
     expect(JSON.stringify(h.logged)).not.toContain(CANARY);
     expect(h.logged).toContainEqual(["vault.used", { kind: "login", part: "password", site: true }]);
     expect((await h.service.use("login", "user", GITHUB, async v => v.length)).ok).toBe(true);
+  });
+
+  it("never hands short secrets to a field, including values in older entries", async () => {
+    const h = await make();
+    expect((await h.store.add("card", GITHUB, { cardNumber: "4242424242424242", expiry: "08/29", securityCode: "123" })).ok).toBe(true);
+    expect(await h.service.keep("login", { app: "new-short-login" }, { password: "aB1!x" })).toEqual({ ok: false, why: "invalid" });
+    expect((await h.store.add("login", { app: "short-login" }, { password: "aB1!x" })).ok).toBe(true);
+    const never = async () => { throw new Error("short secret was handed to a field"); };
+    expect(await h.service.use("card", "securityCode", GITHUB, never)).toEqual({ ok: false, why: "short" });
+    expect(await h.service.use("login", "password", { app: "short-login" }, never)).toEqual({ ok: false, why: "short" });
+    expect(await h.service.use("card", "cardNumber", GITHUB, async () => "filled")).toEqual({ ok: true, result: "filled" });
+    expect((await h.store.add("card", MAIL, { cardNumber: "4242424242424242", expiry: "08/29" })).ok).toBe(true);
+    expect(await h.service.use("card", "securityCode", MAIL, never)).toEqual({ ok: false, why: "short" });
   });
 
   it("opens only the entry bound to exactly that destination", async () => {

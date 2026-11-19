@@ -715,7 +715,7 @@ describe("a command the user said no to, through the flow (commands-remote-r9-8)
   });
 
   it("takes a Stop during the countdown for a no: the command isn't announced again", async () => {
-    const h = commands([], { words: "delete the build folder", go: false, review: false });
+    const h = commands([], { words: "delete the build folder", go: false });
     expect((await h.run("rm -rf build")).textResultForLlm).toMatch(/^The user stopped it before it ran\./);
     expect(h.st.announced).toEqual(["rm -rf build"]);
     expect((await h.run("rm -rf build")).textResultForLlm).toBe(CMD_REFUSED);

@@ -166,6 +166,89 @@ describe("AgentHost with routines", () => {
     expect(new RoutineBook({ file: routinesFile(dir) }).reminders()).toEqual([]);
     host.reminders.clear();
   });
+
+  it("does not overwrite stored reminders when restoring them fails", async () => {
+    const { AgentHost } = await import("../../app/main/agent/host");
+    const { SettingsStore } = await import("../../app/main/settings");
+    const dir = tmp();
+    const settings = new SettingsStore(path.join(dir, "settings.json"));
+    settings.load();
+    settings.update({ routines: { on: true, consent: { version: FEATURE_CONSENT_VERSION.routines, at: "2026-11-02T00:00:00.000Z" } } });
+    const routines = new RoutineBook({ file: routinesFile(dir) });
+    const saved = { id: "abc123", text: "stand up", at: Date.now() + 120_000, created: Date.now() };
+    routines.setReminders([saved]);
+    const read = vi.spyOn(routines, "reminders").mockImplementationOnce(() => { throw new Error("read failed"); });
+    const host = new AgentHost({ userData: dir, runtimePath: "/nowhere", settings, log: quiet, setState: () => undefined, onStatus: () => undefined, routines });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- start without Copilot
+    const keep = () => (host as any).keepRoutines();
+    keep();
+    expect(host.reminders.add("call Priya", Date.now() + 60_000, "remind me to call Priya")).toMatch(/Not set/);
+    expect(routines.reminders()).toEqual([saved]);
+    // Home's edit uses a separate save callback and must obey the same restore guard.
+    const live = { id: "def456", text: "call Priya", at: Date.now() + 180_000, created: Date.now() };
+    host.reminders.restore([live]);
+    expect(() => host.reminders.change(live, null, next => routines.setReminders(next))).toThrow(/could not be restored/);
+    expect(routines.reminders()).toEqual([saved]);
+    keep();
+    expect(host.reminders.list()).toEqual([saved, live]);
+    read.mockRestore();
+    host.reminders.clear();
+  });
+
+  it("retries clearing saved reminders after routines are turned off and a storage write fails", async () => {
+    const { AgentHost } = await import("../../app/main/agent/host");
+    const { SettingsStore } = await import("../../app/main/settings");
+    const dir = tmp();
+    const settings = new SettingsStore(path.join(dir, "settings.json"));
+    settings.load();
+    settings.update({ routines: { on: true, consent: { version: FEATURE_CONSENT_VERSION.routines, at: "2026-11-02T00:00:00.000Z" } } });
+    const routines = new RoutineBook({ file: routinesFile(dir) });
+    const host = new AgentHost({ userData: dir, runtimePath: "/nowhere", settings, log: quiet, setState: () => undefined, onStatus: () => undefined, routines });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- start without Copilot
+    const keep = () => (host as any).keepRoutines();
+    keep();
+    host.reminders.add("call Priya", Date.now() + 60_000, "remind me to call Priya");
+    settings.update({ routines: { on: false, consent: settings.get().routines.consent } });
+    const write = vi.spyOn(routines, "setReminders").mockImplementationOnce(() => { throw new Error("disk full"); });
+    keep();
+    expect(routines.reminders()).toHaveLength(1);
+    expect(host.getTranscript().at(-1)?.text).toMatch(/couldn't remove saved reminders/);
+    keep();
+    expect(routines.reminders()).toEqual([]);
+    write.mockRestore();
+    host.reminders.clear();
+  });
+
+  it("does not restore stale saved reminders after a failed restore and failed turn-off cleanup", async () => {
+    const { AgentHost } = await import("../../app/main/agent/host");
+    const { SettingsStore } = await import("../../app/main/settings");
+    const dir = tmp();
+    const settings = new SettingsStore(path.join(dir, "settings.json"));
+    settings.load();
+    settings.update({ routines: { on: true, consent: { version: FEATURE_CONSENT_VERSION.routines, at: "2026-11-02T00:00:00.000Z" } } });
+    const routines = new RoutineBook({ file: routinesFile(dir) });
+    const saved = { id: "abc123", text: "stand up", at: Date.now() + 120_000, created: Date.now() };
+    routines.setReminders([saved]);
+    vi.spyOn(routines, "reminders").mockImplementationOnce(() => { throw new Error("read failed"); });
+    const host = new AgentHost({ userData: dir, runtimePath: "/nowhere", settings, log: quiet, setState: () => undefined, onStatus: () => undefined, routines });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- start without Copilot
+    const keep = () => (host as any).keepRoutines();
+    keep();
+    expect(host.reminders.list()).toEqual([]);
+    const write = vi.spyOn(routines, "setReminders").mockImplementationOnce(() => { throw new Error("disk full"); })
+      .mockImplementationOnce(() => { throw new Error("still full"); });
+    settings.update({ routines: { on: false, consent: settings.get().routines.consent } });
+    keep();
+    settings.update({ routines: { on: true, consent: settings.get().routines.consent } });
+    keep();
+    expect(host.reminders.list()).toEqual([]);
+    expect(host.reminders.add("call Priya", Date.now() + 60_000, "remind me to call Priya")).toMatch(/Not set/);
+    keep();
+    expect(host.reminders.list()).toEqual([]);
+    expect(routines.reminders()).toEqual([]);
+    write.mockRestore();
+    host.reminders.clear();
+  });
 });
 
 describe("routines and the user's own words (audit of the conversation features)", () => {
@@ -558,7 +641,7 @@ describe("AgentHost's routines across a sign-out, a restart and another account 
   it("forgets routines and memory at sign-out even while the organisation has them off: main always gives the host both", () => {
     const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
     const at = main.indexOf("agent = new AgentHost({");
-    const opts = main.slice(at, at + 400);
+    const opts = main.slice(at, main.indexOf("cornerTasks: true", at));
     expect(opts).toMatch(/\n\s+memory: hostMemory,\n\s+routines: routineBook,/);
     // hostMemory is made once, unconditionally, from the one MemoryLearning (memory-learning.test.ts covers it).
     expect(main).toMatch(/\n {2}const hostMemory = \{\n {4}\.\.\.learning\.conductorMemory\(\),/);

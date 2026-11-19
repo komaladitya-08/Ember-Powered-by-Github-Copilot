@@ -584,7 +584,7 @@ describe("a program Ember doesn't know, named in the user's words (modes-y9-7)",
       ["frobnicate 8080", "run frobnicate on port 8080"], ["frobnicate db.test.example.com", "run frobnicate against db.test.example.com"],
       ["rails db:migrate", "run rails db:migrate"], ["stack exec -- hpack", "run stack exec hpack"]] as const) {
       const d = decide(cmd, { words });
-      expect(d.verdict, `${cmd} «${words}»`).toBe("announce");
+      expect(d.verdict, `${cmd} «${words}»`).toBe(d.classes.some(c => c !== "unknown") ? "ask" : "announce");
     }
   });
 });
@@ -697,7 +697,7 @@ describe("a deletion the user's words hold back or narrow in a later clause (com
       "delete the build folder and commit", "please delete the build folder now", "delete the build folder in this project", "first delete the build folder, then rebuild",
       // As earlier rounds decided and pinned (commands-remote-y7-6, x8-10): a word that only describes the thing, and the user's own computer.
       "delete the old build folder", "delete the build folder that is huge", "delete the build folder on my laptop"]) {
-      expect(decide("rm -rf build", { words }).verdict, words).toBe("announce");
+      expect(decide("rm -rf build", { words }).verdict, words).toBe("ask");
     }
   });
 });
@@ -1130,7 +1130,7 @@ describe("a deletion the user's words send to the trash or a stash (commands-cla
 
   it("still announces a deletion beside a folder named bin, and a step after it", () => {
     for (const words of ["delete the build folder", "delete the build folder and the bin folder too", "delete the build folder and run the tests"]) {
-      expect(decide("rm -rf build", { words }).verdict, words).toBe("announce");
+      expect(decide("rm -rf build", { words }).verdict, words).toBe("ask");
     }
   });
 });
@@ -1524,7 +1524,8 @@ describe("a word that sets a variable, handed to a program the user's words name
   it("still announces the program with a value that is a file in the folder, or with the word written out", () => {
     for (const [cmd, words] of [["frobnicate X=src/a.c", "run frobnicate"], ["frobnicate out=build/a.o", "run frobnicate"], ["frobnicate X=/tmp/x.so", "run frobnicate X=/tmp/x.so"],
       ["frobnicate CC=clang", "run frobnicate CC=clang"], ["frobnicate app:build", "run frobnicate app:build"], ["frobnicate src/main.c", "run frobnicate"]] as const) {
-      expect(decide(cmd, { words }).verdict, `${cmd} (${words})`).toBe("announce");
+      const d = decide(cmd, { words });
+      expect(d.verdict, `${cmd} (${words})`).toBe(d.classes.some(c => c !== "unknown") ? "ask" : "announce");
     }
     expect(decide("frobnicate.exe C:\\Users\\ana\\proj\\a.txt", { shell: "powershell", context: "win32", words: "run frobnicate" }).verdict).toBe("announce");
   });

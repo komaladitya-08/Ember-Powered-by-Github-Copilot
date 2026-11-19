@@ -98,6 +98,78 @@ h2[tabindex="-1"]:focus, .w-lead:focus { outline: none; }
 #project-question { width: 100%; resize: vertical; font: inherit; color: var(--fg); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-xs); padding: 8px; }
 #project-files, #project-folder, #project-previous-question { overflow-wrap: anywhere; }
 #project-command-form { display: grid; gap: 10px; }
+/* Project sessions use the same opaque controls as the conversation, with labels above their fields at every width. */
+#project-sessions form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; }
+#project-sessions :is(input[type="text"], textarea, select) {
+  width: 100%; min-width: 0; max-width: 100%; min-height: calc(32px * var(--text-scale));
+  padding: 6px 8px; border: 1px solid var(--control-edge); border-radius: var(--r-xs);
+  background: var(--surface-2); color: var(--fg); font: var(--type-body);
+}
+#project-sessions textarea { resize: vertical; }
+#project-sessions :is(input[type="text"], textarea, select):focus-visible { outline: none; box-shadow: var(--focus-ring); }
+#project-sessions :is(input[type="text"], textarea, select):disabled { opacity: 0.6; }
+#project-sessions > label { min-height: 0; padding-bottom: 6px; }
+#project-sessions > select { margin-bottom: 12px; }
+#project-sessions-goal-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+#project-sessions .agent-actions { min-width: 0; }
+#project-sessions .agent-actions .btn { max-width: 100%; overflow-wrap: anywhere; }
+#project-sessions-list { list-style: none; padding-inline: 0; }
+#project-sessions-list li { min-width: 0; padding-block: 12px; overflow-wrap: anywhere; }
+#project-sessions-list li:first-child { padding-top: 0; }
+#project-sessions-list li + li { border-top: 1px solid var(--line); }
+#project-sessions-list h4 { margin: 0; font: var(--type-headline); }
+#project-sessions-list p { margin: 6px 0 0; white-space: pre-wrap; }
+#project-sessions-list .agent-actions { margin-top: 8px; }
+#project-sessions-plans details + details { margin-top: 12px; }
+#project-sessions-plans :is(summary, li), #project-sessions-recovery { min-width: 0; overflow-wrap: anywhere; }
+#project-sessions-plans li { padding-block: 8px; }
+#project-sessions-plans h4, #project-sessions-recovery h4 { margin: 0; font: var(--type-headline); }
+#project-sessions-plans p { margin: 6px 0; white-space: pre-wrap; }
+#project-sessions-recovery:not([hidden]) { display: grid; gap: 8px; }
+/* Coding results stay in the project pane as plain reviewable content, with the original folder left untouched. */
+#project-coding { min-width: 0; }
+#project-coding :is(p, li, h4), #project-coding .agent-actions { min-width: 0; overflow-wrap: anywhere; }
+#project-coding .agent-actions .btn { max-width: 100%; overflow-wrap: anywhere; }
+#project-coding-results { list-style: none; padding-inline: 0; }
+#project-coding-results li { padding-block: 12px; }
+#project-coding-results li:first-child { padding-top: 0; }
+#project-coding-results li + li { border-top: 1px solid var(--line); }
+#project-coding :is(h4, p) { margin: 0; }
+#project-coding h4 { font: var(--type-headline); }
+#project-coding-results p { margin-top: 6px; white-space: pre-wrap; }
+#project-coding-results button { margin-top: 8px; }
+#project-coding-review:not([hidden]) { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+#project-coding-review ul { margin: 0; padding-inline-start: 20px; }
+#project-coding-review li + li { margin-top: 6px; }
+#project-coding-review li p { margin-top: 4px; white-space: pre-wrap; }
+#project-coding-continue-form:not([hidden]) { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; }
+#project-coding-continue-request {
+  width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; resize: vertical;
+  padding: 6px 8px; border: 1px solid var(--control-edge); border-radius: var(--r-xs);
+  background: var(--surface-2); color: var(--fg); font: var(--type-body);
+}
+#project-coding-continue-request:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+#project-coding-continue-request:disabled { opacity: 0.6; }
+#project-coding-patch {
+  max-width: 100%; max-height: 24em; margin: 0; padding: 10px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  border: 1px solid var(--control-edge); border-radius: var(--r-xs); background: var(--surface-2); color: var(--fg);
+  font: var(--type-footnote); font-family: var(--ember-mono);
+}
+#project-coding-patch:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+/* Saved coding drafts stay inert; their context and previews wrap within the Projects pane. */
+#coding-drafts, #coding-drafts-view:not([hidden]), #coding-drafts-save-form:not([hidden]) { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
+#coding-drafts :is(h5, p), #coding-drafts-save-form p { margin: 0; }
+#coding-drafts h5 { font: var(--type-callout); font-weight: 600; overflow-wrap: anywhere; }
+#coding-drafts-list { list-style: none; padding-inline: 0; margin: 0; }
+#coding-drafts-list > li { padding-block: 10px; }
+#coding-drafts-list > li + li { border-top: 1px solid var(--separator); }
+#coding-drafts :is(ul, ol) { min-width: 0; }
+#coding-drafts pre { max-width: 100%; max-height: 24em; margin: 0; padding: 10px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: var(--type-footnote); background: var(--surface-2); border: 1px solid var(--control-edge); border-radius: var(--r-xs); }
+#coding-drafts pre:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+@media (forced-colors: active) {
+  #project-sessions :is(input[type="text"], textarea, select), #project-sessions-list li + li { border-color: ButtonText; }
+  #project-coding-patch, #project-coding-continue-request, #project-coding-results li + li { border-color: ButtonText; }
+}
 #project-commands > summary, #project-workspaces > summary, #project-patch > summary { cursor: pointer; }
 /* A disclosure inside Projects (the patch, a command, saved workspaces): the fold's chevron, never the browser's
    triangle (home-12). */

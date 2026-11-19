@@ -1,6 +1,6 @@
 /**
- * Memory's model calls on Copilot (app/main/memory/learn.ts and refine.ts), built like the command reviewer
- * (reviewer.ts): each call is a session of its own, hardened, with no tools and only memory's instructions, deleted once
+ * Tool-free model calls on Copilot (memory, project review and task coordination), built like the command reviewer
+ * (reviewer.ts): each call is a session of its own, hardened, with no tools and only its caller's instructions, deleted once
  * it has answered, so no call hears the conversation or another call. No answer within its time, or a stop, is no
  * answer (null): memory learns nothing from it. A runtime that hangs while making the session counts too, because
  * Project keeps every control waiting on the call (main.ts `projectJob`).
@@ -12,7 +12,7 @@ import type { Logger } from "../logger";
 import type { OneShot } from "../memory/learn";
 import { hardenedSessionConfig, verifySessionTools } from "./session-config";
 
-/** How long one memory call may take (ms). */
+/** How long one memory or task-coordination call may take (ms). */
 export const ONE_SHOT_MS = 30_000;
 /** How long a project request may take (ms): up to 64 KiB of files, which a reasoning model can't read in 30 s. */
 export const PROJECT_SHOT_MS = 120_000;
@@ -34,7 +34,7 @@ function within<T>(work: Promise<T>, signal: AbortSignal, ms: number): Promise<T
 /** Why a call failed, as the session said it (`onFailure`): its error's words, type and status code, or that it took too long. */
 export interface OneShotFailure { message: string; errorType?: string; statusCode?: number; timedOut?: boolean }
 
-export function copilotOneShot(o: { client: CopilotClient; model: string | null; provider?: ProviderConfig; workDir: string; log: Logger; purpose?: "project"; onFailure?: (f: OneShotFailure) => void }): OneShot {
+export function copilotOneShot(o: { client: CopilotClient; model: string | null; provider?: ProviderConfig; workDir: string; log: Logger; purpose?: "project" | "coordination"; onFailure?: (f: OneShotFailure) => void }): OneShot {
   return async (system, prompt, signal) => {
     if (signal.aborted) return null;
     const purpose = o.purpose ?? "memory";
@@ -50,7 +50,7 @@ export function copilotOneShot(o: { client: CopilotClient; model: string | null;
         workingDirectory: o.workDir,
         onPermissionRequest: () => ({ kind: "reject", feedback: "This session has no tools." }),
       });
-      const creating = o.client.createSession(purpose === "project" ? { ...config, infiniteSessions: { enabled: false } } : config);
+      const creating = o.client.createSession(purpose === "memory" ? config : { ...config, infiniteSessions: { enabled: false } });
       making = creating;
       const session = await within(creating, signal, SESSION_START_MS);
       made = true;
@@ -59,7 +59,7 @@ export function copilotOneShot(o: { client: CopilotClient; model: string | null;
       if (signal.aborted) return null;
       const abort = () => { void session.abort().catch(() => undefined); };
       signal.addEventListener("abort", abort, { once: true });
-      if (o.onFailure && typeof session.on === "function") session.on(e => {
+      if ((o.onFailure || purpose === "coordination") && typeof session.on === "function") session.on(e => {
         if (e.type !== "session.error") return;
         const d = e.data as { errorType?: unknown; statusCode?: unknown };
         said = { ...(typeof d.errorType === "string" ? { errorType: d.errorType } : {}), ...(typeof d.statusCode === "number" ? { statusCode: d.statusCode } : {}) };
@@ -77,6 +77,12 @@ export function copilotOneShot(o: { client: CopilotClient; model: string | null;
       const timedOut = /^one-shot timed out$|^Timeout after \d+ms/.test(message);
       // A project's log keeps the cause's kind only, never its words: the service may quote the files it was sent.
       if (purpose === "project") o.log.warn("project.model_failed", { errorType: said.errorType, statusCode: said.statusCode, timedOut });
+      else if (purpose === "coordination") {
+        // A service's arbitrary error kind may quote task data too. Only recognised kinds and HTTP codes leave here.
+        const errorType = ["authentication", "rate_limit", "network", "timeout", "server_error", "invalid_request"].includes(said.errorType ?? "") ? said.errorType : undefined;
+        const statusCode = Number.isInteger(said.statusCode) && said.statusCode! >= 100 && said.statusCode! <= 599 ? said.statusCode : undefined;
+        o.log.warn("coordination.model_failed", { errorType, statusCode, timedOut });
+      }
       else o.log.warn("memory.model_failed", { err: message });
       o.onFailure?.({ message, ...said, ...(timedOut ? { timedOut } : {}) });
       return null;

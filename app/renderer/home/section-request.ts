@@ -59,6 +59,19 @@ export function sectionRequest(value: string): SectionRequest {
   return { section: SECTIONS[value] ?? section, control: CONTROLS[value] ?? null };
 }
 
+/** Ends main's landing after setup. Main waits for Copilot first, up to 20 s: by then the person may have moved on. */
+export const AFTER_SETUP = ":after-setup";
+
+/**
+ * The request a landing from main asks for, or null when it should be left alone: a landing after setup moves focus
+ * only while focus is still where Start left it. Later, it would pull a keyboard or screen-reader user away from what
+ * they went on to (measured in the packaged Windows journeys: focus left the provider switch for a heading).
+ */
+export function landingRequest(value: string, focusStayed: boolean): string | null {
+  if (!value.endsWith(AFTER_SETUP)) return value;
+  return focusStayed ? value.slice(0, -AFTER_SETUP.length) : null;
+}
+
 /** The request that waits for its section to show; at most one, the latest. */
 export class PendingSection {
   private value: string | null = null;

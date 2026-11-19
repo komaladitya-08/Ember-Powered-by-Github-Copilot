@@ -40,7 +40,7 @@ export class HandleWindow {
    * workspace); `o.forward`: click-through forwards the pointer's moves (macOS).
    */
   constructor(private settings: () => Settings, readonly fallback: boolean, private o: { floating?: FloatingWindow; forward?: boolean } = {}) {
-    const size = fallback ? CARD : this.pill();
+    const size = this.fitted(fallback ? CARD : this.pill());
     this.pillWidth = size.width;
     this.win = new BrowserWindow({
       ...size,
@@ -131,8 +131,8 @@ export class HandleWindow {
    */
   private cardMax(): number {
     const b = this.last?.bubble;
-    if (!b?.visible || (!b.whole && b.mood !== "attention")) return CARD_MAX;
-    return Math.max(CARD_MAX, Math.min(640, screen.getPrimaryDisplay().workArea.height - 24));
+    const limit = b?.visible && (b.whole || b.mood === "attention") ? 640 : CARD_MAX;
+    return Math.max(1, Math.min(limit, screen.getPrimaryDisplay().workArea.height - 24));
   }
 
   /** The handle's place on screen (Ember keeps off it). */
@@ -164,6 +164,10 @@ export class HandleWindow {
 
   /** The pill's width as last placed. */
   private pillWidth = PILL.width;
+  private fitted(size: { width: number; height: number }): { width: number; height: number } {
+    const area = screen.getPrimaryDisplay().workAreaSize;
+    return { width: Math.max(1, Math.min(size.width, area.width)), height: Math.max(1, Math.min(size.height, area.height)) };
+  }
   /** The corner it was last placed in. */
   private placedAt: HandlePosition | undefined;
 
@@ -187,7 +191,7 @@ export class HandleWindow {
 
   private reposition = (): void => {
     if (this.win.isDestroyed()) return;
-    const size = this.fallback ? { width: CARD.width, height: this.cardHeight } : this.compact ? TAB : this.pill();
+    const size = this.fitted(this.fallback ? { width: CARD.width, height: Math.min(this.cardHeight, this.cardMax()) } : this.compact ? TAB : this.pill());
     if (!this.fallback && !this.compact) this.pillWidth = size.width;
     this.win.setBounds({ ...size, ...this.corner(size) });
   };

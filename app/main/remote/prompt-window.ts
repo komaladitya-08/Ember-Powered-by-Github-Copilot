@@ -2,11 +2,13 @@
  * The prompt window's controller ("Ember needs you", §8.6): one card at a time for what an SSH connection needs from the
  * user (a
  * host key to trust, a password, a key's passphrase, a code, a security key touch, any other prompt) and for the
- * first-use consent cards (§8.4), whether a Confirmer question (showConsent) or asked directly (ask, settings' switches).
+ * first-use consent cards (§8.4), whether a Confirmer question (showConsent) or asked directly (ask, settings' switches),
+ * and coding-agent clarifications whose answers go to the model.
  *
  * Plain Node (L13): the window comes from `create()` (windows.ts's createPromptWindow, S0b), the IPC from `ipc`. An
  * answer is taken only from this window's own page, only for the card on screen; a secret goes only to whoever asked
- * for it (the askpass server, through `ask`'s promise) and is never logged or kept. A consent yes counts only with the
+ * for it (the askpass server, through `ask`'s promise) and is never logged or kept. Clarification answers return to the
+ * coding session. A consent yes counts only with the
  * hash of the exact text that was shown, and a consent card whose hash doesn't match its own text is never shown.
  */
 
@@ -74,7 +76,7 @@ const QUOTE_FITS = 1;
  * (commands-remote-r4); fitBounds then keeps it inside the work area.
  */
 export const promptSizeOf = (card: PromptCard): PromptSize => {
-  if (card.kind === "consent" || card.kind === "consent-direct" || card.kind === "approval") return PROMPT_SIZE.consent;
+  if (card.kind === "consent" || card.kind === "consent-direct" || card.kind === "approval" || card.kind === "clarification") return PROMPT_SIZE.consent;
   if (card.kind !== "secret") return PROMPT_SIZE.card;
   const lines = card.prompt.split(/\r?\n/).reduce((n, l) => n + Math.max(1, Math.ceil(l.length / QUOTE_COLS)), 0);
   const extra = lines - QUOTE_FITS;
@@ -83,11 +85,13 @@ export const promptSizeOf = (card: PromptCard): PromptSize => {
 
 /** Bounds for a window of `size`, centred where the window is now, inside `area` (with `margin` where there is room). */
 export function fitBounds(now: Rect, size: { width: number; height: number }, area: Rect, margin = 16): Rect {
-  const width = Math.max(1, Math.min(size.width, area.width - 2 * margin));
-  const height = Math.max(1, Math.min(size.height, area.height - 2 * margin));
+  const mx = Math.max(0, Math.min(margin, Math.floor((area.width - 1) / 2)));
+  const my = Math.max(0, Math.min(margin, Math.floor((area.height - 1) / 2)));
+  const width = Math.max(1, Math.min(size.width, area.width - 2 * mx));
+  const height = Math.max(1, Math.min(size.height, area.height - 2 * my));
   const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), Math.max(lo, hi));
-  const x = clamp(Math.round(now.x + now.width / 2 - width / 2), area.x + margin, area.x + area.width - margin - width);
-  const y = clamp(Math.round(now.y + now.height / 2 - height / 2), area.y + margin, area.y + area.height - margin - height);
+  const x = clamp(Math.round(now.x + now.width / 2 - width / 2), area.x + mx, area.x + area.width - mx - width);
+  const y = clamp(Math.round(now.y + now.height / 2 - height / 2), area.y + my, area.y + area.height - my - height);
   return { x, y, width, height };
 }
 
@@ -150,6 +154,9 @@ export function validPromptCard(c: unknown): c is PromptCard {
         && (c.via === undefined || str(c.via, 255, 1)) && (c.login === undefined || str(c.login, 255, 1)) && (c.unmarked === undefined || c.unmarked === true);
     case "consent": return typeof c.n === "number" && Number.isSafeInteger(c.n) && c.n >= 0 && validConsent(c.consent);
     case "consent-direct": return validConsent(c.consent);
+    case "clarification": return str(c.question, 2000, 1) && typeof c.allowFreeform === "boolean" &&
+      (c.choices === undefined || (Array.isArray(c.choices) && c.choices.length <= 20 && c.choices.every(v => str(v, 200, 1)))) &&
+      (c.allowFreeform || (Array.isArray(c.choices) && c.choices.length > 0));
     case "approval": return Number.isSafeInteger(c.n) && (c.n as number) >= 0 && str(c.title, 2000, 1) && str(c.prompt, 100_000, 1)
       && (c.detail === undefined || str(c.detail, 1_000_000)) && (c.where === undefined || str(c.where, 500))
       && (c.risky === undefined || typeof c.risky === "boolean") && (c.context === undefined || str(c.context, 2000))
@@ -295,7 +302,7 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
     if (focusTimer) clearTimeout(focusTimer);
     focusTimer = null;
     const card = e.card;
-    if (card.kind !== "secret" || !o.notify || warned.has(card.id)) return;
+    if ((card.kind !== "secret" && !(card.kind === "clarification" && card.allowFreeform)) || !o.notify || warned.has(card.id)) return;
     focusTimer = setTimeout(() => {
       focusTimer = null;
       if (disposed || queue[0] !== e || live() !== w) return;
@@ -303,7 +310,7 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
       try { has = w.isFocused(); } catch { has = false; } // a window that can't say has to be clicked
       if (has) return;
       warned.add(card.id);
-      try { o.notify?.("Click Ember's window before you type", `Ember is asking for ${ASKS_FOR[card.secret]}, and the keyboard is still in another app.`); } catch (err) { note("warn", "prompt.notify_failed", { err }); }
+      try { o.notify?.("Click Ember's window before you type", `Ember is asking for ${card.kind === "secret" ? ASKS_FOR[card.secret] : "an answer"}, and the keyboard is still in another app.`); } catch (err) { note("warn", "prompt.notify_failed", { err }); }
     }, PROMPT_FOCUS_CHECK_MS);
   }
 
@@ -389,6 +396,15 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
         const v = raw.value;
         const good = raw.ok && typeof v === "string" && v.length > 0 && v.length <= SECRET_MAX && !/[\0\r\n]/.test(v);
         finish(head, good ? { id, ok: true, value: v as string } : { id, ok: false });
+        return;
+      }
+      if (card.kind === "clarification") {
+        const choice = raw.choice;
+        const index = typeof choice === "number" && Number.isSafeInteger(choice) && choice >= 0 && choice < (card.choices?.length ?? 0) ? choice : null;
+        const value = raw.value;
+        const selected = index !== null && value === card.choices![index];
+        const freeform = choice === undefined && card.allowFreeform && typeof value === "string" && value.trim().length > 0 && value.length <= SECRET_MAX && !/[\0\r\n]/.test(value);
+        finish(head, raw.ok && (selected || freeform) ? { id, ok: true, value: value as string, ...(selected ? { choice: index } : {}) } : { id, ok: false });
         return;
       }
       // A host key is trusted only by its own button; a changed key and a touch card can only be closed.

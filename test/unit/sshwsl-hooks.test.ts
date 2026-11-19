@@ -39,7 +39,7 @@ vi.mock("electron", () => ({
   },
   // The command window's close guard listens for Ember quitting (review #262); its placement reads the screen (#272).
   app: { on: () => undefined, removeListener: () => undefined },
-  screen: {},
+  screen: { getPrimaryDisplay: () => ({ workAreaSize: { width: 1920, height: 1080 } }), on() {}, off() {} },
 }));
 
 /** targetRules as main's policy calls it: S0a's stub, unless a test puts a rule of its own in. */
@@ -704,7 +704,8 @@ describe("the command and prompt windows' factories (§3.10, §8.6)", () => {
       expect(options).not.toHaveProperty("focusable");
       expect(String((options.webPreferences as { preload: string }).preload).split(path.sep).slice(-2)).toEqual(["preload", "prompt.cjs"]);
       expect(calls.find(c => c[0] === "loadURL")?.[1]).toMatch(/^file:\/\/.*\/renderer\/prompt\/index\.html$/);
-      expect(calls).toContainEqual(["setAlwaysOnTop", true, "floating"]);
+      // Windows: a level Electron does not put behind the taskbar, as the command window uses (4ae56bdc).
+        expect(calls).toContainEqual(["setAlwaysOnTop", true, os === "win32" ? "pop-up-menu" : "floating"]);
       expect(calls.some(c => c[0] === "setContentProtection" && c[1] === true), os).toBe(os !== "linux");
     }
   });
@@ -717,7 +718,8 @@ describe("the command and prompt windows' factories (§3.10, §8.6)", () => {
         expect(options).toMatchObject({ width: 440, height, useContentSize: true, resizable: false, minimizable: false, maximizable: false, title: "Ember", show: false, alwaysOnTop: true, skipTaskbar: false, webPreferences: secure });
         expect(String((options.webPreferences as { preload: string }).preload).split(path.sep).slice(-2)).toEqual(["preload", "vault.cjs"]);
         expect(calls.find(c => c[0] === "loadURL")?.[1]).toMatch(/^file:\/\/.*\/renderer\/vault\/index\.html$/);
-        expect(calls).toContainEqual(["setAlwaysOnTop", true, "floating"]);
+        // Windows: a level Electron does not put behind the taskbar, as the command window uses (4ae56bdc).
+        expect(calls).toContainEqual(["setAlwaysOnTop", true, os === "win32" ? "pop-up-menu" : "floating"]);
         // Left out of screen captures where the OS can (Linux: Ember never captures its own windows).
         expect(calls.some(c => c[0] === "setContentProtection" && c[1] === true), os).toBe(os !== "linux");
         expect(typeof win.takeKeyboard).toBe("function");

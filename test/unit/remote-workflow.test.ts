@@ -248,6 +248,6 @@ describe("the local commands suite on a Mac, where commands run in zsh (install-
     expect(suite).toContain('const zsh = (await shellHere()) === "zsh";');
     // The macOS job still runs that suite, required.
     const mac = wf.slice(wf.indexOf("\n  ssh-macos:\n"));
-    expect(mac).toMatch(/run: node scripts\/run-integration\.mjs --allow-missing test\/integration\/commands-local\.test\.ts test\/integration\/commands-flow-local\.test\.ts\n\s+env:\n\s+EMBER_COMMANDS_TEST: "1"/);
+    expect(mac).toMatch(/run: node scripts\/run-integration\.mjs test\/integration\/commands-local\.test\.ts test\/integration\/commands-flow-local\.test\.ts\n\s+env:\n\s+EMBER_COMMANDS_TEST: "1"/);
   });
 });

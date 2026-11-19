@@ -1760,6 +1760,7 @@ describe("Conductor: Stop", () => {
   it("Stop with nothing running doesn't refuse the next task", async () => {
     const { c, started, startTask } = await conductor();
     await c.abort();
+    await c.ask("turn on night light");
     expect(await startTask("turn on night light")).toBe("started");
     expect(started).toEqual(["turn on night light"]);
   });
@@ -1770,7 +1771,7 @@ describe("Conductor: Stop", () => {
     await c.abort();
     expect(await startTask("tidy up")).toMatch(/just stopped everything/);
     session.emit("session.idle", { aborted: true });
-    expect(await startTask("tidy up")).toBe("started");
+    expect(await startTask("tidy up")).toMatch(/No user request/);
     await c.ask("tidy up again");
     await c.abort();
     await c.ask("no, do it");
@@ -2491,6 +2492,31 @@ describe("review round 6: a request sent while the conversation is busy waits fo
   }
   const mail = { target: { pid: 1, title: "Mail" }, text: "<screen>Mail: Inbox (3)</screen>" };
   const terminal = { target: { pid: 2, title: "Terminal" }, text: "<screen>Terminal</screen>" };
+
+  it("does not launch coding or mixed tasks while private-file protection is unverified, while desktop tasks remain available", async () => {
+    const workspace = { path: os.tmpdir(), current: () => true };
+    const { host, specs, tool } = await withTasks({ codingWorkspace: () => workspace });
+    await host.ask("Fix my code and open the app");
+    const sessionsBefore = sim.sessions.length;
+    expect(await tool("start_coding")({ goal: "Fix my code" })).toMatch(/coding work is temporarily unavailable/i);
+    expect(await tool("start_mixed")({ first: "coding", firstGoal: "Fix my code", secondGoal: "Open the app" })).toMatch(/coding work is temporarily unavailable/i);
+    expect(specs).toEqual([]);
+    expect(sim.sessions).toHaveLength(sessionsBefore);
+    expect(await tool("start_task")({ goal: "Open the app" })).toMatch(/started/i);
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    await host.stop();
+  });
+
+  it("refuses even a directly queued coding worker while its file-access gate is closed", async () => {
+    const { host } = makeHost({ hands: hands(), codingWorkspace: () => ({ path: os.tmpdir(), current: () => true }) });
+    await host.start(TOKEN, "stored");
+    const sessionsBefore = sim.sessions.length;
+    const task = host.tasks!.start("Fix my code", { codingWorkspace: { path: os.tmpdir(), current: () => true } });
+    await vi.waitFor(() => expect(task.status).toBe("failed"));
+    expect(task.result?.summary).toMatch(/coding work is temporarily unavailable/i);
+    expect(sim.sessions).toHaveLength(sessionsBefore);
+    await host.stop();
+  });
 
   it.each([
     ["first request", "second request"],
@@ -5769,6 +5795,7 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
     const slice = (from: string, to: string) => { const a = main.indexOf(from); expect(a).toBeGreaterThan(-1); return main.slice(a, main.indexOf(to, a)); };
     const handlerOf = (src: string, deps: Record<string, unknown>) => {
       let run!: () => Promise<void>;
+      deps = { forgetCurrentCoding: async () => undefined, resetProjectCoding: privateCodingReset, ...deps };
       const names = Object.keys(deps);
       new Function("ipcMain", "IPC", "guard", ...names, `let signOuts = 0, accountErasures = 0, signInAbort = null, currentToken = "t", askHistory = [], memoryEpoch = 0;\n${src}`)(
         { handle: (_c: string, h: () => Promise<void>) => { run = h; } }, { signOut: "s", memoryForgetAll: "m" }, (fn: unknown) => fn, ...names.map(n => deps[n]));
@@ -5780,6 +5807,9 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
     let sessionWordsForgotten = 0;
     /** How often the vault was forgotten whole (vault-6). */
     let vaultForgotten = 0;
+    /** The new private copies/reviews cleanup remains an awaited part of these actual main handlers. */
+    const privateCodingReset = vi.fn<() => Promise<void>>(async () => undefined);
+    beforeEach(() => { privateCodingReset.mockReset().mockResolvedValue(undefined); });
     const signOutHandler = (agent: AgentHost) => handlerOf(slice("ipcMain.handle(IPC.signOut,", "ipcMain.handle(IPC.cancelSignIn,"), {
       agent, tokens: { clear() {} }, keeper: { use() {} }, providers: { forget() {} }, refusedTokens: { clear() {} }, resetAnswerSpeech() {},
       forgetProject: (what: string) => { projectForgot.push(what); }, forgetSessionWords: () => { sessionWordsForgotten++; },
@@ -5799,6 +5829,7 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       sessionWordsForgotten = 0;
       vaultForgotten = 0;
       await signOutHandler(k.host)();
+      expect(privateCodingReset).toHaveBeenCalledOnce();
       expect(projectForgot).toEqual(["all"]);
       // And what the vault keeps goes with the account (vault-6).
       expect(vaultForgotten).toBe(1);
@@ -5817,6 +5848,7 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       await k.host.start(TOKEN, "stored");
       expect(fs.existsSync(k.file)).toBe(true); // an unknown account shows and touches nothing
       await signOutHandler(k.host)();
+      expect(privateCodingReset).toHaveBeenCalledOnce();
       expect(fs.existsSync(k.file)).toBe(false);
       await k.host.stop();
     });
@@ -5829,20 +5861,48 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
       say("old answer");
       await k.store.flush();
       const calls: string[] = [];
+      privateCodingReset.mockImplementationOnce(async () => { calls.push("private coding"); });
+      k.host.projectSessionsAction({ action: "create", name: "Forget this project" });
       const run = handlerOf(slice("ipcMain.handle(IPC.memoryForgetAll,", '// "Tell Ember about you"'), {
+        projectJob: { abort: () => calls.push("project.stop") },
+        projectSessionStore: { forgetAll: async (current: () => boolean) => { expect(current()).toBe(true); calls.push("projects"); } },
         learning: { forgetAll: () => calls.push("learning") }, agent: k.host, forgetSessionWords: () => calls.push("session words"),
         memoryOwner: { clear: () => calls.push("owner.clear"), refresh: () => undefined }, memoryConfigured: () => true, publishMemoryOwner: () => undefined,
         vault: { forgetAll: () => { calls.push("vault"); return true; } },
       });
       await run();
       // The vault goes too (vault-6).
-      expect(calls).toEqual(["learning", "session words", "vault", "owner.clear"]);
+      expect(calls).toEqual(["project.stop", "projects", "private coding", "learning", "session words", "vault", "owner.clear"]);
+      expect(privateCodingReset).toHaveBeenCalledOnce();
+      expect(k.host.projectSessionsState().projects).toEqual([]);
       expect(fs.existsSync(k.file)).toBe(false);
       expect(k.host.getTranscript().map(e => e.text)).toEqual(["old question", "old answer"]);
       await k.host.ask("after forgetting");
       say("answered");
       await k.store.flush();
       expect(JSON.parse(fs.readFileSync(k.file, "utf8")).entries.map((e: { text: string }) => e.text)).toEqual(["after forgetting", "answered"]);
+      await k.host.stop();
+    });
+
+    it("Sign out waits for private coding cleanup before reporting success", async () => {
+      const k = kept(tmpDir()); await k.host.start(TOKEN, "stored");
+      let release!: () => void;
+      privateCodingReset.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+      let settled = false;
+      const signingOut = signOutHandler(k.host)().then(() => { settled = true; });
+      try {
+        await vi.waitFor(() => expect(k.host.getStatus().phase).toBe("signed-out"));
+        expect(privateCodingReset).toHaveBeenCalledOnce(); expect(settled).toBe(false);
+        release(); await signingOut; expect(settled).toBe(true);
+      } finally { release?.(); await signingOut.catch(() => undefined); await k.host.stop(); }
+    });
+
+    it("Sign out still erases conversation authority when private coding cleanup fails, and reports the fixed cleanup error", async () => {
+      const k = kept(tmpDir()); await k.host.start(TOKEN, "stored"); await k.host.ask("forget this account's words"); say("account-only reply"); await k.store.flush();
+      privateCodingReset.mockRejectedValueOnce(new Error("private native cleanup path canary"));
+      await expect(signOutHandler(k.host)()).rejects.toThrow("couldn't finish clearing its private coding work");
+      expect(privateCodingReset).toHaveBeenCalledOnce(); expect(k.host.getStatus().phase).toBe("signed-out");
+      expect(k.host.getTranscript()).toEqual([]); expect(fs.existsSync(k.file)).toBe(false);
       await k.host.stop();
     });
   });

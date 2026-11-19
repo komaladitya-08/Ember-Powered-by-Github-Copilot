@@ -15,11 +15,8 @@
  * it stands alone (a user name "ada", an expiry's "12/27"), never inside a longer word or number ("adamant"), which
  * would say where it is without hiding anything; a password and a card number are replaced wherever they stand.
  *
- * A secret shorter than MIN_SECRET characters (a card's security code, a four-character password) is never looked for
- * in other text (review vault-3-x9-1): a mark in place of three digits says which three they are to anyone who knows
- * the text around it (a list of numbers, a date, a price), on any page for the rest of the run, and would turn every
- * control and field that has those digits in it secret. Such a value is kept from a model by its field alone, which is
- * secret from the fill on (the helper's fill and the worker's mark), never read and blacked out of every picture.
+ * A secret shorter than MIN_SECRET cannot safely be marked in surrounding text: the mark would reveal its value
+ * in predictable text such as a list of numbers. `note` refuses it before a fill; the user enters it after the task.
  *
  * Text cut short in the middle of a value before it gets here isn't recognised: readers that cut text ask `holds`
  * first (Perception does, for every element), and screen text is redacted whole before it is cut (perception/elements.ts
@@ -36,8 +33,13 @@ import { SECRET_PARTS, type VaultPart } from "../../shared/vault";
 /** What stands where a value was. It names no kind and no length. */
 export const VAULT_REDACTED = "[hidden: filled from Ember's vault]";
 
-/** A secret part with fewer characters than this is not looked for in other text (see above). */
-const MIN_SECRET = 6;
+/** Minimum secret length for safe in-place redaction; shorter secrets are never filled. */
+export const MIN_SECRET = 6;
+
+/** Whether a secret can be watched without revealing it by the position of a redaction mark. */
+export function canWatchVaultValue(part: VaultPart, value: string): boolean {
+  return !SECRET_PARTS.has(part) || [...value.trim()].length >= MIN_SECRET;
+}
 
 /** Values watched at most (a run fills a handful): past this, `note` refuses, and so nothing more is filled in this run. */
 const MAX_VALUES = 400;
@@ -134,11 +136,10 @@ export class VaultRedactor {
   /** A value is about to be put into a field: from now on it is replaced wherever text leaves for a model, the audit or the logs. */
   note(part: VaultPart, value: string): void {
     if (typeof value !== "string" || !value) return;
+    if (!canWatchVaultValue(part, value)) throw new Error("vault value cannot be safely watched");
     this.filled = true;
     if (this.noted.some(n => n.value === value)) return;
     const secret = SECRET_PARTS.has(part);
-    // Too short to hide in place: its field is secret, and that is all that keeps it (vault-3-x9-1).
-    if (secret && [...value.trim()].length < MIN_SECRET) return;
     // What it can't watch it doesn't take: the caller then fills nothing (VaultService.use), and no value it took
     // earlier is dropped to make room (vault-3-x9-6).
     if (this.noted.length >= MAX_VALUES) throw new Error("the vault's redactor holds as many values as it can watch");

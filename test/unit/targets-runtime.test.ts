@@ -26,7 +26,7 @@ import type { PromptAnswer } from "../../app/shared/remote-ui";
 import { SettingsStore } from "../../app/main/settings";
 import type { WslDistro, WslFacts, WslService } from "../../app/main/wsl/types";
 import { KEYS, SHORTCUTS, type OS } from "../../app/shared/shortcuts";
-import type { ConsentPanel } from "../../app/shared/consent";
+import { FEATURE_CONSENT_VERSION, type ConsentPanel } from "../../app/shared/consent";
 import { TARGETS_IPC, type TargetId } from "../../app/shared/targets";
 import { commandsConsent, consentSha256, sshChangedFrom, sshConsent, wslConsent } from "../../app/main/targets/consent";
 import { commandTerminalRow, parseSshVersion, powershellRow, remotePartsRow, sshClientRow } from "../../app/main/targets/doctor";
@@ -94,6 +94,7 @@ function fakeLink(hostId: string, w: Welcome = welcome()) {
 }
 
 interface RigOptions {
+  emberPaths?: readonly string[];
   os?: OS;
   admin?: LoadedAdminPolicy;
   hands?: Hands | null;
@@ -268,6 +269,7 @@ function rig(o: RigOptions = {}) {
     execPath: "/opt/ember/ember", packaged: true, settings, admin: () => admin, audit: () => audit, confirmer: () => confirmer,
     localHands: hands, showState, notify: vi.fn(), openSettings, ipc, isHome: s => s.id === 1,
     windows: { command: windowsMade, prompt: windowsMade }, fetch: vi.fn(), devEnv: () => undefined,
+    emberPaths: o.emberPaths,
     elevated: o.elevated ?? (() => false), emberPids: () => [10, 11], extraPath: () => [], jobHost: null,
     ...(o.keyHint ? { keyHint: o.keyHint } : {}),
   };
@@ -287,7 +289,26 @@ function rig(o: RigOptions = {}) {
   };
 }
 
-const commandsOn = (id: TargetId, version = 3, askEvery = false) => ({ commands: { [id]: { on: true, askEvery, consent: { version, at: SINCE } } } });
+const commandsOn = (id: TargetId, version: number = FEATURE_CONSENT_VERSION.commands, askEvery = false) => ({ commands: { [id]: { on: true, askEvery, consent: { version, at: SINCE } } } });
+
+describe("coding clarifications", () => {
+  it("returns an actual displayed choice, and dismisses a pending card on Stop", async () => {
+    const r = rig();
+    r.pw.ask.mockImplementationOnce(async card => ({ id: card.id, ok: true, value: "second", choice: 1 }));
+    const signal = new AbortController();
+    await expect(r.t.codingClarify({ question: "Which?", choices: ["first", "second"], allowFreeform: false }, signal.signal))
+      .resolves.toEqual({ answer: "second", wasFreeform: false });
+    let release!: (answer: PromptAnswer) => void;
+    r.pw.ask.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const running = r.t.codingClarify({ question: "Where?" }, signal.signal);
+    const card = r.pw.ask.mock.calls.at(-1)![0];
+    signal.abort();
+    expect(r.pw.dismiss).toHaveBeenCalledWith(card.id);
+    release({ id: card.id, ok: true, value: "late" });
+    await expect(running).resolves.toBeNull();
+    await r.t.dispose();
+  });
+});
 const hostRecord = (id: string, more: Partial<HostRecord> = {}): HostRecord => ({
   id, dest: `deploy@${id}`, resolved: { user: "deploy", hostname: `${id}.example.com`, port: 22, jump: [] }, consent: { version: 1, at: SINCE }, ...more,
 });
@@ -425,7 +446,7 @@ describe("commands on this computer (§2.5, §3.8.1)", () => {
     expect(got.hands.commands!.capability().state).toBe("needs-consent");
     expect(r.t.agent.caps().commands).toBe(true);
     got.hands.commands!.consented();
-    expect(r.settings.get().commands.local).toEqual({ on: true, askEvery: false, consent: { version: 3, at: expect.any(String) } });
+    expect(r.settings.get().commands.local).toEqual({ on: true, askEvery: false, consent: { version: FEATURE_CONSENT_VERSION.commands, at: expect.any(String) } });
     expect(got.hands.commands!.capability().state).toBe("on");
   });
 
@@ -521,7 +542,7 @@ describe("consent cards (§8.4) and their records (§7.4)", () => {
     expect(r.cards).toHaveLength(1);
     expect(r.cards[0].title).toBe("Let Ember run commands on this computer?");
     expect(r.cards[0].body[0]).toContain(" Ctrl+Alt+X stops everything at once; what a command already changed stays changed.");
-    expect(r.settings.get().commands.local).toMatchObject({ on: true, consent: { version: 3 } });
+    expect(r.settings.get().commands.local).toMatchObject({ on: true, consent: { version: FEATURE_CONSENT_VERSION.commands } });
     // Already accepted: switching off and on again asks nothing.
     await r.invoke(TARGETS_IPC.act, r.home, { kind: "commands", id: "local", on: false });
     expect(r.settings.get().commands.local!.on).toBe(false);
@@ -764,7 +785,7 @@ describe("SSH targets", () => {
     expect(r.t.bubbleAction("conn:build-01:commands")).toBe(true);
     await flush(); await flush();
     expect(r.cards.at(-1)?.feature).toBe("commands");
-    expect(r.settings.get().commands["ssh:build-01"]).toMatchObject({ on: true, consent: { version: 3 } });
+    expect(r.settings.get().commands["ssh:build-01"]).toMatchObject({ on: true, consent: { version: FEATURE_CONSENT_VERSION.commands } });
     expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Commands are on for build-01", thought: "Ask away: I'll run commands there." }) });
     expect(r.t.agent.handsFor("ssh:build-01").ok).toBe(true);
     // With commands on, the old words are true.
@@ -1203,7 +1224,7 @@ describe("WSL targets", () => {
   });
 
   it("asks before every command in Podman's distro and in a distro whose user is root, and tells the settings window of Podman's (r10-modes-copy-x10-4)", async () => {
-    const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu({ defaultUid: 0 }), ubuntu({ name: "podman-machine-default", isDefault: false, tool: "podman" })]), settings: { ...wslOnSettings, commands: { "wsl:Ubuntu": { on: true, askEvery: false, consent: { version: 3, at: SINCE } }, "wsl:podman-machine-default": { on: true, askEvery: false, consent: { version: 3, at: SINCE } } } } });
+    const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu({ defaultUid: 0 }), ubuntu({ name: "podman-machine-default", isDefault: false, tool: "podman" })]), settings: { ...wslOnSettings, commands: { "wsl:Ubuntu": { on: true, askEvery: false, consent: { version: FEATURE_CONSENT_VERSION.commands, at: SINCE } }, "wsl:podman-machine-default": { on: true, askEvery: false, consent: { version: FEATURE_CONSENT_VERSION.commands, at: SINCE } } } } });
     await flush();
     const root = r.t.agent.handsFor("wsl:Ubuntu");
     const pod = r.t.agent.handsFor("wsl:podman-machine-default");
@@ -2149,6 +2170,16 @@ describe("small helpers", () => {
     expect(hostIdFor("__", new Set())).toBe("host");
   });
 
+  it("passes selected private coding roots to local and host-aware WSL facts only", async () => {
+    const roots = ["C:\\Temp\\ember-coding-unsupported", "D:\\RealTemp\\ember-coding-unsupported"];
+    const r = rig({ os: "win32", emberPaths: roots });
+    expect(r.runnerOpts().ember.paths).toEqual(expect.arrayContaining(roots));
+    expect(r.wslMade).toHaveBeenCalledWith(expect.objectContaining({ ember: { winPaths: expect.arrayContaining(roots) } }));
+    roots.length = 0;
+    expect(r.runnerOpts().ember.paths).toContain("D:\\RealTemp\\ember-coding-unsupported");
+    await r.t.dispose();
+  });
+
   it("names Ember's paths per OS and its process names", () => {
     expect(emberPathsOf({ os: "darwin", userData: "/Users/ana/Library/Application Support/ember", resourcesPath: "/Applications/Ember.app/Contents/Resources", packaged: true, env: {} }))
       .toEqual(["/Users/ana/Library/Application Support/ember", "/Applications/Ember.app", "/Library/Application Support/Ember"]);
@@ -2638,7 +2669,7 @@ describe("first run's commands row", () => {
     const card = r.t.firstRunCommandsCard();
     expect(card).toEqual(commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts: { kind: "local", privileged: false, windows: false, podman: false, byok: false } }));
     expect(r.t.agreeFirstRunCommands(card!.sha256)).toBe(true);
-    expect(r.settings.own().commands.local).toEqual({ on: true, askEvery: false, consent: { version: 3, at: "2026-10-22T12:00:00.000Z" } });
+    expect(r.settings.own().commands.local).toEqual({ on: true, askEvery: false, consent: { version: FEATURE_CONSENT_VERSION.commands, at: "2026-10-22T12:00:00.000Z" } });
     // The flow's own card reads the same once commands are on.
     const got = r.t.agent.handsFor("local");
     if (!got.ok) throw new Error(got.why);

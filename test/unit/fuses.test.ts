@@ -121,10 +121,11 @@ describe("the fuse wire", () => {
     try {
       const file = path.join(dir, "ember");
       fs.writeFileSync(file, fake(), { mode: 0o755 });
+      const originalMode = fs.statSync(file).mode & 0o777;
       expect(fuseMismatches(flipFuses(file, LINUX), LINUX)).toEqual([]);
       expect(fuseMismatches(readFuses(fs.readFileSync(file)), LINUX)).toEqual([]);
       // Windows has no POSIX modes to keep (stat reports 0o666 for any writable file).
-      if (process.platform !== "win32") expect(fs.statSync(file).mode & 0o777).toBe(0o755);
+      if (process.platform !== "win32") expect(fs.statSync(file).mode & 0o777).toBe(originalMode);
       expect(fs.statSync(file).size).toBe(fake().length);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

@@ -1,0 +1,958 @@
+/**
+ * Actual shipped ZIP -> ordinary Windows UI -> Main/preloads/Host/SDK/native Node.
+ * No debugger, app injection, development provider, test IPC or issuing-API replacement.
+ * Required: EMBER_PACKAGED_WINDOWS_NODE_TEST=1 and EMBER_WINDOWS_NODE_PACKAGE=<absolute tested ZIP>.
+ * Windows execution remains blocked by the independently reviewed producer/native proof prerequisites.
+ */
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { types } from "node:util";
+import { spawn, type ChildProcess } from "node:child_process";
+import { expect, it } from "vitest";
+import { readFuses, emberFuses, fuseMismatches } from "../../scripts/package/fuses.mjs";
+import { verifyWindowsNodeToolchain, WINDOWS_NODE_TOOLCHAIN } from "../../scripts/package/windows-node-toolchain.mjs";
+import { openWin32Input } from "../../app/main/platform/win32/input";
+import { titleOf } from "../../app/main/agent/tasks";
+import { UiaBridge, bridgeEnv, type RawNode, type UiaWindow } from "./uia-client";
+import { readCommandCardObservationLog, type PackagedCommandCardObservation } from "../fixtures/command-card-observation-log";
+import {
+  createWindowsNodeProductModel, windowsNodeSourceScenarios, WINDOWS_NODE_REPAIR, WINDOWS_NODE_CONTINUATION,
+  WINDOWS_NODE_TEST_ARGV, WINDOWS_NODE_WRITER_ARGV, WINDOWS_NODE_WRITER_READY, WINDOWS_NODE_PRODUCT_TOOLS,
+  WINDOWS_NODE_SOURCE_ORIGINAL, WINDOWS_NODE_SOURCE_WRITER,
+} from "../fixtures/windows-node-product-model";
+
+const required = process.env.EMBER_PACKAGED_WINDOWS_NODE_TEST === "1";
+const outside = "PACKAGED_NODE_OUTSIDE_MUST_STAY_LOCAL", privateCanary = "gho_" + "Q".repeat(36);
+const excludedGit = "PACKAGED_NODE_EXCLUDED_GIT", excludedDependency = "PACKAGED_NODE_EXCLUDED_DEPENDENCY";
+const environmentCanary = "PACKAGED_NODE_HOST_ENVIRONMENT_MUST_STAY_LOCAL", readme = "Unchanged packaged Node source fixture.\n";
+let quarantined = false;
+type Model = Awaited<ReturnType<typeof createWindowsNodeProductModel>>;
+type Selector = (node: RawNode) => boolean;
+type SnapshotGuard = (nodes: readonly RawNode[]) => boolean;
+const id = (value: string): Selector => node => node.automationId === value;
+const named = (value: string): Selector => node => node.name === value;
+// Bridge handles address one observation. UIA runtime IDs identify the same actual element across observations.
+function sameNode(left: RawNode, right: RawNode): boolean {
+  return !!left.runtimeId && Number.isSafeInteger(left.pid) && left.pid! > 0 && left.runtimeId === right.runtimeId && left.pid === right.pid
+    && left.automationId === right.automationId && left.controlType === right.controlType;
+}
+function subtree(nodes: readonly RawNode[], select: Selector): RawNode[] {
+  const root = nodes.findIndex(select); if (root < 0) return [];
+  const included = new Set([root]), selected: RawNode[] = [];
+  for (const [index, node] of nodes.entries()) if (index === root || included.has(node.parent ?? -1)) { included.add(index); selected.push(node); }
+  return selected;
+}
+const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+function refusal(phase: number): Error {
+  const error = new Error("Windows Node packaged journey refused (phase " + phase + ").");
+  error.stack = "Error: " + error.message; return error;
+}
+function hash(file: string): string { return createHash("sha256").update(fs.readFileSync(file)).digest("hex"); }
+function ordinary(file: string): boolean { const info = fs.lstatSync(file); return info.isFile() && !info.isSymbolicLink() && info.nlink === 1; }
+async function bounded<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try { return await Promise.race([work, new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(refusal(12)), ms); })]); }
+  finally { clearTimeout(timer); }
+}
+
+/** Raw process output stays local; the outer boundary emits only the fixed phase. */
+async function run(file: string, args: readonly string[], env: NodeJS.ProcessEnv, ms: number, maximum = 1024 * 1024) {
+  const child = spawn(file, [...args], { env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  let stdout = "", stderr = 0, bad = false;
+  const timer = setTimeout(() => { bad = true; child.kill(); }, ms);
+  child.stdout.on("data", bytes => { if (stdout.length + bytes.length > maximum) { bad = true; child.kill(); } else stdout += bytes; });
+  child.stderr.on("data", bytes => { stderr += bytes.length; if (stderr > maximum) { bad = true; child.kill(); } });
+  try {
+    const result = await bounded(new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+      child.once("error", () => reject(refusal(1))); child.once("close", (code, signal) => resolve({ code, signal }));
+    }), ms + 5000);
+    if (bad || result.code !== 0 || result.signal) throw refusal(1);
+    return stdout;
+  } finally { clearTimeout(timer); }
+}
+
+interface PackagedObservation {
+  operation: number; iteration: number; welcomeStep: number; nextLabel: number; target: number;
+  bridgeError: number; snapshotFlags: number; focusFlags: number; inputResult: number; bridgeStage: number; projectStage: number;
+  commandWindows: number; targetType: number; focusedType: number; targetState: number; focusTrajectory: number;
+  providerStage: number; commandStage: number; commandDecision: number; repairStep: number; repairResults: number; focusIdentity: number; cardFlags: number; allowFlags: number; denyFlags: number; hintFlags: number;
+}
+/**
+ * Pure cached observations, never action/cleanup authority. Operation is the last marked existing operation, not proof it failed.
+ * 1spawn/2bridge-ready/3windows/4snapshot/5Home-marker/6welcome/7next-step/8row/9toggle/10focus/11focused/
+ * 12fresh-guard/13move/14down/15up/16arming/17transition/18label-or-limit; 0 is unmarked/cleanup.
+ * Snapshot bits: busy1/truncated2/cut4/empty8. Focus bits: HWND1/element2/identity4/focused8 during a focus reply;
+ * present1/onscreen2/bounds4/width8/height16 during the existing fresh guard. Input result is true1/false2/unknown0
+ * from an existing input call or its existing state predicate. No raw identity, coordinate, text or error is retained.
+ * For operation2 ONLY, bridgeError is: unknown0/outer-ready-timeout1/PowerShell-fatal2/CSharp-fatal3/pre-ready-exit4/other-first-JSON5.
+ * For operations3/4 its existing UIA codes remain busy1/gone2/denied3/bad-request4/failed5.
+ * Bridge stage0 is unknown;1..17 are PowerShell bootstrap milestones,18..25 are C# startup,26 is after source path construction,
+ * and27/28 bracket only the initial source SHA chain;29 is after explicit system utility import,30 after assembly loading.
+ * Project/folder stage0 is unknown;1pane/2name/3add/4choose/5folder-call/6source-text/7disclosure/8dialog-wait/
+ * 9dialog-block-check/10dialog-activate/11dialog-foreground/12dialog-input/13destination-read/14select-folder/15dialog-closed/16project-return.
+ * These are observed boundaries, not proof a later operation failed.
+ * Provider stage1pane/2switch/3endpoint/4conversation-model/5worker-model/6key/7Save/8saved-read/9agreement/10test/11idle/12settings-read.
+ * Command stage1pane/2local-read/3ask-read/4ask-toggle/5ask-check/6window/7new-display/8display-focus/9command-text/10cwd/
+ * 11remember-display/12remember-tabs/13answer/14returned; decision1..8 counts only the existing decide calls.
+ * Repair step/results0..4 are cached local fixture counts at the first failure, never tool output or execution evidence.
+ * Focus identity bits: target-runtime1/returned-runtime2/runtime-match4/target-PID8/returned-PID16/PID-match32/known-string-automation-ID-match64/known-string-control-type-match128.
+ * Card bits from an existing display poll: ask-cmd-present1/nonempty-runtime2/different-from-previous4/previous-recorded8.
+ * Target codes1..7 keep the existing welcome controls;8project-sessions-request/9project-sessions-send.
+ * Stage8 focus: control types0missing/1Edit/2Document/3Pane/4Window/5TabItem/6Button/7Group/8other.
+ * Target state uses base-3 digits0unknown/1false/2true, low to high: focusable, offscreen, enabled, positive area.
+ * Focus trajectory0no comparable readout/1first/2repeated first/3different runtime seen. Window candidates0unknown or none/1one/2multiple.
+ * Existing stage13 snapshot only: Allow/Not now presence1/enabled2/disabled4/onscreen8/offscreen16; hint bits exact whole-command-read1/answer-retry2.
+ */
+function packagedObservation() {
+  const limits: PackagedObservation = { operation: 18, iteration: 12, welcomeStep: 6, nextLabel: 7, target: 9, bridgeError: 5, snapshotFlags: 15, focusFlags: 31, inputResult: 2, bridgeStage: 30, projectStage: 16, providerStage: 12, commandStage: 14, commandDecision: 8, repairStep: 4, repairResults: 4, focusIdentity: 255, cardFlags: 15, allowFlags: 31, denyFlags: 31, hintFlags: 3, commandWindows: 2, targetType: 8, focusedType: 8, targetState: 80, focusTrajectory: 3 };
+  const current: PackagedObservation = { operation: 0, iteration: 0, welcomeStep: 0, nextLabel: 0, target: 0, bridgeError: 0, snapshotFlags: 0, focusFlags: 0, inputResult: 0, bridgeStage: 0, projectStage: 0, providerStage: 0, commandStage: 0, commandDecision: 0, repairStep: 0, repairResults: 0, focusIdentity: 0, cardFlags: 0, allowFlags: 0, denyFlags: 0, hintFlags: 0, commandWindows: 0, targetType: 0, focusedType: 0, targetState: 0, focusTrajectory: 0 };
+  let captured = false, first: Readonly<PackagedObservation> | undefined;
+  let decisions = 0;
+  let firstFocusedRuntime: string | undefined;
+  const own = (value: unknown, key: string): unknown => {
+    if (!value || typeof value !== "object" || types.isProxy(value)) return undefined;
+    const property = Object.getOwnPropertyDescriptor(value, key); return property && Object.hasOwn(property, "value") ? property.value : undefined;
+  };
+  const focusType = (value: unknown): number => typeof value === "string" && value
+    ? ["Edit", "Document", "Pane", "Window", "TabItem", "Button", "Group"].indexOf(value) + 1 || 8 : 0;
+  const update = (values: Partial<PackagedObservation>) => {
+    try { for (const key of Object.keys(limits) as (keyof PackagedObservation)[]) {
+      const value = own(values, key); if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= limits[key]) current[key] = value;
+    } } catch { /* An observation cannot alter the operation being observed. */ }
+    if (current.commandStage !== 8) firstFocusedRuntime = undefined;
+  };
+  return {
+    update,
+    decision() { try { decisions = Math.min(9, decisions + 1); update({ commandDecision: decisions <= 8 ? decisions : 0 }); } catch { /* The counter never controls a decision. */ } },
+    resetCommandFocus() {
+      firstFocusedRuntime = undefined;
+      update({ commandWindows: 0, targetType: 0, focusedType: 0, targetState: 0, focusTrajectory: 0 });
+    },
+    commandWindowCandidates(value: unknown) {
+      if (current.commandStage !== 6) return;
+      const count = own(value, "length");
+      if (types.isProxy(value) || !Array.isArray(value) || typeof count !== "number" || !Number.isInteger(count) || count < 0 || count > 2000) {
+        update({ commandWindows: 0 }); return;
+      }
+      let candidates = 0;
+      for (let index = 0; index < count && candidates < 2; index++) {
+        if (own(own(value, String(index)), "name") === "Ember commands") candidates++;
+      }
+      update({ commandWindows: candidates });
+    },
+    commandFocusTarget(target: unknown) {
+      if (current.commandStage !== 8) return;
+      firstFocusedRuntime = undefined;
+      const tri = (value: unknown): number => value === true ? 2 : value === false ? 1 : 0;
+      const bounds = own(target, "bounds"), width = own(bounds, "width"), height = own(bounds, "height");
+      const area = typeof width === "number" && Number.isFinite(width) && typeof height === "number" && Number.isFinite(height)
+        ? width > 0 && height > 0 : undefined;
+      update({ targetType: focusType(own(target, "controlType")), focusedType: 0, focusTrajectory: 0,
+        targetState: tri(own(target, "isKeyboardFocusable")) + 3 * tri(own(target, "isOffscreen"))
+          + 9 * tri(own(target, "isEnabled")) + 27 * tri(area) });
+    },
+    card(value: unknown, previous: unknown) { try {
+      const count = own(value, "length"); let flags = typeof previous === "string" && previous ? 8 : 0;
+      if (!Array.isArray(value) || types.isProxy(value) || typeof count !== "number" || !Number.isInteger(count) || count < 0 || count > 2000) { update({ cardFlags: 0 }); return; }
+      for (let index = 0; index < count; index++) {
+        const node = own(value, String(index)); if (own(node, "automationId") !== "ask-cmd") continue;
+        const runtime = own(node, "runtimeId"), valid = typeof runtime === "string" && !!runtime;
+        flags |= 1 | (valid ? 2 : 0) | (valid && runtime !== previous ? 4 : 0);
+      }
+      update({ cardFlags: flags });
+    } catch { /* No new snapshot or runtime identity is retained. */ } },
+    controls(value: unknown) { try {
+      if (current.commandStage !== 13) return;
+      const count = own(value, "length"); let allowFlags = 0, denyFlags = 0, hintFlags = 0;
+      if (!Array.isArray(value) || types.isProxy(value) || typeof count !== "number" || !Number.isInteger(count) || count < 0 || count > 2000) { update({ allowFlags, denyFlags, hintFlags }); return; }
+      for (let index = 0; index < count; index++) {
+        const node = own(value, String(index)), name = own(node, "name"), kind = own(node, "controlType");
+        if (kind === "Button" && (name === "Allow" || name === "Not now")) {
+          const enabled = own(node, "isEnabled"), offscreen = own(node, "isOffscreen");
+          const flags = 1 | (enabled === true ? 2 : enabled === false ? 4 : 0) | (offscreen === false ? 8 : offscreen === true ? 16 : 0);
+          if (name === "Allow") allowFlags |= flags; else denyFlags |= flags;
+        }
+        if (kind === "Text") hintFlags |= name === "Read the whole command to allow it." ? 1 : name === "Ember couldn't take that answer just now. Try again." ? 2 : 0;
+      }
+      update({ allowFlags, denyFlags, hintFlags });
+    } catch { /* Existing admitted snapshot only; no control text, identity or output is retained. */ } },
+    answer(value: unknown) { try {
+      const error = own(own(value, "error"), "code"), result = own(value, "result"), cut = own(own(result, "cut"), "length"), count = own(own(result, "nodes"), "length");
+      update({ bridgeError: ["busy", "gone", "denied", "bad_request", "failed"].indexOf(error as string) + 1,
+        snapshotFlags: (own(result, "busy") === true ? 1 : 0) | (own(result, "truncated") === true ? 2 : 0) | (typeof cut === "number" && cut > 0 ? 4 : 0) | (count === 0 ? 8 : 0) });
+    } catch { /* Cached malformed data remains unclassified. */ } },
+    readyError(error: unknown) {
+      let category = 0;
+      try {
+        if (error && typeof error === "object" && !types.isProxy(error) && types.isNativeError(error)) {
+          const message = own(error, "message"), prefix = "the bridge did not start: ";
+          if (message === "Windows Node packaged journey refused (phase 12).") category = 1;
+          else if (typeof message === "string" && /^the bridge exited \((?:-?[0-9]{1,10}|null)\) before it was ready; stdout: /.test(message)) category = 4;
+          else if (typeof message === "string" && message.startsWith(prefix) && message.length - prefix.length <= 8192) {
+            const value: unknown = JSON.parse(message.slice(prefix.length));
+            if (!types.isProxy(value)) {
+              category = 5;
+              if (value && typeof value === "object" && !Array.isArray(value)) {
+                const dataOnly = ["fatal", "languageMode"].every(key => { const field = Object.getOwnPropertyDescriptor(value, key); return !field || Object.hasOwn(field, "value"); });
+                if (!dataOnly) category = 0;
+                else if (typeof own(value, "fatal") === "string") {
+                  if (["FullLanguage", "ConstrainedLanguage", "RestrictedLanguage", "NoLanguage"].includes(own(value, "languageMode") as string)) category = 2;
+                  else if (!Object.hasOwn(value, "languageMode")) category = 3;
+                }
+              }
+            }
+          }
+        }
+      } catch { category = 0; }
+      update({ bridgeError: category });
+    },
+    windows(value: unknown) { try { update({ snapshotFlags: own(value, "length") === 0 ? 8 : 0 }); } catch { /* Never change the returned window list. */ } },
+    node(value: unknown) { try {
+      const selected = own(value, "automationId");
+      const target = ["w-next", "w-alt", "w-row-memory", "w-row-voice", "w-row-screenshots", "w-row-interactive", "w-row-commands", "project-sessions-request", "project-sessions-send"].indexOf(selected as string) + 1;
+      update({ target });
+      if (target === 1 || target === 2) { const name = own(value, "name"); update({ nextLabel: typeof name === "string" ? ["Get started", "Agree and continue", "Skip for now", "Continue", "Continue anyway", "Start"].indexOf(name) + 1 || 7 : 0 }); }
+    } catch { /* Never inspect unknown node accessors. */ } },
+    step(value: unknown) { try { const match = typeof value === "string" ? /^Step ([1-6]) of 6$/.exec(value) : null; update({ welcomeStep: match ? Number(match[1]) : 0 }); } catch { /* No raw text is retained. */ } },
+    focused(value: unknown, target: unknown, hwnd: number) { try {
+      const element = own(value, "element"), pid = own(element, "pid"), runtime = own(element, "runtimeId");
+      const targetRuntime = own(target, "runtimeId"), targetPid = own(target, "pid"), validRuntime = typeof runtime === "string" && !!runtime, validTargetRuntime = typeof targetRuntime === "string" && !!targetRuntime;
+      const validPid = typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0, validTargetPid = typeof targetPid === "number" && Number.isSafeInteger(targetPid) && targetPid > 0;
+      update({ focusIdentity: (validTargetRuntime ? 1 : 0) | (validRuntime ? 2 : 0) | (validTargetRuntime && validRuntime && runtime === targetRuntime ? 4 : 0)
+        | (validTargetPid ? 8 : 0) | (validPid ? 16 : 0) | (validTargetPid && validPid && pid === targetPid ? 32 : 0)
+        | (typeof own(element, "automationId") === "string" && own(element, "automationId") === own(target, "automationId") ? 64 : 0)
+        | (typeof own(element, "controlType") === "string" && own(element, "controlType") === own(target, "controlType") ? 128 : 0) });
+      if (!captured && current.commandStage === 8) {
+        update({ focusedType: focusType(own(element, "controlType")) });
+        if (own(value, "hwnd") === hwnd && own(element, "hasKeyboardFocus") === true && validPid && validTargetPid && pid === targetPid
+          && typeof runtime === "string" && runtime.length > 0 && runtime.length <= 512) {
+          if (firstFocusedRuntime === undefined) { firstFocusedRuntime = runtime; update({ focusTrajectory: 1 }); }
+          else if (current.focusTrajectory !== 3) update({ focusTrajectory: runtime === firstFocusedRuntime ? 2 : 3 });
+        }
+      }
+      const same = typeof runtime === "string" && !!runtime && typeof pid === "number" && Number.isSafeInteger(pid) && pid > 0 && runtime === own(target, "runtimeId") && pid === own(target, "pid")
+        && own(element, "automationId") === own(target, "automationId") && own(element, "controlType") === own(target, "controlType");
+      update({ focusFlags: (own(value, "hwnd") === hwnd ? 1 : 0) | (element ? 2 : 0) | (same ? 4 : 0) | (own(element, "hasKeyboardFocus") === true ? 8 : 0) });
+    } catch { /* The original focus predicate remains authoritative. */ } },
+    fresh(value: unknown) { try {
+      const bounds = own(value, "bounds"), width = own(bounds, "width"), height = own(bounds, "height");
+      update({ focusFlags: (value ? 1 : 0) | (own(value, "isOffscreen") === false ? 2 : 0) | (bounds ? 4 : 0) | (typeof width === "number" && !(width <= 0) ? 8 : 0) | (typeof height === "number" && !(height <= 0) ? 16 : 0) });
+    } catch { /* No new bounds or foreground queries. */ } },
+    input<T>(value: T, rejection = false): T { try { update({ inputResult: typeof value === "boolean" ? (rejection ? !value : value) ? 1 : 2 : 0 }); } catch { /* Preserve the exact returned value. */ } return value; },
+    capture() { if (captured) return; captured = true; firstFocusedRuntime = undefined; try { first = Object.freeze({ ...current }); } catch { /* Do not retry with later cleanup state. */ } },
+    value() { return first; },
+  };
+}
+
+/** Keep the real OS profile for AppContainer creation, while excluding account credentials and injected loaders. */
+function environment(temporary: string, userData: string, github: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) if (/^(?:PATH|SYSTEMROOT|WINDIR|COMSPEC|PATHEXT|LANG|LC_ALL|LC_CTYPE|HOME|USERPROFILE|APPDATA|LOCALAPPDATA|PROGRAMDATA|ALLUSERSPROFILE|PROGRAMFILES|PROGRAMFILES\(X86\)|COMMONPROGRAMFILES)$/i.test(key)) env[key] = value;
+  return { ...env, TMPDIR: temporary, TMP: temporary, TEMP: temporary, EMBER_USER_DATA: userData, GH_CONFIG_DIR: github,
+    NO_PROXY: "127.0.0.1,localhost", no_proxy: "127.0.0.1,localhost", EMBER_NODE_SOURCE_CANARY: environmentCanary };
+}
+
+class Journey {
+  phase = 1;
+  readonly source: string;
+  readonly profile: string;
+  readonly temporary: string;
+  readonly exported: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly key = "synthetic_packaged_" + randomUUID();
+  readonly replacementKey = "synthetic_rotated_" + randomUUID();
+  private input: ReturnType<typeof openWin32Input> = null;
+  readonly archive: string;
+  executable = "";
+  resources = "";
+  appRoot = "";
+  executableHash = "";
+  private assets: readonly { path: string; sha256: string }[] = [];
+  private app?: ChildProcess;
+  private appClosed?: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+  private bridge?: UiaBridge;
+  private home = 0;
+  private previousCard = "";
+  private previousTabs = new Set<string>();
+  private stopped = false;
+  private forced = false;
+  // The whole journey's budget. 300 s until the owner raised it to 480 s on 18 November 2026: on the hosted Windows
+  // Server 2025 image the journey passed every step of five cases and reached the sixth as 300 s ran out. Each step's
+  // own wait is unchanged.
+  private deadline = Date.now() + 480_000;
+  private watchdog?: ReturnType<typeof setTimeout>;
+  private readonly observation = packagedObservation();
+  private failureCaptured = false;
+  private commandObservation?: Readonly<PackagedCommandCardObservation>;
+  private cleanupStarted = false;
+  assertionsComplete = false;
+  private observe(values: Partial<PackagedObservation>): void { try { this.observation.update(values); } catch { /* Observation cannot change control flow. */ } }
+  private observeInput<T>(value: T, rejection = false): T { try { this.observation.input(value, rejection); } catch { /* Preserve the exact result. */ } return value; }
+  captureFailure(): void { if (this.failureCaptured) return; this.failureCaptured = true; try { this.observe({ repairStep: this.model.steps.get("repair") ?? 0, repairResults: this.model.results.get("repair")?.length ?? 0 }); } catch { /* Cached local fixture counts only. */ } try { this.observation.capture(); } catch { /* Never retry with later cleanup state. */ } if (!this.cleanupStarted) try { this.commandObservation = readCommandCardObservationLog(this.profile); } catch { /* Unknown; never read again during cleanup. */ } }
+  failureObservation(): Readonly<PackagedObservation> | undefined { try { return this.observation.value(); } catch { return undefined; } }
+  private lastClick?: { x: number; y: number; node: RawNode };
+  private clickUnder = 0;
+  private clickGeometry: Partial<PackagedCommandCardObservation> = {};
+  commandFailureObservation(): Readonly<PackagedCommandCardObservation> | undefined { return this.commandObservation && { ...this.commandObservation, ...(this.commandObservation.known ? { under: this.clickUnder, ...this.clickGeometry } : {}) }; }
+  beginCleanup(): void { this.cleanupStarted = true; }
+  constructor(readonly root: string, readonly model: Model) {
+    const selected = process.env.EMBER_WINDOWS_NODE_PACKAGE;
+    if (!selected || !path.isAbsolute(selected) || path.extname(selected).toLowerCase() !== ".zip" || !ordinary(selected)) throw refusal(1);
+    this.archive = fs.realpathSync.native(selected);
+    this.source = path.join(root, "source"); this.profile = path.join(root, "profile"); this.temporary = path.join(root, "temporary"); this.exported = path.join(root, "exported");
+    for (const directory of [this.source, this.profile, this.temporary, this.exported, path.join(root, "github"), path.join(root, "bridge-cache"), path.join(root, "extracted"), path.join(this.source, ".git"), path.join(this.source, "node_modules")]) fs.mkdirSync(directory);
+    fs.writeFileSync(path.join(this.source, "test.cjs"), WINDOWS_NODE_SOURCE_ORIGINAL);
+    fs.writeFileSync(path.join(this.source, "writer.cjs"), WINDOWS_NODE_SOURCE_WRITER);
+    fs.writeFileSync(path.join(this.source, "README.txt"), readme);
+    fs.writeFileSync(path.join(this.source, ".git/HEAD"), excludedGit);
+    fs.writeFileSync(path.join(this.source, "node_modules/fixture.js"), excludedDependency);
+    fs.writeFileSync(path.join(root, "outside.txt"), outside); fs.writeFileSync(path.join(this.profile, "credential-canary.txt"), privateCanary);
+    // No settings, provider agreement, API-key store or commands agreement is pre-seeded.
+    this.env = environment(this.temporary, this.profile, path.join(root, "github"));
+  }
+  private current(): void { if (this.stopped || this.forced || Date.now() >= this.deadline) throw refusal(this.phase); }
+  private async until<T>(read: () => Promise<T>, accepts: (value: T) => boolean, ms = 30_000): Promise<T> {
+    const end = Math.min(this.deadline, Date.now() + ms);
+    while (Date.now() < end) { this.current(); const value = await read(); if (accepts(value)) return value; await pause(150); }
+    throw refusal(this.phase);
+  }
+  private async windows(): Promise<UiaWindow[]> {
+    this.current();
+    this.observe({ operation: 3, bridgeError: 0, snapshotFlags: 0 });
+    const answer = await this.bridge!.request("topWindows", { pid: this.app!.pid, deadlineMs: 3000 }, 5000);
+    try { this.observation.answer(answer); } catch { /* Do not change the bridge response. */ }
+    if (answer.error?.code === "busy" || answer.error?.code === "gone") return [];
+    if (answer.error) throw refusal(this.phase);
+    const windows = (answer.result as { windows: UiaWindow[] }).windows.filter(window => window.pid === this.app!.pid && !window.busy && !window.skipped);
+    try { this.observation.commandWindowCandidates(windows); } catch { /* Cached filtered candidates only. */ }
+    try { this.observation.windows(windows); } catch { /* Preserve the exact returned array. */ } return windows;
+  }
+  private async nodes(hwnd: number): Promise<RawNode[]> {
+    this.current();
+    this.observe({ operation: 4, bridgeError: 0, snapshotFlags: 0 });
+    const answer = await this.bridge!.request("snapshot", { hwnd, values: false, maxNodes: 2000, maxChildren: 500, deadlineMs: 3000 }, 5000);
+    try { this.observation.answer(answer); } catch { /* Do not change snapshot admission. */ }
+    if (answer.error?.code === "busy" || answer.error?.code === "gone") return [];
+    if (answer.error) throw refusal(this.phase);
+    const result = answer.result as { nodes: RawNode[]; busy: boolean; truncated: boolean; cut: string[] };
+    if (result.busy) return [];
+    if (result.truncated || result.cut.length || !result.nodes.length) throw refusal(this.phase);
+    try { this.observation.controls(result.nodes); } catch { /* Cached stage13 controls only. */ }
+    return result.nodes;
+  }
+  private async node(hwnd: number, select: Selector, enabled = true, guard?: SnapshotGuard): Promise<RawNode> {
+    const found = await this.until(async () => {
+      const nodes = await this.nodes(hwnd);
+      return !guard || guard(nodes) ? nodes.find(node => select(node) && (!enabled || node.isEnabled === true)) : undefined;
+    }, value => !!value);
+    return found!;
+  }
+  private async text(hwnd: number, select: Selector): Promise<string> {
+    const node = await this.node(hwnd, select, false); if (node.isPassword) throw refusal(this.phase);
+    const result = await this.bridge!.call<{ text?: string; secret?: boolean; truncated?: boolean }>("textInfo", { handle: node.h, maxChars: 32_000, deadlineMs: 2500 }, 5000);
+    if (result.secret || result.truncated) throw refusal(this.phase);
+    if (result.text) return result.text;
+    // A paragraph/group may expose only descendant StaticText. Read this exact subtree, never the whole document.
+    const snapshot = await this.bridge!.call<{ nodes: RawNode[]; busy: boolean; truncated: boolean; cut: string[] }>("snapshot", { handle: node.h, values: false, maxNodes: 500, maxChildren: 500, deadlineMs: 2500 }, 5000);
+    if (snapshot.busy || snapshot.truncated || snapshot.cut.length) throw refusal(this.phase);
+    const blocked = new Set<number>(), texts: string[] = [];
+    for (const [index, child] of snapshot.nodes.entries()) {
+      if (child.isPassword || blocked.has(child.parent ?? -1)) { blocked.add(index); continue; }
+      if (child.controlType === "Text" && child.name) texts.push(child.name);
+    }
+    const text = texts.join("\n"); if (text.length > 32_000) throw refusal(this.phase);
+    return text || node.name || "";
+  }
+  private async focus(hwnd: number, node: RawNode, guard?: SnapshotGuard): Promise<RawNode> {
+    this.observe({ operation: 10, focusFlags: 0, inputResult: 0, focusIdentity: 0 }); try { this.observation.node(node); } catch { /* Cached target only. */ }
+    try { this.observation.commandFocusTarget(node); } catch { /* Cached stage8 target only. */ }
+    if (!this.input || this.input.blockedReason?.(hwnd)) throw refusal(this.phase);
+    this.current();
+    this.observeInput(this.input.activate(hwnd));
+    // Activation may return before Windows raises the HWND. Verify foreground and exact focus in one budget.
+    const focusDeadline = Date.now() + 10_000;
+    let performed = false;
+    await this.until(async () => {
+      if (!performed) {
+        if (this.input!.blockedReason?.(hwnd)) throw refusal(this.phase);
+        if (this.input!.activeWindow() !== hwnd) return null;
+        if (Date.now() >= focusDeadline) throw refusal(this.phase);
+        performed = true;
+        await this.bridge!.call("perform", { handle: node.h, op: "focus", deadlineMs: 2500 }, 5000);
+        this.current();
+        this.observe({ operation: 11, focusFlags: 0 });
+      }
+      if (Date.now() >= focusDeadline) throw refusal(this.phase);
+      const result = await this.bridge!.call<{ element: RawNode | null; hwnd: number | null }>("focused", { values: false, deadlineMs: 2500 }, 5000);
+      if (Date.now() >= focusDeadline) throw refusal(this.phase);
+      return result;
+    }, result => {
+      if (result === null) return false;
+      try { this.observation.focused(result, node, hwnd); } catch { /* Preserve the original predicate. */ }
+      return result.hwnd === hwnd && !!result.element && sameNode(result.element, node) && result.element.hasKeyboardFocus === true;
+    }, focusDeadline - Date.now());
+    const nodes = await this.nodes(hwnd);
+    this.current();
+    const fresh = !guard || guard(nodes) ? nodes.find(value => sameNode(value, node)) : undefined;
+    this.observe({ operation: 12 }); try { this.observation.fresh(fresh); } catch { /* Cached guard fields only. */ }
+    if (!fresh || fresh.isOffscreen || !fresh.bounds || fresh.bounds.width <= 0 || fresh.bounds.height <= 0 || this.observeInput(this.input.activeWindow() !== hwnd, true)) throw refusal(this.phase);
+    return fresh;
+  }
+  private pressKey(name: string): void {
+    const key = this.input!.keysymOf(name); if (!key) throw refusal(this.phase);
+    try { if (!this.input!.keysym(key, true)) throw refusal(this.phase); } finally { this.input!.keysym(key, false); }
+  }
+  private chord(modifier: string, key: string): void {
+    const symbol = this.input!.keysymOf(modifier); if (!symbol || !this.input!.keysym(symbol, true)) throw refusal(this.phase);
+    try { this.pressKey(key); } finally { this.input!.keysym(symbol, false); }
+  }
+  private type(value: string): void {
+    if (!this.input?.textKey) throw refusal(this.phase);
+    for (const character of value) { this.current(); if (!this.input.textKey(character, true) || !this.input.textKey(character, false)) throw refusal(this.phase); }
+  }
+  private async click(hwnd: number, select: Selector, guard?: SnapshotGuard): Promise<void> {
+    const node = await this.focus(hwnd, await this.node(hwnd, select, true, guard), guard), box = node.bounds!;
+    this.lastClick = { x: box.x + Math.floor(box.width / 2), y: box.y + Math.floor(box.height / 2), node };
+    this.observe({ operation: 13, inputResult: 0 }); this.observeInput(this.input!.move(box.x + Math.floor(box.width / 2), box.y + Math.floor(box.height / 2)));
+    try { this.observe({ operation: 14, inputResult: 0 }); this.observeInput(this.input!.button(1, true)); }
+    catch (error) { this.captureFailure(); throw error; }
+    finally { this.observe({ operation: 15, inputResult: 0 }); this.observeInput(this.input!.button(1, false)); this.input!.releaseAll(); }
+  }
+  private async fill(hwnd: number, select: Selector, value: string, password = false): Promise<void> {
+    const node = await this.focus(hwnd, await this.node(hwnd, select));
+    if (!!node.isPassword !== password) throw refusal(this.phase);
+    try {
+      this.chord("Control_L", "a"); this.type(value); this.pressKey("Tab");
+      // SendInput confirms insertion, not consumption. Observe owned runtime-focus departure; the next action still validates its own exact target.
+      await this.until(async () => {
+        this.current();
+        if (this.input!.blockedReason?.(hwnd) || this.input!.activeWindow() !== hwnd) throw refusal(this.phase);
+        const focused = await this.bridge!.call<{ element: RawNode | null; hwnd: number | null }>("focused", { values: false, deadlineMs: 2500 }, 5000);
+        this.current();
+        if (this.input!.blockedReason?.(hwnd) || this.input!.activeWindow() !== hwnd) throw refusal(this.phase);
+        return focused;
+      }, result => result.hwnd === hwnd && !!result.element && Number.isSafeInteger(result.element.pid) && result.element.pid! > 0 && result.element.pid === node.pid
+        && result.element.hasKeyboardFocus === true && typeof result.element.runtimeId === "string" && !!result.element.runtimeId && result.element.runtimeId !== node.runtimeId
+        && (!node.automationId || result.element.automationId !== node.automationId), 10_000);
+    } finally { this.input!.releaseAll(); }
+  }
+  private async homeText(select: Selector): Promise<string> { return this.text(this.home, select); }
+  private async accessibleText(accepts: (value: string) => boolean, ms = 30_000): Promise<string> {
+    const found = await this.until(async () => (await this.nodes(this.home)).filter(node => node.controlType === "Text" && !node.isPassword && typeof node.name === "string")
+      .map(node => node.name!).find(value => { if (value.length > 32_000) throw refusal(this.phase); return accepts(value); }), value => value !== undefined, ms);
+    return found!;
+  }
+  private async idle(): Promise<void> {
+    await this.pane("Home"); await this.accessibleText(text => text === "Ready", 45_000);
+    await this.until(async () => this.model.requests.every((request: { doneAt?: number }) => typeof request.doneAt === "number"), Boolean);
+    await this.pane("Projects");
+  }
+  private async pane(name: string): Promise<void> { await this.click(this.home, node => node.controlType === "Hyperlink" && node.name === name); }
+  private async armed(hwnd: number, select: Selector): Promise<void> {
+    const before = await this.node(hwnd, select); this.observe({ operation: 16 }); await pause(600); this.current();
+    if (!sameNode(await this.node(hwnd, select), before)) throw refusal(this.phase);
+    await this.click(hwnd, select);
+  }
+  /**
+   * Scrolls Home's pane by Page Down (or Page Up) from a focused button, up to twelve pages, then from the far end
+   * (End, or Home going up) twelve pages back, until the control shows. For a stretch whose Tab stops cannot be counted.
+   */
+  private async pageHomeControl(select: Selector, enabled = true, up = false): Promise<RawNode> {
+    const shown = async () => (await this.nodes(this.home)).find(node => select(node) && node.isOffscreen === false && (!enabled || node.isEnabled === true));
+    for (const [key, presses] of [[up ? "Page_Up" : "Page_Down", 12], [up ? "Home" : "End", 1], [up ? "Page_Down" : "Page_Up", 12]] as const) {
+      for (let pressed = 0; pressed < presses; pressed++) {
+        const found = await shown(); if (found) return found;
+        this.current(); if (!this.input || this.input.blockedReason?.(this.home) || this.input.activeWindow() !== this.home) throw refusal(this.phase);
+        try { this.pressKey(key); } finally { this.input.releaseAll(); }
+        await pause(250);
+      }
+    }
+    const found = await shown(); if (found) return found;
+    throw refusal(this.phase);
+  }
+  /** UIA does not descend an offscreen group: reveal Home controls with ordinary forward or reverse Tab navigation. */
+  private async revealHomeControl(select: Selector, enabled = true, backwards = false): Promise<RawNode> {
+    this.current();
+    if (!this.input || this.input.blockedReason?.(this.home)) throw refusal(this.phase);
+    this.input.activate(this.home);
+    if (this.input.activeWindow() !== this.home) throw refusal(this.phase);
+    let tabs = 0;
+    return this.until(async () => {
+      const found = (await this.nodes(this.home)).find(node => select(node) && node.isOffscreen === false && (!enabled || node.isEnabled === true));
+      if (found) return found;
+      this.current();
+      if (++tabs > 12 || this.input!.blockedReason?.(this.home) || this.input!.activeWindow() !== this.home) throw refusal(this.phase);
+      try { if (backwards) this.chord("Shift_L", "Tab"); else this.pressKey("Tab"); } finally { this.input!.releaseAll(); }
+      return undefined;
+    }, value => !!value).then(value => value!);
+  }
+  async start(): Promise<void> {
+    this.phase = 1;
+    expect(process.platform).toBe("win32"); expect(process.arch).toBe("x64");
+    // The old three-patch asset cannot certify the supported POSIX product milestone.
+    expect(WINDOWS_NODE_TOOLCHAIN.producerRun).not.toBe(43858256344);
+    this.input = openWin32Input(); expect(this.input).not.toBeNull();
+    const systemRoot = Object.entries(this.env).find(([key]) => key.toLowerCase() === "systemroot")?.[1]; if (!systemRoot) throw refusal(1);
+    const tar = path.join(systemRoot, "System32/tar.exe"), extracted = path.join(this.root, "extracted");
+    const names = (await run(tar, ["-t", "-f", this.archive], this.env, 30_000, 16 * 1024 * 1024)).split(/\r?\n/).filter(Boolean);
+    expect(names).toContain("Ember/Ember.exe"); expect(new Set(names.map(name => name.toLowerCase())).size).toBe(names.length);
+    expect(names.every(name => name.startsWith("Ember/") && !name.includes("\\") && !name.includes(":") && !name.split("/").some(part => part === ".." || part === "."))).toBe(true);
+    await run(tar, ["-x", "-f", this.archive, "-C", extracted], this.env, 45_000);
+    this.executable = path.join(extracted, "Ember/Ember.exe"); this.resources = path.join(extracted, "Ember/resources"); this.appRoot = path.join(this.resources, "app");
+    expect(ordinary(this.executable)).toBe(true); expect(fuseMismatches(readFuses(fs.readFileSync(this.executable)), emberFuses("win32"))).toEqual([]);
+    this.executableHash = hash(this.executable);
+    expect(hash(path.join(this.appRoot, "dist/app/main.cjs"))).toBe(hash(path.join(process.cwd(), "dist/app/main.cjs")));
+    expect(verifyWindowsNodeToolchain(path.join(this.resources, "coding/windows-node-x64")).files).toBe(3);
+    this.assets = ["node.exe", "LICENSE", "build-receipt.json"].map(name => { const file = path.join(this.resources, "coding/windows-node-x64", name); return { path: file, sha256: hash(file) }; });
+    const script = path.join(this.resources, "sidecar/uia/ember_uia.ps1");
+    expect(ordinary(script)).toBe(true); expect(ordinary(path.join(this.resources, "sidecar/uia/ember_uia.cs"))).toBe(true);
+    this.phase = 2;
+    this.observe({ operation: 1 });
+    this.app = spawn(this.executable, ["--show-settings"], { cwd: path.dirname(this.executable), env: this.env, stdio: "ignore", windowsHide: false });
+    this.appClosed = new Promise((resolve, reject) => { this.app!.once("error", () => reject(refusal(2))); this.app!.once("close", (code, signal) => resolve({ code, signal })); });
+    void this.appClosed.catch(() => undefined);
+    if (!this.app.pid) throw refusal(2);
+    this.watchdog = setTimeout(() => { this.forced = true; this.stopped = true; this.app?.kill(); }, 485_000);
+    this.startClipboardHost();
+    this.bridge = new UiaBridge(script, bridgeEnv(this.env, { EMBER_UIA_CACHE: path.join(this.root, "bridge-cache"), EMBER_UIA_STARTUP_OBSERVE: "1" }));
+    this.observe({ operation: 2, bridgeError: 0 });
+    try { await bounded(this.bridge.ready, 30_000); }
+    catch (error) {
+      try { this.observe({ bridgeStage: this.bridge.startupStage }); } catch { /* Only cached stderr is inspected; keep the original ready failure. */ }
+      try { this.observation.readyError(error); } catch { /* Classification never replaces the same ready failure. */ }
+      this.captureFailure(); throw error;
+    }
+    await this.until(async () => {
+      for (const window of await this.windows()) if (window.name === "Ember") {
+        const nodes = await this.nodes(window.hwnd);
+        this.observe({ operation: 5 });
+        if (nodes.some(node => node.automationId === "w-next" || (node.controlType === "Hyperlink" && node.name === "Projects"))) return window.hwnd;
+      }
+      return 0;
+    }, hwnd => { if (hwnd) this.home = hwnd; return !!hwnd; }, 45_000);
+    await this.welcome(); await this.configureProvider(); await this.configureCommands();
+  }
+  private async welcome(): Promise<void> {
+    this.phase = 3;
+    for (let transition = 0; transition < 12; transition++) {
+      this.observe({ iteration: transition + 1, welcomeStep: 0, nextLabel: 0, target: 0 });
+      const nodes = await this.nodes(this.home);
+      this.observe({ operation: 6 });
+      if (nodes.some(node => node.controlType === "Hyperlink" && node.name === "Projects")) return;
+      this.observe({ operation: 7, target: 1 });
+      const next = nodes.find(id("w-next")); try { this.observation.node(next); } catch { /* Cached welcome controls only. */ } if (!next) throw refusal(3);
+      const step = nodes.find(node => node.controlType === "Text" && /^Step \d+ of \d+$/.test(node.name ?? ""))?.name;
+      if (!step) throw refusal(3);
+      try { this.observation.step(step); } catch { /* No text is retained. */ }
+      if (next.name === "Agree and continue") {
+        for (const row of ["memory", "voice", "screenshots", "interactive"]) {
+          this.observe({ operation: 8, target: ["memory", "voice", "screenshots", "interactive"].indexOf(row) + 3 });
+          const field = await this.revealHomeControl(id("w-row-" + row), false);
+          this.observe({ operation: 8 });
+          if (field.patterns.toggle === "On" && field.isEnabled) await this.click(this.home, id("w-row-" + row));
+          const checked = await this.node(this.home, id("w-row-" + row), false); this.observe({ operation: 9 });
+          const toggle = checked.patterns.toggle; this.observeInput(toggle === "Off"); expect(toggle).toBe("Off");
+        }
+        this.observe({ target: 7 }); const checked = await this.revealHomeControl(id("w-row-commands"), true, true); this.observe({ operation: 9 });
+        const toggle = checked.patterns.toggle; this.observeInput(toggle === "On"); expect(toggle).toBe("On");
+      }
+      const skip = nodes.find(node => node.automationId === "w-alt" && node.name === "Skip for now" && node.isEnabled);
+      const selected = skip ?? next;
+      this.observe({ operation: 18 }); try { this.observation.node(selected); } catch { /* Cached selected control only. */ }
+      expect(["Get started", "Agree and continue", "Skip for now", "Continue", "Continue anyway", "Start"]).toContain(selected.name);
+      if (selected.name === "Agree and continue") await this.armed(this.home, id(selected.automationId!));
+      else await this.click(this.home, id(selected.automationId!));
+      this.observe({ operation: 17 }); await this.until(() => this.nodes(this.home), fresh => { this.observe({ operation: 17 }); return fresh.some(node => node.controlType === "Hyperlink" && node.name === "Projects")
+        || fresh.some(node => node.controlType === "Text" && /^Step \d+ of \d+$/.test(node.name ?? "") && node.name !== step); });
+    }
+    this.observe({ operation: 18 }); throw refusal(3);
+  }
+  private async configureProvider(): Promise<void> {
+    this.phase = 4; this.observe({ providerStage: 1 }); await this.pane("Models & connections");
+    this.observe({ providerStage: 2 }); await this.click(this.home, id("byok-on"));
+    this.observe({ providerStage: 3 }); await this.fill(this.home, id("byok-url"), this.model.baseUrl);
+    this.observe({ providerStage: 4 }); await this.fill(this.home, id("byok-conductor"), "mock-model"); this.observe({ providerStage: 5 }); await this.fill(this.home, id("byok-worker"), "mock-model");
+    this.observe({ providerStage: 6 }); await this.fill(this.home, id("byok-key"), this.key, true); this.observe({ providerStage: 7 }); await this.click(this.home, node => node.controlType === "Button" && node.name === "Save");
+    this.observe({ providerStage: 8 }); await this.node(this.home, named("Key saved"), false); this.observe({ providerStage: 9 }); await this.armed(this.home, id("byok-yes"));
+    this.observe({ providerStage: 10 }); await this.click(this.home, id("byok-test"));
+    this.observe({ providerStage: 11 }); await this.idle();
+    this.observe({ providerStage: 12 }); expect(fs.readFileSync(path.join(this.profile, "settings.json"), "utf8")).not.toContain(this.key);
+  }
+  private async configureCommands(): Promise<void> {
+    this.observe({ commandStage: 1 }); await this.pane("Commands");
+    this.observe({ commandStage: 2 }); expect((await this.node(this.home, named("Run commands on this computer"), false)).patterns.toggle).toBe("On");
+    this.observe({ commandStage: 3 }); const ask = named("Ask me before every command on this computer"), node = await this.node(this.home, ask, false);
+    if (node.patterns.toggle === "Off" && node.isEnabled) { this.observe({ commandStage: 4 }); await this.click(this.home, ask); }
+    this.observe({ commandStage: 5 }); expect((await this.node(this.home, ask, false)).patterns.toggle).toBe("On");
+  }
+  private async folder(title: string, destination: string): Promise<void> {
+    this.observe({ projectStage: 8 }); const dialog = (await this.until(() => this.windows(), windows => windows.some(window => window.name === title), 20_000)).find(window => window.name === title)!;
+    this.observe({ projectStage: 9 }); if (!this.input || this.input.blockedReason?.(dialog.hwnd)) throw refusal(this.phase);
+    this.observe({ projectStage: 10 }); this.input.activate(dialog.hwnd);
+    this.observe({ projectStage: 11 }); await this.until(async () => this.input!.activeWindow(), hwnd => hwnd === dialog.hwnd, 5000);
+    this.observe({ projectStage: 12 }); try { this.chord("Alt_L", "d"); this.type(destination); this.pressKey("Return"); } finally { this.input.releaseAll(); }
+    // Inspect the actual dialog after navigation; no hard-coded control ID or simulated dialog result.
+    this.observe({ projectStage: 13 }); await this.until(() => this.nodes(dialog.hwnd), nodes => nodes.some(node => (node.name ?? "").toLowerCase().includes(path.basename(destination).toLowerCase())));
+    this.observe({ projectStage: 14 }); await this.click(dialog.hwnd, node => node.controlType === "Button" && /^Select Folder$/i.test(node.name ?? ""));
+    this.observe({ projectStage: 15 }); await this.until(() => this.windows(), windows => !windows.some(window => window.hwnd === dialog.hwnd));
+  }
+  async project(name: string): Promise<void> {
+    this.phase = 5; this.observe({ projectStage: 1 }); await this.pane("Projects");
+    this.observe({ projectStage: 2 }); await this.fill(this.home, id("project-sessions-name"), "Packaged Node " + name); this.observe({ projectStage: 3 }); await this.click(this.home, id("project-sessions-add"));
+    this.observe({ projectStage: 4 }); await this.revealHomeControl(id("project-coding-choose")); await this.click(this.home, id("project-coding-choose")); this.observe({ projectStage: 5 }); await this.folder("Choose a coding folder", this.source);
+    this.observe({ projectStage: 6 }); await this.accessibleText(text => text.includes(this.source));
+    this.observe({ projectStage: 7 }); await this.accessibleText(text => text.includes("Shells, npm, dependency installation, network access and child processes are unavailable")); this.observe({ projectStage: 16 });
+  }
+  async send(request: string): Promise<void> { await this.revealHomeControl(id("project-sessions-request"), true, true); await this.fill(this.home, id("project-sessions-request"), request); await this.click(this.home, id("project-sessions-send")); }
+  private async command(): Promise<number> { return (await this.until(() => this.windows(), windows => windows.some(window => window.name === "Ember commands"), 45_000)).find(window => window.name === "Ember commands")!.hwnd; }
+  async decide(argv: readonly string[], answer: "Allow" | "Not now" = "Allow"): Promise<void> {
+    try { this.observation.resetCommandFocus(); } catch { /* Cached decision diagnostics only. */ }
+    this.phase = 6; try { this.observation.decision(); } catch { /* Count only this existing call. */ } this.observe({ commandStage: 6, cardFlags: 0, allowFlags: 0, denyFlags: 0, hintFlags: 0 }); const hwnd = await this.command();
+    this.observe({ commandStage: 7 });
+    const commandBlock = id("ask-cmd");
+    const display = (await this.until(async () => {
+      const nodes = await this.nodes(hwnd);
+      try { this.observation.card(nodes, this.previousCard); } catch { /* Cached poll only. */ }
+      const fresh = nodes.filter(node => commandBlock(node) && !!node.runtimeId && node.runtimeId !== this.previousCard);
+      if (fresh.length > 1) throw refusal(this.phase);
+      return fresh[0];
+    }, node => !!node, 45_000))!;
+    const matchesDisplay = (node: RawNode) => sameNode(node, display);
+    const hasDisplay: SnapshotGuard = nodes => {
+      const blocks = nodes.filter(commandBlock);
+      if (blocks.length > 1) throw refusal(this.phase);
+      return blocks.length === 1 && matchesDisplay(blocks[0]);
+    };
+    this.observe({ commandStage: 8 }); await this.focus(hwnd, display);
+    this.observe({ commandStage: 9 }); expect(await this.text(hwnd, matchesDisplay)).toBe("Node arguments: " + JSON.stringify(argv));
+    this.observe({ commandStage: 10 });
+    const commandNodes = await this.nodes(hwnd);
+    if (!hasDisplay(commandNodes)) throw refusal(this.phase);
+    expect(commandNodes.map(node => node.name ?? "").join("\n")).toContain("\\work");
+    this.observe({ commandStage: 11 }); this.previousCard = display.runtimeId!;
+    this.observe({ commandStage: 12 }); this.previousTabs = new Set((await this.nodes(hwnd)).filter(node => node.controlType === "TabItem" && node.runtimeId).map(node => node.runtimeId!));
+    const answerButton = named(answer);
+    this.observe({ commandStage: 13 });
+    await this.click(hwnd, answerButton, nodes => {
+      if (!hasDisplay(nodes)) return false;
+      if (nodes.filter(answerButton).length > 1) throw refusal(this.phase);
+      return true;
+    });
+    // The click is input, not proof it was taken: an answered card leaves the window. Still commandStage 13 until it does.
+    try { await this.until(async () => { const after = await this.nodes(hwnd); return after.length > 0 && !hasDisplay(after); }, answered => answered, 10_000); }
+    catch (error) {
+      // Failure only: one hit test at the click point says what took the press. No name, bounds or identity is kept.
+      try {
+        const at = this.lastClick, chain = at && await this.bridge!.call<RawNode[]>("elementsAt", { x: at.x, y: at.y, values: false, deadlineMs: 2500 }, 5000);
+        const leaf = chain?.at(-1), root = chain?.[0];
+        // 1 the button or something inside it, 2 something else in the command window; another window of Ember's by its
+        // own fixed title: 6 the overlay, 7 the prompt, 8 the Ask box, 9 Home, the handle or the vault's form, 5 any other.
+        const title = root?.name ?? "";
+        // 10: the click point lies outside the command window's own frame, so the button's rectangle reaches past it.
+        const frame = at && (await this.nodes(hwnd)).find(node => node.hwnd === hwnd)?.bounds;
+        const outside = !!at && !!frame && (at.x < frame.x || at.y < frame.y || at.x >= frame.x + frame.width || at.y >= frame.y + frame.height);
+        const unit = (value: number | undefined) => Math.max(0, Math.min(1023, Math.round((value ?? 0) / 4)));
+        if (at && leaf && root && leaf.pid === at.node.pid) this.clickGeometry = { px: unit(at.x), py: unit(at.y), fx: unit(frame?.x), fy: unit(frame?.y), fw: unit(frame?.width), fh: unit(frame?.height),
+          ox: unit(root.bounds?.x), oy: unit(root.bounds?.y), ow: unit(root.bounds?.width), oh: unit(root.bounds?.height) };
+        this.clickUnder = !at || !Array.isArray(chain) ? 0 : !leaf || !root ? 4 : chain.some(node => sameNode(node, at.node)) ? 1
+          : leaf.pid !== at.node.pid ? 3 : root.hwnd === hwnd ? 2 : outside ? 10
+          : title === "Ember overlay" ? 6 : title === "Ember needs you" ? 7 : title === "Ask Ember" ? 8 : title !== "Ember" ? 5
+          // "Ember" is Home, the handle and the vault's form: told apart by size class only. 11 the handle's pill or tab
+          // (at most 80 high), 12 a narrow card (at most 400 wide), 9 anything larger.
+          : !root.bounds ? 9 : root.bounds.height <= 80 ? 11 : root.bounds.width <= 400 ? 12 : 9;
+      } catch { this.clickUnder = 0; /* The original refusal stands. */ }
+      // Failure only: how the command window and Home are stacked. 32 both listed, 1 the command window is always on top,
+      // 2 Home is, 4 the command window is the higher of the two, 8 it is the foreground window, 16 Home is.
+      try {
+        const listed = (await this.bridge!.call<{ windows: UiaWindow[] }>("topWindows", { pid: this.app!.pid, deadlineMs: 2500 }, 5000)).windows;
+        const command = listed.find(window => window.hwnd === hwnd), home = listed.find(window => window.hwnd === this.home);
+        if (command && home) this.clickGeometry = { ...this.clickGeometry, stack: 32 + (command.isTopmost ? 1 : 0) + (home.isTopmost ? 2 : 0) + (command.z < home.z ? 4 : 0) + (command.focused ? 8 : 0) + (home.focused ? 16 : 0) };
+      } catch { /* The original refusal stands. */ }
+      throw error;
+    }
+    this.observe({ commandStage: 14 });
+  }
+  private async review(goal: string, counts: string): Promise<string> {
+    // Phase 7 ends at the Projects pane; 11 is the reveal, the click and the read. A snapshot leaves out whatever is
+    // scrolled out of view, with everything under it, so a result's button is never listed until it shows: waiting for
+    // it to be listed or scrolling it by its handle cannot work. Ordinary Tab navigation brings it into view instead,
+    // from the request box above the Coding group: found within twelve Tabs of the pane's link and focused; then the
+    // Coding group's folder button within twelve Tabs, and the result's button within twelve more (up to fifteen
+    // controls lie between the request box and the results). Within phase 11 the welcome's unused `target` fact
+    // counts the steps: 1 finding the request box, 2 focusing it, 3 the Tab search for the folder button, 4 the Tab
+    // search for the result's button, 5 the click, 6 the read.
+    this.phase = 7; await this.idle(); await this.pane("Projects");
+    const result = named("Review result: " + titleOf(goal));
+    this.phase = 11; this.observe({ target: 1 }); const request = await this.revealHomeControl(id("project-sessions-request"));
+    this.observe({ target: 2 }); await this.focus(this.home, request);
+    this.observe({ target: 3 }); await this.revealHomeControl(id("project-coding-choose"), false);
+    this.observe({ target: 4 }); await this.revealHomeControl(result);
+    this.observe({ target: 5 }); await this.click(this.home, result);
+    this.observe({ target: 6 });
+    const region: Selector = node => node.automationId === "project-coding-review" || (["Group", "Pane"].includes(node.controlType ?? "") && node.name === titleOf(goal));
+    return this.until(() => this.homeText(region), text => text.includes(counts), 45_000);
+  }
+  private assertExport(cumulative: boolean): void {
+    const directories = fs.readdirSync(this.exported); expect(directories).toHaveLength(cumulative ? 2 : 1);
+    const newest = directories.map(name => path.join(this.exported, name)).find(directory => {
+      const parsed = JSON.parse(fs.readFileSync(path.join(directory, "review.json"), "utf8"));
+      return parsed.proposed.some((entry: { path: string; base64?: string }) => entry.path === "test.cjs" && Buffer.from(entry.base64 ?? "", "base64").toString().includes(cumulative ? "continued sum" : "test('sum'"));
+    });
+    expect(newest).toBeTruthy(); const json = fs.readFileSync(path.join(newest!, "review.json"), "utf8"), review = JSON.parse(json);
+    expect(review.purpose).toBe("review-only");
+    for (const tree of [review.baseline, review.current]) expect(tree).toContainEqual(expect.objectContaining({ path: "test.cjs", base64: Buffer.from(WINDOWS_NODE_SOURCE_ORIGINAL).toString("base64") }));
+    const proposed = WINDOWS_NODE_SOURCE_ORIGINAL.replace("1 + 1, 3", "1 + 1, 2").replace("test('sum'", cumulative ? "test('continued sum'" : "test('sum'");
+    expect(review.proposed).toContainEqual(expect.objectContaining({ path: "test.cjs", base64: Buffer.from(proposed).toString("base64") }));
+    expect(review.proposed).toContainEqual(expect.objectContaining({ path: "README.txt", base64: Buffer.from(readme).toString("base64") }));
+    expect(fs.readFileSync(path.join(newest!, "changes.patch"), "utf8")).toContain(proposed.trim());
+    for (const marker of [outside, privateCanary, environmentCanary, excludedGit, excludedDependency, this.key, this.replacementKey]) {
+      expect(json).not.toContain(marker); expect(json).not.toContain(Buffer.from(marker).toString("base64"));
+    }
+  }
+  private async exportReview(cumulative: boolean): Promise<void> {
+    // The welcome's unused `nextLabel` fact counts the export's steps: 1 waiting for Home to be idle, 2 the Tab search
+    // to the Coding group, 3 the Tab search to Export, 4 the click and the folder dialog, 5 Home's sentence, 6 the files.
+    this.observe({ nextLabel: 1 }); await this.idle();
+    const before = this.model.requests.length;
+    // After the idle wait the focus is on the pane's link, further than twelve Tabs from Export: the search goes by
+    // way of the request box (focused), the Coding group's folder button and the first result's button.
+    this.observe({ nextLabel: 2 }); await this.focus(this.home, await this.revealHomeControl(id("project-sessions-request"))); await this.revealHomeControl(id("project-coding-choose"), false);
+    const listedResult: Selector = node => (node.name ?? "").startsWith("Review result: ");
+    this.observe({ nextLabel: 3 }); await this.revealHomeControl(listedResult); await this.revealHomeControl(id("project-coding-export"));
+    this.observe({ nextLabel: 4 }); await this.click(this.home, id("project-coding-export")); await this.folder("Export coding review", this.exported);
+    // Home's sentence stands above the results list, out of view and so unlisted once Export below it has been
+    // clicked: Shift+Tab back to the folder button shows it, and Tab forward again leaves Export shown for what follows.
+    this.observe({ nextLabel: 5 }); await this.revealHomeControl(listedResult, true, true); await this.revealHomeControl(id("project-coding-choose"), false, true);
+    await this.accessibleText(text => text.includes("Exported the coding review"));
+    await this.revealHomeControl(listedResult); await this.revealHomeControl(id("project-coding-export"));
+    this.observe({ nextLabel: 6 }); expect(this.model.requests.length).toBe(before); this.assertExport(cumulative);
+  }
+  async repair(): Promise<void> {
+    await this.project("repair"); await this.send(WINDOWS_NODE_REPAIR.request); await this.decide(WINDOWS_NODE_TEST_ARGV); await this.decide(WINDOWS_NODE_TEST_ARGV);
+    expect(await this.review(WINDOWS_NODE_REPAIR.goal, "Checks: 2 run, 1 passed, 1 failed")).toContain("Done ·");
+    expect(await this.homeText(id("project-coding-patch"))).toContain("1 + 1, 2"); await this.exportReview(false); this.assertUnchanged();
+    await this.click(this.home, id("project-coding-continue")); await this.revealHomeControl(id("project-coding-continue-request")); await this.fill(this.home, id("project-coding-continue-request"), WINDOWS_NODE_CONTINUATION.request);
+    await this.click(this.home, id("project-coding-continue-send")); await this.decide(WINDOWS_NODE_TEST_ARGV); await this.decide(WINDOWS_NODE_TEST_ARGV);
+    expect(await this.review(WINDOWS_NODE_CONTINUATION.goal, "Checks: 2 run, 2 passed, 0 failed")).toContain("Done ·");
+    expect(await this.homeText(id("project-coding-patch"))).toContain("continued sum"); await this.exportReview(true);
+    expect(this.model.steps.get("repair")).toBe(4); expect(this.model.steps.get("continuation")).toBe(5);
+    expect(JSON.stringify(this.model.results.get("repair"))).toContain("ERR_ASSERTION");
+    await this.forget();
+  }
+  async deny(): Promise<void> {
+    const scenario = windowsNodeSourceScenarios("denied")[0]; await this.project("denied"); await this.send(scenario.request); await this.decide(WINDOWS_NODE_TEST_ARGV, "Not now");
+    expect(await this.review(scenario.goal, "Checks: 0 run, 0 passed, 0 failed")).toMatch(/Didn't finish ·[^\n]*Checks: 0 run, 0 passed, 0 failed/);
+    expect(this.model.steps.get("denied")).toBe(1); await this.forget();
+  }
+  private clipboardHost?: { child: ReturnType<typeof spawn>; lines: string[]; rest: string };
+  /**
+   * One Windows PowerShell for every clipboard step, started with the journey. Starting PowerShell and loading Windows
+   * Forms for each step did not finish in the step's 10 s on the hosted images once Ember and a writer were running
+   * (the script started; Windows Forms had not loaded). It answers a line per request: ready once loaded, then 1 or 0.
+   */
+  private startClipboardHost(): void {
+    const systemRoot = Object.entries(this.env).find(([key]) => key.toLowerCase() === "systemroot")?.[1]; if (!systemRoot) throw refusal(this.phase);
+    const script = "Add-Type -AssemblyName System.Windows.Forms;[Console]::Out.WriteLine('r');while(($l=[Console]::In.ReadLine()) -ne $null){"
+      // A clipboard another program holds open at that instant makes the call throw: the helper answers 0 rather than
+      // nothing, so a read is tried again inside the writer check's own 30 s and a failed clear refuses at once.
+      + "if($l -eq 'c'){try{[System.Windows.Forms.Clipboard]::SetText('PACKAGED_NODE_CLIPBOARD_FRESH');[Console]::Out.WriteLine('1')}catch{[Console]::Out.WriteLine('0')}}"
+      + "elseif($l -eq 'g'){try{$s=[System.Windows.Forms.Clipboard]::GetText();if($s.Contains('" + WINDOWS_NODE_WRITER_READY + "')){[Console]::Out.WriteLine('1')}else{[Console]::Out.WriteLine('0')}}catch{[Console]::Out.WriteLine('0')}}}";
+    const child = spawn(path.join(systemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe"), ["-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-Command", script], { env: bridgeEnv(this.env), stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
+    const host = { child, lines: [] as string[], rest: "" }; this.clipboardHost = host;
+    child.once("error", () => { /* A step that needs it refuses at its own limit. */ });
+    child.stdout!.on("data", bytes => {
+      if (host.rest.length + host.lines.length > 4096) return;
+      const parts = (host.rest + bytes).split(/\r?\n/); host.rest = parts.pop() ?? ""; host.lines.push(...parts);
+    });
+  }
+  private async clipboard(mode: "clear" | "ready"): Promise<boolean> {
+    const host = this.clipboardHost; if (!host) throw refusal(this.phase);
+    // Each step keeps its 10 s: for the helper to be ready (its first line) and for this request's answer (the next).
+    const end = Date.now() + 10_000, line = async (): Promise<string | undefined> => { while (!host.lines.length && Date.now() < end) { this.current(); await pause(50); } return host.lines.shift(); };
+    // Failure only, as the `nextLabel` fact: 5 the helper was not ready, 6 it did not answer.
+    if (!this.clipboardReady) { if (await line() !== "r") { this.observe({ nextLabel: 5 }); throw refusal(this.phase); } this.clipboardReady = true; }
+    host.lines.length = 0; host.child.stdin!.write(mode === "clear" ? "c\n" : "g\n");
+    const answer = await line(); if (answer === undefined) { this.observe({ nextLabel: 6 }); throw refusal(this.phase); }
+    return answer === "1";
+  }
+  private clipboardReady = false;
+  private async writerReady(): Promise<void> {
+    // The welcome's unused `nextLabel` fact counts the steps while phase 6 lasts: 1 the command window, 2 clearing the
+    // clipboard, 3 the run's own tab with a live Stop, 4 its command text and Copy output until the writer says ready.
+    this.observe({ nextLabel: 1 }); const hwnd = await this.command(); this.observe({ nextLabel: 2 }); expect(await this.clipboard("clear")).toBe(true);
+    this.observe({ nextLabel: 3 });
+    const freshTab = (node: RawNode) => node.controlType === "TabItem" && !!node.runtimeId && !this.previousTabs.has(node.runtimeId) && node.patterns.selectionItem?.selected === true;
+    const panelFor = (nodes: readonly RawNode[], tab: RawNode) => {
+      if (!/^tab-\d+$/.test(tab.automationId ?? "")) throw refusal(this.phase);
+      return subtree(nodes, id(tab.automationId!.replace(/^tab-/, "panel-")));
+    };
+    const live = (node: RawNode) => node.controlType === "Button" && (node.name ?? "").startsWith("Stop: ") && node.isEnabled === true;
+    const selected = (await this.until(() => this.nodes(hwnd), nodes => {
+      const tab = nodes.find(freshTab); return !!tab && panelFor(nodes, tab).some(live);
+    })).find(freshTab)!;
+    this.observe({ nextLabel: 4 });
+    await this.until(async () => {
+      const nodes = await this.nodes(hwnd);
+      // A busy command window answers with nothing (a writer is filling it): read again inside the same 30 s, as the
+      // journey's other waits do, rather than take the empty read for a tab that has gone.
+      if (!nodes.length) return false;
+      const panel = panelFor(nodes, selected);
+      if (!nodes.some(node => sameNode(node, selected) && node.patterns.selectionItem?.selected === true) || !panel.some(live)) throw refusal(this.phase);
+      const command = panel.find(named("The command")); if (!command) throw refusal(this.phase);
+      expect(await this.text(hwnd, node => sameNode(node, command))).toBe("Node arguments: " + JSON.stringify(WINDOWS_NODE_WRITER_ARGV));
+      const copy = panel.find(node => node.name === "Copy output" && node.isEnabled);
+      if (!copy) return false;
+      await this.click(hwnd, node => sameNode(node, copy)); return this.clipboard("ready");
+    }, Boolean, 30_000);
+  }
+  async writer(kind: "stop" | "mode" | "account"): Promise<void> {
+    const scenario = windowsNodeSourceScenarios(kind)[0]; await this.project(kind); await this.send(scenario.request); await this.decide(WINDOWS_NODE_WRITER_ARGV); await this.writerReady();
+    this.phase = 8; await this.pane("Projects");
+    // A snapshot leaves out what is scrolled out of view, so each control is brought into view before it is read: the
+    // project's Forget button beside the request box, then by Tab from the Show conversation button the folder's
+    // Forget button, and back by Shift+Tab to the running session's Stop.
+    // The welcome's unused `nextLabel` fact counts the steps while phase 8 lasts: 1 the project's Forget, 2 the keyboard
+    // on Show conversation, 3 the folder button, 5 the folder's Forget, 6 the session's Stop shown, 7 Stop clicked.
+    this.observe({ nextLabel: 1 }); expect((await this.revealHomeControl(id("project-sessions-forget"), false)).isEnabled).toBe(false);
+    this.observe({ nextLabel: 2 }); await this.focus(this.home, await this.revealHomeControl(id("project-sessions-conversation")));
+    // A running session lists its own controls between the request box and the Coding group, more Tab stops than a
+    // search allows (twelve Tabs did not show the folder button on the hosted Windows Server 2022 image), so this
+    // stretch is scrolled by the page keys from the focused button.
+    this.observe({ nextLabel: 3 }); this.observe({ nextLabel: 5 }); expect((await this.pageHomeControl(id("project-coding-forget"), false)).isEnabled).toBe(false);
+    const stops: Selector = node => (node.name ?? "").startsWith("Stop session:");
+    if (kind === "stop") { this.observe({ nextLabel: 6 }); await this.pageHomeControl(stops, true, true); this.observe({ nextLabel: 7 }); await this.click(this.home, stops); }
+    else if (kind === "mode") {
+      await this.pane("Apps & privacy"); await this.click(this.home, id("mode-assisted")); await this.armed(this.home, id("approvals-yes")); await this.pane("Projects");
+    } else {
+      await this.pane("Models & connections"); await this.click(this.home, id("byok-key-replace"));
+      await this.fill(this.home, id("byok-key"), this.replacementKey, true); await this.click(this.home, node => node.controlType === "Button" && node.name === "Save");
+      await this.node(this.home, named("Key saved"), false); await this.pane("Projects");
+    }
+    if (kind === "account") {
+      await this.idle();
+      await this.until(() => this.nodes(this.home), nodes => nodes.some(node => node.automationId === "project-sessions-request" && node.isEnabled === false)
+        && nodes.some(node => node.automationId === "project-sessions-forget" && node.isEnabled === false)
+        && !nodes.some(node => /^(?:Review result:|Stop session:)/.test(node.name ?? "")));
+    }
+    else {
+      expect(await this.review(scenario.goal, "Checks: 0 run, 0 passed, 0 failed")).toMatch(/Stopped ·[^\n]*Checks: 0 run, 0 passed, 0 failed/);
+      await this.forget();
+    }
+    expect(this.model.steps.get(kind)).toBe(1); this.assertUnchanged(); await this.rolesEmpty();
+    // Assisted can remove an elevated host's forced ask state; establish the real editable preference before the next card.
+    if (kind === "mode") await this.configureCommands();
+  }
+  private async forget(): Promise<void> {
+    this.phase = 9; await this.pane("Projects");
+    // A snapshot leaves out what is scrolled out of view, so the controls are brought into view by Tab from the pane's
+    // link first. The welcome's unused `nextLabel` fact counts the steps: 1 to the request box and the folder button,
+    // 2 looking for a result, 3 forgetting results, 4 forgetting the folder, 5 forgetting the project, 7 the roles.
+    this.observe({ nextLabel: 1 }); await this.focus(this.home, await this.revealHomeControl(id("project-sessions-request"))); await this.revealHomeControl(id("project-coding-choose"), false);
+    const forgets: Selector = node => (node.name ?? "").startsWith("Forget private result:");
+    // Results follow the Coding group's own controls: twelve Tabs show the first one's button if there is one. None
+    // shown then counts as none; the private roles read from disk at the end are the proof that nothing is left.
+    this.observe({ nextLabel: 2 });
+    for (let tabs = 0; tabs < 12 && !(await this.nodes(this.home)).some(node => forgets(node) && node.isOffscreen === false); tabs++) { this.current(); try { this.pressKey("Tab"); } finally { this.input!.releaseAll(); } }
+    // Only actual stopped results and inactive folder/project controls are used.
+    this.observe({ nextLabel: 3 });
+    while ((await this.nodes(this.home)).some(forgets)) {
+      const before = (await this.nodes(this.home)).filter(forgets).length;
+      await this.click(this.home, forgets);
+      await this.until(() => this.nodes(this.home), nodes => nodes.filter(forgets).length < before);
+    }
+    // Forgetting a result, the folder or the project removes or disables the control that held the keyboard, so each
+    // later search starts again from the pane's link and the request box rather than backwards from where it was.
+    this.observe({ nextLabel: 4 }); await this.pane("Projects"); await this.focus(this.home, await this.revealHomeControl(id("project-sessions-request")));
+    await this.revealHomeControl(id("project-coding-forget"));
+    await this.click(this.home, id("project-coding-forget")); await this.accessibleText(text => text.includes("No coding folder selected"));
+    this.observe({ nextLabel: 5 }); await this.pane("Projects"); await this.focus(this.home, await this.revealHomeControl(id("project-sessions-request")));
+    await this.revealHomeControl(id("project-sessions-forget"));
+    await this.click(this.home, id("project-sessions-forget")); await this.pane("Projects"); await this.revealHomeControl(id("project-sessions-request"), false);
+    await this.until(() => this.nodes(this.home), nodes => nodes.some(node => node.automationId === "project-sessions-request" && node.isEnabled === false));
+    this.observe({ nextLabel: 7 });
+    this.assertUnchanged(); await this.rolesEmpty();
+  }
+  private async rolesEmpty(): Promise<void> {
+    await this.until(async () => {
+      const controllers = path.join(this.profile, "coding-controllers"); if (fs.existsSync(controllers) && fs.readdirSync(controllers).length) return false;
+      const common = path.join(this.temporary, "ember-coding-unsupported");
+      if (fs.existsSync(common)) for (const entry of fs.readdirSync(common)) {
+        if (!/^process-[0-9a-f-]{36}$/.test(entry)) throw refusal(this.phase);
+        for (const role of fs.readdirSync(path.join(common, entry))) {
+          if (!["copies", "reviews", "assets"].includes(role)) throw refusal(this.phase);
+          if (fs.readdirSync(path.join(common, entry, role)).length) return false;
+        }
+      }
+      return true;
+    }, Boolean, 20_000);
+  }
+  private assertUnchanged(): void {
+    expect(fs.readFileSync(path.join(this.source, "test.cjs"), "utf8")).toBe(WINDOWS_NODE_SOURCE_ORIGINAL);
+    expect(fs.readFileSync(path.join(this.source, "writer.cjs"), "utf8")).toBe(WINDOWS_NODE_SOURCE_WRITER);
+    expect(fs.readFileSync(path.join(this.source, "README.txt"), "utf8")).toBe(readme);
+    expect(fs.existsSync(path.join(this.source, "heartbeat.txt"))).toBe(false);
+    expect(fs.readFileSync(path.join(this.root, "outside.txt"), "utf8")).toBe(outside);
+    expect(fs.readFileSync(path.join(this.profile, "credential-canary.txt"), "utf8")).toBe(privateCanary);
+    const messages = JSON.stringify(this.model.requests.map((request: { messages: unknown }) => request.messages));
+    for (const marker of [outside, privateCanary, environmentCanary, excludedGit, excludedDependency, this.key, this.replacementKey]) expect(messages).not.toContain(marker);
+    expect(this.model.failures).toEqual([]);
+    for (const inventory of this.model.inventories) expect([...inventory].sort()).toEqual([...WINDOWS_NODE_PRODUCT_TOOLS].sort());
+  }
+  async finish(): Promise<void> {
+    this.phase = 10; this.assertUnchanged(); expect(this.model.requests.length).toBeGreaterThan(0);
+    expect(this.model.requests.every((request: { authorization: string | null }) => request.authorization === "Bearer " + this.key || request.authorization === "Bearer " + this.replacementKey)).toBe(true);
+    expect(JSON.stringify(this.model.requests.map((request: { messages: unknown }) => request.messages))).toContain("Only bundled Node is supplied");
+    await this.pane("Your Ember"); await this.click(this.home, id("p-quit"));
+    const exited = await bounded(this.appClosed!, 20_000); expect(exited).toEqual({ code: 0, signal: null });
+    expect(this.forced).toBe(false); expect(fs.existsSync(path.join(this.temporary, "ember-coding-unsupported"))).toBe(false);
+    const controllers = path.join(this.profile, "coding-controllers"); if (fs.existsSync(controllers)) expect(fs.readdirSync(controllers)).toEqual([]);
+    expect(hash(this.executable)).toBe(this.executableHash);
+    for (const member of this.assets) expect(hash(member.path)).toBe(member.sha256);
+    expect(fuseMismatches(readFuses(fs.readFileSync(this.executable)), emberFuses("win32"))).toEqual([]);
+    this.assertionsComplete = true;
+  }
+  /** Failure never converts a forced process stop into a successful private-owner cleanup receipt. */
+  async close(): Promise<boolean> {
+    this.observe({ operation: 0 });
+    clearTimeout(this.watchdog); let clean = this.assertionsComplete && !this.forced;
+    if (this.app && this.app.exitCode === null && this.app.signalCode === null) { this.stopped = true; this.forced = true; this.app.kill(); clean = false; }
+    try { if (this.appClosed) { const result = await bounded(this.appClosed, 10_000); clean &&= result.code === 0 && result.signal === null; } } catch { clean = false; }
+    this.input?.releaseAll(); this.input?.close();
+    try { this.clipboardHost?.child.stdin?.end(); this.clipboardHost?.child.kill(); } catch { /* Already gone. */ }
+    try { if (this.bridge) { const result = await bounded(this.bridge.close(), 10_000); clean &&= result.code === 0; } } catch { this.bridge?.kill(); clean = false; }
+    return clean;
+  }
+}
+
+it.skipIf(!required)("uses the shipped Windows Home for normal provider setup, exact Node repair/continuation, denial, Stop and revocation with verified cleanup", async () => {
+  if (quarantined) throw refusal(1);
+  quarantined = true;
+  let root: string | undefined, model: Model | undefined, fixture: Journey | undefined, failed = false, phase = 1;
+  try {
+    expect(process.platform).toBe("win32"); expect(process.arch).toBe("x64");
+    if (process.env.GITHUB_ACTIONS === "true") { expect(["windows-2022", "windows-2025"]).toContain(process.env.EMBER_WINDOWS_NODE_PRODUCT_IMAGE); expect(process.env.GITHUB_SHA).toMatch(/^[0-9a-f]{40}$/); }
+    const temporary = fs.realpathSync.native(os.tmpdir()), parent = path.basename(temporary).startsWith("ember-run-") ? path.dirname(temporary) : temporary;
+    root = fs.realpathSync.native(fs.mkdtempSync(path.join(parent, "ember-packaged-node-product-")));
+    const scenarios = [...windowsNodeSourceScenarios("repair"), ...windowsNodeSourceScenarios("denied"), ...windowsNodeSourceScenarios("stop"), ...windowsNodeSourceScenarios("mode"), ...windowsNodeSourceScenarios("account")];
+    model = await createWindowsNodeProductModel(scenarios); fixture = new Journey(root, model);
+    await fixture.start(); await fixture.repair(); await fixture.deny(); await fixture.writer("stop"); await fixture.writer("mode"); await fixture.writer("account"); await fixture.finish();
+  } catch { try { fixture?.captureFailure(); } catch { /* Failure observation cannot replace the original path. */ } failed = true; phase = fixture?.phase ?? phase; }
+  finally {
+    fixture?.beginCleanup();
+    let clean = false; try { clean = !!fixture && await fixture.close(); } catch { failed = true; phase = 12; }
+    try { await model?.close(); } catch { failed = true; phase = 12; }
+    if (!failed && clean && root) { try { fs.rmSync(root, { recursive: true, force: false }); } catch { failed = true; phase = 12; } }
+    else if (root) failed = true;
+  }
+  if (failed) {
+    try { fixture?.captureFailure(); const observation = fixture?.failureObservation(); if (observation) console.info("Windows Node packaged cached observation", JSON.stringify(observation)); }
+    catch { /* No diagnostic fault changes the original refusal or retained state. */ }
+    try { const observation = fixture?.commandFailureObservation(); if (observation) console.info("Windows Node packaged command observation", JSON.stringify(observation)); }
+    catch { /* The separate numeric record cannot change the primary failure. */ }
+    throw refusal(phase);
+  }
+  quarantined = false;
+  console.info("Windows Node packaged journey passed", JSON.stringify({ schema: 1, phase: 12 }));
+}, 540_000);

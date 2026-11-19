@@ -145,13 +145,6 @@ export interface Input extends XInput {
 /** What Perception needs of a window system. The desk's remote X11 facade (desk/agent.ts) satisfies it structurally. */
 export type PerceptionWindows = Pick<WindowSystem, "activeWindow" | "focusWindow" | "clientWindows" | "stack" | "capture" | "systemDialogOpen" | "systemDialogReason">;
 
-/**
- * Keys held when an ask-shortcut callback runs (WindowSystem.keysDown, freshAskPress). Every backend answers it, but
- * main uses it only on Linux, where X re-reports a grabbed shortcut when its grab ends; elsewhere main passes null
- * (trusted and debounced, G6; §4.1).
- */
-export type ChordState = { control: boolean; alt: boolean; space: boolean };
-
 // ───────────── Electron, as structural shapes (injected by main.ts) ─────────────
 
 /** A display as Electron's screen reports it (DIP bounds; macOS: points). */

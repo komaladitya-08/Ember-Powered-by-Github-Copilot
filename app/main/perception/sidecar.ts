@@ -7,8 +7,8 @@
  * process; answers on stdout), started on demand. The sidecar answers one request at a time, so a request that
  * doesn't come back in time holds up every other one: that process is killed,
  * and a fresh one starts at once (as after any exit or crash), so one stays
- * connected (see revive); while each new one answers nothing past its ping,
- * the next waits longer (reviveDelay). Element ids are only valid in the process that issued
+ * connected (see revive); repeated crashes wait longer (reviveDelay), even when a recovery status answers.
+ * Element ids are only valid in the process that issued
  * them; what it knows about secret fields is kept here too and handed to every
  * new process.
  */
@@ -401,11 +401,11 @@ const MAX_STDERR_LINE_BYTES = 64 * 1024;
 
 /** The longest a revive waits (reviveDelay). */
 const REVIVE_MAX_MS = 60_000;
+/** A recovery probe must remain connected this long to count as stable without a real request. */
+const RECOVERY_STABLE_MS = 30_000;
 /**
- * How long a revive waits once `streak` helpers in a row answered nothing past their ping (rp-3): the first at once, as
- * after a helper that worked, then 2 s, 4 s, 8 s … up to a minute. Measured before: a helper that crashed on every
- * request was started 29 times a second, and one whose status hung every 5 s, for as long as Ember ran. A request of
- * the user's still starts one at once, and any answer ends the streak.
+ * How long a revive waits after `streak` consecutive crashes: the first at once, then 2 s, 4 s, 8 s … up to a minute.
+ * A user's request still starts one at once, and a real answer or a stable recovery ends the streak.
  */
 export function reviveDelay(streak: number): number {
   return streak <= 1 ? 0 : Math.min(REVIVE_MAX_MS, 1000 * 2 ** (streak - 1));
@@ -459,7 +459,7 @@ export function boundedLines(input: NodeJS.ReadableStream, max: number, onLine: 
   });
 }
 
-interface Pending { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }
+interface Pending { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout; recovery?: boolean }
 /**
  * One sidecar process and the requests waiting on it; `answered`: it has answered something (it works); `warm`: it has
  * answered a request waited on (see SidecarLaunch.firstRequestMs).
@@ -470,6 +470,7 @@ interface Helper {
   ready: boolean;
   pingId: number;
   held: string[];
+  recoveryAt?: number;
 }
 
 /** What a vault fill that the helper couldn't do rejects with: fixed words, never the helper's or the app's. */
@@ -500,7 +501,7 @@ export class AtspiSidecar {
   /** stop() was called: no helper is started again on its own (see revive). */
   private stopped = false;
   private reviving = false;
-  /** Revived helpers in a row that answered nothing past their ping (reviveDelay); an answer to any request ends it. */
+  /** Consecutive crashes without useful work or a stable recovery (reviveDelay). */
   private fruitless = 0;
   /** A process of this client reported another protocol version: none is started again by this client (a new one is made to try again). */
   private incompatible: SidecarVersionError | null = null;
@@ -610,7 +611,10 @@ export class AtspiSidecar {
     const p = id !== null ? h.pending.get(id) : undefined;
     if (!p) return;
     h.warm = true;
-    this.fruitless = 0;
+    // A status request made solely to reconnect to the bus can answer just before another crash. It is not
+    // evidence of useful work; otherwise that cycle resets backoff forever.
+    if (p.recovery) h.recoveryAt = Date.now();
+    else this.fruitless = 0;
     clearTimeout(p.timer);
     h.pending.delete(id!);
     if (msg.error) p.reject(new Error(msg.error.message)); else p.resolve(msg.result);
@@ -655,7 +659,10 @@ export class AtspiSidecar {
     h.held = [];
     for (const p of h.pending.values()) { clearTimeout(p.timer); p.reject(typeof why === "string" ? new Error(why) : why); }
     h.pending.clear();
-    if (current && h.answered) this.revive(h.warm);
+    if (current && h.answered) {
+      if (h.recoveryAt !== undefined && Date.now() - h.recoveryAt >= RECOVERY_STABLE_MS) this.fruitless = 0;
+      this.revive();
+    }
   }
 
   /**
@@ -663,12 +670,12 @@ export class AtspiSidecar {
    * away and asked for its status, so one stays connected to the accessibility bus. LibreOffice (24.2) aborts, losing
    * unsaved work, when a client that read it has left, a document is opened while no client is connected, and then a
    * new client lists the desktop; one staying connected while the document opens prevents it. Never after stop(); and
-   * a helper that never answered isn't started over and over (the next request starts one). `worked`: the one that went
-   * answered a request; while none does, each revive waits longer (reviveDelay).
+   * a helper that never answered isn't started over and over (the next request starts one). Repeated failures back off;
+   * a real answer or a recovery connection that stayed up resets the streak.
    */
-  private revive(worked: boolean): void {
+  private revive(): void {
     if (this.stopped || this.reviving || this.launch?.noRevive) return;
-    this.fruitless = worked ? 0 : this.fruitless + 1;
+    this.fruitless++;
     const wait = reviveDelay(this.fruitless);
     // Once a streak, not every lap: the log keeps only 4 × 5 MB, and the lines that matter come at the streak's start.
     if (wait && this.fruitless === 2) this.log.warn("sidecar.revive_backoff", { failed: this.fruitless, waitMs: wait });
@@ -679,7 +686,7 @@ export class AtspiSidecar {
       // (A launch that may not start now, a stopped WSL distro, isn't started by a revive either.)
       if (!this.mayStartNow()) return;
       this.log.info("sidecar.revive", {});
-      this.request("status").catch(() => undefined);
+      this.requestImpl("status", {}, 5000, true).catch(() => undefined);
     }, wait);
     if (wait) timer.unref?.();
   }
@@ -697,6 +704,10 @@ export class AtspiSidecar {
   }
 
   request<T>(method: string, params: Record<string, unknown> = {}, timeoutMs = 5000): Promise<T> {
+    return this.requestImpl(method, params, timeoutMs, false);
+  }
+
+  private requestImpl<T>(method: string, params: Record<string, unknown>, timeoutMs: number, recovery: boolean): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       const h = this.ensure();
       const id = this.nextId++;
@@ -710,7 +721,7 @@ export class AtspiSidecar {
         this.log.warn("sidecar.timeout", { method, timeoutMs: ms });
         this.retire(h, "accessibility helper was restarted (an earlier request took too long)", "SIGKILL");
       }, ms);
-      h.pending.set(id, { resolve: v => resolve(v as T), reject, timer });
+      h.pending.set(id, { resolve: v => resolve(v as T), reject, timer, recovery });
       const line = JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n";
       if (h.ready) h.child.send(line); else h.held.push(line);
     });

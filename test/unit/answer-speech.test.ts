@@ -28,6 +28,7 @@ function wiring() {
   const voicePreference = { natural: true, naturalModel: "kitten" };
   const confirmer = { waiting: false };
   const personal = { answered: vi.fn(() => null) };
+  const resetProjectCoding = vi.fn(async (): Promise<void> => undefined);
   const code = ts.transpile(`
     let lastAskByVoice = false, turnAnswer = "", lastReply = "";
     const log = { info() {} }, policy = { features: {} }, screenLock = null;
@@ -44,6 +45,7 @@ function wiring() {
     const signInAbort = { abort() {} }, keeper = { use() {} }, tokens = { clear() {} }, providers = { forget() {} }, refusedTokens = new Set();
     const conversationNow = (entries = []) => entries;
     const forgetProject = () => {};
+    const forgetCurrentCoding = async () => undefined;
     const forgetSessionWords = () => {};
     const vault = { forgetAll: () => true };
     ${speech}
@@ -55,8 +57,8 @@ function wiring() {
       speechWorks: ok => { speechHeard = ok; },
     };
   `, { target: ts.ScriptTarget.ES2022 });
-  const run = new Function("SpeechStream", "answerPieces", "AnswerLanguage", "TurnLatency", "ACK_MS", "acknowledgement", "afterAck", "endsWithQuestion", "spokenText", "speaksAloud", "speechSilenced", "IPC", "broadcast", "voicePreference", "voice", "personal", "agent", "confirmer", "taskNotice", "prefs", code);
-  const callbacksUnderTest = run(SpeechStream, answerPieces, AnswerLanguage, TurnLatency, ACK_MS, acknowledgement, afterAck, endsWithQuestion, spokenText, speaksAloud, speechSilenced, IPC, broadcast, voicePreference, voice, personal, agent, confirmer, taskNotice, prefs) as {
+  const run = new Function("SpeechStream", "answerPieces", "AnswerLanguage", "TurnLatency", "ACK_MS", "acknowledgement", "afterAck", "endsWithQuestion", "spokenText", "speaksAloud", "speechSilenced", "IPC", "broadcast", "voicePreference", "voice", "personal", "agent", "confirmer", "taskNotice", "prefs", "resetProjectCoding", code);
+  const callbacksUnderTest = run(SpeechStream, answerPieces, AnswerLanguage, TurnLatency, ACK_MS, acknowledgement, afterAck, endsWithQuestion, spokenText, speaksAloud, speechSilenced, IPC, broadcast, voicePreference, voice, personal, agent, confirmer, taskNotice, prefs, resetProjectCoding) as {
     onTurnStart(turn: { text: string; spoken: boolean; manual?: true }): void;
     onAnswerDelta(text: string): void;
     onAnswer(text: string): void;
@@ -74,7 +76,7 @@ function wiring() {
     stopSpeaking(source: "menu"): void;
     manualListening(on: boolean): void;
   };
-  return { ...callbacksUnderTest, voice, personal, agent, confirmer, broadcast, voicePreference, prefs };
+  return { ...callbacksUnderTest, voice, personal, agent, confirmer, broadcast, voicePreference, prefs, resetProjectCoding };
 }
 
 afterEach(() => vi.useRealTimers());
@@ -90,6 +92,8 @@ describe("main's answer speech ownership", () => {
     const hushes = w.voice.hush.mock.calls.length;
     const signingOut = w.signOut();
     expect(w.voice.hush).toHaveBeenCalledTimes(hushes + 1);
+    expect(w.resetProjectCoding).toHaveBeenCalledOnce();
+    expect(w.voice.hush.mock.invocationCallOrder[hushes]).toBeLessThan(w.resetProjectCoding.mock.invocationCallOrder[0]);
     expect(w.agent.forgetConversation).toHaveBeenCalledOnce();
     // Runtime/task callbacks arriving while teardown waits cannot begin new playback or another acknowledgement.
     w.onTurnStart({ text: "Another old queued request", spoken: true });
@@ -210,6 +214,7 @@ describe("main's answer speech ownership", () => {
     w.agent.forgetConversation.mockRejectedValue(new Error("Erasure failed"));
     w.onTurnStart({ text: "Old request", spoken: true });
     await expect(w.signOut()).rejects.toThrow("Erasure failed");
+    expect(w.resetProjectCoding).toHaveBeenCalledOnce();
     w.onAnswer("The old answer after failed erasure.");
     expect(w.voice.speak).not.toHaveBeenCalled();
     w.onTurnStart({ text: "Another account’s request", spoken: false });

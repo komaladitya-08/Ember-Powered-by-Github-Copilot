@@ -12,7 +12,6 @@ import { LOCAL_TARGET, targetIdOf, DISTRO_NAME, HOST_ID, type TargetId, type Tar
 import type { LoadedAdminPolicy } from "../admin";
 import type { CommandCapability } from "../commands/types";
 import type { HostRecord } from "../remote/types";
-import type { DesktopState } from "../remote/protocol";
 import type { Settings } from "../settings";
 import type { WslDistro, WslFacts } from "../wsl/types";
 import type { DesktopAccess } from "./types";
@@ -308,9 +307,4 @@ export function summaryOf(e: TargetEntry, active: TargetId): TargetSummary {
   // The distro that "WSL" names is the one "in WSL" goes to: settings marks it.
   const wslDefault = e.kind === "wsl" && e.names.includes(WSL_WORDS[0]);
   return { id: e.id, kind: e.kind, label: e.label, ...(e.login ? { login: e.login } : {}), state: e.state, can: e.can, active: e.id === active, ...(wslDefault ? { wslDefault } : {}) };
-}
-
-/** A remote's desktop as the registry shows it: what the agent reported (§5.4). */
-export function desktopOf(d: DesktopState | undefined): DesktopAccess | undefined {
-  return d?.access;
 }

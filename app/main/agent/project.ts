@@ -217,8 +217,9 @@ export function projectRequestSecret(question: string): string {
 
 /** A native folder selection bound to its local directory identity until the run starts. */
 export function projectCommandFolder(folder: string, privateDir: string) {
-  const resolved = fsSync.realpathSync(folder);
-  const relative = path.relative(fsSync.realpathSync(privateDir), resolved);
+  // Match fs.promises.realpath in the resource validator, including Windows case and short-name canonicalisation.
+  const resolved = fsSync.realpathSync.native(folder);
+  const relative = path.relative(fsSync.realpathSync.native(privateDir), resolved);
   if (/^[\\/]{2}|[\p{Cc}\p{Cf}]/u.test(resolved) || !relative || (relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative))) {
     throw new ProjectInputError("Choose a local folder outside Ember's data folder.");
   }
@@ -230,7 +231,7 @@ export function projectCommandFolder(folder: string, privateDir: string) {
       try {
         const live = fsSync.lstatSync(resolved);
         return live.isDirectory() && live.dev === selected.dev && live.ino === selected.ino &&
-          path.relative(resolved, fsSync.realpathSync(resolved)) === "";
+          path.relative(resolved, fsSync.realpathSync.native(resolved)) === "";
       } catch { return false; }
     },
   };

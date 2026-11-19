@@ -41,10 +41,10 @@ const input = (o: Partial<CommandGateInput> & Pick<CommandGateInput, "spec" | "c
 const RM = finding("destroy", "posix.rm", "Deletes build and everything in it.");
 
 describe("gate 2 for commands (§3.16)", () => {
-  it("runs what the stamp covers: an ordinary command, or a dangerous one whose class and rule the PC named", async () => {
+  it("runs an ordinary command but asks for an old bare announcement of a dangerous command", async () => {
     expect(await gateCommand(input({ spec: spec(), classify: classifier(() => []).classify }))).toMatchObject({ status: "ok", approved: false });
     const announced = spec({ verdict: "announce", classes: ["destroy"], rules: ["posix.rm"] });
-    expect(await gateCommand(input({ spec: announced, classify: classifier(() => [RM]).classify }))).toMatchObject({ status: "ok" });
+    expect(await gateCommand(input({ spec: announced, classify: classifier(() => [RM]).classify }))).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.approvalMissing, rules: ["posix.rm"] });
   });
 
   it("asks for any finding beyond the stamp's, for \"run\" and for \"announce\" alike (critique security-3)", async () => {
@@ -54,8 +54,8 @@ describe("gate 2 for commands (§3.16)", () => {
       const r = await gateCommand(input({ spec: s, classify: classifier(() => [RM, extra]).classify }));
       expect(r).toEqual({
         status: "needs_confirm", reason: GATE_WORDS.disagree,
-        says: verdict === "run" ? [RM.says, extra.says] : [extra.says],
-        rules: verdict === "run" ? ["posix.rm", "path.secret"] : ["path.secret"],
+        says: [RM.says, extra.says],
+        rules: ["posix.rm", "path.secret"],
       });
     }
   });
@@ -141,7 +141,7 @@ describe("gate 2 for commands (§3.16)", () => {
     const line = "[[ -d build ]] && rm -rf build";
     expect(await real(line, { verdict: "announce", classes: ["destroy"], rules: ["posix.rm"] })).toMatchObject({ status: "needs_confirm", rules: ["posix.rm"] });
     expect((await real(line, { verdict: "ask", classes: ["destroy"], rules: ["posix.rm"], approval: { ageMs: 1000 } })).status).toBe("ok");
-    expect((await real("rm -rf build", { verdict: "announce", classes: ["destroy"], rules: ["posix.rm"] })).status).toBe("ok");
+    expect((await real("rm -rf build", { verdict: "announce", classes: ["destroy"], rules: ["posix.rm"] })).status).toBe("needs_confirm");
   });
 
   it("asks, as the PC does, before any bash loop, whatever its body, and still runs an ordinary if (commands-c7-1, commands-remote-y7-1, y7-2, y7-3)", async () => {
@@ -252,13 +252,13 @@ describe("gate 2 and the PC's Autopilot (modes-D3; PLAN.md §10 \"Settled\" (3))
       expect(root).toMatchObject({ status: "needs_confirm", says: [GATE_WORDS.noAutopilot, GATE_WORDS.root], rules: ["admin.no-autopilot"] });
       // Not even for what a stamp's class would cover in an announcement the user's own words asked for: a deletion
       // Autopilot announced, and a command with no finding at all that it announced in a task that was steered.
-      expect(await gate([RM], announced([RM]), { autopilotOk })).toEqual({ status: "needs_confirm", reason: GATE_WORDS.noAutopilot, says: [GATE_WORDS.noAutopilot], rules: ["admin.no-autopilot"] });
+      expect(await gate([RM], announced([RM]), { autopilotOk })).toEqual({ status: "needs_confirm", reason: GATE_WORDS.noAutopilot, says: [GATE_WORDS.noAutopilot, RM.says], rules: ["posix.rm", "admin.no-autopilot"] });
       expect(await gate([], announced([], { rules: ["tainted", "autopilot"] }), { autopilotOk })).toMatchObject({ status: "needs_confirm", rules: ["admin.no-autopilot"] });
       // A stamp that names Autopilot among its rules without the announcement's age is no way round it.
       expect((await gate([RM], spec({ verdict: "announce", classes: ["destroy"], rules: ["posix.rm", "autopilot"] }), { autopilotOk })).status).toBe("needs_confirm");
       // The user's own yes runs it, as ever; and an announcement their own words asked for is covered by its class, as before.
       expect((await gate([RM], announced([RM], { verdict: "ask", approval: { ageMs: 100 }, rules: ["posix.rm", "autopilot", "admin.no-autopilot"] }), { autopilotOk })).status).toBe("ok");
-      expect((await gate([RM], spec({ verdict: "announce", classes: ["destroy"], rules: ["posix.rm"] }), { autopilotOk })).status).toBe("ok");
+      expect((await gate([RM], spec({ verdict: "announce", classes: ["destroy"], rules: ["posix.rm"] }), { autopilotOk })).status).toBe("needs_confirm");
     }
   });
 
@@ -383,8 +383,8 @@ describe("gate 2 reads the scripts a command runs, here (L8, the lead's ruling)"
     }));
     // "delete build/" announced `rm -r build`: the script's rm of src isn't what the user named.
     const announced = await at({ verdict: "announce", classes, rules });
-    expect(announced).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree, rules: ["in-script:posix.rm"] });
-    expect((announced as { says: string[] }).says).toEqual(["In t.sh: Deletes ~/src and everything in it."]);
+    expect(announced).toMatchObject({ status: "needs_confirm", reason: GATE_WORDS.disagree, rules: ["posix.rm", "in-script:posix.rm"] });
+    expect((announced as { says: string[] }).says).toEqual(["Deletes build and everything in it.", "In t.sh: Deletes ~/src and everything in it."]);
     // A yes to the PC's card (which couldn't show the script) doesn't cover it either; a yes to this question does.
     expect((await at({ verdict: "ask", classes, rules, approval: { ageMs: 500 } })).status).toBe("needs_confirm");
     expect(await at({ verdict: "ask", classes, rules: [...rules, "in-script:posix.rm"], approval: { ageMs: 500 } })).toMatchObject({ status: "ok", approved: true });
@@ -528,7 +528,7 @@ describe("gate 2 and the PC's Assisted check and Interactive announcements under
   it("wants the user's yes for what Assisted's check cleared where this computer's administrator turned the check or the modes off, or capped them below Assisted", async () => {
     for (const assistedOk of [false, undefined]) {
       for (const f of [[RM], [PUSH], []]) {
-        expect(await gate(f, checked(f), { assistedOk, interactiveOk: true }), String(assistedOk)).toMatchObject({ status: "needs_confirm", says: [GATE_WORDS.noCheck], rules: ["admin.no-check"] });
+        expect(await gate(f, checked(f), { assistedOk, interactiveOk: true }), String(assistedOk)).toMatchObject({ status: "needs_confirm", says: [GATE_WORDS.noCheck, ...f.map(x => x.says)], rules: [...f.map(x => x.rule), "admin.no-check"] });
       }
     }
     // Allowed there: covered by its class, as before.

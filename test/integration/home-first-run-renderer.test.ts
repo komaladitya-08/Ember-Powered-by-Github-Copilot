@@ -7,7 +7,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { USER_PROVIDER_NO_MODEL } from "../../app/main/agent/host";
 import { DEFAULT_SETTINGS } from "../../app/main/settings";
 import { AGREE_ARM_MS } from "../../app/shared/provider";
@@ -46,7 +46,7 @@ const SIGNED_OUT = { phase: "signed-out", detail: "Not signed in.", models: [], 
 const CARD = commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts: { kind: "local", privileged: false, windows: false, podman: false, byok: false } });
 const ALL_ROWS = ["commands", "memory", "voice", "screenshots", "interactive"].map(row => ({ row, offered: true, why: null }));
 
-interface Seed { consent?: number; firstRun?: { rows: unknown[]; commands: unknown }; agreeDone?: { ok: boolean; failed: string[] }; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean }
+interface Seed { consent?: number; firstRun?: { rows: unknown[]; commands: unknown }; agreeDone?: { ok: boolean; failed: string[] }; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean; viewport?: { width: number; height: number } }
 
 let browser: Browser;
 let server: http.Server;
@@ -55,7 +55,7 @@ let port = 0;
 beforeAll(async () => {
   if (gate) return;
   browser = await chromium.launch({ executablePath: process.env.EMBER_CHROMIUM_PATH ?? "/usr/bin/chromium", headless: true, args: ["--no-sandbox"] });
-  const dist = path.resolve("dist");
+  const dist = path.resolve(process.env.EMBER_FIRST_RUN_DIST ?? "dist");
   server = http.createServer((req, res) => {
     const file = path.resolve(dist, `.${decodeURIComponent((req.url ?? "/").split("?")[0])}`);
     if (!file.startsWith(dist + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); res.end(); return; }
@@ -67,6 +67,8 @@ beforeAll(async () => {
   port = (server.address() as { port: number }).port;
 });
 afterAll(async () => { if (gate) return; await browser.close(); server.close(); });
+// A case may open several Home windows; retire their animation loops before the next case starts.
+afterEach(async () => { if (!gate) await Promise.all(browser.contexts().map(context => context.close())); });
 
 async function open(seed: Seed = {}): Promise<Page> {
   const settings = structuredClone(DEFAULT_SETTINGS);
@@ -75,7 +77,7 @@ async function open(seed: Seed = {}): Promise<Page> {
   settings.consent = { version: seed.consent ?? 99, at: "2026-11-04T12:00:00Z" };
   const admin = { source: null, error: null, managed: [], features: {}, provider: null, confirmEveryAction: false, allowGrants: true, retentionDays: 30, neverLook: [], ...seed.admin };
   const environment = { checks: seed.checks ?? [], versions: { node: "24", electron: "44", chrome: "152" } };
-  const page = await browser.newPage({ viewport: { width: 1000, height: 900 } });
+  const page = await browser.newPage({ viewport: seed.viewport ?? { width: 1000, height: 900 } });
   const errors: string[] = [];
   page.on("pageerror", e => errors.push(e.message));
   (page as Page & { errors: string[] }).errors = errors;
@@ -1032,8 +1034,14 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await p.locator("#w-alt").click();
     await expect.poll(() => calls(p)).toContain(off);
     expect(await p.locator("#welcome").getAttribute("data-step")).toBe("sign-in");
-    // Failing: its details, opened from the sign-in step, show the connection's own words, as mine (first-run-r4-2);
-    // Back leaves it on.
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  });
+
+  it("(aa2) a failing provider's own details explain the connection and Back leaves it in use (first-run-r4-2)", async () => {
+    const provider = { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "api.example.com" } };
+    const inForce = { inForce: true, host: "api.example.com", agreed: true, keySaved: true };
+    const off = `save:${JSON.stringify({ provider: { on: false } })}`;
+    // This independent failing-connection journey has its own case and browser context.
     const detail = "Ember can't reach the model server on this computer (localhost:11434). Start it, and Ember will connect in a moment.";
     const mine = "I can't reach the model server on this computer (localhost:11434). Start it, and I'll connect in a moment.";
     const local = { ...provider, baseUrl: "http://localhost:11434/v1", consent: { ...provider.consent, host: "localhost:11434" } };
@@ -1047,7 +1055,6 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await q.locator("#w-title").innerText()).toBe("Your own model provider");
     await q.waitForTimeout(100);
     expect(await calls(q)).not.toContain(off);
-    expect((p as Page & { errors: string[] }).errors).toEqual([]);
     expect((q as Page & { errors: string[] }).errors).toEqual([]);
   });
 
@@ -1765,7 +1772,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await p.locator("#w-count").innerText()).toBe("Step 2 of 6");
     expect(await p.locator("#w-changes").isVisible()).toBe(true);
     const changed = await p.locator("#w-changes-list li").allInnerTexts();
-    expect(changed).toHaveLength(5);
+    expect(changed).toHaveLength(9);
     expect(changed[0]).toContain("“Keep my recent conversation”");
     // Version 8 (owner decision of 2026-11-12): anyone near the computer can answer Ember's questions by voice.
     expect(changed[1]).toContain("anyone near the computer can answer it by voice");
@@ -1774,7 +1781,15 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     // Version 10: what the vault keeps, and that only Autopilot fills it in (vault-4).
     expect(changed[3]).toBe("If you give me a login, a card or contact details in my Secure Form, I keep them in a vault on this computer, locked with your computer's keyring, until you forget them. Only Autopilot fills them in, and the AI model never sees them.");
     // Version 11: what asks, and that a command Ember doesn't know runs (Settled 28, accessibility-c11-1, r11-copy-x11-3).
-    expect(changed[4]).toBe("I say plainly what I ask before: anything risky in an app, and a command I know is dangerous or code I can't read, unless you asked for exactly that command and it only deletes or overwrites data, publishes something or changes the system. A command I don't know runs, and I tell you, and Assisted and Autopilot, if you choose them later, ask less.");
+    expect(changed[4]).toBe("I say plainly what I ask before: anything risky in an app, and a command I know is dangerous or code I can't read, even if you asked for it. A command I don't know runs, and I tell you, and Assisted and Autopilot, if you choose them later, ask less.");
+    // Version 12: Interactive asks even for an explicitly requested dangerous command.
+    expect(changed[5]).toBe("In Interactive, I ask before a dangerous command even when you asked for it.");
+    // Version 13: project checkpoints are explicit, encrypted and never resume work automatically.
+    expect(changed[6]).toBe("If you choose Save projects, I encrypt project names, goals and session outcomes on this computer until you choose Forget saved projects or Forget everything. Opening a checkpoint never resumes work.");
+    // Version 14: coding copies/sends and full-file export retention are agreed before coding can start.
+    expect(changed[7]).toBe("When you ask for coding work, I copy the project folder you chose and may send requested files and command output to your model, leaving the original unchanged. Exports keep all captured files, including unchanged files, until you remove them. Private copies I can't verify as removed may remain and block new coding work.");
+    // Version 15: explicit encrypted drafts, historical context and separately enabled exact public dependency sets.
+    expect(changed[8]).toBe("If you choose Save coding draft, I encrypt complete captured files, the last request and summary, and historical check outcomes on this computer until you forget the draft or choose Forget everything. Opening a saved draft never resumes work. Using its edits requires a newly chosen folder, a new import review and a new request. When you start a new request from an imported draft, its saved request and summary may go to your connected model as historical context. If you separately enable public dependencies for a WSL coding project, I may send its locked public npm package names and versions to registry.npmjs.org after the normal approval decision for that exact set. I send no project files or private registry credentials there, and commands remain offline.");
     expect(await p.locator(".w-row").evaluateAll(rows => rows.map(r => (r as HTMLElement).dataset.row))).toEqual(["interactive"]);
     expect(await p.locator("#w-row-interactive").isChecked()).toBe(true);
     // The usual points and the full text are still there; nothing goes on until Agree is saved.
@@ -1825,7 +1840,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     // A returning user after a consent bump: Ember isn't connected yet (nothing is, before the consent).
     const p = await open({ consent: 6, provider: own, providerState: inForce });
     expect(await p.locator("#w-title").innerText()).toBe("What's changed since you last agreed");
-    await expect.poll(() => send(p)).toBe("When you ask something, your request and what I read go to your own model provider (api.example.com). Nothing is sent before you ask.");
+    await expect.poll(() => send(p)).toBe("When you ask something, your request and what I read go to your own model provider (api.example.com). Nothing is sent before you ask. For coding, I use a private copy of the project folder you choose; requested files and command output may go to the connected model. Your original files stay unchanged. When you start a new request from an imported draft, its saved request and summary may go to your connected model as historical context. If you separately enable public dependencies for a WSL coding project, I may send its locked public npm package names and versions to registry.npmjs.org after the normal approval decision for that exact set. I send no project files or private registry credentials there, and commands remain offline.");
     expect(await full(p)).toBe("your own model provider (api.example.com)");
     expect(await send(p)).not.toContain("Copilot");
     // Agreed, and Back to the consent from the sign-in step: the same recipient.
@@ -1970,6 +1985,44 @@ describe.skipIf(gate)("first run's one agreement (owner decision of 2026-11-12)"
     await p.waitForTimeout(AGREE_ARM_MS + 100);
   };
   const ON = (more: Record<string, boolean> = {}) => JSON.stringify({ commands: true, memory: true, voice: true, screenshots: true, interactive: true, ...more });
+
+  it("ordinary keyboard scrolling reveals consent switches below the normal packaged window viewport", async () => {
+    const card = commandsConsent({ os: "win32", target: "local", targetLabel: "This computer", facts: { kind: "local", privileged: false, windows: true, podman: false, byok: false } });
+    const p = await open({ consent: 0, viewport: { width: 760, height: 640 }, firstRun: { rows: ALL_ROWS, commands: { title: card.title, body: card.body, sha256: card.sha256 } } });
+    await toConsent(p);
+    const position = (row: string) => p.locator("#w-row-" + row).evaluate(node => {
+      const box = node.getBoundingClientRect(); return { top: box.top, bottom: box.bottom, onscreen: box.top < innerHeight && box.bottom > 0 };
+    });
+    expect((await position("memory")).onscreen).toBe(false);
+    const reveal = async (row: string, backwards = false) => {
+      let tabs = 0;
+      while (!(await position(row)).onscreen && tabs < 12) {
+        const before = await p.evaluateHandle(() => document.activeElement);
+        try {
+          await p.keyboard.press(backwards ? "Shift+Tab" : "Tab"); tabs++;
+          // Match the real fixture's existing 150-ms pause between navigation attempts.
+          await p.waitForTimeout(150);
+          await expect.poll(() => p.evaluate(previous => document.activeElement !== previous, before)).toBe(true);
+        } finally { await before.dispose(); }
+      }
+      expect((await position(row)).onscreen, row).toBe(true);
+    };
+    // Match the packaged fixture: navigate in row order, then click/focus each optional switch before the next row.
+    // Mouse coordinates cannot ask Playwright to scroll an offscreen locator into view.
+    for (const row of ["memory", "voice", "screenshots", "interactive"]) {
+      await reveal(row);
+      const box = await p.locator("#w-row-" + row).boundingBox(); expect(box).not.toBeNull();
+      await p.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
+      expect(await focusedId(p)).toBe("w-row-" + row);
+      expect(await p.locator("#w-row-" + row).isChecked()).toBe(false);
+    }
+    // The commands switch is earlier in the same tab order; return with Shift+Tab without animated Home scrolling.
+    await reveal("commands", true);
+    expect(await p.locator("#w-row-commands").isChecked()).toBe(true);
+    for (const row of ["memory", "voice", "screenshots", "interactive"]) expect(await p.locator("#w-row-" + row).isChecked()).toBe(false);
+    expect((await calls(p)).some(call => call.startsWith("agreeFirstRun:"))).toBe(false);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 30_000);
 
   it("shows five rows, each on, named, with its own card's whole text, and agrees to what is left on (slice4-27)", async () => {
     const p = await open({ consent: 0 });

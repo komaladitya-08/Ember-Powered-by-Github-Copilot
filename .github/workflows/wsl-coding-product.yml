@@ -1,0 +1,137 @@
+name: WSL coding product qualification
+
+# Portable PR contracts register the workflow before merge. Native proof remains manual and cannot enable admission.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/wsl-coding-product.yml"
+      - "app/wsl-coding/**"
+      - "app/main/agent/**"
+      - "app/shared/wsl-coding*"
+      - "scripts/package/wsl-coding-tools.*"
+      - "test/fixtures/coding/wsl-socket-probe.c"
+      - "test/integration/wsl-coding-*.test.ts"
+      - "test/unit/wsl-coding-*.test.ts"
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'ember-improve/20261116-windows-node-product'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22.23.5"
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      - name: Framing, syscall and manual-native admission contracts
+        run: npx vitest run test/unit/wsl-coding-protocol.test.ts test/unit/wsl-coding-seccomp.test.ts test/unit/wsl-coding-workflow.test.ts --maxWorkers=1
+  native:
+    if: github.event_name == 'workflow_dispatch' && github.ref_name == 'ember-improve/20261116-windows-node-product'
+    needs: contracts
+    name: WSL2 native coding (${{ matrix.image }})
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.image }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep reviewed source line endings
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22.23.5"
+      - uses: Vampire/setup-wsl@4c48163d9f981914dd8caa0fc335fe19cca5bff4 # v7.2.0
+        with:
+          distribution: Ubuntu-22.04
+          wsl-version: 2
+          wsl-shell-user: ember
+          wsl-conf: |
+            [user]
+            default=ember
+            [boot]
+            systemd=true
+          additional-packages: bubblewrap gcc libc6-dev util-linux
+      - name: Apply the dedicated qualification distro configuration
+        run: wsl.exe --terminate Ubuntu-22.04
+      - name: Mark this CI-created distro's completed noninteractive setup
+        shell: pwsh
+        run: |
+          Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss' | ForEach-Object {
+            $v = Get-ItemProperty $_.PSPath
+            if ($v.DistributionName -eq 'Ubuntu-22.04') { Set-ItemProperty $_.PSPath -Name RunOOBE -Value 0 -Type DWord }
+          }
+      - run: npm ci
+      - run: npm run build
+      - name: Prepare only the lock-pinned offline TypeScript asset
+        run: node scripts/package/wsl-coding-tools.mjs
+      - name: Authenticate the existing reviewed Linux Node runtime pin
+        shell: pwsh
+        run: |
+          $pin = Get-Content scripts/package/remote-runtime.json -Raw | ConvertFrom-Json
+          $asset = $pin.targets.'linux-x64'.xz
+          $archive = Join-Path $env:RUNNER_TEMP $asset.file
+          Invoke-WebRequest -Uri "https://nodejs.org/dist/v$($pin.pinned)/$($asset.file)" -OutFile $archive
+          if ((Get-Item $archive).Length -ne $asset.bytes) { throw 'Pinned Linux runtime size mismatch.' }
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $asset.sha256) { throw 'Pinned Linux runtime digest mismatch.' }
+          "EMBER_WSL_CODING_NODE_ARCHIVE=$archive" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Explicit CI-only root provisioning and native socket fixture compilation
+        run: |
+          set -euo pipefail
+          MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu-22.04 -u root --exec /bin/bash -euo pipefail -s "$EMBER_WSL_CODING_NODE_ARCHIVE" "$GITHUB_WORKSPACE" <<'SH'
+          archive=$(wslpath -a -u "$1")
+          repo=$(wslpath -a -u "$2")
+          # Already authenticated above; this provisioning is never run by the product or a coding model.
+          # Discovery validates the resolved executable against its fixed system prefixes, including /opt/node.
+          test ! -e /opt/node
+          test ! -L /opt/node
+          install -d -m 755 /opt/node
+          tar -xJf "$archive" -C /opt/node --strip-components=1
+          chown -R root:root /opt/node
+          chmod -R go-w /opt/node
+          test -f /opt/node/bin/node
+          test ! -L /opt/node/bin/node
+          test ! -e /usr/bin/node
+          test ! -L /usr/bin/node
+          ln -s /opt/node/bin/node /usr/bin/node
+          test "$(readlink -f /usr/bin/node)" = /opt/node/bin/node
+          cc -O2 "$repo/test/fixtures/coding/wsl-socket-probe.c" -o "$repo/dist/wsl-socket-probe"
+          SH
+      - name: Require the real Windows-to-WSL helper and native adversarial controls
+        run: |
+          set -euo pipefail
+          export EMBER_WSL_CODING_SOCKET_PROBE="$GITHUB_WORKSPACE/dist/wsl-socket-probe"
+          node scripts/run-integration.mjs test/integration/wsl-coding-native.test.ts --maxWorkers=1 --reporter=default --reporter=json --outputFile=dist/wsl-coding-native-result.json
+        env:
+          EMBER_WSL_CODING_NATIVE_TEST: "1"
+          EMBER_WSL_CODING_TEST_DISTRO: Ubuntu-22.04
+      - name: Reject skipped, empty or failed native evidence
+        shell: node {0}
+        run: |
+          const fs = require('node:fs');
+          const result = JSON.parse(fs.readFileSync('dist/wsl-coding-native-result.json', 'utf8'));
+          if (result.success !== true || result.numPassedTests !== 1 || result.numPendingTests !== 0 || result.numFailedTests !== 0) {
+            throw new Error('The required native WSL coding case must pass without skips.');
+          }
+          console.log('The required native WSL coding boundary case passed; product readiness remains separately reviewed.');
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: wsl-coding-native-${{ matrix.image }}
+          path: dist/wsl-coding-native-result.json
+          if-no-files-found: warn

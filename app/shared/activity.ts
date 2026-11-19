@@ -21,7 +21,6 @@ export const STATUS_WORDS = {
   /** A stopped task whose question went unanswered: the user stopped nothing (tasks-approvals-r1). */
   unanswered: "No answer in time",
 } as const;
-export type StatusWord = keyof typeof STATUS_WORDS;
 
 /** What an activity item is. */
 export type ActivityKind =
@@ -189,6 +188,7 @@ export const STEP_GROUP: Readonly<Record<string, StepGroup>> = {
   open_app: "open", open_on_desk: "open",
   press_keys: "keys", scroll: "scroll",
   run_command: "command",
+  run_node: "command",
   point_at: "point", wait_for_click: "wait",
 };
 

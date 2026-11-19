@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { commandLineSecret, KEY_VALUE, keyValueSteps, REDACT_PASSES, redactSecrets, redactSteps, runSteps, SECRET_HIDDEN, UNGUARDED_PASSES } from "../../app/main/commands/redact";
+import { commandLineSecret, KEY_VALUE, keyValueSteps, REDACT_PASSES, redactSecrets, redactSteps, runSteps, runStepsYielding, SECRET_HIDDEN, UNGUARDED_PASSES } from "../../app/main/commands/redact";
 import { memoryRefusal } from "../../app/main/memory/guard";
 
 const GH = `ghp_${"a1B2".repeat(9)}`;
@@ -664,6 +664,48 @@ describe("the Azure Key Vault passes on output with no value in it (stop-yield-x
   }, 60_000);
 });
 
+describe("the MySQL password pass's necessary option check", () => {
+  it("preserves every pass's bytes across clients, paths, quotes and malformed options", () => {
+    const clients = ["mysql", "mysqldump", "Mysql", "MYSQL", "mYsQl.ExE", "mariadb", "mariadb-dump", "mariabackup"];
+    const folders = ["", "/usr/bin/", "bin\\", "${MYSQL_HOME}/bin/", "\\\\db01\\tools\\"];
+    const options = [" -pWint3r!Sh0p", " -p'Wint3r!Sh0p'", ' -p"Wint3r!Sh0p"', " -p", " -P3306", " --port=3306", " -\\pWint3r!Sh0p", " \u2011pWint3r!Sh0p", "\n-pWint3r!Sh0p", ""];
+    const texts = clients.flatMap(client => folders.flatMap(folder => options.map(option => `${folder}${client}${option}`)));
+    texts.push("gcc -I/usr/include/mysql -pthread", "notmysql -pWint3r!Sh0p", "mysql --port=3306\nprintf -- '-p'",
+      "mysql -p'Wint3r\\!Sh0p'", "mysql -pWint3r\u2603Sh0p", "mysql -p$PASSWORD", "mysql -p\\x41", "mysql\t-pWint3r!Sh0p");
+    // Compare each pass, so a later pattern cannot hide a difference in the password search. Interleave text
+    // without the required option to check both guard branches on successive uses of the shared global regex.
+    for (const text of texts) {
+      for (let i = 0; i < REDACT_PASSES.length; i++) {
+        expect(REDACT_PASSES[i](text), `pass ${i}: ${JSON.stringify(text)}`).toBe(UNGUARDED_PASSES[i](text));
+        expect(REDACT_PASSES[i]("mysql --port=3306")).toBe(UNGUARDED_PASSES[i]("mysql --port=3306"));
+      }
+    }
+  });
+
+  it("still hides a password after a long run of ids without an option", () => {
+    const ids = '"https://kv.vault.azure.net/secrets/name-1/abc"\n'.repeat(20_000);
+    expect(redactSecrets(`${ids}/usr/bin/mysql -p'Wint3r!Sh0p'`)).toBe(`${ids}/usr/bin/mysql -p'${SECRET_HIDDEN}'`);
+  });
+});
+
+describe("the environment assignment pass's necessary equals check", () => {
+  it("preserves every pass's original bytes for assignments, ordinary fields and malformed separators", () => {
+    const names = ["DB_PASS", "REDIS_AUTH", "MYSQL_PW", "SIGNING_KEY", "AUTH", "PASSPHRASE", "PWD", "OLDPWD", "LOW_PASS", "PUBLIC_KEY", "SORT_KEY", "SECRET_KEY", "key", "pass"];
+    for (const name of names) for (const separator of ["=", ":", " = ", "\uff1d"]) {
+      for (const value of ["hunter2x", "a1B2c3D4", "Basic dXNlcjpwYXNz", "[secret hidden]", "$DB_PASS", "'quoted-value'"]) {
+        const text = `prefix ${name}${separator}${value}\n"value":"a", "x": 1, `;
+        for (let i = 0; i < REDACT_PASSES.length; i++) expect(REDACT_PASSES[i](text)).toBe(UNGUARDED_PASSES[i](text));
+      }
+    }
+  });
+
+  it("still hides assignments and Vault values after an id run while leaving ordinary fields intact", () => {
+    const ids = '"https://kv.vault.azure.net/secrets/name-1/abc"\n'.repeat(20_000);
+    const text = `${ids}DB_PASS=hunter2x\nAUTH=a1B2c3D4\n"value":"a", "x": 1, `;
+    expect(redactSecrets(text)).toBe(`${ids}DB_PASS=${SECRET_HIDDEN}\nAUTH=${SECRET_HIDDEN}\n"value":"${SECRET_HIDDEN}", "x": 1, `);
+  });
+});
+
 describe("the key-value pass in slices (integ-x-3)", () => {
   const atOnce = (t: string): string => t.replace(KEY_VALUE, (m, keep: string, _s: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN));
   const longestStep = (text: string): { ms: number; out: string } => {
@@ -691,6 +733,112 @@ describe("the key-value pass in slices (integ-x-3)", () => {
     for (const t of ["token = \n  abc, password:\n\n'x' y", `${"token".repeat(100)}:v ${"a".repeat(500)} token=z`, "a; token\t=>\t\"v\";b", "pwd:" + "x".repeat(2000)]) {
       for (const slice of [1, 7, 64]) expect(runSteps(keyValueSteps(t, slice)), t.slice(0, 60)).toBe(atOnce(t));
     }
+  });
+
+  it("preserves operator preference, original whitespace, key bounds and consumed hidden matches", () => {
+    const whitespace = "\t\n\r\f\v \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
+    const cases = [
+      ": password=> secret", "token=>", "token=>''", "token=>\"\"", "token=>>abc", "token=> ;password=x",
+      "token=one:password=two token=three", "token=x=password=>y;password=z",
+      "token=[secretpassword \n : leak", "token=[secretpassword" + " \n".repeat(2000) + ": leak",
+      "token=[secretpassword \n : leak; password=real", "token='[secret hidden]' password=x", "token=[Secret]",
+      `token${whitespace}=${whitespace}'value' tail`, `token${whitespace}=>${whitespace}"value"`,
+      "token='\nnot-a-value' password=x", "token=\u0085value", "token=\ud83d\ude00 tail", "token=\ud800 tail",
+      ...["password", "passwd", "pwd", "secret", "token", "api_key", "access-key", "private_key", "client-secret"].flatMap(key =>
+        [0, 255, 256, 257, 301].map(n => `prefix_${key}${"x".repeat(n)}'] \n => \t'v'`)),
+      "token" + " ".repeat(32 * 1024) + "=value",
+      "token=>" + "\n ".repeat(16 * 1024) + "'';password=x",
+      "token=" + "x=:>".repeat(8192) + ";password=after",
+    ];
+    for (const text of cases) {
+      for (const slice of [1, 7, 64, 256 * 1024]) expect(runSteps(keyValueSteps(text, slice))).toBe(atOnce(text));
+    }
+    expect(runSteps(keyValueSteps(": password=> secret", 1))).toBe(`: password=> ${SECRET_HIDDEN}`);
+    expect(runSteps(keyValueSteps("token=>''", 1))).toBe(`token=${SECRET_HIDDEN}''`);
+    expect(runSteps(keyValueSteps("token=[secretpassword \n : leak", 1))).toBe("token=[secretpassword \n : leak");
+  });
+
+  it("keeps the trailing-name filter equivalent for all secret alternatives, legacy case folding and preceding URLs", () => {
+    const names = ["password", "passwd", "pwd", "secret", "token",
+      ...["api", "access", "private"].flatMap(prefix => ["", "_", "-"].map(separator => `${prefix}${separator}key`)),
+      ...["", "_", "-"].map(separator => `client${separator}secret`)];
+    const previous = '"https://kv.vault.azure.net/secrets/name-1/abc"\n';
+    for (const name of names) for (const casing of [name, name.toUpperCase(), [...name].map((c, i) => i % 2 ? c.toUpperCase() : c).join("")]) {
+      for (const suffix of ["", "x".repeat(255), "x".repeat(256), "x".repeat(257), ".-_x"]) {
+        for (const closing of ["", "'", '"]', "']"]) {
+          const text = `${previous}embedded_${casing}${suffix}${closing}\u00a0\n=>\t'value'; "value":"a", "x":1`;
+          for (const slice of [1, 8, 256 * 1024]) expect(runSteps(keyValueSteps(text, slice))).toBe(atOnce(text));
+        }
+      }
+    }
+    for (const text of [
+      `${previous}"value":"a", "x":1; token=tail`, `${previous}https:ordinary; password=tail`,
+      "\u017fecret=x; token\u212a=x; pr\u0131vatekey=x; ap\u0130key=x; password=real",
+      "secret\u200b_suffix=x; token\u00a0=real; \u212atoken=x; \u017fecret_token=x",
+      "token=[secretpassword \n : leave; client-secret=>''; token=tail",
+      "token = ' \n value'\npassword=real; prefixapi_key'']=ordinary; prefixapi_key']=real",
+    ]) for (const slice of [1, 3, 64]) expect(runSteps(keyValueSteps(text, slice))).toBe(atOnce(text));
+  });
+
+  it("finds late names across every presence-scan boundary without adding left-boundary or case rules", () => {
+    const names = ["password", "passwd", "pwd", "secret", "token", "apikey", "api_key", "api-key", "accesskey", "access_key", "access-key",
+      "privatekey", "private_key", "private-key", "clientsecret", "client_secret", "client-secret"];
+    for (const slice of [1, 3, 8, 64]) for (const name of names) {
+      for (let offset = -13; offset <= 1; offset++) {
+        const text = `${"x".repeat(Math.max(0, slice * 4 + offset))}${name.toUpperCase()}=private-value`;
+        expect(runSteps(keyValueSteps(text, slice))).toBe(atOnce(text));
+      }
+    }
+    for (const slice of [0, -1, NaN, Infinity, 0.5]) {
+      expect(runSteps(keyValueSteps("ordinary:1 token=private-value", slice))).toBe(atOnce("ordinary:1 token=private-value"));
+    }
+  });
+
+  it("observes Stop during the presence scan without returning plain or late-secret output", async () => {
+    const plain = '"value":"a", "x":1, '.repeat(40_000);
+    for (const text of [plain, `${plain}password=late-private-value`]) {
+      const steps = keyValueSteps(text); let polls = 0;
+      expect(await runStepsYielding(steps, () => ++polls > 2)).toBeNull();
+      expect(polls).toBe(3); expect(steps.next()).toEqual({ done: true, value: undefined });
+      expect(runSteps(keyValueSteps(text))).toBe(atOnce(text));
+    }
+  });
+
+  it("leaves dense non-secret operators unchanged without searching each remaining value suffix", () => {
+    const text = "x=1".repeat(40_000) + "; token=last";
+    expect(runSteps(keyValueSteps(text))).toBe(`${"x=1".repeat(40_000)}; token=${SECRET_HIDDEN}`);
+    expect(runSteps(keyValueSteps(text))).toBe(atOnce(text));
+  });
+
+  it("keeps paused generators independent from each other and the whole-text regex", () => {
+    const texts = ["token=[secretpassword \n : leak; password=x", ": password=> secret; token=>''", "token" + " ".repeat(70) + "='v' tail"];
+    const steps = texts.map(text => keyValueSteps(text, 1));
+    const results: (string | undefined)[] = texts.map(() => undefined);
+    while (results.some(result => result === undefined)) {
+      for (let i = 0; i < steps.length; i++) {
+        if (results[i] !== undefined) continue;
+        atOnce("token=another password=another");
+        const next = steps[i].next();
+        if (next.done) results[i] = next.value;
+      }
+    }
+    expect(results).toEqual(texts.map(atOnce));
+  });
+
+  it.each([
+    "unrelated-output ".repeat(1000),
+    "token" + " ".repeat(16 * 1024) + "=private-value",
+    "token=" + " \n".repeat(8192) + "'private-value'",
+    "token=" + "private-value".repeat(2000),
+    "token=private-value;" + "ordinary-output ".repeat(1000),
+    "x=1".repeat(5000) + ";token=private-value",
+  ])("honors Stop during bounded search, whitespace, value and output work without a partial result (%#)", async text => {
+    const steps = keyValueSteps(text, 64);
+    let polls = 0;
+    expect(await runStepsYielding(steps, () => ++polls > 2)).toBeNull();
+    expect(polls).toBe(3);
+    expect(steps.next()).toEqual({ done: true, value: undefined });
+    expect(runSteps(keyValueSteps(text))).toBe(atOnce(text));
   });
 
   it("never holds Ember's main thread for a whole 4 MiB pass, so Stop gets it within 300 ms", () => {

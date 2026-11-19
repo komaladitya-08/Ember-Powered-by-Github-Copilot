@@ -72,7 +72,11 @@ export function win32System(deps: PlatformDeps, o: Win32SystemOptions = {}): Sys
     which: cmd => lookup.which(cmd),
     spawnDefaults: { windowsHide: true },
     // The mic page's device listing starts Chromium's video capture service: in the browser process, not one of its own.
-    chromiumSwitches: ["enable-features=RunVideoCaptureServiceInBrowserProcess"],
+    // Chromium's native occlusion check counts the full-screen overlay, once it stops being click-through for a
+    // question's buttons, as covering every Ember window beneath it: the command window's page then turns hidden,
+    // stops reporting its card in view and stops updating what UI Automation reads (measured on Windows Server 2022
+    // and 2025: visible, then hidden, with its window in the foreground). Ember's windows are few and small.
+    chromiumSwitches: ["enable-features=RunVideoCaptureServiceInBrowserProcess", "disable-features=CalculateNativeWinOcclusion"],
     environment: ctx => environment.environment(ctx),
     fixes: environment.fixes,
     doctorProbes: () => win32DoctorProbes({

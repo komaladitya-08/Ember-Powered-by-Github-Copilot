@@ -60,7 +60,7 @@ export const PART_SPEC: Readonly<Record<VaultPart, { label: string; max: number;
   cardName: { label: "Name on the card", max: 200, required: false },
   cardNumber: { label: "Card number", max: 23, required: true },
   expiry: { label: "Expiry date (MM/YY)", max: 7, required: true },
-  securityCode: { label: "Security code", max: 4, required: true },
+  securityCode: { label: "Security code", max: 4, required: false },
   name: { label: "Full name", max: 200, required: false },
   email: { label: "Email", max: 254, required: false },
   phone: { label: "Phone", max: 40, required: false },
@@ -210,7 +210,7 @@ export function formWords(kind: VaultKind, where: string, site: boolean, via: st
     where: site
       ? `${via ? `Asked in ${via}. ` : ""}Ember fills ${them} in only on ${where}, in any browser.`
       : `Ember fills ${them} in only in ${where}.`,
-    lead: `Ember keeps ${them} locked with your computer's keyring and uses ${them} only in Autopilot. It never shows ${them} to you again, and the AI model never sees ${them}.`,
+    lead: `Ember keeps ${them} locked with your computer's keyring and uses ${them} only in Autopilot. It never shows ${them} to you again, and the AI model never sees ${them}.${kind === "card" ? " Ember cannot safely fill the security code; enter it yourself after stopping all Ember tasks." : kind === "login" ? " Passwords shorter than six characters cannot be kept for filling; enter those yourself after stopping all Ember tasks." : ""}`,
   };
 }
 
@@ -274,10 +274,17 @@ export function checkValues(kind: VaultKind, raw: unknown): { ok: true; values: 
   return { ok: true, values };
 }
 
+/** New entries must be usable without exposing a short secret; legacy entries still use checkValues on load. */
+export function checkNewValues(kind: VaultKind, raw: unknown): ReturnType<typeof checkValues> {
+  const checked = checkValues(kind, raw);
+  if (checked.ok && checked.values.password && [...checked.values.password.trim()].length < 6) return { ok: false, part: "password" };
+  return checked;
+}
+
 /** What the form says under a part that can't be kept. */
 export function partProblemText(part: VaultPart): string {
   switch (part) {
-    case "password": return "Type the password.";
+    case "password": return "Type a password of at least six characters.";
     case "cardNumber": return "Type the card's number: 12 to 19 digits.";
     case "expiry": return "Type the expiry date as MM/YY, for example 08/29.";
     case "securityCode": return "Type the 3 or 4 digits of the security code.";

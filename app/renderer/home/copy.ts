@@ -12,7 +12,6 @@ import { KEYS, OPEN_AGAIN, SHORTCUTS, type KeyConventions, type OS, type Shortcu
 import { parseTargetId } from "../../shared/targets";
 import { PLATFORM_WORDS } from "../../shared/words";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { EXACT_ONLY } from "../../shared/commands-card";
 import { APPROVAL_MODES, modeRank, type ApprovalMode, type ApprovalsState, type ModeWhy } from "../../shared/approvals";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefaults as missingFor } from "../../shared/never-look";
 import { onboardingRest } from "./computers-copy";
@@ -21,6 +20,12 @@ import { sideOf, type HandlePosition } from "../../shared/handle-place";
 import { CONVERSATION_LIMIT, CONVERSATION_REQUEST_LIMIT, type HistoryProblemKind } from "../../shared/conversation";
 import { NATURAL_CHOICES, naturalModelHint, type NaturalModel } from "./natural-copy";
 import { searchFold } from "./search-copy";
+
+/** A named coding session opens its existing review, without starting or applying work. */
+export function sessionReviewWords(title: string): { button: string; label: string } {
+  return { button: "Review changes", label: `Review changes: ${title}` };
+}
+export function sessionReviewChanged(): string { return "This coding review changed. Open it again from the current session."; }
 
 export const CONVERSATION_RETENTION = `Keeps the latest ${CONVERSATION_LIMIT} messages while Ember runs. Older messages are forgotten as new ones arrive. Closing Ember or signing out forgets this conversation.`;
 export const CONVERSATION_KEEP_LABEL = "Keep my recent conversation after Ember closes";
@@ -282,11 +287,11 @@ export const SCREEN_IMAGES_TEXT = {
 
 /**
  * What "Before Ember starts" says about commands in its hand line (index.html), past its lead: a dangerous command or
- * code Ember can't read asks unless the user asked for exactly that command and it does no more than EXACT_ONLY says;
+ * code Ember can't read asks even when the user requested it;
  * one Ember doesn't know runs, announced (the owner's decision of 2026-11-14; r11-copy-x11-1, -x11-3). True below
  * Interactive and in it; Assisted and Autopilot ask less, which the line says too.
  */
-export const HAND_COMMANDS = `It asks before a command it knows is dangerous and before code it can't read, unless you asked for exactly that command and it ${EXACT_ONLY} (it shows it first, with a few seconds to stop it).`;
+export const HAND_COMMANDS = `It asks before a command it knows is dangerous and before code it can't read.`;
 export const UNKNOWN_RUNS = "A command it doesn't know runs, and it tells you.";
 /** The hand line's words after its lead, as the page says them (privacyFoldWords words them for the mode in force). */
 export const HAND_COMMANDS_FULL = ` in an app unless you turn on Interactive, when you agree or later in settings, and then still before anything risky there. ${HAND_COMMANDS} ${UNKNOWN_RUNS} Assisted and Autopilot, if you choose them later in settings, ask less.`;
@@ -312,9 +317,9 @@ export function privacyFoldWords(text: string, o: { screenImages: boolean; auton
     .replace(HAND_COMMANDS_FULL, o.autonomy === "autopilot"
       ? ", even on anything risky or hard to undo: Autopilot is on, so it tells you what it's doing as it goes and asks only where How Ember asks, below, says."
       : o.autonomy === "assisted"
-        ? ` on anything risky in an app, or before a command it knows is dangerous or code it can't read, unless Assisted's check finds the step in what you asked, or you asked for exactly that command and it ${EXACT_ONLY}: then it goes ahead and tells you. ${UNKNOWN_RUNS} For ordinary steps it tells you what it's doing instead (How Ember asks, below).`
+        ? ` on anything risky in an app, or before a command it knows is dangerous or code it can't read, unless Assisted's check finds the step in what you asked: then it goes ahead and tells you. ${UNKNOWN_RUNS} For ordinary steps it tells you what it's doing instead (How Ember asks, below).`
       : o.autonomy
-      ? ` on anything risky in an app, and before a command it knows is dangerous or code it can't read, except where you asked for exactly that command and it ${EXACT_ONLY}: it shows you that one first, with a few seconds to stop it. ${UNKNOWN_RUNS} For ordinary steps it tells you what it's doing instead (How Ember asks, below).`
+      ? ` on anything risky in an app, and before a command it knows is dangerous or code it can't read, even when you asked for it. ${UNKNOWN_RUNS} For ordinary steps it tells you what it's doing instead (How Ember asks, below).`
       : o.grants ? ` in an app, except those you let it act in without asking (below), and even there before anything risky. ${HAND_COMMANDS} ${UNKNOWN_RUNS}`
         : ` in an app. ${HAND_COMMANDS} ${UNKNOWN_RUNS}`)
     .replace(" Only in Autopilot, it can fill in a login, a card or contact details from its vault, which the AI model never sees.", o.vaultFill === false
@@ -1007,12 +1012,12 @@ export const MEMORY_QUESTIONS_HINT = "At most one question a day, only while you
 
 /**
  * Interactive's card (Apps & privacy › How Ember asks, FEATURE_CONSENT_VERSION.autonomy; app/main/policy/autonomy.ts):
- * what is announced instead of asked, what still asks every time (risky steps in an app; a dangerous command but one the
- * user asked for exactly, which is announced in every mode: accessibility-c11-1), what never happens, that a stop always works, and
+ * what is announced instead of asked, what still asks every time (risky steps in an app; a dangerous command even one the
+ * user asked for exactly), what never happens, that a stop always works, and
  * that anyone near the computer can answer a question by voice while Voice Match is off. Change it only with a bump of
  * that version.
  */
-export const AUTONOMY_CONSENT_TEXT = `In Interactive, Ember does ordinary steps without asking first: it works in your apps, borrows your mouse and keyboard, runs ordinary commands and ones it doesn't know, moves text between apps and presses OK on a message box that has nothing else to choose. It tells you what it is doing as it goes, and keeps a record under What Ember did. It still asks every time before anything risky in an app: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings and any dialog that asks a question. It asks before a dangerous command too, one that deletes, publishes, changes the system, touches passwords or keys, downloads and runs code or keeps running after you stop Ember, unless you asked for exactly that command and it ${EXACT_ONLY}: then it shows it first, with a few seconds to stop it. It asks before code it can't read, too. It asks more often in your system's settings and security apps, and a task goes back to asking once you say no or a page or file tries to give it instructions. It never types passwords and never acts in sign-in prompts. “Ember, stop” or Ember's stop shortcut stops everything at once, and moving your mouse takes it back. While Voice Match is off, anyone near the computer can answer Ember's questions by voice.`;
+export const AUTONOMY_CONSENT_TEXT = `In Interactive, Ember does ordinary steps without asking first: it works in your apps, borrows your mouse and keyboard, runs ordinary commands and ones it doesn't know, moves text between apps and presses OK on a message box that has nothing else to choose. It tells you what it is doing as it goes, and keeps a record under What Ember did. It still asks every time before anything risky in an app: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings and any dialog that asks a question. It asks before a dangerous command too, one that deletes, publishes, changes the system, touches passwords or keys, downloads and runs code or keeps running after you stop Ember, even when you asked for it. It asks before code it can't read, too. It asks more often in your system's settings and security apps, and a task goes back to asking once you say no or a page or file tries to give it instructions. It never types passwords and never acts in sign-in prompts. “Ember, stop” or Ember's stop shortcut stops everything at once, and moving your mouse takes it back. While Voice Match is off, anyone near the computer can answer Ember's questions by voice.`;
 
 /**
  * Assisted's card (Apps & privacy › How Ember asks, FEATURE_CONSENT_VERSION.assisted; PolicyEngine.assist and
@@ -1050,7 +1055,7 @@ export const APPROVALS_HEADING = "How Ember asks";
 export const MODE_NAME: Readonly<Record<ApprovalMode, string>> = { interactive: "Interactive", assisted: "Assisted", autopilot: "Autopilot" };
 /** Each offered mode's one sentence under its name (a mode joins as it is built). */
 export const MODE_LINE: Readonly<Partial<Record<ApprovalMode, string>>> = {
-  interactive: `Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying, unless you asked for exactly that command and it ${EXACT_ONLY}: then it tells you first.`,
+  interactive: `Ember tells you about ordinary steps as it does them, and asks before anything risky, such as sending, deleting or paying, including a dangerous command you asked for.`,
   assisted: "As Interactive, but before Ember asks, a lighter AI model checks the step against what you asked. If it matches, Ember goes ahead and tells you.",
   autopilot: "Ember doesn't ask, except before commands where you or your organisation set them to ask every time: it sends, deletes, pays and installs without asking, and tells you as it goes. You accept that risk when you choose it.",
 };
@@ -2114,9 +2119,9 @@ export function signOutScope(c: ForgetCounts): string {
     + (hasUnknown(c) ? UNKNOWN_NOTE : "");
 }
 
-/** The question for Forget everything: only saved memory goes, and the other three are said to stay. */
+/** Forget everything names saved data and project records that go; active task execution stays. */
 export function forgetEverythingScope(c: ForgetCounts): string {
-  return `Forget everything? This removes ${plural(c.facts, "saved fact", "saved facts")}, what Ember learned from them and the conversation saved on this computer, if you keep one.${VAULT_GOES} `
+  return `Forget everything? This removes ${plural(c.facts, "saved fact", "saved facts")}, what Ember learned from them and the conversation saved on this computer, if you keep one.${VAULT_GOES} It also removes project records and all saved project checkpoints on this computer. `
     // The sentence's first words: "An unknown number of tasks", never "an …" after the full stop (memory-r7-3).
     + `${plural(c.tasks, "task", "tasks").replace(/^a/, "A")}, ${plural(c.reminders, "reminder", "reminders")} and ${plural(c.routines, "routine", "routines")} stay as they are, and so do the lines on screen now, but they aren't saved again.`
     + (hasUnknown(c) ? UNKNOWN_NOTE : "");
