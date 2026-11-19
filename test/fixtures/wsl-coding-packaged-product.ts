@@ -441,30 +441,16 @@ export class WslPackagedJourney {
       const refused = this.u.readRefusal; this.phase = refused === 1 ? 56 : refused === 2 ? 38 : await this.windowRead(hwnd, 37, 38, 27); throw wslProductRefusal(this.phase);
     })).find(id("ask-cmd"))!;
     this.phase = 33; await this.u.focus(hwnd, node); this.phase = 34;
-    // Failure only: while the card was still being found, the same plain read (45 the window listed nothing, 46 its
-    // read was cut short, 34 neither); once found, how far its text's read got: 52 the text itself was refused, 53 it
-    // was secret or cut short, 54 the read of the card's children was refused, 55 that read was busy or cut short.
-    // 47 the card's text was read whole and is not the expected command.
-    // The card's text is read inside the card's own 90 s (the owner's limit for this step), not a further 10 s: on the
-    // hosted Windows Server 2022 image's slow runs the bridge sent no answer to that one read for a whole 10 s while WSL
-    // was starting, and the window's value read was as silent, where its quicker runs and Server 2025 answer at once.
-    const command = await this.u.text(hwnd, id("ask-cmd"), cardBy).catch(async () => {
-      // 52 by the bridge's own answer: 57 it failed, 58 it was denied, 59 another error, 60 no answer for the rest
-      // of the card's 90 s, 61 busy for it, 62 gone for it; 52 stays for the journey's own guard after an answer.
-      const stage = this.u.textStage, error = this.u.textError;
-      if (stage === 2 && error === 6) {
-        // Failure only, after a card whose text got no answer for the rest of its 90 s: what else the bridge answers
-        // then. 66 nothing at all (not even its list of windows) though its process is running, 70 nothing and its process has
-        // ended, 67 not the card's own properties, 68 the card's
-        // first 16 characters (so the whole text is what goes unanswered), 69 not those either, 60 the card is gone.
-        const asks = async (method: string, params: Record<string, unknown>) => !!await this.bridge!.request(method, { ...params, deadlineMs: 2500 }, 5000).catch(() => null);
-        const card = await this.u.nodes(hwnd).then(nodes => nodes.find(id("ask-cmd")), () => undefined);
-        this.phase = !await asks("topWindows", { pid: this.app?.pid }) ? (this.bridge!.child.exitCode !== null || this.bridge!.child.signalCode !== null ? 70 : 66) : !card ? 60 : !await asks("element", { handle: card.h }) ? 67
-          : await asks("textInfo", { handle: card.h, maxChars: 16 }) ? 68 : 69;
-        throw wslProductRefusal(this.phase);
-      }
-      this.phase = stage === 2 && error >= 3 ? 54 + error : stage === 2 && error ? 60 + error : stage >= 2 && stage <= 5 ? 50 + stage : await this.windowRead(hwnd, 45, 46, 34); throw wslProductRefusal(this.phase);
-    });
+    // The command is read as the card's own value in one whole read of the command window, inside the card's 90 s,
+    // and compared exactly. The bridge's text read is not used on the card: on the hosted Windows Server 2022 image's
+    // slow runs that read ended the bridge's own process (six runs; an open product defect, see
+    // docs/CONDUCTOR-PROGRESS.md). 45 no whole read held the card's value in time, 46 it was a password's or cut
+    // short, 47 it is not the expected command.
+    const valued = await this.u.until(() => this.u.nodes(hwnd, true), nodes => typeof nodes.find(id("ask-cmd"))?.patterns?.value?.value === "string", Math.max(1, cardBy - Date.now()))
+      .catch(() => { this.phase = 45; return this.fail(); });
+    const card = valued.find(id("ask-cmd"))!;
+    if (card.isPassword || card.patterns!.value!.truncated) { this.phase = 46; this.fail(); }
+    const command = card.patterns!.value!.value!;
     if (command !== WSL_PRODUCT_CHECK) { this.phase = 47; this.fail(); }
     this.phase = 35; const words = (await this.u.nodes(hwnd)).map(node => node.name ?? "").join("\n");
     expect(words).toContain("/work"); this.phase = 36; expect(words).toContain(this.targetLabel); this.previousCard = node.runtimeId!;
