@@ -44,6 +44,18 @@ export function copilotToolAsset(packageDir, relative) {
 }
 
 /**
+ * True for a Copilot runtime helper build made for another platform or architecture than the target's own: the SDK's
+ * x64 macOS package also carries ripgrep/bin/darwin-arm64/rg, an arm64-only Mach-O that CI's Intel check refuses
+ * (and that could never run there). The helpers for the target's own build stay.
+ * @param {string} relative path inside the package, either separator
+ * @param {string} target `${platform}-${arch}`
+ */
+export function foreignToolBuild(relative, target) {
+  const m = /^(?:ripgrep|tgrep)[\\/]bin[\\/]((?:darwin|linux|linuxmusl|win32)-(?:x64|arm64))(?:[\\/]|$)/.exec(relative);
+  return m !== null && m[1] !== target;
+}
+
+/**
  * onnxruntime-web's builds Voice Match and Better recall don't use (WebGPU, WebGL, browser bundles and their source
  * maps: about 100 MB), pruned on every target: the voiceprint worker and the memory process need only its Node build
  * and that build's WebAssembly.

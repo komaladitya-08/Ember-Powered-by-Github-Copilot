@@ -39,7 +39,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { specLicenceIds, suppliedLicence, uncoveredLicences } from "./licences.mjs";
 import { EMBER_FUSES, flipFuses, fuseMismatches } from "./fuses.mjs";
-import { copilotToolAsset, layoutFor, npmInvocation, prodPackageDirs, REMOTE_PARTS_DIR, RUNTIME_BUNDLE, selectPackages } from "./layout.mjs";
+import { copilotToolAsset, foreignToolBuild, layoutFor, npmInvocation, prodPackageDirs, REMOTE_PARTS_DIR, RUNTIME_BUNDLE, selectPackages } from "./layout.mjs";
 import { writeIco, writeIconset } from "./icon.mjs";
 import { exeResourceMismatches, readExeResources, rewriteExeResources } from "./exe-resources.mjs";
 import { finishMacBundle } from "./mac-bundle.mjs";
@@ -220,6 +220,8 @@ for (const src of prod) {
     filter: s => {
       const r = path.relative(src, s);
       // The SDK uses these shipped helpers, plugin manifests and skill Markdown at runtime for native coding tools.
+      // ...but only the target's own build of them: the x64 macOS package carries an arm64 ripgrep too.
+      if (copilotToolAsset(src, r) && foreignToolBuild(r, layout.target)) return false;
       if (copilotToolAsset(src, r)) return true;
       // Nested node_modules are copied on their own.
       if (/(^|[\\/])node_modules([\\/]|$)/.test(r)) return false;
