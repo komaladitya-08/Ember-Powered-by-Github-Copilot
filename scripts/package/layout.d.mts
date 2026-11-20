@@ -70,6 +70,7 @@ export declare function layoutFor(platform: string, arch: string): Layout;
 export declare function artifactNames(layout: Layout, version: string): string[];
 export declare function packageNameOf(dir: string): string | null;
 export declare function copilotToolAsset(packageDir: string, relative: string): boolean;
+export declare function foreignToolBuild(relative: string, target: string): boolean;
 export declare function selectPackages(dirs: string[], layout: Layout): {
   bundle: string[];
   skipped: { dir: string; name: string; why: string }[];

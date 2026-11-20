@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { PLATFORM_FAMILIES, TARGETS, VOICE_NATIVE_DIR, artifactNames, copilotToolAsset, layoutFor, npmInvocation, packageNameOf, prodPackageDirs, selectPackages } from "../../scripts/package/layout.mjs";
+import { PLATFORM_FAMILIES, TARGETS, VOICE_NATIVE_DIR, artifactNames, copilotToolAsset, foreignToolBuild, layoutFor, npmInvocation, packageNameOf, prodPackageDirs, selectPackages } from "../../scripts/package/layout.mjs";
 import { archivePlan } from "../../scripts/package/archive.mjs";
 import { askpassSourceCandidates } from "../../app/main/remote/askpass-win";
 
@@ -167,6 +167,18 @@ describe("every target", () => {
     }
     expect(copilotToolAsset("C:\\repo\\node_modules\\@github\\copilot-sdk-win32-x64", "builtin-skills\\skill\\SKILL.md")).toBe(true);
     expect(fs.readFileSync(path.resolve("scripts/package/stage.mjs"), "utf8")).toContain("if (copilotToolAsset(src, r)) return true;");
+  });
+
+  it("leaves other platforms' ripgrep and tgrep builds out of a target's package (Intel Mac Mach-O check)", () => {
+    expect(foreignToolBuild("ripgrep/bin/darwin-arm64/rg", "darwin-x64")).toBe(true);
+    expect(foreignToolBuild("ripgrep\\bin\\darwin-arm64\\rg", "darwin-x64")).toBe(true);
+    expect(foreignToolBuild("ripgrep/bin/linuxmusl-x64/rg", "linux-x64")).toBe(true);
+    expect(foreignToolBuild("tgrep/bin/win32-x64/tgrep.exe", "darwin-arm64")).toBe(true);
+    expect(foreignToolBuild("ripgrep/bin/darwin-x64/rg", "darwin-x64")).toBe(false);
+    expect(foreignToolBuild("ripgrep/bin/darwin-arm64", "darwin-arm64")).toBe(false);
+    expect(foreignToolBuild("plugins/browser/skills/use/SKILL.md", "darwin-x64")).toBe(false);
+    for (const l of layouts) expect(foreignToolBuild(`ripgrep/bin/${l.target}/rg`, l.target), l.target).toBe(false);
+    expect(fs.readFileSync(path.resolve("scripts/package/stage.mjs"), "utf8")).toContain("foreignToolBuild(r, layout.target)");
   });
 
   it("refuses a target Ember isn't staged for", () => {

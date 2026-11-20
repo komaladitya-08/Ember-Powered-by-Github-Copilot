@@ -2067,10 +2067,12 @@ describe("guide words and highlights (live retest: font chooser)", () => {
   it("with the app not answering, the highlight and the click stay on the control pointed at, never another of the same name (review)", async () => {
     const second = { x: 10, y: 200, width: 40, height: 20 };
     let t0 = 0;
-    // A press on the first "Close Document" (not the one pointed at), then one on the second.
+    // A press on the first "Close Document" (not the one pointed at), then one on the second. Each is held 400 ms: the
+    // worker watches the pointer every 15 ms, and a 60 ms press fell between two looks on a busy Windows runner (CI run
+    // 44592911607), so the wait ran out with the click never seen.
     const pointer = () => {
       const t = t0 ? Date.now() - t0 : 0;
-      return t > 100 && t < 160 ? { x: 20, y: 15, mask: 256 } : t > 1000 && t < 1060 ? { x: 20, y: 205, mask: 256 } : { x: 0, y: 0, mask: 0 };
+      return t > 100 && t < 500 ? { x: 20, y: 15, mask: 256 } : t > 1000 && t < 1400 ? { x: 20, y: 205, mask: 256 } : { x: 0, y: 0, mask: 0 };
     };
     const { call, flown } = makeWorker({
       name: "Close Document", mode: "guide", pointer,

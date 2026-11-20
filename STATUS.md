@@ -32,7 +32,7 @@ Since 4 November a product audit has rated 13 areas and fixed them in six rounds
 - Newer AT-SPI versions report push buttons as “button”; normalizing the role preserves click actions and password-reveal protection. GTK list checkboxes with an alternate activation action stay on the pointer path.
 - The five Windows voice smoke scenarios passed through the native listener with synthetic microphone recordings. On the Windows test machine Kokoro took 1.01–1.37 seconds to produce a second of speech (the cutoff is 0.50); native Piper, then the default voice, produced its first audio in 121–257 ms (Piper has since been replaced by Kitten Nano and is no longer in the product).
 - Decided: every release attaches the voice's GPL-licensed sources (sherpa-onnx, eSpeak NG and piper-phonemize) as SHA-256-pinned `source-*.zip` files (`scripts/package/gpl-source.mjs`), so the eSpeak NG archives are no longer an open owner decision.
-- Reconciled #99/#114 with the current voice and gated MCP plugin architecture in [PR-RECONCILIATION.md](docs/PR-RECONCILIATION.md). App and npm launcher versions are aligned at 0.1.1 for release preparation; no tag or release has been published.
+- Reconciled #99/#114 with the current voice and gated MCP plugin architecture in [PR-RECONCILIATION.md](docs/PR-RECONCILIATION.md). App and npm launcher versions are aligned at 0.1.1 for release preparation; 0.1.1 has no tag or release yet (0.1.0, an unsigned beta, was published on 31 October).
 
 ## Next correctness work
 
