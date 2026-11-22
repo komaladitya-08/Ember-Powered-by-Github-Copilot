@@ -8508,11 +8508,37 @@ reg(NATIVE, ["git"], h => {
     });
     if (verb === "grep") secretSearch(h, rest);
   }
+  noteUpstream(gh, verb);
   const fn = GIT[verb];
   if (fn) { fn(gh, widen); return; }
   if (!GIT_READ.has(verb)) { h.e.unclear("unclear.git-verb", "Ember can't tell which git command this runs (an alias or an add-on)."); return; }
   h.e.readArgs(rest.filter(a => !isOption(a)), sc);
 });
+
+/**
+ * What remotesAdded carries once a branch's upstream was set to a remote added with an address: not a name a remote
+ * can have (git refuses spaces), so it only ever says a later plain `git pull` may pull from it (review H).
+ */
+const UPSTREAM_ADDED = " upstream";
+
+/**
+ * Notes a branch's upstream set to a remote this line or an earlier command of the task added with an address (`git
+ * branch -u x/main`, `--set-upstream-to=x/main`, `git checkout --track x/main`, `git push -u x main`, `git config
+ * branch.main.remote x`): a later `git pull` with no remote named draws on it (review H).
+ */
+function noteUpstream(h: H, verb: string): void {
+  if (!/^(branch|checkout|switch|push|config)$/.test(verb)) return;
+  const added = new Set([...h.e.addedRemotes, ...(h.e.ctx.remotes ?? [])]);
+  added.delete(UPSTREAM_ADDED);
+  if (added.size === 0) return;
+  if (verb === "push" && !h.args.some(a => /^(-[a-zA-Z]*u[a-zA-Z]*|--set-upstream)$/.test(a.v ?? ""))) return;
+  const names = (w: string): boolean => [...added].some(r => w === r || w.startsWith(`${r}/`) || w.startsWith(`refs/remotes/${r}/`));
+  const sets = h.args.some(a => {
+    if (a.v === null) return added.has(UNSEEN) || verb !== "push";
+    return names(a.v.replace(/^(--set-upstream-to=|--track=|-u)/, ""));
+  });
+  if (sets) h.e.addedRemotes.add(UPSTREAM_ADDED);
+}
 
 type GitFn = (h: H, widen: string[]) => void;
 const GIT: Record<string, GitFn> = {};
@@ -8573,8 +8599,9 @@ const gitFetch = (fetches: boolean): GitFn => h => {
   // (commands-remote-c5-4, i6a): a plain `git pull` still pulls from the branch's own upstream.
   const earlier = h.e.ctx.remotes ?? new Set<string>();
   const namedEarlier = ops[0] !== undefined && earlier.size > 0 && (ops[0].v === null || earlier.has(ops[0].v) || earlier.has(UNSEEN));
+  // A plain one draws on such a remote once a branch's upstream was set to it (UPSTREAM_ADDED: review H).
   const fromAdded = (h.e.addedRemotes.size > 0 && (named || ops.length === 0 || h.args.some(a => a.v === "--all")))
-    || namedEarlier || (earlier.size > 0 && h.args.some(a => a.v === "--all"));
+    || namedEarlier || (earlier.size > 0 && h.args.some(a => a.v === "--all")) || (ops.length === 0 && earlier.has(UPSTREAM_ADDED));
   if (fetches && (ops.some(a => URL_LIKE.test(a.v ?? "")) || SCP_LIKE.test(ops[0]?.v ?? "") || fromAdded)) h.e.markUnnamed(".", h.sc);
 };
 git(["fetch", "pull"], gitFetch(true));
@@ -8587,6 +8614,15 @@ git(["remote"], h => {
   const [verb, name, url] = p.operands;
   // Where a later fetch or push goes (commands-remote-r9-11): changing an existing remote's address asks.
   if (verb?.v === "set-url") h.e.add("system", "git.config.remote", GIT_REMOTE_SAYS, { program: "git remote set-url" });
+  // `git remote update` fetches every remote (or the ones or the group it names), as `git fetch --all` does: one added
+  // with an address on this line or earlier in the task is fetched from too (review H).
+  if (verb?.v === "update") {
+    const added = new Set([...h.e.addedRemotes, ...(h.e.ctx.remotes ?? [])]);
+    added.delete(UPSTREAM_ADDED);
+    const names = p.operands.slice(1);
+    if (added.size > 0 && (names.length === 0 || names.some(n => n.v === null || added.has(n.v) || added.has(UNSEEN)))) h.e.markUnnamed(".", h.sc);
+    return;
+  }
   if (!(verb?.v === "add" || verb?.v === "set-url") || !name || !url) return;
   if (url.v !== null && !URL_LIKE.test(url.v) && !SCP_LIKE.test(url.v)) return;
   h.e.addedRemotes.add(name.v ?? UNSEEN);

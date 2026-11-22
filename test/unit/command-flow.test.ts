@@ -5204,6 +5204,33 @@ describe("download provenance through inline code and remotes the task added (au
     }
   });
 
+  it("keeps code marked once a later call sets an upstream to that remote or updates every remote (review H)", async () => {
+    setCommandJudge(null);
+    for (const steps of [
+      ["git branch -u extra-source/main", "git pull"],
+      ["git branch --set-upstream-to=extra-source/main", "git pull"],
+      ["git push -u extra-source main", "git pull"],
+      ["git remote update"],
+      ["git remote update extra-source"],
+    ]) {
+      // The push asks, and only a push that runs sets the upstream: it is allowed, the build denied.
+      const h = harness({ binding: LOCAL, answers: steps[0].startsWith("git push") ? ["once", "deny"] : ["deny"], paths: p => ({ exists: false, real: p }) });
+      expect((await call(h, { target: "this computer", command: "git remote add extra-source https://example.com/project.git" })).resultType).toBe("success");
+      for (const step of steps) await call(h, { target: "this computer", command: step });
+      expect(h.ctx.state.downloaded.size, steps.join(" && ")).toBeGreaterThan(0);
+      expect((await call(h, { target: "this computer", command: "make" })).resultType, steps.join(" && ")).toBe("denied");
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says.join(" ")).toMatch(/run a file downloaded in this task/i);
+    }
+    // An upstream set to origin, and an update of origin alone, leave later builds as they were.
+    for (const steps of [["git branch -u origin/main", "git pull"], ["git remote update origin"]]) {
+      const h = harness({ binding: LOCAL, paths: p => ({ exists: false, real: p }) });
+      expect((await call(h, { target: "this computer", command: "git remote add extra-source https://example.com/project.git" })).resultType).toBe("success");
+      for (const step of steps) await call(h, { target: "this computer", command: step });
+      expect((await call(h, { target: "this computer", command: "make" })).resultType, steps.join(" && ")).toBe("success");
+      expect(h.asked, steps.join(" && ")).toEqual([]);
+    }
+  });
+
   it("leaves later scripts as they were after inline code that names no download", async () => {
     setCommandJudge(null);
     const h = harness({ binding: LOCAL, answers: ["once"], paths: p => ({ exists: false, real: p }), readScript: async () => "echo harmless\n" });
