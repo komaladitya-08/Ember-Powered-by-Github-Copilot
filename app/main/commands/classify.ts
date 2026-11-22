@@ -1262,15 +1262,21 @@ class Classifier {
    * target can't show when it is probed, as the link isn't there yet (commands-remote-c7-1).
    */
   private linkAliases: { link: string; to: string; env: PathEnv }[] = [];
+  /** More such links than linkAliases keeps were made: what one of them leads to is unknown (review E). */
+  private linksUntracked = false;
 
   /** Notes that `link` will lead to `to` (both absolute), when `to` is Ember's own folder or holds it. */
   noteLink(link: string, to: string, env: PathEnv): void {
-    if (!isEmberPath(to, env) && !holdsEmberPath(to, env)) return;
-    if (this.linkAliases.length < MAX_FORMS && !this.linkAliases.some(l => l.link === link && l.to === to)) this.linkAliases.push({ link, to, env });
+    if ((!isEmberPath(to, env) && !holdsEmberPath(to, env)) || this.linkAliases.some(l => l.link === link && l.to === to)) return;
+    if (this.linkAliases.length < MAX_FORMS) this.linkAliases.push({ link, to, env });
+    else this.linksUntracked = true;
   }
 
   /** §3.6's rules on one absolute path. */
   private judge(abs: string, use: PathUse, env: PathEnv, text: string, sc: Scope, isPrefix = false, throughLink = false): void {
+    // Past the links Ember keeps, a path that names one of Ember's folders by its name may go through one it didn't
+    // keep, to that folder: refused, where a text with fewer links would be judged through them (review E).
+    if (this.linksUntracked && !throughLink && namesEmberFolder(abs, env)) this.refuseWith("ember.path", accessOf(use));
     // A path through a link this text made is judged where it leads too, once (a link to a link is followed no further).
     if (!throughLink) {
       for (const l of this.linkAliases) {
@@ -6922,6 +6928,14 @@ reg(NATIVE, ["diskutil"], h => {
   if (/^(erasedisk|erasevolume|partitiondisk|zerodisk|securerase|secureerase|reformat|randomdisk|erase)$/.test(verb)) h.e.add("destroy", "disk.erase", "Erases or repartitions a disk.");
   else if (/^(mount|unmount|umount|mountdisk|unmountdisk|eject|apfs|cs|ar|enablejournal|disablejournal|rename|repair)/.test(verb)) h.e.add("system", "system.kernel", "Changes how the system works.");
 });
+
+/** Whether a path has a part named as one of Ember's own folders is (`z/ember/settings.json`), any case but on Linux. */
+function namesEmberFolder(abs: string, env: PathEnv): boolean {
+  const mod = env.flavour === "win32" ? win32 : posix;
+  const fold = (s: string): string => (env.flavour === "win32" || env.os === "darwin" ? s.toLowerCase() : s);
+  const names = new Set(env.ember.map(e => fold(mod.basename(e))).filter(n => n !== ""));
+  return abs.split(env.flavour === "win32" ? /[\\/]+/ : /\/+/).some(part => names.has(fold(part)));
+}
 
 /**
  * A link a command makes at each of `links` (as written, any form a variable may give) to `target`: noted, so a later

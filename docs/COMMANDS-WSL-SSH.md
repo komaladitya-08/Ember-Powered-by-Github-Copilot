@@ -856,7 +856,8 @@ Ember can't read that names one of them, or a folder that holds them as what it 
 cmd variable set on the line, also from a profile variable or another such variable (`set "D=%LOCALAPPDATA%\ember" &
 type "%D%\settings.json"`, `set D=%LOCALAPPDATA%& set E=%D%\ember& type %E%\settings.json`), a path through a link the same command makes to them or to a folder that holds them (`ln -s
 ~/.config L; cat L/ember/settings.json`, `cp -s`, a symbolic link's target read beside the link, a PowerShell junction
-or `mklink`; making the link alone runs, and a later command is judged by where the link really leads),
+or `mklink`; making the link alone runs, and a later command is judged by where the link really leads; past 32 such
+links in one command, any path with a part named as Ember's folder is refused),
 `printf -v` and the text a here-string or here-document gives `read` or `xargs` (`while read f; do rm -rf "$f"; done <<<
 ~/.config/ember`); when it names a folder that holds them for a delete or a move (`for f in ~; do rm -rf "$f"; done`),
 and when a name Ember can't see stands where one of Ember's folders is (`rm -rf ~/.config/$x`, or a cut or a default

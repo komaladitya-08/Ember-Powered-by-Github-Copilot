@@ -218,4 +218,14 @@ describe("links to folders that hold Ember's", () => {
     }
     expect(win("New-Item -ItemType Junction -Path link -Value C:\\Users\\ana\\proj; Get-Content link\\a.txt", "powershell")).toBe("run");
   });
+
+  it("refuses Ember's settings reached past more such links than Ember keeps, and nothing else they lead to (review E)", () => {
+    const decoys = Array.from({ length: 33 }, (_, k) => `ln -s ~/.config d${k}`).join("; ");
+    expect(linux(`${decoys}; ln -s ~/.config z; cat z/ember/settings.json`)).toBe("refuse");
+    expect(linux(`${decoys}; cat d32/ember/settings.json`)).toBe("refuse");
+    expect(linux(`${decoys}; ln -s ~/.config z; cat z/notes.txt`)).toBe("run");
+    // Many links to ordinary folders are no links to Ember's.
+    const builds = Array.from({ length: 33 }, (_, k) => `ln -s build/out${k} l${k}`).join("; ");
+    expect(linux(`${builds}; cat build/ember/a.txt`)).not.toBe("refuse");
+  });
 });
