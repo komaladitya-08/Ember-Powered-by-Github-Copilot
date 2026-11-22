@@ -822,6 +822,12 @@ export const PROVIDER_IPC = {
    */
   agree: "provider:agree",
   /**
+   * An edit of the provider in force, checked, adopted whole (ProviderAdoption): its details, the card's yes for their
+   * host and the key typed for it are kept together or not at all, so the provider and key that work stay until the
+   * replacement is saved (integrations-r7-1).
+   */
+  adopt: "provider:adopt",
+  /**
    * One small request to the endpoint in settings (its model list), with the saved key: ProviderTest. With a
    * ProviderDraft, the same request to details typed but not saved, which it saves nothing of (first-run-r2-1).
    */
@@ -897,6 +903,14 @@ export interface ProviderMove {
   azureApiVersion?: string | null;
 }
 
+/**
+ * An edit of the provider in force to adopt (PROVIDER_IPC.adopt): `from` the host in force as the edit began (nothing is
+ * adopted once another one is), `host` the one `move` names and the card was agreed for, `key` one typed for that host
+ * (sent to main once, kept only with the change, never sent back). Without one, a key saved for `host` stays; one saved
+ * for another host goes with the move, as it always does.
+ */
+export interface ProviderAdoption { from: string; host: string; move: ProviderMove; key?: string }
+
 /** The settings window's provider API (`window.emberProvider`, app/preload/home.ts). */
 export interface EmberProviderApi {
   state(): Promise<ProviderState>;
@@ -909,6 +923,8 @@ export interface EmberProviderApi {
    * details, saved with it: integrations-c3-1), and turns the provider on.
    */
   agree(host: string, move?: ProviderMove): Promise<ProviderDone>;
+  /** Adopts a checked edit of the provider in force with the card's yes and its key, together or not at all (integrations-r7-1). */
+  adopt(request: ProviderAdoption): Promise<ProviderDone>;
   /** The endpoint in settings, or `draft`'s details without saving any of them (first-run-r2-1). */
   test(draft?: ProviderDraft): Promise<ProviderTest>;
 }

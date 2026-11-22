@@ -66,6 +66,8 @@ async function harness(o: { slowKey?: boolean; failOff?: "false" | "throw" } = {
   const api = {
     saveKey: (k: string) => service.api.saveKey(k),
     agree: async (h: string, move?: never) => { const gate = agreeGates[agrees++]; if (gate) await gate.promise; return service.api.agree(h, move); },
+    // An edit of the provider in use is adopted with its yes and its key together (integrations-r7-1): it is that yes.
+    adopt: async (r: never) => { const gate = agreeGates[agrees++]; if (gate) await gate.promise; return service.api.adopt(r); },
     test: (draft?: never) => service.api.test(draft),
   };
   const nodes: Record<string, { hidden: boolean; textContent: string; focus(): void }> = {};

@@ -215,14 +215,19 @@ async function commit(host: string, unlisted: boolean, ids?: string[]): Promise<
   held = null;
   asTyped = null;
   heldRun++;
-  const done = await a.agree(host, move);
-  // Not recorded (the settings changed meanwhile): still held, if the provider it began from is still in force.
-  if (!done.ok) { if (!held && inForceHost() === keep.from) held = keep; draw(); say(done.why, true); return; }
-  if (key) {
-    const k = await a.saveKey(key);
-    if (!k.ok) { say(k.why, true); void reread(); return; }
-    keyField.value = "";
+  // The details, the yes and the key typed for them go together or not at all: a key main can't keep leaves the
+  // provider in force and its key as they were (integrations-r7-1; agree() then saveKey() left the new host keyless).
+  const done = await a.adopt({ from: keep.from, host, move, ...(key ? { key } : {}) }).catch(() => ({ ok: false as const, why: "" }));
+  // Not adopted: still held, with its key in the field to try again, if the provider it began from is still in force.
+  if (!done.ok) {
+    const still = !held && inForceHost() === keep.from;
+    if (still) held = keep;
+    draw();
+    say(still ? providerHeldKept(keep.from, done.why) : done.why, true);
+    void reread();
+    return;
   }
+  if (key) keyField.value = "";
   say(unlisted ? providerAgreedUnlisted(host, now.conductor ?? null) : providerAgreedText(host));
   if (ids) suggestModels(ids);
   input("byok-url").focus();

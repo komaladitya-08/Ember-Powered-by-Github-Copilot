@@ -620,12 +620,11 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
         // change, so the provider in use never leaves force for Copilot between, then a typed key for it, as Home's
         // held edit does (first-run-r4-3).
         if (since !== providerChoice()) return { epoch, result: tried };
-        const agreed = await api.agree(host, { type: f.type, baseUrl: f.baseUrl, conductor: f.conductor, worker: f.worker || null });
-        if (!agreed.ok) return { epoch, result: { ok: false, why: agreed.why } };
-        if (f.key.trim()) {
-          const k = await api.saveKey(f.key);
-          if (!k.ok) return { epoch, result: { ok: false, why: k.why } };
-        }
+        // Adopted whole: a key main can't keep leaves the provider in use and its key as they were, and says so
+        // (integrations-r7-1: agree() then saveKey() left the new host keyless and the old key deleted).
+        const move = { type: f.type, baseUrl: f.baseUrl, conductor: f.conductor, worker: f.worker || null };
+        const adopted = await api.adopt({ from: keep, host, move, ...(f.key.trim() ? { key: f.key } : {}) });
+        if (!adopted.ok) return { epoch, result: { ok: false, why: adopted.why }, kept: keep };
         return { epoch, result: tried };
       }
       // Back, an edit or another check can come between any two steps. Each step that does something (the card's yes

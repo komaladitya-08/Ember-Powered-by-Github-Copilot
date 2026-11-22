@@ -1855,9 +1855,8 @@ First run's provider step, opened for a provider already in use, checks edited d
 details that work (`providers.api.test(draft)`, first-run-r2-1): the same GET, to the typed address only, after the
 card's yes for exactly its host given by the same press, with a key just typed (refused, unsent, where it couldn't be
 kept) or, without one, the saved key only when it was entered for that very host. Nothing is saved or recorded until it
-answers; then the details are written with the card's yes for their host in one change (`agree(host, move)`, as Home's
-held edit is), so the provider in use never leaves force for Copilot between, and a typed key is saved after
-(first-run-r4-3).
+answers; then they are adopted as Home's held edit is (`adopt`, below), so the provider in use never leaves force for
+Copilot between (first-run-r4-3).
 Home's **Model provider** does the same for the provider in force (integrations-c3-1): an address naming another host is
 held in the page, unsaved, so requests still go to the host in force (never to Copilot meanwhile, and Ember goes on
 answering with no GitHub sign-in), and the type, models and Advanced rows edited with it are held too. The card comes
@@ -1866,8 +1865,15 @@ up for the new host, the status line says "Read the note above: Ember sends noth
 quiet button reads "Keep using <host in force>" (it puts the details in force back, saving nothing), and a key typed for
 the new host waits in its field. "I agree" checks the held details with the same GET ("Checking <new host>…"); one that
 fails says main's reason and "Nothing has changed: Ember still uses <host in force>.", with the focus on the field it
-names; one that answers is saved with the yes in one settings change (`PROVIDER_IPC.agree` with the held details, which
-main writes only for the host they name), so the provider never leaves force between, and then the key typed for it.
+names; one that answers is adopted whole (`PROVIDER_IPC.adopt`: the host in force it began from, the held details, which
+main writes only for the host they name, and the key typed for it; integrations-r7-1): main seals that key and puts it
+in place first, the one in use set aside, then writes the details with the yes in one settings change through the
+provider's record, as `agree` does, so the provider never leaves force between. A key that can't be written, settings
+that can't be saved, or a yes the record can't take put the provider and the key that worked back as they were, and the
+line says why and "Nothing has changed: Ember still uses <host in force>.", the edit still held and its key in its
+field. A key replaced for the host in use is written beside the old one and renamed over it the same way, so one that
+can't be written leaves the old key in use (integrations-v7-1). Ember quitting in the middle of those renames can still
+leave no key saved; Remove and signing out delete what such a change left.
 A host that answers but has no model list at that address (404, 405 or 501 on GET /models, as some gateways that answer
 chat only do, and as a mistyped path does; or a 200 that isn't a model list, as a web front end, a sign-in page or a
 parked domain gives: both are the test's `cause: "no-list"`, which the start probe doesn't count as down either) is not

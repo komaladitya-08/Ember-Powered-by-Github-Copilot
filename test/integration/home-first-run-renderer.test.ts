@@ -47,7 +47,8 @@ const CARD = commandsConsent({ os: "linux", target: "local", targetLabel: "This 
 const ALL_ROWS = ["commands", "memory", "voice", "screenshots", "interactive"].map(row => ({ row, offered: true, why: null }));
 
 /** `holdProvider`: main's provider state isn't answered until the test does (`providerState` in __frPend). */
-interface Seed { holdProvider?: boolean; consent?: number; firstRun?: { rows: unknown[]; commands: unknown }; agreeDone?: { ok: boolean; failed: string[] }; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean; viewport?: { width: number; height: number } }
+/** `keyFails`: main can't keep a key (a full disk): saveKey and adopt with a key refuse, as main does. */
+interface Seed { keyFails?: boolean; holdProvider?: boolean; consent?: number; firstRun?: { rows: unknown[]; commands: unknown }; agreeDone?: { ok: boolean; failed: string[] }; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean; viewport?: { width: number; height: number } }
 
 let browser: Browser;
 let server: http.Server;
@@ -84,7 +85,7 @@ async function open(seed: Seed = {}): Promise<Page> {
   (page as Page & { errors: string[] }).errors = errors;
   const returning = (seed.consent ?? 99) > 0 && (seed.consent ?? 99) < CONSENT_VERSION;
   const firstRun = seed.firstRun ?? (returning ? { rows: [{ row: "interactive", offered: true, why: null }], commands: null } : { rows: ALL_ROWS, commands: { title: CARD.title, body: CARD.body, sha256: CARD.sha256 } });
-  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge, slowAgree, failOff, liveState, firstRun, agreeDone, version, holdProvider }) => {
+  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge, slowAgree, failOff, liveState, firstRun, agreeDone, version, holdProvider, keyFails }) => {
     window.__frFailOff = failOff;
     window.__frCalls = []; window.__frPend = {};
     window.__frState = { settings, agent };
@@ -149,7 +150,18 @@ async function open(seed: Seed = {}): Promise<Page> {
         },
         // Main's word that the provider changed, as `providerChanged` (a test emits it).
         onChanged: (fn: () => void) => { (subs.providerChanged ??= []).push(fn); return () => undefined; },
-        saveKey: () => { window.__frCalls.push("saveKey"); keyHost = hostOf(window.__frState.settings.provider.baseUrl); return Promise.resolve({ ok: true }); },
+        saveKey: () => {
+          if (keyFails) { window.__frCalls.push("saveKey-refused"); return Promise.resolve({ ok: false, why: "Ember couldn't save the key: its data folder can't be written. Try again." }); }
+          window.__frCalls.push("saveKey"); keyHost = hostOf(window.__frState.settings.provider.baseUrl); return Promise.resolve({ ok: true });
+        },
+        // As main (integrations-r7-1): the details, the yes and the key together, recorded as the yes and the key were
+        // before; a key it can't keep changes nothing.
+        adopt: async (r: { from: string; host: string; move: object; key?: string }) => {
+          if (keyFails && r.key) { window.__frCalls.push(`adopt-refused:${r.host}`); return { ok: false, why: "Ember couldn't save the key: its data folder can't be written. Try again." }; }
+          const done = await window.emberProvider!.agree(r.host, r.move as never);
+          if (done.ok && r.key) { window.__frCalls.push("saveKey"); keyHost = r.host; }
+          return done;
+        },
         removeKey: async () => ({ ok: true }),
         agree: (host: string, move?: object) => {
           window.__frCalls.push(`agree:${host}`);
@@ -165,7 +177,7 @@ async function open(seed: Seed = {}): Promise<Page> {
         test: (draft?: { host: string; key?: string }) => { window.__frCalls.push(draft ? `test-draft:${draft.host}${draft.key ? "+key" : ""}` : "test"); return defer("test") as never; },
       };
     }
-  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff, liveState: !!seed.liveState, firstRun, agreeDone: seed.agreeDone ?? { ok: true, failed: [] }, version: CONSENT_VERSION, holdProvider: !!seed.holdProvider });
+  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff, liveState: !!seed.liveState, firstRun, agreeDone: seed.agreeDone ?? { ok: true, failed: [] }, version: CONSENT_VERSION, holdProvider: !!seed.holdProvider, keyFails: !!seed.keyFails });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   if (seed.home) { await page.waitForSelector("a[href='#copilot-h']"); await page.locator("a[href='#copilot-h']").first().click(); } else await page.waitForSelector("#welcome:not([hidden])");
   return page;
@@ -1210,6 +1222,27 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     for (const page of [a, b, c, d, e, f]) expect((page as Page & { errors: string[] }).errors).toEqual([]);
   }, 30_000);
 
+  it("(ac2) an edit of a provider in use whose key can't be saved leaves the details and the key that work as they were (integrations-r7-1)", async () => {
+    const service = { kind: "user", host: "api.example.com" };
+    const provider = { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "api.example.com" } };
+    const p = await open({ keyFails: true, provider, providerState: { inForce: true, host: "api.example.com", agreed: true, keySaved: true }, agent: readyAgent({ login: undefined, models: [], conductorModel: "gpt-4.1", workerModel: null, service }) });
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Your own model provider");
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+    await p.locator("#w-back").click();
+    await p.fill("#w-p-url", "https://api2.example.com/v1");
+    await p.fill("#w-p-key", "sk-new-not-real");
+    await next(p).click();
+    await expect.poll(() => calls(p)).toContain("test-draft:api2.example.com+key");
+    await settle(p, "test", { ok: true, host: "api2.example.com", models: 2 });
+    // The new details answered, but main couldn't keep their key: nothing was adopted, and the step says so in my voice.
+    await expect.poll(() => p.locator("#w-p-result").innerText()).toBe("I couldn't save the key: my data folder can't be written. Try again. Nothing has changed: I'm still using api.example.com.");
+    expect((await calls(p)).filter(c => c.startsWith("agree:") || c === "saveKey" || c.startsWith("save:"))).toEqual([]);
+    expect(await p.evaluate(() => ({ on: window.__frState.settings.provider.on, baseUrl: window.__frState.settings.provider.baseUrl }))).toEqual({ on: true, baseUrl: "https://api.example.com/v1" });
+    expect(await p.locator("#w-p-keep").innerText()).toBe("Keep using api.example.com");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
+
   it("(af) after “Use GitHub Copilot instead”, my provider's step opened again isn't in use: a failed check switches it off, never says “I'm using” it, and Back is Copilot's sign-in (first-run-r3-1)", async () => {
     const service = { kind: "user", host: "api.example.com" };
     const provider = { on: true, baseUrl: "https://api.example.com/v1", conductor: "gpt-4.1", consent: { version: 1, at: "2026-11-07T12:00:00Z", host: "api.example.com" } };
@@ -1449,6 +1482,30 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await p.locator("#byok-url").fill("https://c.example:8443/v1");
     expect(await p.locator("#byok-key").inputValue()).toBe("");
     expect((await calls(p)).filter(c => c === "saveKey" || c.startsWith("agree:"))).toEqual([]);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
+
+  it("(am3) Home keeps my provider in use, its key and the held edit when the new host's key can't be saved (integrations-r7-1)", async () => {
+    const using = "127.0.0.1:18308";
+    const p = await open({ home: true, liveState: true, keyFails: true, providerState: { keySaved: true },
+      agent: readyAgent({ login: undefined, service: { kind: "user", host: using } }),
+      provider: { on: true, baseUrl: `http://${using}/v1`, conductor: "mock-model", consent: { version: 1, at: "2026-11-08T12:00:00Z", host: using } } });
+    await p.locator("#byok-url").fill("http://127.0.0.1:18309/v1");
+    await p.keyboard.press("Tab");
+    await expect.poll(() => p.locator("#byok-consent").isVisible()).toBe(true);
+    await p.locator("#byok-key").fill("sk-new-not-real");
+    await p.waitForTimeout(AGREE_ARM_MS + 100);
+    await p.locator("#byok-yes").click();
+    await expect.poll(() => calls(p)).toContain("test-draft:127.0.0.1:18309+key");
+    await settle(p, "test", { ok: true, host: "127.0.0.1:18309", models: 1, ids: ["mock-model"] });
+    await expect.poll(() => p.locator("#byok-msg").innerText()).toBe(`Ember couldn't save the key: its data folder can't be written. Try again. Nothing has changed: Ember still uses ${using}.`);
+    expect((await calls(p)).filter(c => c.startsWith("agree:") || c === "saveKey" || c.startsWith("save:"))).toEqual([]);
+    expect(await p.evaluate(() => window.__frState.settings.provider)).toMatchObject({ baseUrl: `http://${using}/v1`, consent: { host: using } });
+    expect(await p.evaluate(() => window.emberProvider!.state())).toMatchObject({ keySaved: true, host: using, inForce: true });
+    // Still held for the new host, with its key in the field to try again.
+    expect(await p.locator("#byok-consent").isVisible()).toBe(true);
+    expect(await p.locator("#byok-no").innerText()).toBe(`Keep using ${using}`);
+    expect(await p.locator("#byok-key").inputValue()).toBe("sk-new-not-real");
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   }, 20_000);
 

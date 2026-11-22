@@ -295,6 +295,7 @@ describe("Home's provider channels", () => {
     const full: ProviderApi = {
       state: () => ({ allowed: true, managed: null, keySaved: false, keyring: true, inForce: false, host: null, agreed: false }),
       agree: () => { calls.push("agree"); return { ok: true }; },
+      adopt: async () => { calls.push("adopt"); return { ok: true }; },
       saveKey: async () => { calls.push("save"); return { ok: true }; },
       removeKey: () => { calls.push("remove"); return { ok: true }; },
       test: async () => ({ ok: true, host: "models.example.com", models: 3 }),
@@ -345,6 +346,22 @@ describe("Home's provider channels", () => {
     expect(await call(PROVIDER_IPC.agree, HOME, "b.example", move)).toEqual({ ok: true });
     expect(await call(PROVIDER_IPC.agree, HOME, "b.example", { type: "azure", baseUrl: "https://b.example/v1" })).toEqual({ ok: true });
     expect(seen).toEqual([["b.example", undefined], ["b.example", move], ["b.example", { type: "azure", baseUrl: "https://b.example/v1" }]]);
+  });
+
+  it("takes one checked edit for adopt: the host it began from, the agreed host, the details and a key at most (integrations-r7-1)", async () => {
+    const seen: unknown[] = [];
+    const { call } = wire({ adopt: async r => { seen.push(r); return { ok: true }; } });
+    const move = { type: "openai", baseUrl: "https://b.example/v1", conductor: "gpt-4.1", worker: null };
+    const ok = { from: "a.example", host: "b.example", move, key: KEY };
+    for (const bad of [[], [ok, ok], [{ ...ok, from: "A EXAMPLE" }], [{ ...ok, host: "" }], [{ ...ok, key: "" }], [{ ...ok, key: "k".repeat(9000) }],
+      [{ ...ok, move: { ...move, on: true } }], [{ ...ok, move: { ...move, consent: { version: 9, host: "b.example" } } }], [{ ...ok, id: "x" }], ["b.example", move]]) {
+      expect(await call(PROVIDER_IPC.adopt, HOME, ...bad)).toEqual({ ok: false, why: PROVIDER_BAD_REQUEST });
+    }
+    expect(seen).toEqual([]);
+    expect(await call(PROVIDER_IPC.adopt, HOME, ok)).toEqual({ ok: true });
+    const { key: _key, ...keyless } = ok;
+    expect(await call(PROVIDER_IPC.adopt, HOME, keyless)).toEqual({ ok: true });
+    expect(seen).toEqual([ok, keyless]);
   });
 
   it("passes a draft of typed details to the check, and none when there is none (first-run-r2-1)", async () => {
