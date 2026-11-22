@@ -23,7 +23,7 @@ import type { SecretBox } from "../../app/main/agent/auth";
 import type { Logger } from "../../app/main/logger";
 import { friendlyError } from "../../app/main/agent/presenter";
 import { settingsFromHome } from "../../app/main/windows";
-import { AGREE_ARM_MS, AgreeGuard, agreeAction, heldAnswer, heldPress } from "../../app/shared/provider";
+import { AGREE_ARM_MS, AgreeGuard, agreeAction, heldAnswer, heldPress, typedKeyFor } from "../../app/shared/provider";
 
 const KEY = "sk-" + "r".repeat(40); // not a real key
 const NONE: LoadedAdminPolicy = { policy: AdminPolicySchema.parse({}), source: null };
@@ -240,6 +240,24 @@ describe("the key and its host (S2)", () => {
     const s = createProviderService({ settings, admin: () => NONE, keys, consented: () => true, fetch: ok200(), log: { info() {}, warn() {} }, changed: () => undefined });
     await s.ensureKey();
     expect(s.key()).toBeNull();
+  });
+
+  it("typed but not yet saved, stays with the host it was typed for and is dropped for another host or port (integrations-v7-2, first-run-v7-1)", () => {
+    // A path edit, and an address still being typed, keep it for its host.
+    expect(typedKeyFor("b.example", "b.example")).toEqual({ keep: true, boundTo: "b.example" });
+    expect(typedKeyFor("b.example", null)).toEqual({ keep: true, boundTo: "b.example" });
+    // Typed before any address: bound to the first host entered.
+    expect(typedKeyFor(null, null)).toEqual({ keep: true, boundTo: null });
+    expect(typedKeyFor(null, "b.example")).toEqual({ keep: true, boundTo: "b.example" });
+    // Another host, or the same name on another port, is another recipient: the key goes.
+    expect(typedKeyFor("b.example", "c.example")).toEqual({ keep: false });
+    expect(typedKeyFor("c.example", "c.example:8443")).toEqual({ keep: false });
+    // Both pages bind the field's key to its host and send it to no other (the renderer journeys drive them).
+    const home = readFileSync("app/renderer/home/provider.ts", "utf8");
+    expect(home).toContain("const key = keyFor(host);");
+    expect(home).toContain(`input("byok-url").addEventListener("input", followAddress);`);
+    const welcome = readFileSync("app/renderer/home/welcome.ts", "utf8");
+    expect(welcome).toContain("typedKeyHost === endpointHost(baseUrl)");
   });
 });
 

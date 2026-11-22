@@ -173,10 +173,18 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
 
 ### Using Ember
 
+Closing Home keeps its unsent conversation draft and waiting-message recovery in memory for this run; reopening
+Home (the handle, the shortcuts or the launcher) brings them back. It still ends Home's Listen once, Voice Match
+teaching and Project work. No draft is written to disk or sent automatically. Signing out or changing account clears
+the conversation and draft; a policy lockdown clears the draft too, including while Home is hidden. Quitting Ember
+destroys the page and discards unsent drafts.
+
 - **First run** is six essential steps in the settings window, with optional character and personalisation detours (`app/renderer/home/welcome.ts`, its words
   in `welcome-copy.ts`): Ember says hello; you choose a character; you read what Ember does and doesn't do (five short
   lines, the full text under **Read the full text**; both name where a request goes: GitHub Copilot, your own model
-  provider while it is in force, or the organisation's model service), then what the one agreement turns on (owner
+  provider while it is in force, or the organisation's model service; until Ember knows which, Agree waits, and the
+  half second that guards it from a stray press starts again whenever the recipient or the words shown change:
+  first-run-c7-1), then what the one agreement turns on (owner
   decision of 2026-11-12, `app/shared/first-run.ts`, `app/main/first-run.ts`): five rows, each with a switch that is on
   by default and its own card's full text from the same source Settings uses (commands on this computer, this
   computer's commands card as main builds it; memory, `MEMORY_CONSENT_TEXT`; listening for “Hey Ember” with spoken
@@ -202,7 +210,14 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
   agrees to nothing); you sign in to GitHub (the device flow; a build without Ember's GitHub App offers the GitHub CLI's page and **Check again**; with the organisation's own model service there is nothing to sign in to and the step only goes on; under the organisation's lockdown the step, the try step and **Ready to start** say Ember can't connect until the policy is fixed, and only go on; where the organisation turned off your own model provider the step doesn't offer it; once Ember uses your own model provider, connected, connecting or failing, the step names it, never Copilot, and Back from the setup check returns to the provider's step, shown as in use: Back leaves it on, only **Use GitHub Copilot instead** switches it off (pressed while Ember is still answering or at a task, the step says Ember will switch once it has finished, and lets you go on), and an edit is checked as typed before it replaces the details in use, so one that fails, or that you leave or change while it is checked, changes nothing and the step says Ember is still using the old host, with **Keep using** it to go on; once switched off, the step opens again as one to set up, and a check there that fails leaves it off; or **Skip for now**); the setup check shows only
   the rows that need you (and, once **Turn on** has switched screen reading on, that apps already open need a restart), in plain words, with their fix button or the command to copy (main writes it to the clipboard: pages have no clipboard permission), and
   **Check again**, which reads the rows anew once you have run the command or changed the setting yourself (Home's
-  setup check has it too; on Linux a missing pyatspi is looked for at once, not only every 30 s, in the background, so Ember
+  setup check has it too; on Linux Python bindings and the GNOME accessibility switch are checked in the background,
+  at start and every 30 s, or at once with Check again. While a check is pending the row says Checking screen reading,
+  never that bindings are missing or ready. Neither a first read nor a later session-bus check blocks Stop; `ember doctor`
+  waits asynchronously for the completed checks. **Turn on** also waits off the main thread for GNOME to apply the
+  setting, leaving Stop responsive and reporting a failed change through the existing fix error. If the GNOME switch cannot be read, the row says it could not be
+  checked. Screen-reader detection also queries GNOME off the main thread, caches its answer for a minute and keeps
+  using Chromium's current accessibility state. While reader detection is unknown, teaching and Listen once use
+  their screen-reader guards; that uncertainty never enables speaking only meant for a detected reader. A missing pyatspi is looked for again, so Ember
   keeps answering while that import takes up to 5 s) (**Show the details** has every
   row); you try the stop shortcut, “Hey Ember” with a level meter that follows your request after the wake word (only while it is on, agreed to, allowed by the organisation, not muted and listening; on, with the microphone not working or turned off, the step and **Ready to start** say so and name the microphone, never that it is off; on, but not listening for another reason, such as damaged speech models or the voice process failing, they say Ember can't listen right now and that Settings › Voice says why, without blaming the microphone) and a first
   request in the ask box; and **Ready to start** sums it up before **Start** (neither says Ember's name, nor does “Setup is finished.”, which a screen reader is told as Start lands on Home's status line: after a changed consent “Hey Ember” already listens, first-run-r6-1). Nothing is read, heard or sent before
@@ -234,7 +249,10 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
   about**. **Search settings** at the top of the sidebar narrows it to the panes that hold the words typed; Enter goes
   to a selected labelled result (ArrowDown/Tab enters results; Escape clears them). The window reopens on the pane you last viewed (kept in the page's own storage).
   - **Home** is a status panel (Ember's still presence ring, its state in a few words, which of listening, memory and
-    commands are on in fact (`whatsOn`: what the organisation's policy or a lockdown turned off reads off, and
+    commands are on in fact (`whatsOn`: what the organisation's policy or a lockdown turned off reads off; commands and
+    computers over SSH count from the targets runtime's own capabilities (`TargetSummary.capabilities`, which include a
+    remote's stricter policy and each first-use agreement), so a saved or restricted host is never counted as working,
+    and nothing is counted until that list has arrived; its first answer never replaces a newer push; and
     listening that can't run reads "Listening needs its speech models" or "Microphone problem", never "on"; "Checking…"
     until the first status arrives, and if every try for it fails the caption says "The settings couldn't be loaded.
     Try again, or restart if it keeps happening." with **Try again**), today's tasks and approvals, **Ask Ember…** and **Stop everything** with the stop chord), then the
@@ -410,7 +428,12 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
     where the item reaches (the marketplace's source, or GitHub's Copilot service for a connector).
     The first yes also records extensions' own consent (`settings.extensions`, `FEATURE_CONSENT_VERSION.extensions`;
     `consentCard`'s words are pinned to that version in extensions-runtime.test.ts) and turns extensions on; nothing
-    loads before it. Connectors' catalog is empty for now (see "Extensions: the runtime and the gate").
+    loads before it. Neither card stands in for “Before Ember starts”: until its current version is agreed to (after
+    a `CONSENT_VERSION` bump too), no agreed extension is probed or started at launch, no tool is offered and no
+    marketplace request goes out (extensions-refresh-consent-1). Losing it stops a probe or an install under way,
+    whose late answer is dropped; an install the runtime had already downloaded still removes its copy, and Remove
+    still works, starting nothing (extensions-consent-review-1). Connectors' catalog is empty for now (see
+    "Extensions: the runtime and the gate").
   - With `features.extensions` false, or while Ember is locked down, the section says so and lists what was added,
     with nothing to change. A build without the extensions runtime says extensions aren't available yet.
   - Main's side is `app/main/extensions-ipc.ts` (`EXTENSIONS_IPC`: the settings window only, every argument checked,
@@ -428,7 +451,11 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
   open instead while Ember isn't set up or the desktop session is one it can't use (the setup check says why). The macOS
   Dock menu's **Ask Ember** does the same in the running Ember.
 - **Comfort & access** in settings has **Calm mode** (no hops, bounces or fidgets). It is also on when GNOME's
-  animations are off or the desktop asks for reduced motion. Its **Text size** (Default, Large, Larger) changes the text
+  animations are off or the desktop asks for reduced motion. On Linux that preference is checked in the background,
+  including when a compositor returns: Stop stays responsive, and cursor-following starts with reduced motion while
+  that preference is unchecked. A newer live preference takes priority.
+  A result for a stopped or replaced overlay, or one superseded by a live preference change, is ignored.
+  Its **Text size** (Default, Large, Larger) changes the text
   in settings, Ember's bubble, task cards and handle, the ask box, the desk window's bar, the command window and its
   terminal, and Ember's password and consent cards. **Glass** (Clear, Regular, Solid; `settings.glass`, put on the floating pages as
   `html[data-glass]`) sets how much of the screen shows through the bubble, task cards, handle and ask box: Clear is an even,
@@ -975,7 +1002,8 @@ it builds on:
   - *At every call:* what the model is shown now is compared with the pin again; a tool that differs is denied and
     turned off the same way. A session never bound, or whose list can't be read, denies every extension call.
 - **Ember's gate decides every call** (`gate.ts`, from `onPreToolUse`): off (the admin's `features.extensions`,
-  LOCKDOWN, the user's switch or consent `FEATURE_CONSENT_VERSION.extensions`), stopped, disabled, changed, shown
+  LOCKDOWN, the user's switch, consent `FEATURE_CONSENT_VERSION.extensions` or “Before Ember starts” at
+  `CONSENT_VERSION`), stopped, disabled, changed, shown
   differently, or refused this turn: deny. After the user said no to a question (the Confirmer's `onDeny` tells
   `userSaidNo()` which task put it), a tool that changes things asks and is never announced, and Autopilot denies it
   (a refusal, never a question): while that task is queued or running and, once it is over, until the user next asks
@@ -1324,6 +1352,11 @@ output when you change it (`pactl`, from the same package), and keeps that outpu
 listens. A request ends
 when your voice stops, even with a TV or colleagues talking behind you, and is at most 10 s long (20 s in a
 quiet room); when a longer one is cut, Ember says it only caught the first part.
+
+A short ambiguous name from an early wake check waits for the finished phrase, even if the partial recognizer wrote
+punctuation or repeated a fragment. The full check must confirm the name through the existing rules, or stop.
+An empty, garbled or unrelated full check closes the window rather than carrying its uncertainty into later speech;
+existing rejected near-miss forms stay rejected. The spotter's thresholds and name spellings are unchanged.
 
 ### How speech runs (native synthesis, native or WebAssembly listening)
 
@@ -1822,9 +1855,8 @@ First run's provider step, opened for a provider already in use, checks edited d
 details that work (`providers.api.test(draft)`, first-run-r2-1): the same GET, to the typed address only, after the
 card's yes for exactly its host given by the same press, with a key just typed (refused, unsent, where it couldn't be
 kept) or, without one, the saved key only when it was entered for that very host. Nothing is saved or recorded until it
-answers; then the details are written with the card's yes for their host in one change (`agree(host, move)`, as Home's
-held edit is), so the provider in use never leaves force for Copilot between, and a typed key is saved after
-(first-run-r4-3).
+answers; then they are adopted as Home's held edit is (`adopt`, below), so the provider in use never leaves force for
+Copilot between (first-run-r4-3).
 Home's **Model provider** does the same for the provider in force (integrations-c3-1): an address naming another host is
 held in the page, unsaved, so requests still go to the host in force (never to Copilot meanwhile, and Ember goes on
 answering with no GitHub sign-in), and the type, models and Advanced rows edited with it are held too. The card comes
@@ -1833,8 +1865,15 @@ up for the new host, the status line says "Read the note above: Ember sends noth
 quiet button reads "Keep using <host in force>" (it puts the details in force back, saving nothing), and a key typed for
 the new host waits in its field. "I agree" checks the held details with the same GET ("Checking <new host>…"); one that
 fails says main's reason and "Nothing has changed: Ember still uses <host in force>.", with the focus on the field it
-names; one that answers is saved with the yes in one settings change (`PROVIDER_IPC.agree` with the held details, which
-main writes only for the host they name), so the provider never leaves force between, and then the key typed for it.
+names; one that answers is adopted whole (`PROVIDER_IPC.adopt`: the host in force it began from, the held details, which
+main writes only for the host they name, and the key typed for it; integrations-r7-1): main seals that key and puts it
+in place first, the one in use set aside, then writes the details with the yes in one settings change through the
+provider's record, as `agree` does, so the provider never leaves force between. A key that can't be written, settings
+that can't be saved, or a yes the record can't take put the provider and the key that worked back as they were, and the
+line says why and "Nothing has changed: Ember still uses <host in force>.", the edit still held and its key in its
+field. A key replaced for the host in use is written beside the old one and renamed over it the same way, so one that
+can't be written leaves the old key in use (integrations-v7-1). Ember quitting in the middle of those renames can still
+leave no key saved; Remove and signing out delete what such a change left.
 A host that answers but has no model list at that address (404, 405 or 501 on GET /models, as some gateways that answer
 chat only do, and as a mistyped path does; or a 200 that isn't a model list, as a web front end, a sign-in page or a
 parked domain gives: both are the test's `cause: "no-list"`, which the start probe doesn't count as down either) is not
@@ -1850,6 +1889,11 @@ An edit back to the host in force, or of the same host, is saved at once as befo
 sentence about turning it off to go back to Copilot (`providerConsentText(host, "in-use")`, as first run's step for a
 provider in use): turning the switch off puts the held edit away, as "Keep using" does, and saves only the switch, so
 the address in force and its saved key are kept and come back with the switch (integrations-v4-1).
+A key typed but not yet saved belongs to the host it was typed for, in Home and in first run alike (`typedKeyFor` in
+app/shared/provider.ts; integrations-v7-2, first-run-v7-1): an address changed to another host or port clears it from
+its field, and first run's step opened again clears it as the saved address comes back. A path edit and an address
+still being typed keep it, a key typed before any address goes with the first one entered, and a check or a save sends
+it to that host only. The provider in force and its saved key stay as they were.
 
 - **Is it there?** Nothing else contacts the endpoint before the first request, so the same GET (`probeProvider`,
   main's `providers.api.test()`) is made before Ember connects to a server on this computer, and after a turn or a

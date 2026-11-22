@@ -398,6 +398,10 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   policy locks Ember down)
   beside a quiet **Stop everything** and the stop chord. Under them two quiet links, **Write to Ember** (the
   composer, focused) and **Task activity**, keep both a step away however long the conversation grows.
+- **Closing Home** hides its page for this running session, preserving unsent drafts and waiting-message recovery;
+  it still ends Home's Listen once, teaching and Project work. Hidden Home draws no characters. Privacy erasure on
+  sign-out or account change reaches the hidden page too; a policy lockdown clears the draft, and actual quit destroys
+  the page (home-r7-1).
 - **Home's setup check** says each row's state in first run's words beside its tint ("Ready", "Worth a look",
   "Needs fixing", never a code such as OK), in one column as wide as the widest word (a subgrid, so the labels line
   up), offers **Copy** for a command the row tells the user to run, and **Check again** under the rows, which shows
@@ -497,7 +501,8 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   command and prompt windows' status lines (a refused press's line, the hints, "Starting Ubuntu…") do the same. Home and
   Ask announce nothing as the microphone opens for a request, or while it is open, since a screen reader says it
   through the speakers into what Ember hears: the voice line is said once it has held for a second and never while a
-  window is open, and Listen once's line is said through a status line of its own, which never says "Ember is already
+  window is open or its microphone is starting, even when startup lasts longer than that second. Listen once's line
+  is said through a status line of its own, which never says "Ember is already
   listening.", nor "Answer Ember's question first." while a conversation waits for that answer (shown under the button,
   as its description). While they say nothing new, both of those status lines are emptied, so reading the page never
   finds a line beside the one shown that no longer holds. Hear me more clearly's line, the voice row's line and the note
@@ -619,6 +624,9 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   the consent note for that exact host, and one prominent button, “Agree and check the models”, which saves, keeps the
   key, records the yes and asks the service for its model list. Nothing says the provider works until that answers; a
   failure is written in the step (status line, red words) and a provider that didn't answer is switched off again.
+  A key typed there belongs to the host it was typed for: another host or port in the address clears its field, and so
+  does the saved address coming back as the step opens again; a path edit or an address still being typed keeps it
+  (first-run-v7-1).
   A service that answers has its models named (“It lists 1 model: llama3.2:3b.”, Home's `providerTestText`), and a
   model name typed that its list doesn't hold fails the check on that field, naming what is listed (“<host> answered,
   but it doesn't list gpt-4.1. It lists 1 model: llama3.2:3b. Enter that name.”), instead of passing a name the first
@@ -658,7 +666,9 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   and the step's own part. The buttons follow the step, never stuck to the window's foot: Back leading, the step's
   quiet choice (Not now, Skip for now, Cancel), then its one prominent button, with the reason beside it whenever it
   waits (`aria-describedby`). Not now leaves focus on the note that says what it did, and Agree and Quit Ember drop a
-  press for half a second after they appear, so a double click or a held Enter can't agree or quit (first-run-c1-1). Sign in
+  press for half a second after they appear, so a double click or a held Enter can't agree or quit (first-run-c1-1).
+  Agree also waits while the summary can't name where requests go (“Checking where your requests go… Wait a moment.”
+  beside it), and its half second starts again whenever the recipient or the words shown change (first-run-c7-1). Sign in
   keeps focus on its own button while it waits, and a cancelled sign-in moves it to the title, so a second Enter
   neither cancels nor skips (first-run-r3). Rows that need the user, the tries and **Ready to start** are grouped rows on `--surface-1`;
   the full consent text and the setup rows' details are disclosures (an accent chevron and words) over a

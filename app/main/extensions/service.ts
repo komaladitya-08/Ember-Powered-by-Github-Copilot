@@ -28,10 +28,10 @@ import { appEnv } from "../hands/system";
 import type { Logger } from "../logger";
 import { injectionSignals } from "../perception/injection";
 import type { AuditLog } from "../policy/audit";
-import type { Settings, SettingsPatch } from "../settings";
+import { hasConsent, type Settings, type SettingsPatch } from "../settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { ConnectResult, ExtensionsApi, Installed, Marketplace, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
-import { EXTENSION_ON_UNSAVED, EXTENSION_UNSEALED, MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed, extensionUnsaved } from "../../renderer/home/extensions-copy";
+import { EXTENSION_ON_UNSAVED, EXTENSION_UNSEALED, EXTENSIONS_START_AGREEMENT, MARKETPLACE_BUILT_IN_KEPT, MARKETPLACE_MANAGED_KEPT, addMarketplaceFailed, browseFailed, extensionUnsaved } from "../../renderer/home/extensions-copy";
 import type { OS } from "../../shared/shortcuts";
 import { CHECKABLE, REFUSED, RESULT_MAX, UNANSWERED, callForCheck, classify, emberReachOf, failureNote, gateAnnouncement, gateQuestion, plainName, wrapResult, writeOutHidden } from "./gate";
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
@@ -307,10 +307,15 @@ export class ExtensionsService implements ExtensionsApi {
       try { this.save(); } catch (err) { o.log.warn("extensions.save_failed", { err }); }
     }
     let active = this.active();
+    let agreed = this.globallyConsented();
     o.settings.onChange?.(() => {
       const next = this.active();
-      if (active && !next) this.stopPart().stop();
+      const agreedNow = this.globallyConsented();
+      // The global agreement going out of date stops a probe or an install under way too, with extensions on or not
+      // (extensions-refresh-consent-1).
+      if ((active && !next) || (agreed && !agreedNow)) this.stopPart().stop();
       active = next;
+      agreed = agreedNow;
     });
     // Revoke an earlier run's leases. Legacy pid files are dropped too; their numbers are never signalled.
     try { for (const f of fs.readdirSync(this.store.runDir)) fs.rmSync(path.join(this.store.runDir, f), { force: true }); } catch { /* no run folder yet */ }
@@ -409,10 +414,17 @@ export class ExtensionsService implements ExtensionsApi {
     return this.o.admin().features.extensions !== false;
   }
 
-  /** Allowed, turned on, and agreed to (FEATURE_CONSENT_VERSION.extensions): only then does a session get tools. */
+  /**
+   * "Before Ember starts" is agreed to at its current version (CONSENT_VERSION). Extensions' own card never stands in
+   * for it: after a bump nothing is probed, started or asked of a marketplace until the user agrees again
+   * (extensions-refresh-consent-1).
+   */
+  private globallyConsented(): boolean { return hasConsent(this.o.settings.get()); }
+
+  /** The current global agreement, allowed, turned on, and agreed to (FEATURE_CONSENT_VERSION.extensions): only then does a session get tools. */
   active(): boolean {
     const e = this.o.settings.get().extensions;
-    return this.allowed() && e.on && e.consent.version >= FEATURE_CONSENT_VERSION.extensions;
+    return this.globallyConsented() && this.allowed() && e.on && e.consent.version >= FEATURE_CONSENT_VERSION.extensions;
   }
 
   /** The runtime is connected (Copilot or a model provider is ready): only then are marketplaces listed (integrations-v2). */
@@ -420,14 +432,14 @@ export class ExtensionsService implements ExtensionsApi {
     return this.o.client() !== null;
   }
 
-  /** The user agreed to extensions' first-use card at its current version. */
+  /** The current global agreement, and extensions' first-use card agreed to at its current version. */
   consented(): boolean {
-    return this.o.settings.get().extensions.consent.version >= FEATURE_CONSENT_VERSION.extensions;
+    return this.globallyConsented() && this.o.settings.get().extensions.consent.version >= FEATURE_CONSENT_VERSION.extensions;
   }
 
   /** The card's yes in Home (a click there, never the model): records the agreement and turns extensions on. */
   async agree(): Promise<void> {
-    if (!this.allowed() || !this.o.settings.update) return;
+    if (!this.globallyConsented() || !this.allowed() || !this.o.settings.update) return;
     if (!this.consented()) {
       for (const item of this.items) item.consentedAt = null;
       this.save();
@@ -507,7 +519,9 @@ export class ExtensionsService implements ExtensionsApi {
 
   // ---- Marketplaces (registered with the runtime, which fetches them) ----
 
+  /** The runtime's calls, each of which reaches a marketplace or the runtime's plugins: none before the global agreement. */
   private rpc() {
+    if (!this.globallyConsented()) throw new Error(EXTENSIONS_START_AGREEMENT);
     const c = this.o.client();
     if (!c) throw new Error("not connected");
     return c.rpc;
@@ -516,9 +530,10 @@ export class ExtensionsService implements ExtensionsApi {
   async marketplaces(): Promise<Marketplace[]> {
     // Before the runtime is connected (Home opens first on a fresh start) there is nothing to ask: `connected()` tells
     // Home why the list is empty, and a warning with a stack at every such start was only noise in the log.
-    if (!this.allowed() || !this.o.client()) return [];
+    if (!this.globallyConsented() || !this.allowed() || !this.o.client()) return [];
     try {
       const r = await this.rpc().plugins.marketplaces.list();
+      if (!this.globallyConsented()) return [];
       // Copilot's own (isDefault) and the organisation's (managed) can't be removed: Home shows them so (integrations-4).
       return r.marketplaces.map(m => ({ name: m.name, source: m.source, ...(m.isDefault ? { builtIn: true } : {}), ...(m.managed ? { managed: true } : {}) }));
     } catch (err) {
@@ -544,6 +559,7 @@ export class ExtensionsService implements ExtensionsApi {
   }
 
   async addMarketplace(source: string): Promise<{ ok: true } | { ok: false; why: string }> {
+    if (!this.globallyConsented()) return { ok: false, why: EXTENSIONS_START_AGREEMENT };
     if (!this.allowed()) return { ok: false, why: "Your organisation has turned extensions off." };
     const s = typeof source === "string" ? this.marketplaceSource(source) : null;
     if (!s) return { ok: false, why: "Enter a GitHub repository (owner/name) or an https address." };
@@ -567,6 +583,7 @@ export class ExtensionsService implements ExtensionsApi {
 
   /** Removes a marketplace the user added; one built into Copilot or set by the organisation is refused, saying so. */
   async removeMarketplace(name: string): Promise<{ ok: true } | { ok: false; why: string }> {
+    if (!this.globallyConsented()) return { ok: false, why: EXTENSIONS_START_AGREEMENT };
     if (typeof name !== "string" || !name) return { ok: false, why: "Ember couldn't remove that marketplace." };
     try {
       await this.rpc().plugins.marketplaces.remove({ name, force: true });
@@ -586,6 +603,7 @@ export class ExtensionsService implements ExtensionsApi {
   /** The folder the runtime keeps a marketplace's catalogue in: a local one's own, else its cache (found by name). */
   private async marketplaceRoot(name: string): Promise<string | null> {
     const list = await this.rpc().plugins.marketplaces.list();
+    if (!this.globallyConsented()) return null;
     const m = list.marketplaces.find(x => x.name === name);
     if (!m) return null;
     const local = /^Local: (.+)$/.exec(m.source)?.[1];
@@ -612,6 +630,7 @@ export class ExtensionsService implements ExtensionsApi {
 
   /** What `marketplace` offers, or why its list couldn't be fetched or read (integrations-r2): never an empty list for that. */
   async browse(marketplace: string): Promise<MarketplaceEntry[] | { ok: false; why: string }> {
+    if (!this.globallyConsented()) return { ok: false, why: EXTENSIONS_START_AGREEMENT };
     if (!this.allowed() || typeof marketplace !== "string") return [];
     try {
       // The runtime fetches (or refreshes) the catalogue; Ember reads it for what it offers.
@@ -652,6 +671,7 @@ export class ExtensionsService implements ExtensionsApi {
   }
 
   private async installNow(marketplace: string, name: string): Promise<{ ok: true; id: string } | { ok: false; why: string }> {
+    if (!this.globallyConsented()) return { ok: false, why: EXTENSIONS_START_AGREEMENT };
     if (!this.allowed()) return { ok: false, why: "Your organisation has turned extensions off." };
     if (!this.consented()) return { ok: false, why: "Agree to extensions in settings first." };
     if (typeof marketplace !== "string" || typeof name !== "string" || !PATH_NAME.test(marketplace) || !PATH_NAME.test(name)) return { ok: false, why: "Ember couldn't find that plugin." };
@@ -659,17 +679,22 @@ export class ExtensionsService implements ExtensionsApi {
     if (this.items.some(i => i.source === source)) return { ok: false, why: "It's already installed." };
     const id = `${slug(name, 40)}-${slug(marketplace, 40)}-${crypto.randomBytes(3).toString("hex")}`;
     const dst = this.store.pluginDir(id);
-    let viaRuntime = false;
+    let cleanRuntime: (() => Promise<unknown>) | null = null;
     const epoch = this.epoch;
     try {
       const root = await this.marketplaceRoot(marketplace);
+      if (epoch !== this.epoch || !this.active()) throw new Error("extensions stopped");
       const listed = root ? readMarketplace(root).plugins.find(p => p.name === name) : undefined;
       if (!listed) return { ok: false, why: "Ember couldn't find that plugin." };
       let src = listed.folder;
       if (!src) {
         // Kept elsewhere (a GitHub repository at a pinned commit): the runtime fetches it, and Ember copies it.
-        await this.rpc().plugins.install({ source });
-        viaRuntime = true;
+        const plugins = this.rpc().plugins;
+        // This install was let through: its own clean-up still runs once the agreement is lost meanwhile, while every
+        // new request stays held back by rpc() (extensions-consent-review-1).
+        cleanRuntime = () => plugins.uninstall({ name: source });
+        await plugins.install({ source });
+        if (epoch !== this.epoch || !this.active()) throw new Error("extensions stopped");
         src = path.join(this.o.copilotHome, "installed-plugins", marketplace, name);
         if (!fs.existsSync(src)) return { ok: false, why: "Ember couldn't fetch that plugin." };
       }
@@ -720,13 +745,15 @@ export class ExtensionsService implements ExtensionsApi {
       return { ok: false, why: m === "too big" ? "It's too big to install." : m === "not connected" ? "Ember isn't connected to Copilot yet." : m === "outside its marketplace" || m === "not a folder" ? "Its files aren't in its marketplace, so Ember didn't install it." : "Ember couldn't install it." };
     } finally {
       // The runtime's own install is only a download: Ember runs its copy, so the runtime keeps nothing enabled.
-      if (viaRuntime) { try { await this.rpc().plugins.uninstall({ name: source }); } catch (err) { this.o.log.warn("extensions.runtime_uninstall_failed", { err }); } }
+      if (cleanRuntime) { try { await cleanRuntime(); } catch (err) { this.o.log.warn("extensions.runtime_uninstall_failed", { err }); } }
       this.busy.delete(id);
       this.changed();
     }
   }
 
   private probe(spec: ServerSpec, cwd: string): Promise<ProbeResult> {
+    // Probing starts a stdio server's program or contacts a remote one (extensions-refresh-consent-1).
+    if (!this.globallyConsented()) return Promise.resolve({ ok: false, why: EXTENSIONS_START_AGREEMENT });
     if (this.o.probe) return this.o.probe(spec, cwd);
     // The kill switch ends a probe under way (its signal is replaced at each stop).
     const signal = this.stopAsks.signal;
@@ -834,6 +861,8 @@ export class ExtensionsService implements ExtensionsApi {
       if (epoch !== this.epoch || !this.items.includes(item) || !this.active()) return;
       if (!s.spec) continue;
       const r = await this.probe(s.spec, this.store.pluginDir(item.id));
+      // An answer that comes after a stop or a lost agreement says nothing that is kept (extensions-refresh-consent-1).
+      if (epoch !== this.epoch || !this.items.includes(item) || !this.active()) return;
       if (!r.ok) { s.status = r.needsAuth ? "needs-auth" : "failed"; s.detail = r.why; continue; }
       const before = s.tools.filter(t => t.changed).length;
       s.tools = checkPins(s.tools, r.tools);

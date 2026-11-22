@@ -13,7 +13,7 @@
 import type { EmberProviderApi, ProviderMove, ProviderState } from "../../shared/ipc";
 import type { Settings, SettingsPatch } from "../../main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
-import { AZURE_API_VERSION, AgreeGuard, agreeAction, endpointHost, endpointProblem, heldAnswer, heldPress, latestOnly, MODEL_ID, type ProviderType } from "../../shared/provider";
+import { AZURE_API_VERSION, AgreeGuard, agreeAction, endpointHost, endpointProblem, heldAnswer, heldPress, latestOnly, MODEL_ID, type ProviderType, typedKeyFor } from "../../shared/provider";
 import { noteProviderChoice } from "./provider-choice";
 import { type OwnProvider, PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerSealLine, providerAgreedChecked, providerAgreedText, providerAgreedUnlisted, providerCardShown, providerConsentText, providerHeldChecking, providerHeldHint, providerHeldKept, providerHeldKey, providerHeldUnlisted, providerHint, providerTestText, providerTestWaits } from "./copy";
 import { providerFailField, providerKeepLabel } from "./first-run-copy";
@@ -59,6 +59,26 @@ let checkingFor: string | null = null;
  * with), and nothing is saved before that press (integrations-c5-1, -c7-1).
  */
 let asTyped: { host: string; run: number; asked: string } | null = null;
+/**
+ * The host the key in the field was typed for (null: none yet). It goes only there: an address changed to another
+ * host or port takes it out of the field, and a held edit's check and its save send it to that host only (integrations-v7-2).
+ */
+let keyHost: string | null = null;
+/** The key in the field, if it was typed for `host`; otherwise none goes (integrations-v7-2). */
+function keyFor(host: string): string {
+  const v = input("byok-key").value;
+  return v.trim() && keyHost === host ? v : "";
+}
+/** The address field changed: a typed key stays only while it names the host the key was typed for (integrations-v7-2). */
+function followAddress(): void {
+  if (!input("byok-key").value) { keyHost = null; return; }
+  const r = typedKeyFor(keyHost, endpointHost(input("byok-url").value.trim()));
+  if (r.keep) { keyHost = r.boundTo; return; }
+  input("byok-key").value = "";
+  keyHost = null;
+  // The key was part of what a held edit's check asked with: its offer goes too (integrations-x7-2).
+  if (asTyped) draw();
+}
 /**
  * Counts first "I agree"s in Home and the edits that change what their check asks with (the switch, the provider
  * type, the address, Azure's version, the key), so a check's late answer about what was set before says nothing.
@@ -155,8 +175,7 @@ async function adopt(host: string): Promise<void> {
   if (!a || !own || !was) return;
   const run = heldRun;
   const asked = askedWith();
-  const keyField = input("byok-key");
-  const key = keyField.value.trim() ? keyField.value : "";
+  const key = keyFor(host);
   const d = { ...own, ...was.fields };
   checkingFor = host;
   asTyped = null;
@@ -187,7 +206,7 @@ async function commit(host: string, unlisted: boolean, ids?: string[]): Promise<
   const a = api();
   if (!a || !own || !held) return;
   const keyField = input("byok-key");
-  const key = keyField.value.trim() ? keyField.value : "";
+  const key = keyFor(host);
   // Details edited while it was asked (a model) go too: they don't change where requests go.
   const now = { ...own, ...held.fields };
   const move: ProviderMove = { type: now.type, baseUrl: now.baseUrl, conductor: now.conductor, worker: now.worker, wireApi: now.wireApi, azureApiVersion: now.azureApiVersion };
@@ -196,14 +215,19 @@ async function commit(host: string, unlisted: boolean, ids?: string[]): Promise<
   held = null;
   asTyped = null;
   heldRun++;
-  const done = await a.agree(host, move);
-  // Not recorded (the settings changed meanwhile): still held, if the provider it began from is still in force.
-  if (!done.ok) { if (!held && inForceHost() === keep.from) held = keep; draw(); say(done.why, true); return; }
-  if (key) {
-    const k = await a.saveKey(key);
-    if (!k.ok) { say(k.why, true); void reread(); return; }
-    keyField.value = "";
+  // The details, the yes and the key typed for them go together or not at all: a key main can't keep leaves the
+  // provider in force and its key as they were (integrations-r7-1; agree() then saveKey() left the new host keyless).
+  const done = await a.adopt({ from: keep.from, host, move, ...(key ? { key } : {}) }).catch(() => ({ ok: false as const, why: "" }));
+  // Not adopted: still held, with its key in the field to try again, if the provider it began from is still in force.
+  if (!done.ok) {
+    const still = !held && inForceHost() === keep.from;
+    if (still) held = keep;
+    draw();
+    say(still ? providerHeldKept(keep.from, done.why) : done.why, true);
+    void reread();
+    return;
   }
+  if (key) keyField.value = "";
   say(unlisted ? providerAgreedUnlisted(host, now.conductor ?? null) : providerAgreedText(host));
   if (ids) suggestModels(ids);
   input("byok-url").focus();
@@ -443,7 +467,12 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
     void change({ azureApiVersion: v || null });
   });
   // A key typed over the one a held edit was checked with: its offer goes as it is typed (integrations-x7-2).
-  input("byok-key").addEventListener("input", () => { if (asTyped) draw(); });
+  input("byok-key").addEventListener("input", () => {
+    keyHost = input("byok-key").value ? endpointHost(input("byok-url").value.trim()) : null;
+    if (asTyped) draw();
+  });
+  // Path edits and an address still being typed keep a typed key; another host or port takes it out (integrations-v7-2).
+  input("byok-url").addEventListener("input", followAddress);
   $("byok-key-form").addEventListener("submit", e => {
     e.preventDefault();
     const field = input("byok-key");

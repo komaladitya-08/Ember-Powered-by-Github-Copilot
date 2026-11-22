@@ -419,6 +419,8 @@ async function runDoctor(): Promise<void> {
     await app.whenReady();
     ws = wsState = platform.openWindows(log);
     helper = await doctorHelper();
+    // The doctor reports completed checks; Home can show their pending state without blocking Stop.
+    await sys.lookAgain?.();
     const env = readEnvironment();
     // The doctor never logged xtest.unavailable: no logger.
     input = platform.openInput(ws, null);
@@ -507,6 +509,9 @@ function start(): void {
   app.on("will-quit", () => { endThisRun("quit"); unwatch(); try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); } });
 
   let home: BrowserWindow | null = null;
+  // Closing Home hides it for this run so an unsent draft survives; an actual quit must still destroy it (home-r7-1).
+  let homeQuitting = false;
+  app.on("before-quit", () => { homeQuitting = true; });
   let projectFiles: string[] = [];
   let projectPicking = false;
   let projectJob: AbortController | null = null;
@@ -576,6 +581,23 @@ function start(): void {
     // screen lock, the policy and Stop everything still end it.
     const hidden = () => { shown(false)(); cancelHomeListenOnce(); };
     win.on("minimize", hidden); win.on("hide", hidden); win.on("restore", shown(true)); win.on("show", shown(true));
+    let levelWhenClosed = false;
+    win.on("show", () => { if (levelWhenClosed) { homeWantsLevel = true; levelWhenClosed = false; } });
+    win.on("close", e => {
+      if (homeQuitting || sessionEnding) return;
+      // Retain only this running session's page: account/sign-out/policy erasure events still clear it while hidden.
+      // Closing still ends teaching, microphone capture and project work, just as destroying Home did (home-r7-1).
+      // showHome() shows this same window again, so the handle, the shortcuts and the launcher still bring it back.
+      e.preventDefault();
+      levelWhenClosed = homeWantsLevel;
+      homeWantsLevel = false;
+      win.hide();
+      cancelHomeListenOnce();
+      enrolEnded = undefined;
+      forgetProject("all");
+      stepAside();
+      if (greetOnClose) { greetOnClose = false; setTimeout(() => greet(), 300); }
+    });
     home.on("closed", () => {
       cancelHomeListenOnce();
       enrolEnded = undefined;
@@ -3694,8 +3716,8 @@ function start(): void {
 
     const makeOverlay = (hidden = false) => {
       const o = new OverlayManager(() => settings.get(), log.child("overlay"), cursor, platform.overlay);
-      // The system asking for less motion (GNOME's "Animations" switch off) counts as asking for calm mode.
-      try { o.systemReducedMotion = sys.a11y.systemReducedMotion(); } catch { /* not known: Ember's own setting only */ }
+      // A restored compositor must not wait on GNOME's session bus while Stop and tasks are active (reliability-r7-2).
+      o.checkSystemMotion(() => sys.a11y.systemReducedMotion(), () => overlay === o);
       o.avoid = () => handle?.bounds ?? null;
       o.setState(lastState);
       o.setHidden(hidden);
@@ -4432,7 +4454,8 @@ function start(): void {
       monitor: settings.get().voice.speakerRejection && sys.voice.speakerMonitor,
       conversation: () => settings.get().voice.conversation,
       // A screen reader says Listen once's status lines through the speakers: the voice process leaves them out.
-      screenReaderOn: () => sys.a11y.screenReaderOn(),
+      // A pending reader check protects the microphone; it never enables reader-only speech (reliability-v7-2).
+      screenReaderOn: () => sys.a11y.screenReaderState ? sys.a11y.screenReaderState() !== false : sys.a11y.screenReaderOn(),
       // (EMBER_NO_OUTPUT_WATCH: a test that speaks through the speakers as the user would count as other sound. A fake
       // microphone's WAV is Chromium's fake loopback too, so it would.)
       outputLevel: sys.voice.outputLevel && !testMicWav && !devEnv("EMBER_NO_OUTPUT_WATCH"),

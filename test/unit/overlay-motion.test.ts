@@ -21,6 +21,39 @@ const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return q
 const shaper = { setInputRegion: () => false, release() {}, forward: false, floating: () => ({ options: {}, allWorkspaces: null }) };
 
 describe("the desktop's reduce-motion preference", () => {
+  it.each([true, false])("stays Calm until a current asynchronous preference answers %s (reliability-r7-2)", async on => {
+    const { OverlayManager } = await import("../../app/main/overlay");
+    const m = new OverlayManager(() => ({ size: 60, reduceMotion: false }) as Settings, quiet, () => ({ x: 900, y: 600 }), shaper);
+    let finish!: (on: boolean) => void;
+    const waiting = new Promise<boolean>(resolve => { finish = resolve; });
+    m.checkSystemMotion(() => waiting, () => true);
+    expect(m.systemReducedMotion).toBe(true);
+    finish(on);
+    await vi.waitFor(() => expect(m.systemReducedMotion).toBe(on));
+  });
+
+  it.each(["replaced", "stopped", "newer-live-value", "newer-live-off"])("ignores a late preference after the overlay is %s (reliability-r7-2)", async why => {
+    const { OverlayManager } = await import("../../app/main/overlay");
+    const m = new OverlayManager(() => ({ size: 60, reduceMotion: false }) as Settings, quiet, () => ({ x: 900, y: 600 }), shaper);
+    let finish!: (on: boolean) => void;
+    const waiting = new Promise<boolean>(resolve => { finish = resolve; });
+    let current = true;
+    m.checkSystemMotion(() => waiting, () => current);
+    if (why === "replaced") current = false;
+    else if (why === "stopped") m.stop();
+    else m.reducedMotionChanged(why !== "newer-live-off");
+    finish(why === "newer-live-off");
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+    expect(m.systemReducedMotion).toBe(why !== "newer-live-off");
+  });
+
+  it.each(["throw", "reject"])("stays Calm when the preference cannot be read: %s (reliability-r7-2)", async why => {
+    const { OverlayManager } = await import("../../app/main/overlay");
+    const m = new OverlayManager(() => ({ size: 60, reduceMotion: false }) as Settings, quiet, () => ({ x: 900, y: 600 }), shaper);
+    m.checkSystemMotion(() => { if (why === "throw") throw new Error("unavailable"); return Promise.reject(new Error("unavailable")); }, () => true);
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+    expect(m.systemReducedMotion).toBe(true);
+  });
   it("is followed when it changes while Ember runs, either way", async () => {
     const { OverlayManager } = await import("../../app/main/overlay");
     const m = new OverlayManager(() => ({ size: 60, reduceMotion: false }) as Settings, quiet, () => ({ x: 900, y: 600 }), shaper);

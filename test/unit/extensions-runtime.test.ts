@@ -18,7 +18,7 @@ import { admittedExtensionTools, hardenedSessionConfig, verifySessionTools, type
 import { AdminPolicySchema, applyAdminPolicy, lockedDown, managedKeys } from "../../app/main/admin";
 import { DEFAULT_SETTINGS, withOwnExtensions, type Settings } from "../../app/main/settings";
 import { settingsFromHome } from "../../app/main/windows";
-import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
+import { CONSENT_VERSION, FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import type { CopilotSession } from "@github/copilot-sdk";
 import crypto from "node:crypto";
 import { EventEmitter, getEventListeners } from "node:events";
@@ -677,7 +677,8 @@ describe("ExtensionsService", () => {
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-exts-"));
-    settings = { ...DEFAULT_SETTINGS, extensions: { on: true, consent: { version: FEATURE_CONSENT_VERSION.extensions, at: "2026-11-02T00:00:00Z" } } };
+    // Agreed to "Before Ember starts" as it is now: extensions never run before that (extensions-refresh-consent-1).
+    settings = { ...DEFAULT_SETTINGS, consent: { version: CONSENT_VERSION, at: "2026-11-02T00:00:00Z" }, extensions: { on: true, consent: { version: FEATURE_CONSENT_VERSION.extensions, at: "2026-11-02T00:00:00Z" } } };
     admin = AdminPolicySchema.parse({});
     served = [LOOKUP, POST];
     answers = []; asked = []; audit = []; auditFails = false; installs = []; sealed = null;
@@ -2150,7 +2151,20 @@ describe("ExtensionsService", () => {
     expect(audit).toContainEqual(expect.objectContaining({ phase: "answer", answer: "stale" }));
   });
 
+  it("runs nothing on an Allow given after “Before Ember starts” went out of date while it was up (extensions-refresh-consent-1)", async () => {
+    const s = await installed({ confirmer: () => ({ ask: async () => {
+      settings = { ...settings, consent: { version: CONSENT_VERSION - 1, at: "2026-11-09T00:00:00Z" } };
+      return "once";
+    } }) as never });
+    const ext = s.forSession()!;
+    shown(ext);
+    expect(await call(ext, "fake-post_message")).toMatchObject({ permissionDecision: "deny" });
+  });
+
   const revocations: { name: string; revoke(s: ExtensionsService, id: string): unknown }[] = [
+    { name: "global agreement out of date (extensions-refresh-consent-1)", revoke: () => {
+      settings = { ...settings, consent: { version: CONSENT_VERSION - 1, at: "2026-11-09T00:00:00Z" } };
+    } },
     { name: "disabled", revoke: (s, id) => s.setEnabled(id, false) },
     { name: "disabled and enabled again", revoke: async (s, id) => { await s.setEnabled(id, false); await s.setEnabled(id, true); } },
     { name: "removed", revoke: (s, id) => s.uninstall(id) },
@@ -2707,7 +2721,7 @@ describe("extensions' first-use card", () => {
   });
 
   it("is recorded only by agree(), from Home, and only while the organisation allows extensions", async () => {
-    let s: Settings = DEFAULT_SETTINGS;
+    let s: Settings = { ...DEFAULT_SETTINGS, consent: { version: CONSENT_VERSION, at: "2026-11-02T00:00:00Z" } };
     let admin = AdminPolicySchema.parse({});
     const svc = new ExtensionsService({
       dir: fs.mkdtempSync(path.join(os.tmpdir(), "ember-agree-")), copilotHome: "/nonexistent", os: "linux", launcher: null,

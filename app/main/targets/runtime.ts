@@ -674,7 +674,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       const problem = e.kind === "ssh" && e.host && (e.state === "off" || e.state === "lost") ? conns.get(e.host.id)?.problem : undefined;
       const privileged = safeCap(commandsOf(e.id))?.askEvery === "root";
       const toolOwned = e.kind === "wsl" && !!e.distro && isToolDistro(e.distro);
-      return { ...summaryOf(e, a), ...(problem ? { problem } : {}), ...(privileged ? { privileged: true as const } : {}), ...(toolOwned ? { toolOwned: true as const } : {}) };
+      return { ...summaryOf(e, a), capabilities: { commands: e.usable && safeState(commandsOf(e.id)) === "on", work: e.usable && !e.listedOnly }, ...(problem ? { problem } : {}), ...(privileged ? { privileged: true as const } : {}), ...(toolOwned ? { toolOwned: true as const } : {}) };
     });
   };
   const ipc = registerTargetsIpc({

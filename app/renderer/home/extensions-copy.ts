@@ -31,6 +31,8 @@ export const EXTENSIONS_BAD_REQUEST = "Ember couldn't do that: something in the 
 export const EXTENSIONS_OFFLINE = "Ember couldn't reach that address. Check the network, then try again.";
 export const EXTENSIONS_NOT_FOUND = "Ember couldn't find anything there. Check the address, then try again.";
 export const EXTENSIONS_TIMED_OUT = "That took too long. Try again in a moment.";
+/** Asked of extensions before the current “Before Ember starts” is agreed to: nothing goes out (extensions-refresh-consent-1). */
+export const EXTENSIONS_START_AGREEMENT = "Agree to “Before Ember starts” first.";
 export const EXTENSIONS_REFUSED_URL = "GitHub's page didn't come back as a GitHub address, so Ember didn't open it.";
 
 /**

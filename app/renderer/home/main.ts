@@ -7,6 +7,7 @@
  */
 
 import { Rig, FACTORIES, frameSeconds, restingGap, type Character } from "@ember/characters";
+import type { TargetSummary } from "../../shared/targets";
 import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RetryResult, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
 import { MEMORY_UNDO_MS } from "../../shared/ipc";
 import { CONVERSATION_REQUEST_LIMIT, conversationTurnChangeOf, type ConversationTurn, type ConversationTurnEnd, type HistoryProblemKind } from "../../shared/conversation";
@@ -286,6 +287,8 @@ function renderTagline(): void {
 // ───── Home's status panel: the still ring, Ember's state, what is on, today, and its actions ─────
 /** The tasks as Task activity last heard them; today's counts from the audit's recent entries. */
 let tasksNow: TaskEntry[] = [];
+/** What the targets runtime says works now, from its existing subscription; nothing known yet counts as nothing on (home-v7-1). */
+let statusTargets: readonly TargetSummary[] = [];
 let today = { tasks: 0, approvals: 0 };
 const setText = (id: string, text: string) => { if ($(id).textContent !== text) $(id).textContent = text; };
 function renderStatus(): void {
@@ -298,7 +301,7 @@ function renderStatus(): void {
   $("state-word").dataset.ring = s.ring;
   // What is in force, not what the switches ask for: policy, a lockdown and the microphone's real state (home-r6-1).
   setText("whats-on", whatsOnLine({
-    settings, admin: lastAdmin, mic: voice?.state ?? null,
+    settings, admin: lastAdmin, mic: voice?.state ?? null, targets: statusTargets,
     memory: memoryWhatsOn(!!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION, !!settings && memoryPaused(settings.memory), memoryOwner, memoryTrouble),
   }));
   setText("today", todaySummary(tasksNow, today));
@@ -685,6 +688,8 @@ function renderAdmin(a: Status["admin"]): void {
 // draw it (the notice, What Ember reads, sends and keeps, the switches it manages, first run, computers, extensions),
 // not only once this window is opened again (safety-privacy-w5-1).
 window.ember.onAdminChanged(a => {
+  // A lockdown clears volatile words even while Home is hidden with a draft (home-r7-1).
+  if (a.error !== null) resetComposerDraft();
   pushedAdmin = a;
   renderAdmin(a);
   if (!statusNow) return;
@@ -1140,7 +1145,7 @@ window.ember.onSettingsChanged(s => statusFence.pushedSettings(s));
 window.ember.onSettingsChanged(applySettings);
 // Computers and Commands (§8.3): shown once the targets runtime answers, kept in step with the settings.
 window.ember.onSettingsChanged(targetsSettings);
-startTargets();
+startTargets(list => { statusTargets = list; renderStatus(); });
 // Extensions, plugins and connectors: what main says is added, and the catalogs (only the user adds, here).
 startExtensions();
 // The user's own model provider (Copilot › Model provider): its key goes to main once and never comes back.
@@ -1568,8 +1573,8 @@ void window.ember.conversation().then(entries => {
   if (!conversationReceived && conversationOpened === conversationGeneration) renderConversation(entries);
 }, () => { if (!conversationReceived && conversationOpened === conversationGeneration) conversationComposeStatus.textContent = COMPOSER_SAYS.loadFailed; });
 window.ember.onConversation(entries => { conversationReceived = true; keepingComposer(() => renderConversation(entries)); });
-const resetConversationView = () => {
-  // Only explicit session erasure clears an unsent draft; forgetting the last learned fact can also empty this list.
+const resetComposerDraft = () => {
+  // Explicit account/privacy erasure or a lockdown clears volatile drafts, even while Home is hidden (home-r7-1).
   conversationMessage.value = "";
   syncComposerCount();
   conversationSearch.value = "";
@@ -1590,8 +1595,9 @@ const resetConversationView = () => {
   send.textContent = "Send";
   $("conversation-stop").removeAttribute("aria-disabled");
   conversationSendTaken = conversationTurnSeen = false;
-  renderConversation([]);
 };
+// Only explicit session erasure clears an unsent draft; forgetting the last learned fact can also empty this list.
+const resetConversationView = () => { resetComposerDraft(); renderConversation([]); };
 window.ember.onConversationForgotten(resetConversationView);
 window.ember.onConversationStream(e => {
   const ev = e as Partial<StreamEvent> | null;
@@ -2843,12 +2849,14 @@ function renderVoice(v: VoiceStatus): void {
   // Teaching Ember a voice: its prompts are what screen readers hear; the voice line only when it changes.
   const said = renderMatch();
   if (said) voiceLive(said);
-  if (said || v.state === "active" || !$("consent-error").hidden) clearTimeout(voiceLineSoon);
+  // micHeld, not only "active": a Listen once start can outlast the line's one-second timer, and "Starting…" was said
+  // into the microphone as it opened (voice-listening-refresh-2).
+  if (said || micHeld(v) || !$("consent-error").hidden) clearTimeout(voiceLineSoon);
   else if (v.state !== "downloading" && text !== voiceLine) { clearTimeout(voiceLineSoon); voiceLineSoon = setTimeout(() => voiceLive(text), VOICE_LINE_SETTLE_MS); }
   // Emptied, unsaid, while a window is open: browse mode read "Listening for “Ember”" there beside "Hearing you…"
   // (voice-listening-v4-2). An emptied status line says nothing.
   const live = $("voice-live");
-  if (!said && v.state === "active" && live.textContent) { voiceTold = live.textContent; live.textContent = ""; }
+  if (!said && micHeld(v) && live.textContent) { voiceTold = live.textContent; live.textContent = ""; }
   voiceLine = text;
   $("voice-dot").dataset.phase = v.state === "waiting" || v.state === "active" ? "ready" : v.state === "error" ? "error" : v.state === "off" || v.state === "muted" ? "" : "starting";
   const dl = $("voice-download") as HTMLButtonElement;

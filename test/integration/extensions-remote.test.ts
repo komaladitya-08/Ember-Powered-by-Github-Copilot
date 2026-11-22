@@ -18,7 +18,7 @@ import { SettingsStore } from "../../app/main/settings";
 import { createLogger } from "../../app/main/logger";
 import { ExtensionsService } from "../../app/main/extensions/service";
 import { AdminPolicySchema } from "../../app/main/admin";
-import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
+import { CONSENT_VERSION, FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "../../app/main/agent/runtime-temp";
 import type { EmberState } from "../../app/shared/overlay";
 import type { OS } from "../../app/shared/shortcuts";
@@ -98,7 +98,7 @@ describe("a remote extension server on the real Copilot runtime", () => {
   it("never sends the plugin's header or a call's arguments to the host a server redirects to (integrations-c9-4)", async () => {
     const settings = new SettingsStore(path.join(dir, "settings.json"));
     settings.load();
-    settings.update({ extensions: { on: true, consent: { version: FEATURE_CONSENT_VERSION.extensions, at: new Date().toISOString() } } });
+    settings.update({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() }, extensions: { on: true, consent: { version: FEATURE_CONSENT_VERSION.extensions, at: new Date().toISOString() } } });
     const log = createLogger({ dir: path.join(dir, "logs") });
     const service = new ExtensionsService({
       dir: path.join(dir, "extensions"), copilotHome: path.join(dir, "copilot"), settings, admin: () => AdminPolicySchema.parse({}),

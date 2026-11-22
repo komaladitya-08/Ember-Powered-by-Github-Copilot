@@ -16,15 +16,16 @@
 
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import type { ProviderConfig } from "@github/copilot-sdk";
 import { applyAdminPolicy, userProviderAllowed, type LoadedAdminPolicy } from "./admin";
 import { lenientJson, repairSettings, type Settings, type SettingsPatch } from "./settings";
-import { redactGitHubTokens, type SaveResult, type SecretBox } from "./agent/auth";
+import { redactGitHubTokens, type SecretBox } from "./agent/auth";
 import { friendlyError } from "./agent/presenter";
 import type { Fields, Logger } from "./logger";
 import { FEATURE_CONSENT_VERSION } from "../shared/consent";
 import { endpointHost, MAX_API_KEY, MODEL_ID } from "../shared/provider";
-import type { ProviderDraft, ProviderMove, ProviderSealNotes, ProviderState, RetryResult } from "../shared/ipc";
+import type { ProviderAdoption, ProviderDraft, ProviderMove, ProviderSealNotes, ProviderState, RetryResult } from "../shared/ipc";
 
 /** The user's provider settings (SettingsSchema `provider`). */
 export type UserProviderSettings = Settings["provider"];
@@ -220,6 +221,13 @@ export const KEY_WRITE_FAILED = "Ember couldn't save the key: its data folder ca
 export type KeySave = { ok: true } | { ok: false; why: string };
 /** What the key store says of a save: on success, the id sealed with the key (it never goes to a page). */
 export type KeyKept = { ok: true; keyId: string } | { ok: false; why: string };
+/**
+ * A key sealed and written beside the one in use, not yet in its place (integrations-r7-1). `commit()` puts it there,
+ * the one it replaces set aside, or says it couldn't (the one in use then stays as it was), and gives back what to do
+ * once the change it belongs to is decided: `keep()` it (the one set aside goes) or `undo()` it (that one comes back).
+ * `discard()` drops a staged key never committed.
+ */
+export type StagedKey = { ok: true; keyId: string; commit(): { keep(): void; undo(): void } | null; discard(): void } | { ok: false; why: string };
 
 /** Where the host a key belongs to is kept (not secret: the settings name it too), so no keyring is asked to know it. */
 const hostFile = (file: string) => file.replace(/\.bin$/, "") + ".host";
@@ -257,14 +265,32 @@ export class ProviderKeyStore {
     }
   }
 
-  /** Seals and writes `key` for `host`, or says why it wasn't. Never throws. */
+  /**
+   * Seals and writes `key` for `host`, or says why it wasn't. Never throws. A key that can't be written leaves the one
+   * saved before in its place, as it was (integrations-v7-1: it was deleted, and the provider in use lost its key).
+   */
   async save(key: string, host: string, current: () => boolean = () => true): Promise<KeyKept> {
+    const staged = await this.stage(key, host, current);
+    if (!staged.ok) return staged;
+    const placed = staged.commit();
+    if (!placed) return { ok: false, why: KEY_WRITE_FAILED };
+    placed.keep();
+    return { ok: true, keyId: staged.keyId };
+  }
+
+  /**
+   * Seals `key` for `host` and writes it beside the key in use, which stays in use until `commit()` (integrations-r7-1:
+   * a provider moved to another host is adopted with its key, or not at all). Only sealed bytes and the host are ever
+   * written. `current` is asked again after each wait; a staged key it no longer holds for is dropped.
+   */
+  async stage(key: string, host: string, current: () => boolean = () => true): Promise<StagedKey> {
     const revision = ++this.revision;
+    const fresh = () => revision === this.revision && current();
     const problem = apiKeyProblem(key);
     if (problem) return { ok: false, why: problem };
     if (!host) return { ok: false, why: PROVIDER_NO_ADDRESS };
     if (!(await this.canPersist())) return { ok: false, why: KEY_NO_KEYRING };
-    if (revision !== this.revision || !current()) return { ok: false, why: PROVIDER_HOST_CHANGED };
+    if (!fresh()) return { ok: false, why: PROVIDER_HOST_CHANGED };
     // The id is sealed with the key, so the two can never be of different saves.
     const keyId = randomUUID();
     const text = JSON.stringify({ v: 1, host, key: key.trim(), id: keyId });
@@ -274,10 +300,58 @@ export class ProviderKeyStore {
     } catch {
       return { ok: false, why: KEY_NO_KEYRING };
     }
-    if (revision !== this.revision || !current()) return { ok: false, why: PROVIDER_HOST_CHANGED };
-    const r: SaveResult = this.write(this.file, sealed);
-    if (r !== "kept" || this.write(hostFile(this.file), Buffer.from(host)) !== "kept") { this.clear(); return { ok: false, why: KEY_WRITE_FAILED }; }
-    return { ok: true, keyId };
+    if (!fresh()) return { ok: false, why: PROVIDER_HOST_CHANGED };
+    // Both files are written whole before either one in use is touched: a full disk fails here, changing nothing.
+    const nonce = randomUUID();
+    const files = [{ file: this.file, data: sealed }, { file: hostFile(this.file), data: Buffer.from(host) }]
+      .map(f => ({ ...f, stage: `${f.file}.${nonce}.stage`, backup: `${f.file}.${nonce}.backup` }));
+    const tidy = (names: string[]) => { for (const n of names) { try { fs.rmSync(n, { force: true }); } catch { /* holds sealed bytes or a host only */ } } };
+    try {
+      for (const f of files) fs.writeFileSync(f.stage, f.data, { mode: 0o600 });
+    } catch {
+      tidy(files.map(f => f.stage));
+      return { ok: false, why: KEY_WRITE_FAILED };
+    }
+    let done = false;
+    // A Remove, a sign-out or another save after this one was staged comes first: this one is then never put in place.
+    const staged = this.revision;
+    return {
+      ok: true, keyId,
+      discard: () => { if (done) return; done = true; tidy(files.map(f => f.stage)); },
+      commit: () => {
+        if (done) return null;
+        done = true;
+        if (staged !== this.revision) { tidy(files.map(f => f.stage)); return null; }
+        // Renames only, which need no room on the disk: the ones in use step aside, the new ones take their place,
+        // and on any failure the ones in use come back (never a new key beside an old host, or none at all).
+        const moved: typeof files = [], placed: typeof files = [];
+        try {
+          for (const f of files) {
+            try { fs.renameSync(f.file, f.backup); moved.push(f); } catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err; }
+          }
+          for (const f of files) { fs.renameSync(f.stage, f.file); placed.push(f); }
+        } catch {
+          for (const f of placed) { try { fs.rmSync(f.file, { force: true }); } catch { /* put back below */ } }
+          for (const f of moved) { try { fs.renameSync(f.backup, f.file); } catch { /* left as the backup, sealed bytes only */ } }
+          tidy(files.map(f => f.stage));
+          return null;
+        }
+        const at = ++this.revision;
+        let decided = false;
+        return {
+          keep: () => { if (decided) return; decided = true; tidy(moved.map(f => f.backup)); },
+          // Put back only while nothing came since (a Remove or another save would be undone with it).
+          undo: () => {
+            if (decided) return;
+            decided = true;
+            if (at !== this.revision) { tidy(moved.map(f => f.backup)); return; }
+            ++this.revision;
+            for (const f of files) { try { fs.rmSync(f.file, { force: true }); } catch { /* put back over it below */ } }
+            for (const f of moved) { try { fs.renameSync(f.backup, f.file); } catch { /* left as the backup, sealed bytes only */ } }
+          },
+        };
+      },
+    };
   }
 
   /** The saved key and its host, or null (none saved, unreadable, or the keyring wouldn't open it). Never throws. */
@@ -301,23 +375,17 @@ export class ProviderKeyStore {
     }
   }
 
-  /** Deletes the saved key and its host. */
+  /** Deletes the saved key and its host, and any staged or set-aside copy an interrupted change left (sealed bytes only). */
   clear(): void {
     ++this.revision;
-    for (const f of [this.file, hostFile(this.file)]) {
-      try { fs.rmSync(f, { force: true }); } catch { /* already gone */ }
-    }
-  }
-
-  private write(file: string, data: Buffer): SaveResult {
-    const tmp = `${file}.${process.pid}.tmp`;
+    let left: string[] = [];
     try {
-      fs.writeFileSync(tmp, data, { mode: 0o600 });
-      fs.renameSync(tmp, file);
-      return "kept";
-    } catch {
-      try { fs.rmSync(tmp, { force: true }); } catch { /* nothing was written */ }
-      return "write-failed";
+      const names = [path.basename(this.file), path.basename(hostFile(this.file))];
+      left = fs.readdirSync(path.dirname(this.file)).filter(n => names.some(b => n.startsWith(`${b}.`) && /^[0-9a-f-]{36}\.(?:stage|backup)$/.test(n.slice(b.length + 1))))
+        .map(n => path.join(path.dirname(this.file), n));
+    } catch { /* no data folder to look in: nothing was left there */ }
+    for (const f of [this.file, hostFile(this.file), ...left]) {
+      try { fs.rmSync(f, { force: true }); } catch { /* already gone */ }
     }
   }
 }
@@ -416,7 +484,7 @@ export function redactingLogger(base: Logger, secret: () => string | null | read
 export interface ProviderServiceDeps {
   settings: { get(): Settings; own(): Settings; update(patch: SettingsPatch): Settings };
   admin: () => LoadedAdminPolicy;
-  keys: Pick<ProviderKeyStore, "savedHost" | "canPersist" | "save" | "load" | "clear">;
+  keys: Pick<ProviderKeyStore, "savedHost" | "canPersist" | "save" | "load" | "clear"> & Partial<Pick<ProviderKeyStore, "stage">>;
   /** The user agreed to Ember at all (hasConsent): until then nothing is sent anywhere. */
   consented: () => boolean;
   fetch: FetchLike;
@@ -590,6 +658,59 @@ export function createProviderService(d: ProviderServiceDeps) {
         }
         d.log.info("provider.agreed", {});
         return { ok: true };
+      },
+      /**
+       * A checked edit of the provider in force (Home's held edit, first run's step for a provider in use), adopted whole
+       * (integrations-r7-1): the key typed for its host is sealed and put in place first, the one in use set aside, then
+       * the details are written with the card's yes through the record, as agree() writes them. A key that can't be
+       * written, settings that can't be saved, or a yes the record can't take leave the provider and the key that worked
+       * exactly as they were: before, the yes was saved first and the old host's key deleted with the move, so a key
+       * refused afterwards left the new host keyless and the working provider gone. Nothing is adopted once the provider
+       * in force isn't `from` any more, or the settings, the policy, the consent or the key changed meanwhile.
+       */
+      adopt: async (request: ProviderAdoption): Promise<KeySave> => {
+        if (!d.consented()) return { ok: false, why: PROVIDER_NO_CONSENT };
+        if (!allowed()) return { ok: false, why: PROVIDER_MANAGED };
+        const before = d.settings.own().provider;
+        const inForce = before.on && agreedNow(before) ? endpointHost(before.baseUrl) : null;
+        if (inForce !== request.from || endpointHost(request.move.baseUrl) !== request.host) return { ok: false, why: PROVIDER_HOST_CHANGED };
+        invalidate();
+        const started = revision;
+        const fingerprint = JSON.stringify(before);
+        const current = () => started === revision && d.consented() && allowed() && JSON.stringify(d.settings.own().provider) === fingerprint;
+        const operation = saving.then(async (): Promise<KeySave> => {
+          if (!current()) return { ok: false, why: PROVIDER_HOST_CHANGED };
+          let staged: Extract<StagedKey, { ok: true }> | null = null;
+          if (request.key !== undefined) {
+            const s = d.keys.stage ? await d.keys.stage(request.key, request.host, current) : { ok: false as const, why: KEY_WRITE_FAILED };
+            if (!s.ok) return s;
+            staged = s;
+          }
+          if (!current()) { staged?.discard(); return { ok: false, why: PROVIDER_HOST_CHANGED }; }
+          const placed = staged ? staged.commit() : null;
+          if (staged && !placed) return { ok: false, why: KEY_WRITE_FAILED };
+          const previous = stored;
+          const putBack = () => { placed?.undo(); if (placed) stored = previous; };
+          if (staged) { retire(); stored = { key: request.key!.trim(), host: request.host, keyId: staged.keyId }; }
+          const next = { ...before, ...request.move, on: true, consent: { version: FEATURE_CONSENT_VERSION.provider, at: (d.now?.() ?? new Date()).toISOString(), host: request.host } };
+          const yes = () => d.settings.update({ provider: next });
+          // Not saved (the settings store says why in every window): the key goes back with it, and the error is told.
+          try { if (d.record) d.record.as(yes); else yes(); } catch (err) { putBack(); throw err; }
+          // A yes the record holds back is no yes (integrations-r11-1): the provider and its key go back to what they were.
+          if (d.record?.held?.()) {
+            putBack();
+            d.record.as(() => d.settings.update({ provider: before }));
+            d.log.warn("provider.agree_unrecorded", {});
+            return { ok: false, why: providerNotRecorded(request.host) };
+          }
+          placed?.keep();
+          invalidate();
+          d.log.info("provider.adopted", {});
+          d.changed();
+          return { ok: true };
+        });
+        saving = operation.catch(() => undefined);
+        return operation;
       },
       test: async (draft?: ProviderDraft): Promise<TestResult> => {
         if (!d.consented()) return { ok: false, why: PROVIDER_NO_CONSENT };

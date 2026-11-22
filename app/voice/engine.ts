@@ -246,10 +246,11 @@ const NUMBER_SO_FAR = new RegExp(String.raw`^\W*${GREETED_NUMBER}`, "i");
 /**
  * "Hey Amber…" when the spotter heard "Hey Ember": Moonshine base writes the name so (the early check heard "Pay amber to"
  * for "Hey Ember, turn on night light", and took a real wake back). Where the check heard only a word or two after the
- * name, with no end to it, it leaves this to the whole of what was said (Mode.maybeAmber): "Hey Amber, dinner's ready." is
+ * name, it leaves this to the whole of what was said (Mode.maybeAmber): punctuation from an unfinished decode and a
+ * hyphenated decoder repeat aren't an end to the audio (listening-ci-r7-1). "Hey Amber, dinner's ready." is
  * still someone else's, and so is "Hey Amber, what time is it?", heard whole.
  */
-const GREETED_AMBER = /^\W*(?:hey|hi|hay|pay|pey|ok|okay)\W+amber\b(?:\W+[\w']+){0,2}\s*,?\s*$/i;
+const GREETED_AMBER = /^\W*(?:hey|hi|hay|pay|pey|ok|okay)\W+amber\b(?:\W+[\w'-]+){0,2}[\s,.!?…]*$/i;
 
 /**
  * More of the recognizer's spellings of the name said first, alone or before the request ("Member.", "Member, what time
@@ -2226,14 +2227,16 @@ export class VoiceEngine {
       if (calledByName(again) || isStop(stripWake(again, true))) heard = again;
     }
     if (this.mode.maybeAmber) {
-      this.mode.maybeAmber = false;
-      if (heardOtherWord(heard) && !NAME_ALONE.test(heard) && !CALLED_AS_WORD.test(heard) && !isStop(stripWake(heard, true))) {
+      // An unresolved name isn't permission to hear the next segment as a request: an empty or garbled whole check
+      // used to clear this flag and let later unrelated words through (listening-ci-r7-2). Stop still errs safely.
+      if (!calledByName(heard) && !NAME_ALONE.test(heard) && !isStop(stripWake(heard, true))) {
         const answerUntil = this.mode.fromAnswer;
         this.emit({ type: "rejected", keyword: this.mode.keyword, reason: "check", heard });
         this.endListening("rejected");
         this.backToAnswer(answerUntil);
         return;
       }
+      this.mode.maybeAmber = false;
     }
     if (this.mode.first && this.mode.reason === "wake" && this.mode.announced !== false && !this.mode.bargeIn && !this.mode.overFollowUp && this.o.verifyWake !== false
       && ((nearMiss(heard) && !(this.mode.heardWake && this.mode.fromAnswer === undefined)) || (this.mode.fromAnswer !== undefined ? !saidWakeItself(heard) : !startsAsWake(heard, clip.audio.length))) && !isStop(stripWake(heard, true))) {
