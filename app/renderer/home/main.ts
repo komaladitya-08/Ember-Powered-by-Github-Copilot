@@ -7,6 +7,7 @@
  */
 
 import { Rig, FACTORIES, frameSeconds, restingGap, type Character } from "@ember/characters";
+import type { TargetSummary } from "../../shared/targets";
 import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RetryResult, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
 import { MEMORY_UNDO_MS } from "../../shared/ipc";
 import { CONVERSATION_REQUEST_LIMIT, conversationTurnChangeOf, type ConversationTurn, type ConversationTurnEnd, type HistoryProblemKind } from "../../shared/conversation";
@@ -286,6 +287,8 @@ function renderTagline(): void {
 // ───── Home's status panel: the still ring, Ember's state, what is on, today, and its actions ─────
 /** The tasks as Task activity last heard them; today's counts from the audit's recent entries. */
 let tasksNow: TaskEntry[] = [];
+/** What the targets runtime says works now, from its existing subscription; nothing known yet counts as nothing on (home-v7-1). */
+let statusTargets: readonly TargetSummary[] = [];
 let today = { tasks: 0, approvals: 0 };
 const setText = (id: string, text: string) => { if ($(id).textContent !== text) $(id).textContent = text; };
 function renderStatus(): void {
@@ -298,7 +301,7 @@ function renderStatus(): void {
   $("state-word").dataset.ring = s.ring;
   // What is in force, not what the switches ask for: policy, a lockdown and the microphone's real state (home-r6-1).
   setText("whats-on", whatsOnLine({
-    settings, admin: lastAdmin, mic: voice?.state ?? null,
+    settings, admin: lastAdmin, mic: voice?.state ?? null, targets: statusTargets,
     memory: memoryWhatsOn(!!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION, !!settings && memoryPaused(settings.memory), memoryOwner, memoryTrouble),
   }));
   setText("today", todaySummary(tasksNow, today));
@@ -1142,7 +1145,7 @@ window.ember.onSettingsChanged(s => statusFence.pushedSettings(s));
 window.ember.onSettingsChanged(applySettings);
 // Computers and Commands (§8.3): shown once the targets runtime answers, kept in step with the settings.
 window.ember.onSettingsChanged(targetsSettings);
-startTargets();
+startTargets(list => { statusTargets = list; renderStatus(); });
 // Extensions, plugins and connectors: what main says is added, and the catalogs (only the user adds, here).
 startExtensions();
 // The user's own model provider (Copilot › Model provider): its key goes to main once and never comes back.

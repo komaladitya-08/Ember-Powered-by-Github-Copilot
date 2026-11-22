@@ -104,7 +104,7 @@ async function open(pane: string, seed: Seed = {}): Promise<Page & { errors: str
     // Main's provider bridge, as in Electron: each state read answers when the test says (home-mic-recipient's pattern).
     if (provider) (window as unknown as { emberProvider: unknown }).emberProvider = { state: () => new Promise(resolve => { h.providerReads.push(resolve); }), onChanged: () => () => undefined };
     if (targets !== null) (window as unknown as { emberTargets: unknown }).emberTargets = new Proxy({}, { get: (_t, name: string) => {
-      if (name.startsWith("on")) return () => () => undefined;
+      if (name.startsWith("on")) return (fn: (v: unknown) => void) => { (subs[name] ??= []).push(fn); return () => undefined; };
       if (name === "list") return () => new Promise(resolve => setTimeout(() => resolve([{ id: "local", kind: "local", label: "This computer", state: "ready" }]), targets));
       return () => new Promise(() => undefined);
     } });
@@ -228,6 +228,22 @@ const step = (i: number, words: string): ActivityItem => ({ id: `s${i}`, kind: "
 const task = (id: string, title: string, items: ActivityItem[], status: TaskEntry["status"] = "running"): TaskEntry => ({
   id, title, status, controls: { stop: status === "running" || status === "waiting", retry: status === "failed", window: true },
   activity: { startedAt: Date.now() - 5000, items, dropped: 0, steps: items.length, failedSteps: 0, counts: {}, questions: 0, approvals: 0, asking: status === "waiting", retry: 0, slow: false, nearLimit: false, live: "Working in Text Editor" },
+});
+
+describe.skipIf(gate)("Home's Features line follows the targets runtime (home-v7-1)", () => {
+  const here = { id: "local", kind: "local", label: "Here", state: "ready", can: "apps and commands", active: true, capabilities: { work: true, commands: true } };
+  it("counts only what works there now, and a late first snapshot never undoes a newer push", async () => {
+    const page = await open("home", { targets: 300 });
+    try {
+      // Nothing known yet is nothing on, never the saved switches.
+      expect(await page.locator("#whats-on").innerText()).not.toContain("Commands on");
+      await page.evaluate(t => window.__pane.emit("onChanged", [t, { id: "ssh:work", kind: "ssh", label: "Work", state: "ready", can: "apps", active: false, capabilities: { work: true, commands: false } }, { id: "ssh:old", kind: "ssh", label: "Old", state: "off", can: "", active: false, capabilities: { work: false, commands: false } }]), here);
+      await expect.poll(() => page.locator("#whats-on").innerText()).toMatch(/Commands on · 1 computer over SSH/);
+      // The runtime's slower first answer (a local with no capabilities) arrives after the push: it is ignored.
+      await page.waitForTimeout(500);
+      expect(await page.locator("#whats-on").innerText()).toMatch(/Commands on · 1 computer over SSH/);
+    } finally { await page.close(); }
+  }, 30_000);
 });
 
 describe.skipIf(gate)("Home's Task activity, while a task works (2026-11-07 product audit)", () => {

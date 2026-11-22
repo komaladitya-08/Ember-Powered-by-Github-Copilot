@@ -7,7 +7,7 @@
 
 import type { ActivityEntry, Status } from "../../shared/ipc";
 import type { MicState } from "../../shared/voice";
-import { parseTargetId } from "../../shared/targets";
+import { parseTargetId, type TargetSummary } from "../../shared/targets";
 import { modeFor } from "./computers-copy";
 import { STATUS_WORDS, type TaskEntry } from "../../shared/activity";
 import { dayLabel } from "./copy";
@@ -164,6 +164,12 @@ export interface WhatsOnFacts {
   mic: MicState | null;
   /** Memory as memoryWhatsOn says it. */
   memory: WhatsOn["memory"];
+  /**
+   * The targets runtime's own list, with each one's capabilities (it already combines the organisation's and a remote's
+   * policy with each first-use agreement). When given, commands and computers count only what works there now, and a
+   * missing snapshot or capability counts as not on (home-v7-1); left out, the settings decide, as before.
+   */
+  targets?: readonly TargetSummary[];
 }
 
 /**
@@ -190,6 +196,14 @@ export function whatsOn(f: WhatsOnFacts): WhatsOn {
     if (!t || c?.on !== true || modeFor(a, t.kind) === "off") return false;
     return t.kind === "local" || (t.kind === "wsl" ? wsl : hosts.has(t.name));
   }).length;
+  if (f.targets) {
+    const working = f.targets.filter(t => t.capabilities?.work === true);
+    return {
+      voice, memory: a.features.memory === false ? false : f.memory,
+      commands: working.filter(t => t.capabilities?.commands === true).length,
+      computers: working.filter(t => t.kind === "ssh").length, wsl: working.some(t => t.kind === "wsl"),
+    };
+  }
   return { voice, memory: a.features.memory === false ? false : f.memory, commands, computers: ssh ? hosts.size : 0, wsl };
 }
 

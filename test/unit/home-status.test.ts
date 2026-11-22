@@ -199,6 +199,20 @@ describe("Home's status panel", () => {
     expect(line({ settings: null, admin: null, mic: null, memory: false })).toBe("Listening off · Memory off · Commands off");
   });
 
+  it("counts commands and computers from the targets runtime's capabilities when it gives them, and none without them (home-v7-1)", () => {
+    const settings = { ...DEFAULT_SETTINGS, commands: { local: { ...DEFAULT_SETTINGS.commands.local, on: true }, "ssh:build-01": { on: true } }, targets: { ...DEFAULT_SETTINGS.targets, hosts: [{ id: "build-01" }] } } as unknown as typeof DEFAULT_SETTINGS;
+    const admin = { source: null, error: null, features: {}, commands: { local: "on", wsl: "on", ssh: "on" } } as const;
+    const t = (id: string, kind: "local" | "ssh" | "wsl", capabilities?: { commands: boolean; work: boolean }) => ({ id, kind, label: id, state: "ready" as const, can: "", active: false, ...(capabilities ? { capabilities } : {}) }) as never;
+    const line = (targets?: readonly never[]) => whatsOnText(whatsOn({ settings, admin, mic: "off", memory: false, ...(targets ? { targets } : {}) }));
+    // The saved switches say a host and commands are on; the runtime says the host is restricted: not counted.
+    expect(line()).toBe("Listening off · Memory off · Commands on · 1 computer over SSH");
+    expect(line([t("local", "local", { commands: true, work: true }), t("ssh:build-01", "ssh", { commands: false, work: false })])).toBe("Listening off · Memory off · Commands on");
+    expect(line([t("local", "local", { commands: true, work: true }), t("ssh:build-01", "ssh", { commands: true, work: true }), t("wsl:Ubuntu", "wsl", { commands: false, work: true })])).toBe("Listening off · Memory off · Commands on · 1 computer over SSH · WSL");
+    // Nothing heard yet, or a target without capability metadata, counts as nothing on.
+    expect(line([])).toBe("Listening off · Memory off · Commands off");
+    expect(line([t("local", "local")])).toBe("Listening off · Memory off · Commands off");
+  });
+
   it("says Checking… on the Features line until a status has arrived, never the defaults as if they were the truth (home-r7-2)", () => {
     const admin = { source: null, error: null, features: {} };
     expect(whatsOnLine({ settings: null, admin: null, mic: null, memory: false })).toBe("Checking…");
