@@ -1444,6 +1444,8 @@ describe("the classifier's speed", () => {
     [Array.from({ length: 40 }, (_, k) => `Get-ChildItem -Path .\\src${k} -Recurse | Where-Object { $_.Length -gt ${k} } | Select-Object -First 3`).join("; "), "powershell", "win32"],
     [Array.from({ length: 40 }, (_, k) => `if exist build${k} (echo found ${k}) else (echo none)`).join(" & "), "cmd", "win32"],
     [`cat <<'EOF' > notes.txt\n${"plain words in a here-document, nothing more.\n".repeat(60)}EOF`, "bash", "linux"],
+    // A loop Ember can't parse, with many paths and many deletes of its variable (removesHeld).
+    ...[30, 200].map(n => [`foreach ($f in @(${Array.from({ length: n }, (_, k) => `"C:\\Users\\ana\\proj\\d${k}"`).join(", ")})) { ${"rm \"$f\\out.txt\"; ".repeat(300)}}`, "powershell", "win32"] as [string, ShellId, "win32"]),
   ];
   for (const [text, shell, where] of texts) {
     it(`classifies ${shell} text in under 5 ms per KiB`, () => {

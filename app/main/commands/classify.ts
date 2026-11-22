@@ -2805,19 +2805,28 @@ class Engine extends Classifier {
    */
   private removesHeld(shown: string, paths: readonly string[], at: Parameters<typeof resolveTargetPath>[1], sc: Scope): void {
     const named = [...new Set(paths)];
+    const seen = new Map<string, boolean>();
+    const held = (f: string): boolean => {
+      if (!/^[~/\\]|^[A-Za-z]:[\\/]/.test(f)) return false;
+      let known = seen.get(f);
+      if (known === undefined) {
+        const abs = resolveTargetPath(f, at);
+        known = isEmberPath(abs, sc.path) || holdsEmberPath(abs, sc.path);
+        seen.set(f, known);
+      }
+      return known;
+    };
+    // Past the cap a variable may be any of them as it is (the rest of the word unread), worked out once, so the scan
+    // stays linear in the text however many paths and deletes it holds.
+    let anyHeld: boolean | undefined;
     for (const segment of shown.split(/[;|&{}()\r\n]+/)) {
       const words = segment.trim().split(/\s+/).map(w => w.replace(/^["']+|["']+$/g, "")).filter(w => w !== "");
       if (words.length < 2 || !WIN_REMOVES.test(words[0])) continue;
       for (const w of words.slice(1)) {
         if (/^-|^\/[A-Za-z?]$/.test(w)) continue;
-        // A variable may be any path the text names; past the cap, each of them as it is (the rest of the word unread).
         const lead = /^(\$\{?[\w:]+\}?|%\w+%)/.exec(w);
-        const forms = !lead ? [w] : named.length > MAX_FORMS ? named : named.map(p => p + w.slice(lead[0].length));
-        for (const f of forms) {
-          if (!/^[~/\\]|^[A-Za-z]:[\\/]/.test(f)) continue;
-          const abs = resolveTargetPath(f, at);
-          if (isEmberPath(abs, sc.path) || holdsEmberPath(abs, sc.path)) this.refuseWith("ember.path", "safety");
-        }
+        const refuses = !lead ? held(w) : named.length > MAX_FORMS ? (anyHeld ??= named.some(held)) : named.some(p => held(p + w.slice(lead[0].length)));
+        if (refuses) { this.refuseWith("ember.path", "safety"); return; }
       }
     }
   }
