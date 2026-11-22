@@ -419,6 +419,8 @@ async function runDoctor(): Promise<void> {
     await app.whenReady();
     ws = wsState = platform.openWindows(log);
     helper = await doctorHelper();
+    // The doctor reports completed checks; Home can show their pending state without blocking Stop.
+    await sys.lookAgain?.();
     const env = readEnvironment();
     // The doctor never logged xtest.unavailable: no logger.
     input = platform.openInput(ws, null);
@@ -3694,8 +3696,8 @@ function start(): void {
 
     const makeOverlay = (hidden = false) => {
       const o = new OverlayManager(() => settings.get(), log.child("overlay"), cursor, platform.overlay);
-      // The system asking for less motion (GNOME's "Animations" switch off) counts as asking for calm mode.
-      try { o.systemReducedMotion = sys.a11y.systemReducedMotion(); } catch { /* not known: Ember's own setting only */ }
+      // A restored compositor must not wait on GNOME's session bus while Stop and tasks are active (reliability-r7-2).
+      o.checkSystemMotion(() => sys.a11y.systemReducedMotion(), () => overlay === o);
       o.avoid = () => handle?.bounds ?? null;
       o.setState(lastState);
       o.setHidden(hidden);
@@ -4432,7 +4434,8 @@ function start(): void {
       monitor: settings.get().voice.speakerRejection && sys.voice.speakerMonitor,
       conversation: () => settings.get().voice.conversation,
       // A screen reader says Listen once's status lines through the speakers: the voice process leaves them out.
-      screenReaderOn: () => sys.a11y.screenReaderOn(),
+      // A pending reader check protects the microphone; it never enables reader-only speech (reliability-v7-2).
+      screenReaderOn: () => sys.a11y.screenReaderState ? sys.a11y.screenReaderState() !== false : sys.a11y.screenReaderOn(),
       // (EMBER_NO_OUTPUT_WATCH: a test that speaks through the speakers as the user would count as other sound. A fake
       // microphone's WAV is Chromium's fake loopback too, so it would.)
       outputLevel: sys.voice.outputLevel && !testMicWav && !devEnv("EMBER_NO_OUTPUT_WATCH"),
