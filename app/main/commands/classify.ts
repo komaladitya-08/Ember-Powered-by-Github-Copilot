@@ -4159,12 +4159,32 @@ class Engine extends Classifier {
 
   /**
    * A command's words with a loop's option-like words in place of its variable (`$f` or `"$f"` alone as a word, from a
-   * short written-out list: loopVars), one list a pass; none when no such word names one.
+   * short written-out list: loopVars), each variable's word from its own list (nested loops: `git reset $a $b` takes
+   * every pair, review C), one combination a pass; none when no such word names one. Past MAX_FORMS combinations, as
+   * many passes as the longest list, each giving every variable the next word of its own list, so every word of every
+   * list is still judged in a command, beside words the other lists give.
    */
   loopPasses(args: readonly Arg[]): Arg[][] {
-    const at = args.findIndex(a => this.optionLoop(a) !== null);
-    if (at < 0) return [];
-    return (this.optionLoop(args[at]) ?? []).map(v => args.map(a => (this.optionLoop(a) === null ? a : lit(v))));
+    const names = [...new Set(args.flatMap(a => (this.optionLoop(a) === null ? [] : [this.loopName(a)])))];
+    if (names.length === 0) return [];
+    const lists = names.map(n => this.loopVars.get(n) as readonly string[]);
+    const fill = (pick: ReadonlyMap<string, string>): Arg[] => args.map(a => {
+      const v = this.optionLoop(a) === null ? undefined : pick.get(this.loopName(a));
+      return v === undefined ? a : lit(v);
+    });
+    if (lists.reduce((n, l) => n * l.length, 1) > MAX_FORMS) {
+      const longest = Math.max(...lists.map(l => l.length));
+      return Array.from({ length: longest }, (_, i) => fill(new Map(names.map((n, k) => [n, lists[k][i % lists[k].length]]))));
+    }
+    let picks: Map<string, string>[] = [new Map()];
+    names.forEach((n, k) => { picks = picks.flatMap(p => lists[k].map(v => new Map([...p, [n, v]]))); });
+    return picks.map(fill);
+  }
+
+  /** The loop variable a word is only the variable of (optionLoop's). */
+  private loopName(a: Arg): string {
+    const part = a.parts?.[0];
+    return typeof part === "object" && part.name !== null ? part.name : "";
   }
 
   /** The words of the short written-out loop list a word is only the variable of, when one of them is an option. */

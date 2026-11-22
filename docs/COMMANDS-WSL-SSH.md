@@ -602,7 +602,8 @@ asked for that kind of operation, and one that would touch Ember's own safety fi
 when Ember can't read all of it: an sh or bash script's `if`, `for` and `while` and a plain `[[ … ]]` test are read
 (the commands inside them are judged, a loop's body once, in the folder the script starts in, so a `cd` in a loop
 isn't followed from one pass to the next; a command given the loop's variable is judged again with each option a
-written-out list holds, so `for f in --hard; do git reset $f; done` asks as `git reset --hard` does), but `case`, functions, `trap`, `{ … }` groups, a `[[` that compares numbers or
+written-out list holds, so `for f in --hard; do git reset $f; done` asks as `git reset --hard` does, and in nested
+loops each variable takes the words of its own list), but `case`, functions, `trap`, `{ … }` groups, a `[[` that compares numbers or
 uses `-v`, a variable in a file name, a loop whose variable is `PATH` or the like, a `read` or a loop's list over text
 Ember can't see (as on a command line, above), more than 64 commands or more than
 8,000 characters ask, and so do zsh's `if`, `for` and `while` (also from a bash script's `zsh -c '…'`) and

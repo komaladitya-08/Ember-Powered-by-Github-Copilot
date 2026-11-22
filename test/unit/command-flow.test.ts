@@ -5144,6 +5144,10 @@ describe("script loop bodies (audit-seven dc81160b)", () => {
       ["for f in --hard; do git reset $f; done\n", "git.reset.hard"],
       ['for f in --hard --soft; do git reset "$f"; done\n', "git.reset.hard"],
       ["for o in -rf; do rm $o build; done\n", "posix.rm"],
+      // Each loop's word from its own list, never one loop's for every variable (review C).
+      ["for a in -q; do for b in --hard; do git reset $a $b; done; done\n", "git.reset.hard"],
+      ['for a in -q -v; do for b in --soft --hard; do git reset "$a" "$b"; done; done\n', "git.reset.hard"],
+      ["for a in -q -v -q -v -q; do for b in -q -v -q -v --hard; do for c in -q -v -q -v -q; do git reset $a $b $c; done; done; done\n", "git.reset.hard"],
     ]) {
       const h = harness({ binding: LOCAL, answers: ["deny"], readScript: async () => script, paths: p => ({ exists: true, real: p }) });
       expect((await call(h, { target: "this computer", command: "sh task.sh" })).resultType, script).toBe("denied");
@@ -5159,7 +5163,10 @@ describe("script loop bodies (audit-seven dc81160b)", () => {
 
   it("still runs an ordinary script loop without asking", async () => {
     setCommandJudge(null);
-    for (const script of ["for t in unit lint; do echo $t; done\n", "for d in a b; do cd $d; make; cd ..; done\n"]) {
+    for (const script of [
+      "for t in unit lint; do echo $t; done\n", "for d in a b; do cd $d; make; cd ..; done\n",
+      "for a in -q -v; do for b in --soft --mixed; do git reset $a $b; done; done\n",
+    ]) {
       const h = harness({ binding: LOCAL, readScript: async () => script });
       expect((await call(h, { target: "this computer", command: "sh task.sh" })).resultType, script).toBe("success");
       expect(h.asked, script).toEqual([]);
