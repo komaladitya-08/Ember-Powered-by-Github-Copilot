@@ -64,8 +64,10 @@ const ENV_C = [
   "env -C . sh < deploy.sh", "env --chdir=. sh < deploy.sh", "env -C /tmp bash deploy.sh", "env -i -C . sh < deploy.sh",
   "env -C . -- sh -s < deploy.sh", "env -C. sh <deploy.sh", "env -C . sh deploy.sh",
 ];
-// A wrapper option's value Ember can't see may hold the command it runs (commands-q6-3, commands-v7-5).
-const WRAPPER = ["N='1 rm -rf ~'; xargs -P $N echo", "xargs -P $(cat jobs.txt) echo", "env -C $(cat folder.txt) echo"];
+// A wrapper option's value Ember can't see may hold the command it runs (commands-q6-3, commands-v7-5); one the text
+// gives is split as the shell splits it, so `N='1 rm -rf build'` asks for the rm it runs (`rm -rf ~` is refused as
+// Ember's own files: commands-audit-seven.test.ts).
+const WRAPPER = ["N='1 rm -rf build'; xargs -P $N echo", "xargs -P $(cat jobs.txt) echo", "env -C $(cat folder.txt) echo"];
 const CMDS = [...REDIS, ...ENV_C, ...WRAPPER];
 // The script on stdin is opened where the line is (the shell's redirection, not env's folder), so the classifier
 // names it for the flow to read, which is where these ask: by what the script does (scripts.ts judgeScripts).

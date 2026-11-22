@@ -481,8 +481,10 @@ Ember stops and asks before a command that:
   words after the count that are targets, `T='4 deploy'; make -j $T`), and a value Ember can't see written straight
   after an option of a program that runs another one, quoted or not (`nice -n"$X" cmd`, `xargs -n$X cmd`, `env
   -C"$d" cmd`), or apart from it unquoted (`xargs -P $N cmd`, `env -C $(cat folder.txt) cmd`), which may hold the
-  command it runs (`N='1 rm -rf ~'`); only `xargs -P` and `parallel -j` take a count there (`xargs -P$(nproc) cmd`),
-  and a value quoted whole is one word (`xargs -P "$N" cmd` runs); and `rclone copy`, `sync` or `move` with more words than it takes, after an option Ember
+  command it runs; only `xargs -P` and `parallel -j` take a count there (`xargs -P$(nproc) cmd`), a value with no
+  expansion outside quotes is one word (`xargs -P "$N" cmd`, `env -C "$d"/sub cmd` run), and so is one the command
+  gives a value of one word (`d=build; env -C $d make`, `N=4; xargs -P $N cmd` run), while a value of several words it
+  gives is split as the shell splits it and what it runs judged (`N='1 rm -rf ~'` is refused as Ember's files); and `rclone copy`, `sync` or `move` with more words than it takes, after an option Ember
   doesn't know took a value (`rclone copy ./src remote:dst --max-transfer 10G`), so it can't tell where the files go;
   and a command behind an option that an earlier version of Ember read another way, where that reading asked:
   `git commit -S -m wip` (and `-u`, `--gpg-sign` or `--untracked-files` apart in front of `-m`), `redis-cli --tls GET

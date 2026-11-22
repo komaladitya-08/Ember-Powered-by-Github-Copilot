@@ -3065,6 +3065,12 @@ class Engine extends Classifier {
       }
     }
     if (unresolved) a.parts = parts;
+    // Every value the text gives it, when Ember knows them all and none is a pattern the shell would match against
+    // names, nor IFS changed how it splits (Arg.seen: a wrapper's option value, review B2).
+    if (unresolved && !globs && !this.varValues.has("IFS")) {
+      const forms = this.knownForms(a);
+      if (forms.length > 0 && forms.every(f => f !== null && !/[*?[]/.test(f))) a.seen = forms as string[];
+    }
     if (glob) a.pattern = pattern;
     if (fetch || w.proc) a.fetch = fetch;
     return a;

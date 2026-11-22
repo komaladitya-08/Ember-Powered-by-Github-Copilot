@@ -118,7 +118,7 @@ describe("a wrapper's option value Ember can't see", () => {
   it("is read as text that may hold the command itself, as an attached one is (commands-q6-3, i6b, commands-v7-5)", () => {
     for (const command of [
       "xargs -P $(cat jobs.txt) echo", "xargs --max-procs $(cat jobs.txt) echo", "xargs -P $N echo",
-      "N='1 rm -rf ~'; xargs -P $N echo", "env -C $(cat folder.txt) echo", "env --chdir $D echo", "nice -n $(cat priority.txt) echo",
+      "env -C $(cat folder.txt) echo", "env --chdir $D echo", "nice -n $(cat priority.txt) echo",
       "parallel -j $(cat jobs.txt) echo", "parallel --jobs $N echo", "xargs -a $(cat input.txt) echo",
     ]) {
       const d = decide(command);
@@ -134,6 +134,26 @@ describe("a wrapper's option value Ember can't see", () => {
     ]) expect(decide(command).verdict, command).toBe("run");
     expect(decide('d=~/.config/ember/settings.json; xargs -a "$d" echo').verdict).toBe("refuse");
     expect(decide("N=4; xargs -P $N cat ~/.config/ember/settings.json").verdict).toBe("refuse");
+  });
+
+  it("judges a value the text gives the option by that value, and runs one plain word as before the ports (review B2)", () => {
+    for (const command of [
+      "d=build; env -C $d make", "N=4; xargs -P $N -n1 gzip -k < files.txt", 'd=build; env -C "$d"/sub make', "d=a; d=b; env -C $d make",
+    ]) expect(decide(command).verdict, command).toBe("run");
+    for (const script of ["d=build; env -C $d make\n", "N=4\nxargs -P $N -n1 gzip -k < files.txt\n"]) {
+      const cls = classifyCommand(script, "bash", { ...contextOf("linux"), script: true });
+      expect(cls.findings.map(f => f.rule), script).toEqual([]);
+    }
+    // A value of several words is split as the shell splits it, and what it runs is judged.
+    expect(decide("N='1 rm -rf ~'; xargs -P $N echo").verdict).toBe("refuse");
+    const push = decide("N='4 git push'; xargs -P $N echo");
+    expect(push.verdict).toBe("ask");
+    expect(push.rules).toContain("git.push");
+    expect(decide("d=~/.config/ember; env -C $d cat settings.json").verdict).toBe("refuse");
+    // A variable the text never sets may split into a command there: still the question it was (docs/APPROVALS.md).
+    for (const command of ["nice -n $NICE make", "nice -n ${NICE} make", "xargs -n $N echo", "xargs -I $R echo"]) {
+      expect(decide(command).rules, command).toContain("unclear.program");
+    }
   });
 });
 
