@@ -368,7 +368,9 @@ Ember stops and asks before a command that:
   redirection, `{ echo "$x"; } > a.py`); a repository cloned from an address or into a folder Ember can't see (`git clone $REPO`)
   makes the folder it is cloned in count, so building there asks, and so do `gh repo clone a/b -- --depth 1` (the
   folder is named before git's options), `gh gist clone`, `git submodule add` and a pull or fetch from a remote the
-  same line adds with an address (`git remote add e https://… && git pull e main`); and `node .` or `python3 tool` asks when the
+  same line, or an earlier command of the task, adds with an address (`git remote add e https://… && git pull e main`;
+  `git pull e` later, by its name, not a plain `git pull`), and inline code that names a download, which may copy it
+  under any name (`python3 -c 'shutil.copy("x.py", "y.sh")'`), makes every later script count; and `node .` or `python3 tool` asks when the
   folder's entry file (`index.js`, `package.json`, `__main__.py`) is a download. Once the task has downloaded
   anything, a build tool or test runner (or `python3 -m`) in a folder Ember can't name asks as it would in the
   download's folder: after `cd b;`, `cd b || exit`, `pushd b` or a `cd` on its own line, any of which may have

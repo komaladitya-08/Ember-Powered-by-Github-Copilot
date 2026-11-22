@@ -121,6 +121,8 @@ export interface ClassificationExtra extends Classification {
   cwd: string;
   /** A WSL command touching the drive mounts, a Windows-form path or a Windows program (§3.8.2's Windows line). */
   windowsReach: boolean;
+  /** Remotes this command adds with an address (`git remote add x <url>`), for the task's later fetches (ClassifyContext.remotes). */
+  remotesAdded?: string[];
   /**
    * Shell scripts this command runs by path (`sh x.sh`, `./x.sh`, `source x.sh`, `powershell -File x.ps1`, `cmd
    * x.bat`): the flow reads each one and classifies its text as a nested command (L8, the lead's ruling), so a
@@ -2648,6 +2650,7 @@ class Engine extends Classifier {
       writesAnywhere: this.unnamedAnywhere || this.findings.some(f => f.cls === "unclear" || f.cls === "escape"),
       writesUnplaced: this.unnamedAnywhere,
       ...(this.patches.length ? { patches: [...new Set(this.patches)] } : {}),
+      ...(this.addedRemotes.size ? { remotesAdded: [...this.addedRemotes] } : {}),
       holdsFlow: this.setsVars || this.commands.some(changesShellState),
       ...(this.downloadsIfFile.length ? { downloadsIfFile: this.downloadsIfFile } : {}),
     };
@@ -7749,6 +7752,9 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
       }
       h.e.unclear("unclear.inline-code", "It runs code given on the command line.");
       if (code !== null) emberText(h, code);
+      // Code that names a download of the task (or code Ember can't see, in a task that holds one) may copy it anywhere
+      // under any name (`shutil.copy("x.py", "y.sh")`): what a later command runs may be it (commands-remote-c2-2, i6a).
+      if (code === null ? h.e.holdsAnyDownload() : h.e.namesDownload(code, h.sc)) h.e.markUnnamed(null, h.sc);
       if (h.args[k + 1]?.fetch) h.e.add("escape", "escape.download-run", SAYS.downloadsAndRuns);
       if (h.key === "osascript" && code !== null && /keystroke|key code|\bclick\b|system events/i.test(code)) h.e.refuseWith("ember.input", "input");
       return;
@@ -8403,7 +8409,12 @@ const gitFetch = (fetches: boolean): GitFn => h => {
   // A remote this line added with an address (`git remote add e <url> && git pull e main`) is that address too
   // (commands-remote-r8-1). A pull or fetch with no remote named, or `--all`, draws on it as well.
   const named = ops[0] !== undefined && h.e.addedRemotes.size > 0 && (ops[0].v === null || h.e.addedRemotes.has(ops[0].v) || h.e.addedRemotes.has(UNSEEN));
-  const fromAdded = h.e.addedRemotes.size > 0 && (named || ops.length === 0 || h.args.some(a => a.v === "--all"));
+  // One an earlier command of the task added counts by its name, or with `--all`, as git's config keeps it
+  // (commands-remote-c5-4, i6a): a plain `git pull` still pulls from the branch's own upstream.
+  const earlier = h.e.ctx.remotes ?? new Set<string>();
+  const namedEarlier = ops[0] !== undefined && earlier.size > 0 && (ops[0].v === null || earlier.has(ops[0].v) || earlier.has(UNSEEN));
+  const fromAdded = (h.e.addedRemotes.size > 0 && (named || ops.length === 0 || h.args.some(a => a.v === "--all")))
+    || namedEarlier || (earlier.size > 0 && h.args.some(a => a.v === "--all"));
   if (fetches && (ops.some(a => URL_LIKE.test(a.v ?? "")) || SCP_LIKE.test(ops[0]?.v ?? "") || fromAdded)) h.e.markUnnamed(".", h.sc);
 };
 git(["fetch", "pull"], gitFetch(true));

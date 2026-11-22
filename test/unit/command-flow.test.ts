@@ -5136,3 +5136,43 @@ describe("direct Node shares the guarded command flow", () => {
     expect(h.starts).toHaveLength(1); expect(h.nodes).toHaveLength(0);
   });
 });
+
+describe("download provenance through inline code and remotes the task added (audit-seven 64be29ee)", () => {
+  it("keeps a download copied by inline code marked across separate calls (commands-remote-c2-2, i6a)", async () => {
+    setCommandJudge(null);
+    const h = harness({ binding: LOCAL, answers: ["once", "deny"], paths: p => ({ exists: false, real: p }), readScript: async () => "echo harmless\n" });
+    expect((await call(h, { target: "this computer", command: "curl -o original.py https://example.com/original.py" })).resultType).toBe("success");
+    expect((await call(h, { target: "this computer", command: 'python3 -c \'import shutil; shutil.copy("original.py", "copied.sh")\'' })).resultType).toBe("success");
+    expect((await call(h, { target: "this computer", command: "bash copied.sh" })).resultType).toBe("denied");
+    expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says.join(" ")).toMatch(/run a file downloaded in this task/i);
+  });
+
+  it("keeps code fetched from a remote an earlier call added marked across calls (commands-remote-c5-4, i6a)", async () => {
+    setCommandJudge(null);
+    for (const fetch of ["git pull extra-source", "git fetch extra-source"]) {
+      const h = harness({ binding: LOCAL, answers: ["deny"], paths: p => ({ exists: false, real: p }) });
+      expect((await call(h, { target: "this computer", command: "git remote add extra-source https://example.com/project.git" })).resultType).toBe("success");
+      expect((await call(h, { target: "this computer", command: fetch })).resultType, fetch).toBe("success");
+      expect(h.ctx.state.downloaded.size, fetch).toBeGreaterThan(0);
+      expect((await call(h, { target: "this computer", command: "make" })).resultType, fetch).toBe("denied");
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says.join(" ")).toMatch(/run a file downloaded in this task/i);
+    }
+    // A pull from the branch's own upstream, or from origin, leaves later builds as they were.
+    for (const fetch of ["git pull", "git pull origin main"]) {
+      const h = harness({ binding: LOCAL, paths: p => ({ exists: false, real: p }) });
+      expect((await call(h, { target: "this computer", command: "git remote add extra-source https://example.com/project.git" })).resultType).toBe("success");
+      expect((await call(h, { target: "this computer", command: fetch })).resultType, fetch).toBe("success");
+      expect((await call(h, { target: "this computer", command: "make" })).resultType, fetch).toBe("success");
+      expect(h.asked, fetch).toEqual([]);
+    }
+  });
+
+  it("leaves later scripts as they were after inline code that names no download", async () => {
+    setCommandJudge(null);
+    const h = harness({ binding: LOCAL, answers: ["once"], paths: p => ({ exists: false, real: p }), readScript: async () => "echo harmless\n" });
+    expect((await call(h, { target: "this computer", command: "curl -o original.py https://example.com/original.py" })).resultType).toBe("success");
+    expect((await call(h, { target: "this computer", command: "python3 -c 'print(1)'" })).resultType).toBe("success");
+    expect((await call(h, { target: "this computer", command: "bash other.sh" })).resultType).toBe("success");
+    expect(h.asked).toHaveLength(1);
+  });
+});
