@@ -24,6 +24,16 @@ describe("protected paths handed to opaque shell contexts", () => {
     expect(decide("echo $0").verdict).toBe("run");
   });
 
+  it("reads ${1} and ${0} as $1 and $0 (review G)", () => {
+    for (const command of [
+      "sh -c 'cat \"${1}/settings.json\"' _ ~/.config/ember",
+      "sh -c 'cat \"${0}/settings.json\"' ~/.config/ember",
+      "set -- ~/.config/ember; cat \"${1}/settings.json\"",
+    ]) expect(decide(command).verdict, command).toBe("refuse");
+    expect(decide("sh -c 'echo \"${1}\"' _ hello").verdict).toBe("run");
+    expect(decide("echo ${1}").verdict).toBe("run");
+  });
+
   it("refuses visible Ember paths when a PowerShell loop or a cmd variable hides their later use (commands-remote-c3-2, i6a)", () => {
     for (const command of [
       '$d = "$env:LOCALAPPDATA\\ember"; foreach ($f in @($d)) { Remove-Item -Recurse $f }',

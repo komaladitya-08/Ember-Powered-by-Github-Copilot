@@ -82,7 +82,7 @@ export const WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS: readonly Readonly<{ pat
   Object.freeze({"path":"app/main/commands/flow.ts","bytes":138424,"sha256":"e29369ec3a21fc31d58fd0326ddc7fd3be4a64aeea14fb02cdc02e43496357d8"}),
   Object.freeze({"path":"app/main/commands/intent.ts","bytes":141856,"sha256":"aba4cb8960e9fa575a2ccb4cc83a4e7569d40448fbe72d0664d7f02e83ea4a06"}),
   Object.freeze({"path":"app/main/commands/lex-cmd.ts","bytes":6193,"sha256":"610db12ce122570d99f0702fbd9e97b534138d4fb100c62c9af4178f08e1497b"}),
-  Object.freeze({"path":"app/main/commands/lex-posix.ts","bytes":29563,"sha256":"fa1391f8f7803938dd825979dd4abab5f47adf3357d35d60eacb437dfdb3252c"}),
+  Object.freeze({"path":"app/main/commands/lex-posix.ts","bytes":29807,"sha256":"ca48a1ca47bfd4f193c26abaf69d398adc1b42dc7900c74009261ed5da7c6770"}),
   Object.freeze({"path":"app/main/commands/lex-powershell.ts","bytes":24602,"sha256":"f4d7830c3fcb9d57d279556c3be56417408ab31bc3601ef513c0aaebf7388d48"}),
   Object.freeze({"path":"app/main/commands/node-invocation.ts","bytes":1808,"sha256":"b9629735ff52de4dcdedaa905ae0d3f077ace38981188e57bc98d8334b654c77"}),
   Object.freeze({"path":"app/main/commands/output.ts","bytes":24073,"sha256":"f2e6f7bf6da8c03f079b109d82703fb5f5c9c58ce1a51e8f9577a4f4dad052f9"}),
