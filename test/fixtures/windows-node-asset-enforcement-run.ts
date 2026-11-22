@@ -89,7 +89,7 @@ export const WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS: readonly Readonly<{ pat
   Object.freeze({"path":"app/main/commands/paths.ts","bytes":50322,"sha256":"706fef351cf84660361f534383d9836a0917f22523611b7a1ae6a27756d3f20c"}),
   Object.freeze({"path":"app/main/commands/pending.ts","bytes":1083,"sha256":"1cb23fa321afa7811c85e4111700a0d866cc5d2d76f8156c5aa4795c9b17e756"}),
   Object.freeze({"path":"app/main/commands/prompts.ts","bytes":3673,"sha256":"cb29986eb8d0343b79b9ca3348afff0fb5f9b8f5abd52ef6fc3ff7ec587d4840"}),
-  Object.freeze({"path":"app/main/commands/redact.ts","bytes":51196,"sha256":"70366ce794a1b0f71f05a1550fbfc9bc8e7796cedaa4260ac91772e48e8545a9"}),
+  Object.freeze({"path":"app/main/commands/redact.ts","bytes":67311,"sha256":"a7011545c4ec0e2cfae51685472b248f11599e2f428df3691b52b40b2f0fdefe"}),
   Object.freeze({"path":"app/main/commands/review.ts","bytes":19945,"sha256":"c3f31714fe1592aca12d57e9dfee0d442b109a8b325c5564cebce18374514c9c"}),
   Object.freeze({"path":"app/main/commands/scripts.ts","bytes":36168,"sha256":"f283e201b0eff703292c5d3817ac118e6d64695d44cafb2c8ea8f0bf12d86163"}),
   Object.freeze({"path":"app/main/commands/tables.ts","bytes":82265,"sha256":"c1ce59a6c0943deb4eb94385258499c6b969216c47ae29eb98b0578ce1ac513f"}),
