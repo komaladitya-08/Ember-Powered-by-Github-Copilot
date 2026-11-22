@@ -37,16 +37,16 @@ it("binds encrypted-draft Home to the reviewed fixed producer and qualified sour
   expect(reviewed).toEqual({ ready: true, run: 43991252195, commit: "b75c944dec58973d157542e2d4d2db3720667982", artifact: 14289217635, archiveBytes: 38425334,
     archiveSha256: "cbbbf6c641c41bda8ece457c28a54b9bc4121a068dc376725bcf0e3ac24a2f62",
     manifestSha256: "d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f",
-    assetProofCommit: "aa5345a934d75d9a7924a4b7984c3b27c9521020",
-    assetProofManifestSha256: "91f162e84a22f199606acee94131bcb605761d2796e57d9148c77311e09e8db6",
-    verifierFileSha256: "9674e7b019cf736024b00593e0a73cfa4c8a30ed57f8135baf749b15b21e2a97" });
+    assetProofCommit: "4b91c00ac87c705a3d051395d317878f0ec930c1",
+    assetProofManifestSha256: "986f88ecfa4c3c5d4f49116691ec9cb49997e3b77550b7ecfbb8e32a5ee1849c",
+    verifierFileSha256: "b5dd7658579dc5d75d3f5ee894048fbeea77f2e14ad9d4b6b1e87507e5a6b025" });
   expect(Object.isFrozen(reviewed)).toBe(true);
 });
 it.each([
   ["closed", "ready: true,", "ready: false,"],
-  ["missing proof commit", 'assetProofCommit: "aa5345a934d75d9a7924a4b7984c3b27c9521020",', "assetProofCommit: null,"],
-  ["missing source manifest", 'assetProofManifestSha256: "91f162e84a22f199606acee94131bcb605761d2796e57d9148c77311e09e8db6",', "assetProofManifestSha256: null,"],
-  ["missing verifier", 'verifierFileSha256: "9674e7b019cf736024b00593e0a73cfa4c8a30ed57f8135baf749b15b21e2a97",', "verifierFileSha256: null,"],
+  ["missing proof commit", 'assetProofCommit: "4b91c00ac87c705a3d051395d317878f0ec930c1",', "assetProofCommit: null,"],
+  ["missing source manifest", 'assetProofManifestSha256: "986f88ecfa4c3c5d4f49116691ec9cb49997e3b77550b7ecfbb8e32a5ee1849c",', "assetProofManifestSha256: null,"],
+  ["missing verifier", 'verifierFileSha256: "b5dd7658579dc5d75d3f5ee894048fbeea77f2e14ad9d4b6b1e87507e5a6b025",', "verifierFileSha256: null,"],
 ] as const)("refuses %s proof before any download, source read or spawn", (_kind, before, after) => {
   expect(workflow.split(before)).toHaveLength(2);
   const closed = workflow.replace(before, after), spawnSync = vi.fn(), execFileSync = vi.fn(), readFileSync = vi.fn();

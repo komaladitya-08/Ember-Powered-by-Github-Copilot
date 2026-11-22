@@ -21,9 +21,9 @@ export const WINDOWS_NODE_PRODUCT_NATIVE_CWD = "\\work";
 /** Reviewed literal producer and independently qualified current-source asset proof; callers cannot override either identity. */
 export const WINDOWS_NODE_PRODUCT_NATIVE_PREREQUISITE = Object.freeze({ ready: true as boolean,
   manifestSha256: "d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f" as string | null,
-  assetProofCommit: "aa5345a934d75d9a7924a4b7984c3b27c9521020" as string | null,
-  assetProofManifestSha256: "91f162e84a22f199606acee94131bcb605761d2796e57d9148c77311e09e8db6" as string | null,
-  verifierFileSha256: "9674e7b019cf736024b00593e0a73cfa4c8a30ed57f8135baf749b15b21e2a97" as string | null });
+  assetProofCommit: "4b91c00ac87c705a3d051395d317878f0ec930c1" as string | null,
+  assetProofManifestSha256: "986f88ecfa4c3c5d4f49116691ec9cb49997e3b77550b7ecfbb8e32a5ee1849c" as string | null,
+  verifierFileSha256: "b5dd7658579dc5d75d3f5ee894048fbeea77f2e14ad9d4b6b1e87507e5a6b025" as string | null });
 const OWNER = "b".repeat(64), PROJECT = "22222222-2222-4222-8222-222222222222";
 const PROGRAM = fileURLToPath(new URL("./windows-node-product-native-program.cjs", import.meta.url));
 const stdout = Buffer.concat([Buffer.from("PRODUCT-OUT\n"), Buffer.alloc(72 * 1024, 79), Buffer.from("\nPRODUCT-EOF\n")]);
