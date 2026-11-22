@@ -915,13 +915,21 @@ class Classifier {
    */
   withPositional(values: readonly Arg[], sc: Scope, judge: () => void): void {
     const names = ["0", ...POSITIONAL];
-    const saved = names.map(n => [this.varValues.get(n), this.wordVars.has(n)] as const);
-    for (const n of names) { this.varValues.delete(n); if (values.length) this.setVar(n, values, sc, true); }
+    const saved = names.map(n => [this.varValues.get(n), this.wordVars.has(n), this.varRaws.get(n)] as const);
+    const pendingAt = this.pendingSets.length;
+    for (const n of names) { this.varValues.delete(n); this.varRaws.delete(n); if (values.length) this.setVar(n, values, sc, true); }
+    // What setVar left to judge once a use of them is known (judgePendingSets) is these words' alone: judged here, for
+    // a use the text made of them, and then dropped, so a later `$1` outside the text is never taken for them; and
+    // their words as written go too, so `docker pull "x.io/$1"` after the text sends nothing it read (review).
+    const ours = this.pendingSets.slice(pendingAt);
     try { judge(); } finally {
+      for (const p of ours) if (this.usedUnjudged.has(p.name)) for (const f of p.forms) this.judgeForm(f, null, p.sc, this.changedUnjudged.has(p.name));
+      this.pendingSets = this.pendingSets.filter(p => !ours.includes(p));
       names.forEach((n, k) => {
-        const [v, words] = saved[k];
+        const [v, words, raws] = saved[k];
         if (v === undefined) this.varValues.delete(n); else this.varValues.set(n, v);
         if (words) this.wordVars.add(n); else this.wordVars.delete(n);
+        if (raws === undefined) this.varRaws.delete(n); else this.varRaws.set(n, raws);
       });
     }
   }

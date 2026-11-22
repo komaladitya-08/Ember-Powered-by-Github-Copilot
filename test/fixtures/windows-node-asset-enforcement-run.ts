@@ -77,7 +77,7 @@ export const WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS: readonly Readonly<{ pat
   Object.freeze({"path":"app/main/agent/wsl-coding-workspace.ts","bytes":21190,"sha256":"5e01db57931e9d208b1ee49318445e99994092d6ff78f0f9b49e6e7cb76aa48d"}),
   Object.freeze({"path":"app/main/commands/autopilot.ts","bytes":21147,"sha256":"b970ad7ceda6b820c3d4939e1b901d80b15ee8416e84d67b153ad1a709750371"}),
   Object.freeze({"path":"app/main/commands/carried.ts","bytes":3071,"sha256":"e37183ec9a40d00cc8bca6bff4a800d6cf6f6b3d73ebf5c65b0676cbbae1e8d6"}),
-  Object.freeze({"path":"app/main/commands/classify.ts","bytes":918966,"sha256":"fca52aa09425c220463028d59c126976bbbf520611fbe28d0145e2a7d9583561"}),
+  Object.freeze({"path":"app/main/commands/classify.ts","bytes":919779,"sha256":"56826082cfc171650abd058919168c41c54763d4f38a3e865e120766ff37b006"}),
   Object.freeze({"path":"app/main/commands/decide.ts","bytes":10265,"sha256":"347859981c4d934da732297371981219bae28b4d16c26b9657b48cc718fbf7cf"}),
   Object.freeze({"path":"app/main/commands/flow.ts","bytes":138424,"sha256":"e29369ec3a21fc31d58fd0326ddc7fd3be4a64aeea14fb02cdc02e43496357d8"}),
   Object.freeze({"path":"app/main/commands/intent.ts","bytes":141856,"sha256":"aba4cb8960e9fa575a2ccb4cc83a4e7569d40448fbe72d0664d7f02e83ea4a06"}),
