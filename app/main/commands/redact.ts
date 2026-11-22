@@ -262,7 +262,21 @@ const LIST_ARGS = String.raw`(?:${LIST_SEP}${LIST_ELEMENT}){0,12}?`;
  * a comma, a bracket or its own quote, so a long run of other characters is looked at once; never an option's folder
  * (`"-I/usr/include/mysql"`).
  */
-const listProgram = (names: string): string => String.raw`(?<![^\s,["'])(?:(?!-)[^\s"',[\]]*[\/\\])?(?:${names})(?:\.[eE][xX][eE])?["']?(?=${LIST_SEP})`;
+const listProgram = (names: string): string => String.raw`(?<![^\s,["'])(?:(?!-)[^\s"',[\]]*[\/\\])?${listProgramName(names)}`;
+/** listProgram past its folder: the name, an .exe, its closing quote and the separator after it. */
+const listProgramName = (names: string): string => String.raw`(?:${anyCase(names)})(?:\.[eE][xX][eE])?["']?(?=${LIST_SEP})`;
+/**
+ * A program's names in any case, letter by letter (`[mM][yY]…`, no flag, so the rest of a pattern keeps its case): a
+ * list may name it `"mYsQl"`, `"Redis-Cli"` or `"CURL.EXE"`, which Windows and macOS run as the program (memory-y7-1).
+ */
+function anyCase(names: string): string {
+  return names.replace(/[a-z]/g, c => `[${c}${c.toUpperCase()}]`);
+}
+/** htpasswd's options as list elements (`"-nbB", "-C", "10"`), one of them with `b`; with `n` when `n` is given. */
+const listHtpasswd = (n: boolean): string => {
+  const opt = String.raw`${LIST_SEP}["']?-[A-Za-z]+["']?(?:${LIST_SEP}["']?\d+["']?)?`;
+  return String.raw`(?=(?:${opt}){0,3}?${LIST_SEP}["']?-[A-Za-z]*b)${n ? "" : "(?!"}(?=(?:${opt}){0,3}?${LIST_SEP}["']?-[A-Za-z]*n)${n ? "" : ")"}(?:${opt}){1,4}`;
+};
 /** An element that is exactly `option`, with the quote (`q`) it opens with, if any. */
 const listOption = (option: string): string => String.raw`${LIST_SEP}(?<q>["']?)(?:${option})`;
 const LIST_NOT_VALUE = String.raw`(?![$%{<*[])`;
@@ -277,7 +291,8 @@ const listValue = (opened: string, quoted = String.raw`[^\n]`): string =>
   + String.raw`|(?<!["']${opened})${LIST_NOT_VALUE}(?!${LIST_HOLDER}(?![^\s"',\]]))[^\s"',\]]+(?=[ \t]*(?:[,\]\n]|$)))`;
 /** The option as one element and its value as the next, in the same quotes. */
 const listPair = (option: string): string => String.raw`${listOption(option)}\k<q>${LIST_SEP}\k<q>`;
-const SECRET_OPTION = String.raw`--?(?:[A-Za-z0-9]+[-_.])*(?:password|passwd|pass|pwd|token|secret|api[-_]?key|access[-_]?key|private[-_]?key|client[-_]?secret)`;
+const SECRET_OPTION_WORD = String.raw`(?:password|passwd|pass|pwd|token|secret|api[-_]?key|access[-_]?key|private[-_]?key|client[-_]?secret)`;
+const SECRET_OPTION = String.raw`--?(?:[A-Za-z0-9]+[-_.])*${SECRET_OPTION_WORD}`;
 /** An option that switches the secret off and takes no value (`"--no-password"`: memory-x7-1). */
 const LIST_SWITCH_OFF = String.raw`--?no[-_]`;
 /**
@@ -285,6 +300,11 @@ const LIST_SWITCH_OFF = String.raw`--?no[-_]`;
  * argparse's `"store_true"`, a table's `"string"`), whole: `"none1234"` and `"strings"` are values (memory-x7-1).
  */
 const LIST_NO_VALUE = String.raw`(?:[Nn]one|[Nn]ull|nil|undefined|[Ss]tr(?:ing)?|int(?:eger)?|bool(?:ean)?|float|store_(?:true|false|const))`;
+/**
+ * A value that only says where the password is read from, as openssl's `-pass` takes it (`env:PW`, `file:pw.txt`,
+ * `fd:3`, `stdin`): never the password itself (memory-v7-1).
+ */
+const LIST_NAMES_SOURCE = String.raw`(?!(?:env|file|fd):[^\s"']|stdin\k<q>)`;
 /**
  * OPTION_PASSWORDS for lists of arguments: `keep` stays and `value` is hidden. MySQL's and MariaDB's `"-p…"` (a bare
  * `"-p"` prompts, and `"-P"` is a port), `"-p", "…"` after sshpass, mongo's clients and a registry's login,
@@ -297,17 +317,38 @@ const LIST_NO_VALUE = String.raw`(?:[Nn]one|[Nn]ull|nil|undefined|[Ss]tr(?:ing)?
  * it's replaced, a mapping's value and next key (`inMapping`: `"name": "--password", "description": …`) and the
  * option's own name exactly (`ownName`: click's `"--api-key", "api_key"`).
  */
-const LIST_PASSWORDS: readonly RegExp[] = [
-  new RegExp(String.raw`(?<keep>${listProgram(CLIENT)}${LIST_ARGS}${listOption("-p")})(?<value>${listValue("-p")})`, "g"),
-  new RegExp(String.raw`(?<keep>${listProgram("sshpass|mongo|mongosh|mongodump|mongorestore|mongoexport|mongoimport")}${LIST_ARGS}${listOption("-p")}(?:\k<q>${LIST_SEP}\k<q>)?)(?<value>${listValue("(?:-p)?")})`, "g"),
-  new RegExp(String.raw`(?<keep>${listProgram("docker|podman|nerdctl|buildah|helm")}${LIST_ARGS}${LIST_SEP}["']?login["']?${LIST_ARGS}${listPair("-p|--password")})(?<value>${listValue("")})`, "g"),
-  new RegExp(String.raw`(?<keep>${listProgram("redis-cli")}${LIST_ARGS}${listPair("-a")})(?<value>${listValue("")})`, "g"),
-  new RegExp(String.raw`(?<keep>${listProgram("curl|wget")}${LIST_ARGS}${listPair("-u|--user")}[^\s"',:\]]*:)(?<value>${listValue(String.raw`[^\s"',:\]]*:`)})`, "g"),
-  new RegExp(String.raw`(?<keep>${listProgram("smbclient")}${LIST_ARGS}${listPair("-U")}[^\s"',%\]]*%)(?<value>${listValue(String.raw`[^\s"',%\]]*%`)})`, "g"),
-  new RegExp(String.raw`(?<keep>${listProgram("openssl")}${LIST_ARGS}${listPair("-k")})(?<value>${listValue("")})`, "g"),
-  new RegExp(String.raw`(?<keep>${listProgram("openssl")}${LIST_ARGS}${listPair("-pass(?:in|out)?")}pass:)(?<value>${listValue("pass:")})`, "g"),
-  new RegExp(String.raw`(?<keep>(?<![^\s,[(])(?<q>["'])(?!${LIST_SWITCH_OFF})(?<option>${SECRET_OPTION})\k<q>${LIST_SEP}\k<q>)(?<value>(?!-)${LIST_NOT_VALUE}(?!(?:${LIST_HOLDER}|${LIST_NO_VALUE})\k<q>)(?:(?!\k<q>)\S){3,})(?=\k<q>)`, "g"),
+/**
+ * A row of LIST_PASSWORDS and what each of its matches holds, so listRowSteps tries it only where a match can start:
+ * `names`, the programs a row's match starts with (listProgram's), and `tail`, the row from the name on (its `keep`
+ * without the folder); or null for both in the row whose match starts at an option's opening quote.
+ */
+interface ListRow { readonly re: RegExp; readonly names: string | null; readonly tail: string | null }
+/** A row whose match starts with a program of `names` (listProgram) and goes on as `rest`. */
+const programRow = (names: string, rest: string): ListRow => ({
+  re: new RegExp(String.raw`(?<keep>${listProgram(names)}${rest}`, "g"),
+  names,
+  tail: String.raw`(?<keep>${listProgramName(names)}${rest}`,
+});
+const LIST_ROWS: readonly ListRow[] = [
+  // MySQL's and MariaDB's row, which needs a `-p` in the text: skipped without one, as MYSQL_PASSWORD is.
+  programRow(CLIENT, String.raw`${LIST_ARGS}${listOption("-p")})(?<value>${listValue("-p")})`),
+  programRow("sshpass|mongo|mongosh|mongodump|mongorestore|mongoexport|mongoimport", String.raw`${LIST_ARGS}${listOption("-p")}(?:\k<q>${LIST_SEP}\k<q>)?)(?<value>${listValue("(?:-p)?")})`),
+  programRow("docker|podman|nerdctl|buildah|helm", String.raw`${LIST_ARGS}${LIST_SEP}["']?login["']?${LIST_ARGS}${listPair("-p|--password")})(?<value>${listValue("")})`),
+  programRow("redis-cli", String.raw`${LIST_ARGS}${listPair("-a")})(?<value>${listValue("")})`),
+  programRow("curl|wget", String.raw`${LIST_ARGS}${listPair("-u|--user")}[^\s"',:\]]*:)(?<value>${listValue(String.raw`[^\s"',:\]]*:`)})`),
+  programRow("smbclient", String.raw`${LIST_ARGS}${listPair("-U")}[^\s"',%\]]*%)(?<value>${listValue(String.raw`[^\s"',%\]]*%`)})`),
+  programRow("openssl", String.raw`${LIST_ARGS}${listPair("-k")})(?<value>${listValue("")})`),
+  programRow("openssl", String.raw`${LIST_ARGS}${listPair("-pass(?:in|out)?")}pass:)(?<value>${listValue("pass:")})`),
+  // htpasswd's `-nb user password` and `-b file user password`, and `net use \\srv\share password` (also after
+  // `/user:name`), as their lines are read (memory-v7-1).
+  programRow("htpasswd", String.raw`${listHtpasswd(true)}${LIST_SEP}${LIST_ELEMENT}${listOption("")})(?<value>${listValue("")})`),
+  programRow("htpasswd", String.raw`${listHtpasswd(false)}${LIST_SEP}${LIST_ELEMENT}${LIST_SEP}${LIST_ELEMENT}${listOption("")})(?<value>${listValue("")})`),
+  programRow("net", String.raw`${LIST_SEP}["']?${anyCase("use")}["']?(?:${LIST_SEP}["']?[A-Za-z]:["']?)?${LIST_SEP}["']?\\{2,4}[^\s"',\]]+["']?${listOption("")})(?<value>(?!/)${listValue("")})`),
+  programRow("net", String.raw`${LIST_SEP}["']?${anyCase("use")}["']?${LIST_ARGS}${LIST_SEP}["']?/${anyCase("user")}:[^\s"',\]]+["']?${listOption("")})(?<value>(?!/)${listValue("")})`),
+  { re: new RegExp(String.raw`(?<keep>(?<![^\s,[(])(?<q>["'])(?!${LIST_SWITCH_OFF})(?<option>${SECRET_OPTION})\k<q>${LIST_SEP}\k<q>)(?<value>(?!-)${LIST_NOT_VALUE}(?!(?:${LIST_HOLDER}|${LIST_NO_VALUE})\k<q>)${LIST_NAMES_SOURCE}(?:(?!\k<q>)\S){3,})(?=\k<q>)`, "g"), names: null, tail: null },
 ];
+const LIST_PASSWORDS: readonly RegExp[] = LIST_ROWS.map(row => row.re);
+const LIST_MYSQL = LIST_PASSWORDS[0];
 
 /**
  * Whether a list element after `option` is that option's own name as code writes it, not its value: exactly its name
@@ -325,6 +366,300 @@ function ownName(option: string, value: string): boolean {
  */
 function inMapping(text: string, at: number, end: number, q: string): boolean {
   return /:[ \t]*$/.test(text.slice(Math.max(0, at - 32), at)) && new RegExp(String.raw`^${q}[ \t]*:`).test(text.slice(end, end + 34));
+}
+
+/** What a LIST_PASSWORDS match becomes: its `keep` and the hidden mark, or itself where it is no option's value. */
+function listReplacement(match: string, at: number, whole: string, g: { keep: string; value: string; q?: string; option?: string }): string {
+  const leave = g.option !== undefined && (ownName(g.option, g.value) || inMapping(whole, at, at + match.length, g.q ?? ""));
+  return leave ? match : `${g.keep}${SECRET_HIDDEN}`;
+}
+
+/**
+ * How long a step of the list passes runs before it yields (ms): a whole-text pass of one row took 180 to 195 ms on
+ * 4 MiB here and 645 ms on CI's Windows runner, past Stop's 300 ms; the clock is read every LIST_CHECK attempts.
+ */
+const LIST_STEP_MS = 4;
+const LIST_CHECK = 32;
+/** How many characters a step's search for a row's programs looks at in one go, and how far windows overlap: more than
+ * the longest name a row searches for (`mariadb-secure-installation`, 27), so a name across two windows is whole in one. */
+const LIST_WINDOW = 256 * 1024;
+const LIST_NAME_REACH = 64;
+/** What ends a list element's run of characters: what listProgram's folder and name can't hold. */
+const LIST_DELIMITER = /[\s"',[\]]/;
+/**
+ * LIST_DELIMITER by character code (`\s` is JavaScript's white space and line terminators), for the scan back to a run's
+ * start: a regex test per character took 80 ms over a 4 MiB run.
+ */
+function isListDelimiter(c: number): boolean {
+  return c === 32 || c === 34 || c === 39 || c === 44 || c === 91 || c === 93 || (c >= 9 && c <= 13) || (c >= 0xa0 && (
+    c === 0xa0 || c === 0x1680 || (c >= 0x2000 && c <= 0x200a) || c === 0x2028 || c === 0x2029 || c === 0x202f || c === 0x205f || c === 0x3000 || c === 0xfeff));
+}
+
+/**
+ * Whether `text` holds `needle`, a window at a time with a yield every LIST_STEP_MS: a search for "-p" through 4 MiB of
+ * `'-` held the thread 18 ms (each "-" a near miss).
+ */
+function* holds(text: string, needle: string): Generator<void, boolean, void> {
+  let due = performance.now() + LIST_STEP_MS;
+  for (let from = 0; from < text.length; from += LIST_WINDOW) {
+    // Windows overlap by the needle's length less one, so one across their edge is whole in the first.
+    if (text.slice(from, from + LIST_WINDOW + needle.length - 1).includes(needle)) return true;
+    if (performance.now() >= due) { yield; due = performance.now() + LIST_STEP_MS; }
+  }
+  return false;
+}
+/** What listProgram's lookbehind lets stand before a program (or its folder). */
+const BEFORE_PROGRAM = /[\s,["']/;
+/** An option's opening quote, where the last row's match starts. */
+const OPTION_QUOTE = /["']-/g;
+
+/**
+ * A program row's match at `start`, the start of a run of characters that holds one of its names and ends at
+ * `runEnd`, as the row's own regex finds it there: listProgram's lookbehind, then its folder and the rest (`tail`,
+ * sticky). The regex's greedy folder gives back one character at a time and tries the name after every `/` or `\`
+ * in the run, back to its start, and then no folder: 4 MiB of `a/` took that one try 100 ms. The name, its .exe and
+ * its closing quote are followed by a separator, whose first character ends the run, and the name and .exe hold none
+ * (letters, digits, `-`, `_`, `.`), so the name ends where the run does: only a name starting within LIST_NAME_REACH
+ * of the run's end can match. Those places are tried in the regex's own order (after the last `/` or `\` first), then
+ * the run's start with no folder, so the first that matches is the regex's match.
+ */
+function programAt(text: string, start: number, runEnd: number, tail: RegExp): { at: number; m: RegExpExecArray } | null {
+  if (start > 0 && !BEFORE_PROGRAM.test(text[start - 1])) return null;
+  // The folder's `(?!-)`: it can't start with `-`.
+  if (text[start] !== "-") {
+    for (let at = runEnd - 1; at > start && at >= runEnd - LIST_NAME_REACH; at--) {
+      if (text[at - 1] !== "/" && text[at - 1] !== "\\") continue;
+      tail.lastIndex = at;
+      const m = tail.exec(text);
+      if (m) return { at, m };
+    }
+  }
+  tail.lastIndex = start;
+  const m = tail.exec(text);
+  return m ? { at: start, m } : null;
+}
+
+/** What the last row's option, separator and value are made of, and the secret word its option ends in. */
+const OPTION_PART_END = /[^A-Za-z0-9_.-]/;
+const LIST_SEP_END = /[^\s,[-]/;
+const ENDS_IN_SECRET_WORD = new RegExp(String.raw`${SECRET_OPTION_WORD}$`);
+/** optionPairCan's searches, fresh for each run of steps (a paused generator shares no lastIndex). */
+interface OptionPairEnds { readonly option: RegExp; readonly sep: RegExp; readonly value: { readonly '"': RegExp; readonly "'": RegExp } }
+const optionPairEnds = (): OptionPairEnds => ({
+  option: new RegExp(OPTION_PART_END.source, "g"),
+  sep: new RegExp(LIST_SEP_END.source, "g"),
+  value: { '"': /[\s"]/g, "'": /[\s']/g },
+});
+
+/**
+ * Whether the last row can match at the quote at `at`, read as its regex is written: a SECRET_OPTION (letters,
+ * digits, `_`, `.` and `-`, ending in its secret word) up to the same quote, LIST_SEP's characters (white space, `,`,
+ * `[`, `-`) up to that quote again, and a value of three or more characters with no white space up to that quote once
+ * more. Only what every match holds, so a place it turns down the regex fails at too, without the regex's own walk
+ * back through a long option or value that never closes (40 to 50 ms over 4 MiB). Each look runs forward to the next
+ * character that can't belong, once.
+ */
+function optionPairCan(text: string, at: number, ends: OptionPairEnds): boolean {
+  const q = text[at] as '"' | "'";
+  ends.option.lastIndex = at + 1;
+  const optionEnd = ends.option.exec(text)?.index ?? -1;
+  if (optionEnd < 0 || text[optionEnd] !== q || !ENDS_IN_SECRET_WORD.test(text.slice(Math.max(at + 1, optionEnd - 16), optionEnd))) return false;
+  ends.sep.lastIndex = optionEnd + 1;
+  const valueAt = ends.sep.exec(text)?.index ?? -1;
+  if (valueAt < 0 || text[valueAt] !== q) return false;
+  const value = ends.value[q];
+  value.lastIndex = valueAt + 1;
+  const valueEnd = value.exec(text)?.index ?? -1;
+  return valueEnd >= 0 && text[valueEnd] === q && valueEnd - valueAt > 3;
+}
+
+/**
+ * One row of LIST_PASSWORDS's global replace, the same bytes, tried only where a match can start and yielding every
+ * LIST_STEP_MS. The row's own regex, sticky, is run on the whole text at each such place (for a program row, from its
+ * name on: programAt), so its lookbehinds, its lookaheads and inMapping see exactly what the whole-text replace's do:
+ * only where it is tried changes.
+ * - A program row's match starts with listProgram: after a character of `[\s,["']` (or the text's start), an optional
+ *   folder and then a name, all characters no LIST_DELIMITER is. So it starts at the first character of a run of such
+ *   characters, the one run that holds a name of the row; the row is tried once per run that holds one (found case-blind,
+ *   which holds every way anyCase writes it), at that run's start, never inside a match already taken.
+ * - The last row's match starts at a quote followed by `-` (its SECRET_OPTION), so it is tried there.
+ * Every place the whole-text replace could match is so tried, in the same order, so its matches are the same.
+ */
+function* listRowSteps(text: string, row: ListRow): Generator<void, string, void> {
+  // A paused generator must not share lastIndex with another redaction (fresh regexes, as keyValueSteps).
+  const sticky = new RegExp(row.tail ?? row.re.source, "y");
+  const find = row.names === null ? new RegExp(OPTION_QUOTE.source, "g") : new RegExp(row.names, "gi");
+  const ends = new RegExp(LIST_DELIMITER.source, "g");
+  const pairEnds = optionPairEnds();
+  const reach = row.names === null ? 2 : LIST_NAME_REACH;
+  const chunks: string[] = [], pieces: string[] = [];
+  let due = performance.now() + LIST_STEP_MS, tries = 0;
+  let from = 0, taken = 0, outputAt = 0;
+  while (from < text.length) {
+    const windowEnd = Math.min(text.length, from + LIST_WINDOW);
+    find.lastIndex = 0;
+    const hit = find.exec(text.slice(from, windowEnd));
+    if (!hit) {
+      // A name cut by the window's end is whole in the next window, which starts within reach of it.
+      from = windowEnd === text.length ? text.length : Math.max(from + 1, windowEnd - reach);
+    } else {
+      const at = from + hit.index;
+      let start = at, next = at + 1;
+      if (row.names !== null) {
+        while (start > 0 && !isListDelimiter(text.charCodeAt(start - 1))) {
+          start--;
+          // A run can be the whole text: the scan back yields too.
+          if ((start & 0xffff) === 0 && performance.now() >= due) { yield; due = performance.now() + LIST_STEP_MS; }
+        }
+        ends.lastIndex = at;
+        const end = ends.exec(text);
+        next = end ? end.index : text.length;
+      }
+      if (start >= taken) {
+        let found: { at: number; m: RegExpExecArray } | null;
+        if (row.names === null) {
+          sticky.lastIndex = start;
+          const m = optionPairCan(text, start, pairEnds) ? sticky.exec(text) : null;
+          found = m && { at: start, m };
+        } else found = programAt(text, start, next, sticky);
+        if (found) {
+          const folder = text.slice(start, found.at);
+          const g = found.m.groups as { keep: string; value: string };
+          const match = folder + found.m[0];
+          pieces.push(text.slice(outputAt, start), listReplacement(match, start, text, { ...g, keep: folder + g.keep }));
+          outputAt = taken = start + match.length;
+          next = Math.max(next, taken);
+          if (pieces.length >= 4096) { chunks.push(pieces.join("")); pieces.length = 0; }
+        }
+      }
+      from = next;
+    }
+    if (++tries % LIST_CHECK === 0 || !hit) {
+      if (performance.now() >= due) { yield; due = performance.now() + LIST_STEP_MS; }
+    }
+  }
+  if (outputAt === 0) return text;
+  pieces.push(text.slice(outputAt));
+  chunks.push(pieces.join(""));
+  return chunks.join("");
+}
+
+/** The whole-text form of a LIST_PASSWORDS row's pass, which listRowSteps must equal byte for byte. */
+function listRowWhole(text: string, re: RegExp): string {
+  return text.replace(re, (...m) => listReplacement(String(m[0]), m[m.length - 3] as number, m[m.length - 2] as string, m[m.length - 1] as { keep: string; value: string }));
+}
+
+/** A quoted list element or a bracket, for hideClientLists: a string's escapes taken as they come. */
+const LIST_TOKEN = /[[\]()]|"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'/g;
+/** Where a LIST_TOKEN can start. */
+const LIST_TOKEN_START = /[[\]()"']/g;
+const CLIENT_ELEMENT = new RegExp(String.raw`^(?:${CLIENT})(?:\.exe)?$`, "i");
+const LIST_HOLDER_WHOLE = new RegExp(String.raw`^${LIST_HOLDER}$`);
+
+/** Whether a list's element, inside the stack of lists that holds it, hides its value; and marks the list as a client's. */
+function clientListElement(stack: boolean[], word: string): boolean {
+  // The client as an element of its own, alone or with its folder, never an option's folder (`"-I/usr/include/mysql"`).
+  if (!word.startsWith("-") && CLIENT_ELEMENT.test(word.split(/[\\/]/).at(-1) ?? "")) stack[stack.length - 1] = true;
+  const value = word.slice(2);
+  return stack[stack.length - 1] && word.startsWith("-p") && value !== "" && !/^[$%{<*[]/.test(value) && !LIST_HOLDER_WHOLE.test(value);
+}
+
+/**
+ * MySQL's and MariaDB's attached `"-p…"` anywhere in a bracketed list that names the client, however many elements
+ * stand between them (a 21-element list: memory-y7-1), past LIST_PASSWORDS's twelve. One scan of the text's quoted
+ * elements and brackets with a stack of lists; never a bare `"-p"`, a variable, a template or a placeholder (as
+ * listValue). The scan is LIST_TOKEN's matchAll (hideClientListsWhole) read by hand so it stays linear and yields
+ * every LIST_STEP_MS: the regex, where a quote never closes, tries again at every later quote of its kind on that line,
+ * and 128 KiB of `\"` took it 9 s. A quote that doesn't close fails where its string's characters stop (a line's end,
+ * a `\` before one, or the text's); every later quote of its kind before there is one the failed string read as an
+ * escaped character, so from it the string goes on in step with the failed one and fails there too: they are passed
+ * over, as the regex would fail them, without reading the line again.
+ */
+function* clientListSteps(text: string): Generator<void, string, void> {
+  if (!(yield* holds(text, "-p"))) return text;
+  const starts = new RegExp(LIST_TOKEN_START.source, "g");
+  const stack: boolean[] = [];
+  const hide: [number, number][] = [];
+  const failsBefore = { '"': -1, "'": -1 };
+  let due = performance.now() + LIST_STEP_MS, tokens = 0;
+  for (;;) {
+    if (++tokens % LIST_CHECK === 0 && performance.now() >= due) { yield; due = performance.now() + LIST_STEP_MS; }
+    const s = starts.exec(text);
+    if (!s) break;
+    const at = s.index, c = text[at];
+    if (c !== '"' && c !== "'") {
+      if (c === "[" || c === "(") stack.push(false);
+      else stack.pop();
+      continue;
+    }
+    const q = c as '"' | "'";
+    if (at < failsBefore[q]) continue;
+    let i = at + 1;
+    for (let read = 0; ; read++) {
+      // A string can be the whole text: its reading yields too.
+      if ((read & 0xffff) === 0xffff && performance.now() >= due) { yield; due = performance.now() + LIST_STEP_MS; }
+      if (i >= text.length) break;
+      const ch = text.charCodeAt(i);
+      if (ch === q.charCodeAt(0) || ch === 10) break;
+      if (ch === 92) {
+        // `\\.`: `.` takes no line terminator.
+        const after = text.charCodeAt(i + 1);
+        if (i + 1 >= text.length || after === 10 || after === 13 || after === 0x2028 || after === 0x2029) break;
+        i += 2;
+      } else i++;
+    }
+    if (text[i] !== q) {
+      failsBefore[q] = i;
+      starts.lastIndex = at + 1;
+      continue;
+    }
+    starts.lastIndex = i + 1;
+    if (stack.length === 0) continue;
+    if (clientListElement(stack, text.slice(at + 1, i))) hide.push([at + 3, i]);
+  }
+  if (hide.length === 0) return text;
+  // Joined a few thousand pieces at a time: 260,000 values hidden at once held the thread 60 ms.
+  const chunks: string[] = [], pieces: string[] = [];
+  let at = 0;
+  for (const [from, to] of hide) {
+    pieces.push(text.slice(at, from), SECRET_HIDDEN);
+    at = to;
+    if (pieces.length >= 4096) {
+      chunks.push(pieces.join(""));
+      pieces.length = 0;
+      if (performance.now() >= due) { yield; due = performance.now() + LIST_STEP_MS; }
+    }
+  }
+  pieces.push(text.slice(at));
+  chunks.push(pieces.join(""));
+  return chunks.join("");
+}
+
+/** hideClientLists's pass at once: the same bytes as hideClientListsWhole. */
+function hideClientLists(text: string): string {
+  return runSteps(clientListSteps(text));
+}
+
+/** hideClientLists as LIST_TOKEN's matchAll reads it, which clientListSteps must equal byte for byte (tests only:
+ * quadratic where a quote never closes). */
+function hideClientListsWhole(text: string): string {
+  if (!text.includes("-p")) return text;
+  const stack: boolean[] = [];
+  const hide: [number, number][] = [];
+  for (const m of text.matchAll(LIST_TOKEN)) {
+    if (m[1] === undefined && m[2] === undefined) {
+      if (m[0] === "[" || m[0] === "(") stack.push(false);
+      else stack.pop();
+      continue;
+    }
+    if (stack.length === 0) continue;
+    if (clientListElement(stack, m[1] ?? m[2] ?? "")) hide.push([m.index + 3, m.index + m[0].length - 1]);
+  }
+  if (hide.length === 0) return text;
+  let out = "";
+  let at = 0;
+  for (const [from, to] of hide) { out += text.slice(at, from) + SECRET_HIDDEN; at = to; }
+  return out + text.slice(at);
 }
 
 /** URL credentials: `://user:pass@` (and `://:pass@`, a password with no user: commands-remote-r10-6) becomes `://[secret hidden]@`. */
@@ -395,21 +730,39 @@ export function redactSecrets(text: string): string {
 
 /**
  * redactSecrets's passes, in order: each reads and replaces in the whole text it is given, as redactSecrets folds them.
- * A pass can match across lines (a private key block, a list's `\n- ` separator), so only KEY_VALUE has its own
- * bounded recognition and value scans (keyValueSteps, integ-x-3); a caller
+ * A pass can match across lines (a private key block, a list's `\n- ` separator), so only KEY_VALUE (keyValueSteps,
+ * integ-x-3) and the argument-list passes (listRowSteps, clientListSteps: one row took 645 ms over 4 MiB on CI's
+ * Windows runner) run in steps of their own, never on slices of the text; a caller
  * that must keep Ember's main thread free between passes runs them one at a time (redactSecretsYielding) and gets the
  * same bytes, since it is the same list (merge review integ-y-2).
  */
+/** A LIST_PASSWORDS row's steps, guarded as MYSQL_PASSWORD is where `guarded` (LIST_MYSQL needs a `-p`). */
+const listSteps = (row: ListRow, guarded: boolean) => function* (t: string): Generator<void, string, void> {
+  return guarded && row.re === LIST_MYSQL && !(yield* holds(t, "-p")) ? t : yield* listRowSteps(t, row);
+};
+const LIST_ROW_STEPS = LIST_ROWS.map(row => listSteps(row, true));
+/** The list passes, each at once (runSteps over its steps, which redactSteps runs a step at a time: PASS_STEPS). */
+const LIST_PASSES: readonly ((text: string) => string)[] = LIST_ROW_STEPS.map(steps => (t: string) => runSteps(steps(t)));
+const UNGUARDED_LIST_PASSES: readonly ((text: string) => string)[] = LIST_ROWS.map(row => listSteps(row, false)).map(steps => (t: string) => runSteps(steps(t)));
+
+/**
+ * The argument-list passes of REDACT_PASSES (LIST_PASSWORDS's rows, then hideClientLists): as REDACT_PASSES holds
+ * them, as steps in the same order, and the whole-text forms (each row's plain global replace, with no `-p` guard)
+ * they must equal byte for byte (commands-redact-argv.test.ts).
+ */
+export const LIST_PASSES_AT_ONCE: readonly ((text: string) => string)[] = [...LIST_PASSES, hideClientLists];
+export const LIST_PASS_STEPS: readonly ((text: string) => Generator<void, string, void>)[] = [...LIST_ROW_STEPS, clientListSteps];
+export const LIST_PASSES_WHOLE: readonly ((text: string) => string)[] = [
+  ...LIST_PASSWORDS.map(re => (t: string) => listRowWhole(t, re)),
+  hideClientListsWhole,
+];
+
 const passes = (guarded: boolean): readonly ((text: string) => string)[] => [
   ...TOKEN_PATTERNS.map(re => (re === PRIVATE_KEY ? hidePrivateKeys : (t: string) => t.replace(re, SECRET_HIDDEN))),
   ...VALUE_PATTERNS.map(re => (t: string) => (guarded && !(VALUE_NEEDS.get(re) ?? []).every(n => t.includes(n)) ? t : t.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN))),
   ...OPTION_PASSWORDS.map(re => (t: string) => (guarded && re === MYSQL_PASSWORD && !t.includes("-p") ? t : t.replace(re, (_m, keep: string, quote: string, _value: string, after?: string) => `${keep}${quote}${SECRET_HIDDEN}${quote}${typeof after === "string" ? after : ""}`))),
-  ...LIST_PASSWORDS.map(re => (t: string) => t.replace(re, (...m) => {
-    const g = m[m.length - 1] as { keep: string; value: string; q?: string; option?: string };
-    const [match, at, whole] = [String(m[0]), m[m.length - 3] as number, m[m.length - 2] as string];
-    const leave = g.option !== undefined && (ownName(g.option, g.value) || inMapping(whole, at, at + match.length, g.q ?? ""));
-    return leave ? match : `${g.keep}${SECRET_HIDDEN}`;
-  })),
+  ...(guarded ? LIST_PASSES : UNGUARDED_LIST_PASSES),
+  hideClientLists,
   ...CONFIG_PATTERNS.map(re => (t: string) => t.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN)),
   t => t.replace(URL_CREDENTIALS, `://${SECRET_HIDDEN}@`),
   hideKeyValues,
@@ -427,10 +780,18 @@ export function* redactSteps(text: string): Generator<void, string, void> {
   let out = text;
   for (const pass of REDACT_PASSES) {
     yield;
-    out = pass === hideKeyValues ? yield* keyValueSteps(out) : pass(out);
+    const steps = PASS_STEPS.get(pass);
+    out = steps ? yield* steps(out) : pass(out);
   }
   return out;
 }
+
+/** The passes of REDACT_PASSES that run as steps of their own, by the pass: their at-once form is runSteps over them. */
+const PASS_STEPS: ReadonlyMap<(text: string) => string, (text: string) => Generator<void, string, void>> = new Map([
+  ...LIST_PASSES.map((pass, i) => [pass, LIST_ROW_STEPS[i]] as const),
+  [hideClientLists, clientListSteps] as const,
+  [hideKeyValues, (t: string) => keyValueSteps(t)] as const,
+]);
 
 /** KEY_VALUE's pass at once: the same bytes as its whole-text replace (keyValueSteps). */
 function hideKeyValues(text: string): string {

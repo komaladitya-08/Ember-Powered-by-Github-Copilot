@@ -32,10 +32,32 @@ export interface Arg {
    * (`${XDG_CONFIG_HOME:-$HOME/.config}`: commands-remote-v4-4).
    */
   parts?: readonly (string | { name: string | null; cut?: true; value?: string; alt?: string })[];
+  /**
+   * A POSIX word with v null whose every value Ember knows from the text (`d=build; env -C $d make`), none of them a
+   * pattern: those values, so a wrapper's option can be judged by what it is given (parseOpts' unseenValue).
+   */
+  seen?: readonly string[];
 }
 
 /** A literal argument (tests, wrappers that build words). */
 export const lit = (s: string): Arg => ({ v: s, raw: s, glob: false });
+
+/**
+ * Whether a word as written has an expansion outside quotes, which the shell splits into words: `$N`, `${N}`, `$(…)`;
+ * not `"$d"/sub` or `"$N"`, which stay one word whatever they hold.
+ */
+export function splitsUnquoted(raw: string): boolean {
+  let quote: "'" | "\"" | null = null;
+  for (let k = 0; k < raw.length; k++) {
+    const c = raw[k];
+    if (quote === "'") { if (c === "'") quote = null; continue; }
+    if (c === "\\") { k++; continue; }
+    if (quote === "\"") { if (c === "\"") quote = null; continue; }
+    if (c === "'" || c === "\"") quote = c;
+    else if (c === "$" || c === "`") return true;
+  }
+  return false;
+}
 
 /** Whether an argument looks like an option (`-x`, `--xy`); a lone `-` is an operand (stdin). */
 export const isOption = (a: Arg): boolean => a.v !== null && a.v.length > 1 && a.v.startsWith("-") && !a.param;
@@ -202,6 +224,29 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
   // A numeric option's next word in a table of record (numericAny, numericCountOnly), else as above.
   const takesNext = (name: string, k: number): boolean => k + 1 < args.length
     && ((spec.numericAny ?? []).includes(name) || ((spec.numericCountOnly ?? []).includes(name) ? countWord(args[k + 1].raw) : numberNext(k)));
+  // Before a command, a separate value Ember can't see (`xargs -P $N echo`, `env -C $(cat d.txt) echo`) is text the
+  // shell may split into more words, the first of them the command (`N='1 rm -rf ~'` runs rm): the option keeps the
+  // value, for its own checks, and what runs is a command Ember can't name, as for an attached value above, unless the
+  // value is only a job count as written (commands-v7-5, commands-q6-3). A value with no expansion outside quotes
+  // (`-P "$N"`, `-C "$d"/sub`) is one word whatever it holds, so the command is still the word after it; so is one whose
+  // every value the text gives is one word (`d=build; env -C $d make`, `N=4; xargs -P $N …`: review B2). One value of
+  // several words is read as the shell splits it, the command its second word (`N='1 rm -rf ~'` runs `rm -rf ~`).
+  const unseenValue = (k: number, name: string): Parsed | null => {
+    const value = args[k + 1];
+    if (!spec.stopAtOperand || value.v !== null || !splitsUnquoted(value.raw) || ((spec.jobCounts ?? []).includes(name.replace(/^--?/, "")) && countWord(value.raw))) return null;
+    const long = new Set([...longValue, ...longNumeric, ...(spec.longOptional ?? [])]);
+    const words = value.seen?.map(f => f.split(/[ \t\n]+/).filter(w => w !== ""));
+    if (words !== undefined && words.length > 0 && words.every(w => w.length === 1)) {
+      // A value the text gives it once is that value (the folder `env -C` moves to).
+      if (words.length === 1) opts[opts.length - 1] = { ...opts[opts.length - 1], value: words[0][0] };
+      return null;
+    }
+    if (words?.length === 1 && words[0].length > 1) {
+      opts[opts.length - 1] = { ...opts[opts.length - 1], value: words[0][0] };
+      return { opts, operands: [...operands, ...words[0].slice(1).map(lit), ...args.slice(k + 2)], restAt: k + 2, missingValue, long };
+    }
+    return { opts, operands: [...operands, ...args.slice(k + 1)], restAt: k + 1, missingValue, long };
+  };
   for (let k = 0; k < args.length; k++) {
     const a = args[k];
     const v = a.v;
@@ -245,8 +290,8 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
       const name = `--${eq >= 0 ? body.slice(0, eq) : body}`;
       if (eq >= 0) opts.push({ name, value: body.slice(eq + 1), at: k });
       else if (longValue.has(name.slice(2))) {
-        if (k + 1 < args.length) { opts.push({ name, value: args[k + 1].v, at: k }); k++; } else { opts.push({ name, value: null, at: k }); missingValue = true; }
-      } else if (longNumeric.has(name.slice(2)) && takesNext(name.slice(2), k)) { opts.push({ name, value: args[k + 1].v, at: k }); k++; } else opts.push({ name, at: k });
+        if (k + 1 < args.length) { opts.push({ name, value: args[k + 1].v, at: k }); const unseen = unseenValue(k, name); if (unseen) return unseen; k++; } else { opts.push({ name, value: null, at: k }); missingValue = true; }
+      } else if (longNumeric.has(name.slice(2)) && takesNext(name.slice(2), k)) { opts.push({ name, value: args[k + 1].v, at: k }); const unseen = unseenValue(k, name); if (unseen) return unseen; k++; } else opts.push({ name, at: k });
       continue;
     }
     // A short cluster: -rf, -fFILE, -C dir.
@@ -259,13 +304,13 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
         // rest of the word is the cluster's other letters, as main read them (`nmake -jf FILE`: commands-held-x9-4).
         if (attached && (spec.numericCountOnly ?? []).includes(c) && !countWord(attached)) { opts.push({ name: `-${c}`, at: k }); continue; }
         if (attached) opts.push({ name: `-${c}`, value: attached, at: k });
-        else if (shortNumeric.includes(c) && takesNext(c, k)) { opts.push({ name: `-${c}`, value: args[k + 1].v, at: k }); k++; } else opts.push({ name: `-${c}`, at: k });
+        else if (shortNumeric.includes(c) && takesNext(c, k)) { opts.push({ name: `-${c}`, value: args[k + 1].v, at: k }); const unseen = unseenValue(k, `-${c}`); if (unseen) return unseen; k++; } else opts.push({ name: `-${c}`, at: k });
         break;
       }
       if (shortValue.includes(c)) {
         const attached = v.slice(j + 1);
         if (attached) opts.push({ name: `-${c}`, value: attached, at: k });
-        else if (k + 1 < args.length) { opts.push({ name: `-${c}`, value: args[k + 1].v, at: k }); k++; } else { opts.push({ name: `-${c}`, value: null, at: k }); missingValue = true; }
+        else if (k + 1 < args.length) { opts.push({ name: `-${c}`, value: args[k + 1].v, at: k }); const unseen = unseenValue(k, `-${c}`); if (unseen) return unseen; k++; } else { opts.push({ name: `-${c}`, value: null, at: k }); missingValue = true; }
         break;
       }
       opts.push({ name: `-${c}`, at: k });

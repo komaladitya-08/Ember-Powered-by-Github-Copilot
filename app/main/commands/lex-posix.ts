@@ -551,6 +551,8 @@ class Parser {
       const body = this.s.slice(this.i + 2, k);
       this.i = k + 1;
       if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(body)) return { segs: [{ t: "var", name: body }], subs: [], quoted: false };
+      // `${1}`, `${0}`, `${@}` are `$1`, `$0`, `$@` exactly, so a `sh -c` text's words and `set --` reach them too (review G).
+      if (/^[0-9@*#?$!-]$/.test(body)) return { segs: [{ t: "unres", why: `$${body}` }], subs: [], quoted: false };
       if (/\$\(|`/.test(body)) this.note("hidden-command", "It hides a command inside a variable's expansion.");
       // Forms that evaluate a value as code: indirection (`${!x}`), prompt expansion (`${x@P}`), an array subscript
       // or a substring offset that isn't a plain number (`${a[i]}`, `${x:n}`: arithmetic on a variable).

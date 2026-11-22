@@ -146,6 +146,15 @@ snapshot, unchanged seed and asset/private-tree/profile cleanup. This closes the
 or arbitrary-workload acceptance. Published P2 binds all four product-proof tuples to that
 qualification; its separate required product results are recorded above.
 
+**Re-qualified on 22 November 2026, on the owner's instruction.** The seventh audit round's command-safety fixes
+(PR #265) change six pinned files under `app/main/commands` (classify.ts, flow.ts, redact.ts, types.ts, words.ts,
+lex-posix.ts). The catalog still holds 146 pins (4,287,721 bytes); its manifest is now `986f88ec…` and the whole-verifier
+hash `b5dd7658…`. Published `4b91c00a` qualified that graph in
+[manual run 45032257870](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/45032257870),
+started from this branch: the contracts job and the native job on each Windows Server image passed. The three
+product workflows and their tests bind to that commit and those two hashes. The six files' changes were checked by
+a second, independent source review before the run; no person re-read the other 140 files, whose pins are unchanged.
+
 The earlier [WSL native run 44093857380](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/actions/runs/44093857380)
 at `b7e8e54b` passed its one real Windows-to-WSL case on each image, zero skips: non-root helper provisioning,
 offline TypeScript repair, interop/socket denials, drained writer Stop, snapshot and cleanup. The new guest then

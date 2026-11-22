@@ -239,7 +239,7 @@ it("preserves the whole workflow after reversing only the known diagnostic field
     ", commandWindows: 2, targetType: 8, focusedType: 8, targetState: 80, focusTrajectory: 3",
     ", commandWindows: 0, targetType: 0, focusedType: 0, targetState: 0, focusTrajectory: 0",
   ]) { expect(source.split(addition)).toHaveLength(2); source = source.replace(addition, ""); }
-  expect(digest(source)).toBe("f2a0f1217295a6c1f060c0f1a43ddab9f6aa75954b293c8069d619828a097fe1");
+  expect(digest(source)).toBe("fbff3d6a8c72d4d1f1d514871b4c5c5930908001a402288dae3638b743f0973d");
   source = source.replace(", projectStage: 16", "").replace(", projectStage: 0", "");
   const commandStart = source.indexOf("          const commandFailureFacts ="), commandEnd = source.indexOf("          const failureFacts =", commandStart);
   expect(commandStart > 0 && commandEnd > commandStart).toBe(true);
@@ -259,9 +259,9 @@ it("preserves the whole workflow after reversing only the known diagnostic field
             archiveBytes: 38425334,
             archiveSha256: "cbbbf6c641c41bda8ece457c28a54b9bc4121a068dc376725bcf0e3ac24a2f62",
             manifestSha256: "d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f",
-            assetProofCommit: "aa5345a934d75d9a7924a4b7984c3b27c9521020",
-            assetProofManifestSha256: "91f162e84a22f199606acee94131bcb605761d2796e57d9148c77311e09e8db6",
-            verifierFileSha256: "9674e7b019cf736024b00593e0a73cfa4c8a30ed57f8135baf749b15b21e2a97",
+            assetProofCommit: "4b91c00ac87c705a3d051395d317878f0ec930c1",
+            assetProofManifestSha256: "986f88ecfa4c3c5d4f49116691ec9cb49997e3b77550b7ecfbb8e32a5ee1849c",
+            verifierFileSha256: "b5dd7658579dc5d75d3f5ee894048fbeea77f2e14ad9d4b6b1e87507e5a6b025",
           });`;
   const historical = `          const reviewed = Object.freeze({
             ready: true,

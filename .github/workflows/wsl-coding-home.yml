@@ -90,9 +90,9 @@ jobs:
             archiveBytes: 38425334,
             archiveSha256: "cbbbf6c641c41bda8ece457c28a54b9bc4121a068dc376725bcf0e3ac24a2f62",
             manifestSha256: "d6137e7afb434adfe04ce9454aa65e1891e6e4fdaffb248e6303a2fe14cfe89f",
-            assetProofCommit: "aa5345a934d75d9a7924a4b7984c3b27c9521020",
-            assetProofManifestSha256: "91f162e84a22f199606acee94131bcb605761d2796e57d9148c77311e09e8db6",
-            verifierFileSha256: "9674e7b019cf736024b00593e0a73cfa4c8a30ed57f8135baf749b15b21e2a97",
+            assetProofCommit: "4b91c00ac87c705a3d051395d317878f0ec930c1",
+            assetProofManifestSha256: "986f88ecfa4c3c5d4f49116691ec9cb49997e3b77550b7ecfbb8e32a5ee1849c",
+            verifierFileSha256: "b5dd7658579dc5d75d3f5ee894048fbeea77f2e14ad9d4b6b1e87507e5a6b025",
           });
           if (reviewed.ready !== true || !/^[0-9a-f]{40}$/.test(reviewed.commit ?? "") ||
               !Number.isSafeInteger(reviewed.artifact) || reviewed.artifact < 1 ||
