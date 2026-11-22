@@ -2843,12 +2843,14 @@ function renderVoice(v: VoiceStatus): void {
   // Teaching Ember a voice: its prompts are what screen readers hear; the voice line only when it changes.
   const said = renderMatch();
   if (said) voiceLive(said);
-  if (said || v.state === "active" || !$("consent-error").hidden) clearTimeout(voiceLineSoon);
+  // micHeld, not only "active": a Listen once start can outlast the line's one-second timer, and "Starting…" was said
+  // into the microphone as it opened (voice-listening-refresh-2).
+  if (said || micHeld(v) || !$("consent-error").hidden) clearTimeout(voiceLineSoon);
   else if (v.state !== "downloading" && text !== voiceLine) { clearTimeout(voiceLineSoon); voiceLineSoon = setTimeout(() => voiceLive(text), VOICE_LINE_SETTLE_MS); }
   // Emptied, unsaid, while a window is open: browse mode read "Listening for “Ember”" there beside "Hearing you…"
   // (voice-listening-v4-2). An emptied status line says nothing.
   const live = $("voice-live");
-  if (!said && v.state === "active" && live.textContent) { voiceTold = live.textContent; live.textContent = ""; }
+  if (!said && micHeld(v) && live.textContent) { voiceTold = live.textContent; live.textContent = ""; }
   voiceLine = text;
   $("voice-dot").dataset.phase = v.state === "waiting" || v.state === "active" ? "ready" : v.state === "error" ? "error" : v.state === "off" || v.state === "muted" ? "" : "starting";
   const dl = $("voice-download") as HTMLButtonElement;
