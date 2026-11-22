@@ -3505,6 +3505,10 @@ class Engine extends Classifier {
     const from = this.findings.length;
     if (n) { this.runRow(n, h); this.verbGuard(h, from); }
     else { unknownProgram(h); generic(h, true); }
+    // A loop's written-out list may hand the command an option (`for f in --hard; do git reset $f; done`), which a body
+    // judged once with the variable unseen never reads: the row is judged again with each of the list's words in its
+    // place, in a script (read through) as on a command line (commands-remote-c7-4, i6a).
+    if (n && sc.family === "posix") for (const passArgs of this.loopPasses(args)) this.runRow(n, { ...h, args: passArgs });
     toolPayload(h);
     // A script a tool runs by its file's name (`tsx tool.ts 'npm publish'`, `bun tool.ts …`): the words after it are
     // the script's own, read as runScript reads an interpreter's (commands-classes-x9-4).
@@ -4109,6 +4113,24 @@ class Engine extends Classifier {
   /** Whether this task holds any download, named or not: an earlier command's, or one earlier on this line. */
   holdsAnyDownload(): boolean {
     return this.ctx.downloaded.size > 0 || this.downloads.length > 0;
+  }
+
+  /**
+   * A command's words with a loop's option-like words in place of its variable (`$f` or `"$f"` alone as a word, from a
+   * short written-out list: loopVars), one list a pass; none when no such word names one.
+   */
+  loopPasses(args: readonly Arg[]): Arg[][] {
+    const at = args.findIndex(a => this.optionLoop(a) !== null);
+    if (at < 0) return [];
+    return (this.optionLoop(args[at]) ?? []).map(v => args.map(a => (this.optionLoop(a) === null ? a : lit(v))));
+  }
+
+  /** The words of the short written-out loop list a word is only the variable of, when one of them is an option. */
+  private optionLoop(a: Arg): readonly string[] | null {
+    const part = a.v === null && a.parts?.length === 1 ? a.parts[0] : null;
+    if (part === null || typeof part === "string" || part.name === null || part.cut || part.alt !== undefined) return null;
+    const list = this.loopVars.get(part.name);
+    return Array.isArray(list) && list.some(w => w.startsWith("-")) ? list : null;
   }
 
   /** Classifies a nested shell text (sh -c, cmd /c, powershell -Command) in a child scope. */

@@ -5137,6 +5137,36 @@ describe("direct Node shares the guarded command flow", () => {
   });
 });
 
+describe("script loop bodies (audit-seven dc81160b)", () => {
+  it("judges a script loop's command with each option its written-out list hands it (commands-remote-c7-4, i6a)", async () => {
+    setCommandJudge(null);
+    for (const [script, rule] of [
+      ["for f in --hard; do git reset $f; done\n", "git.reset.hard"],
+      ['for f in --hard --soft; do git reset "$f"; done\n', "git.reset.hard"],
+      ["for o in -rf; do rm $o build; done\n", "posix.rm"],
+    ]) {
+      const h = harness({ binding: LOCAL, answers: ["deny"], readScript: async () => script, paths: p => ({ exists: true, real: p }) });
+      expect((await call(h, { target: "this computer", command: "sh task.sh" })).resultType, script).toBe("denied");
+      expect(h.asked, script).toHaveLength(1);
+      expect(h.starts, script).toEqual([]);
+      expect(h.audit.find(e => e.phase === "decided")?.rules as string[], script).toContain(rule);
+    }
+    // In the home folder, `find . -delete` would delete Ember's own files: refused, whatever pass it is.
+    const home = harness({ binding: LOCAL, readScript: async () => "for f in -delete; do find . $f; done\n" });
+    expect((await call(home, { target: "this computer", command: "sh task.sh" })).resultType).toBe("denied");
+    expect(home.asked).toEqual([]);
+  });
+
+  it("still runs an ordinary script loop without asking", async () => {
+    setCommandJudge(null);
+    for (const script of ["for t in unit lint; do echo $t; done\n", "for d in a b; do cd $d; make; cd ..; done\n"]) {
+      const h = harness({ binding: LOCAL, readScript: async () => script });
+      expect((await call(h, { target: "this computer", command: "sh task.sh" })).resultType, script).toBe("success");
+      expect(h.asked, script).toEqual([]);
+    }
+  });
+});
+
 describe("download provenance through inline code and remotes the task added (audit-seven 64be29ee)", () => {
   it("keeps a download copied by inline code marked across separate calls (commands-remote-c2-2, i6a)", async () => {
     setCommandJudge(null);
