@@ -215,6 +215,11 @@ export interface ClassifyContext {
   ember: { paths: string[]; pids: number[]; names: RegExp };
   /** Absolute paths this task downloaded so far (Classification.downloads of earlier commands). */
   downloaded: ReadonlySet<string>;
+  /**
+   * Remotes earlier commands of this task added with an address (`git remote add x <url>`; ClassificationExtra's
+   * `remotesAdded`): a later fetch or pull from one fetches code from that address (commands-remote-c5-4, i6a).
+   */
+  remotes?: ReadonlySet<string>;
   /** WSL facts, when the target is a distro. */
   wsl?: { mountRoot: string; windows: WindowsContext | null };
   /** The second pass (§3.8.3): each probed path's real path, as the target reported it. */

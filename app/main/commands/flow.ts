@@ -104,7 +104,7 @@ export interface CommandFlowContext {
    * (a command's output tainted the task, so the card says so in its own words, §3.8.4) and `written` (what the task's
    * commands wrote, so a script of its own that can't be read in full asks: L8's padding bypass).
    */
-  state: { cwd: string | null; downloaded: Set<string>; running: boolean; outputTainted?: boolean; written?: TaskWrites; withheldSecrets?: boolean };
+  state: { cwd: string | null; downloaded: Set<string>; running: boolean; outputTainted?: boolean; written?: TaskWrites; withheldSecrets?: boolean; remotes?: Set<string> };
   /** The command window's size for new runs. */
   size: () => { cols: number; rows: number };
   /** Ember's own pids now (D4.5; main's live list, §3.6.2). */
@@ -1233,7 +1233,7 @@ async function flow(a: FlowArgs, ctx: CommandFlowContext, endPending: () => void
   // commands reach this computer's processes too (taskkill.exe, Stop-Process through interop); a remote's are its own.
   const ember = { ...facts.ember, pids: binding.kind !== "ssh" ? [...new Set([...facts.ember.pids, ...ctx.emberPids()])] : facts.ember.pids };
   const cctx: ClassifyContext = {
-    os: facts.os, home, cwd, ember, downloaded: ctx.state.downloaded,
+    os: facts.os, home, cwd, ember, downloaded: ctx.state.downloaded, ...(ctx.state.remotes ? { remotes: ctx.state.remotes } : {}),
     ...(facts.wsl ? { wsl: { mountRoot: facts.wsl.mountRoot, windows: facts.wsl.windows } } : {}),
   };
   const classify = (context: ClassifyContext) => a.nodeArgv ? classifyNodeArgv(a.nodeArgv, context) : j.classifyCommand(a.command, shell!, context);
@@ -1955,6 +1955,9 @@ function followPending(svc: CommandService, taskId: string): () => void {
  */
 function noteDownloads(ctx: CommandFlowContext, cls: Classification): void {
   for (const p of cls.downloads) ctx.state.downloaded.add(p);
+  // A remote added with an address is where a later command's fetch gets code from (commands-remote-c5-4, i6a).
+  const remotes = (cls as Partial<ClassificationExtra>).remotesAdded;
+  if (Array.isArray(remotes) && remotes.length) for (const r of remotes) (ctx.state.remotes ??= new Set()).add(r);
   noteWrites(ctx.state.written ??= newTaskWrites(), cls);
 }
 

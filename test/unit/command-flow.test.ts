@@ -3142,6 +3142,30 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     expect(phases(h)).toEqual(["decided", "started", "ended"]);
   });
 
+  it("refuses a PowerShell loop that deletes Ember's own folder, never announcing it as code Ember can't read (commands-remote-c3-2, i6a)", async () => {
+    setCommandJudge(null);
+    const WIN: TargetBinding = { ...LOCAL, screenOs: "win32", shellOs: "win32" };
+    const facts: Partial<RunnerFacts> = {
+      os: "win32", shells: ["powershell", "cmd"], shellPaths: { powershell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", cmd: "C:\\Windows\\System32\\cmd.exe" },
+      script: null, home: "C:\\Users\\ana", user: "ana", ember: { paths: ["C:\\Users\\ana\\AppData\\Local\\ember"], pids: [10], names: /^ember$/ },
+    };
+    for (const command of [
+      '$d = "$env:LOCALAPPDATA\\ember"; foreach ($f in @($d)) { Remove-Item -Recurse $f }',
+      "foreach ($f in @($env:LOCALAPPDATA)) { Remove-Item -Recurse $f }",
+    ]) {
+      const h = auto({ binding: WIN, facts, words: "tidy up" });
+      expect((await call(h, { target: "this computer", shell: "powershell", command })).resultType, command).toBe("denied");
+      expect(h.asked, command).toEqual([]);
+      expect(h.announced, command).toEqual([]);
+      expect(h.starts, command).toEqual([]);
+      expect(h.audit.find(e => e.phase === "decided"), command).toMatchObject({ verdict: "refuse", rules: ["ember.path"] });
+    }
+    // A loop that only lists the folder above Ember's is code Ember can't read, announced as before.
+    const h = auto({ binding: WIN, facts, words: "list my app data" });
+    expect((await call(h, { target: "this computer", shell: "powershell", command: "foreach ($f in Get-ChildItem $env:LOCALAPPDATA) { Write-Output $f.Name }" })).resultType).toBe("success");
+    expect(h.asked).toEqual([]);
+  });
+
   it.each<[string, "linux" | "win32", string]>([
     ["root", "linux", "Commands here run as root (the administrator)."],
     ["an administrator", "win32", "Ember is running as an administrator here."],
@@ -5110,5 +5134,75 @@ describe("direct Node shares the guarded command flow", () => {
     const h = nodeHarness();
     await runCommandTool(Object.assign({ target: "this computer", command: "echo safe", why: "Check shell behavior" }, { nodeArgv: ["--version"] }), h.ctx);
     expect(h.starts).toHaveLength(1); expect(h.nodes).toHaveLength(0);
+  });
+});
+
+describe("script loop bodies (audit-seven dc81160b)", () => {
+  it("judges a script loop's command with each option its written-out list hands it (commands-remote-c7-4, i6a)", async () => {
+    setCommandJudge(null);
+    for (const [script, rule] of [
+      ["for f in --hard; do git reset $f; done\n", "git.reset.hard"],
+      ['for f in --hard --soft; do git reset "$f"; done\n', "git.reset.hard"],
+      ["for o in -rf; do rm $o build; done\n", "posix.rm"],
+    ]) {
+      const h = harness({ binding: LOCAL, answers: ["deny"], readScript: async () => script, paths: p => ({ exists: true, real: p }) });
+      expect((await call(h, { target: "this computer", command: "sh task.sh" })).resultType, script).toBe("denied");
+      expect(h.asked, script).toHaveLength(1);
+      expect(h.starts, script).toEqual([]);
+      expect(h.audit.find(e => e.phase === "decided")?.rules as string[], script).toContain(rule);
+    }
+    // In the home folder, `find . -delete` would delete Ember's own files: refused, whatever pass it is.
+    const home = harness({ binding: LOCAL, readScript: async () => "for f in -delete; do find . $f; done\n" });
+    expect((await call(home, { target: "this computer", command: "sh task.sh" })).resultType).toBe("denied");
+    expect(home.asked).toEqual([]);
+  });
+
+  it("still runs an ordinary script loop without asking", async () => {
+    setCommandJudge(null);
+    for (const script of ["for t in unit lint; do echo $t; done\n", "for d in a b; do cd $d; make; cd ..; done\n"]) {
+      const h = harness({ binding: LOCAL, readScript: async () => script });
+      expect((await call(h, { target: "this computer", command: "sh task.sh" })).resultType, script).toBe("success");
+      expect(h.asked, script).toEqual([]);
+    }
+  });
+});
+
+describe("download provenance through inline code and remotes the task added (audit-seven 64be29ee)", () => {
+  it("keeps a download copied by inline code marked across separate calls (commands-remote-c2-2, i6a)", async () => {
+    setCommandJudge(null);
+    const h = harness({ binding: LOCAL, answers: ["once", "deny"], paths: p => ({ exists: false, real: p }), readScript: async () => "echo harmless\n" });
+    expect((await call(h, { target: "this computer", command: "curl -o original.py https://example.com/original.py" })).resultType).toBe("success");
+    expect((await call(h, { target: "this computer", command: 'python3 -c \'import shutil; shutil.copy("original.py", "copied.sh")\'' })).resultType).toBe("success");
+    expect((await call(h, { target: "this computer", command: "bash copied.sh" })).resultType).toBe("denied");
+    expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says.join(" ")).toMatch(/run a file downloaded in this task/i);
+  });
+
+  it("keeps code fetched from a remote an earlier call added marked across calls (commands-remote-c5-4, i6a)", async () => {
+    setCommandJudge(null);
+    for (const fetch of ["git pull extra-source", "git fetch extra-source"]) {
+      const h = harness({ binding: LOCAL, answers: ["deny"], paths: p => ({ exists: false, real: p }) });
+      expect((await call(h, { target: "this computer", command: "git remote add extra-source https://example.com/project.git" })).resultType).toBe("success");
+      expect((await call(h, { target: "this computer", command: fetch })).resultType, fetch).toBe("success");
+      expect(h.ctx.state.downloaded.size, fetch).toBeGreaterThan(0);
+      expect((await call(h, { target: "this computer", command: "make" })).resultType, fetch).toBe("denied");
+      expect((h.asked.at(-1)?.panel as { card: CommandCard }).card.says.join(" ")).toMatch(/run a file downloaded in this task/i);
+    }
+    // A pull from the branch's own upstream, or from origin, leaves later builds as they were.
+    for (const fetch of ["git pull", "git pull origin main"]) {
+      const h = harness({ binding: LOCAL, paths: p => ({ exists: false, real: p }) });
+      expect((await call(h, { target: "this computer", command: "git remote add extra-source https://example.com/project.git" })).resultType).toBe("success");
+      expect((await call(h, { target: "this computer", command: fetch })).resultType, fetch).toBe("success");
+      expect((await call(h, { target: "this computer", command: "make" })).resultType, fetch).toBe("success");
+      expect(h.asked, fetch).toEqual([]);
+    }
+  });
+
+  it("leaves later scripts as they were after inline code that names no download", async () => {
+    setCommandJudge(null);
+    const h = harness({ binding: LOCAL, answers: ["once"], paths: p => ({ exists: false, real: p }), readScript: async () => "echo harmless\n" });
+    expect((await call(h, { target: "this computer", command: "curl -o original.py https://example.com/original.py" })).resultType).toBe("success");
+    expect((await call(h, { target: "this computer", command: "python3 -c 'print(1)'" })).resultType).toBe("success");
+    expect((await call(h, { target: "this computer", command: "bash other.sh" })).resultType).toBe("success");
+    expect(h.asked).toHaveLength(1);
   });
 });

@@ -262,7 +262,19 @@ const LIST_ARGS = String.raw`(?:${LIST_SEP}${LIST_ELEMENT}){0,12}?`;
  * a comma, a bracket or its own quote, so a long run of other characters is looked at once; never an option's folder
  * (`"-I/usr/include/mysql"`).
  */
-const listProgram = (names: string): string => String.raw`(?<![^\s,["'])(?:(?!-)[^\s"',[\]]*[\/\\])?(?:${names})(?:\.[eE][xX][eE])?["']?(?=${LIST_SEP})`;
+const listProgram = (names: string): string => String.raw`(?<![^\s,["'])(?:(?!-)[^\s"',[\]]*[\/\\])?(?:${anyCase(names)})(?:\.[eE][xX][eE])?["']?(?=${LIST_SEP})`;
+/**
+ * A program's names in any case, letter by letter (`[mM][yY]…`, no flag, so the rest of a pattern keeps its case): a
+ * list may name it `"mYsQl"`, `"Redis-Cli"` or `"CURL.EXE"`, which Windows and macOS run as the program (memory-y7-1).
+ */
+function anyCase(names: string): string {
+  return names.replace(/[a-z]/g, c => `[${c}${c.toUpperCase()}]`);
+}
+/** htpasswd's options as list elements (`"-nbB", "-C", "10"`), one of them with `b`; with `n` when `n` is given. */
+const listHtpasswd = (n: boolean): string => {
+  const opt = String.raw`${LIST_SEP}["']?-[A-Za-z]+["']?(?:${LIST_SEP}["']?\d+["']?)?`;
+  return String.raw`(?=(?:${opt}){0,3}?${LIST_SEP}["']?-[A-Za-z]*b)${n ? "" : "(?!"}(?=(?:${opt}){0,3}?${LIST_SEP}["']?-[A-Za-z]*n)${n ? "" : ")"}(?:${opt}){1,4}`;
+};
 /** An element that is exactly `option`, with the quote (`q`) it opens with, if any. */
 const listOption = (option: string): string => String.raw`${LIST_SEP}(?<q>["']?)(?:${option})`;
 const LIST_NOT_VALUE = String.raw`(?![$%{<*[])`;
@@ -286,6 +298,11 @@ const LIST_SWITCH_OFF = String.raw`--?no[-_]`;
  */
 const LIST_NO_VALUE = String.raw`(?:[Nn]one|[Nn]ull|nil|undefined|[Ss]tr(?:ing)?|int(?:eger)?|bool(?:ean)?|float|store_(?:true|false|const))`;
 /**
+ * A value that only says where the password is read from, as openssl's `-pass` takes it (`env:PW`, `file:pw.txt`,
+ * `fd:3`, `stdin`): never the password itself (memory-v7-1).
+ */
+const LIST_NAMES_SOURCE = String.raw`(?!(?:env|file|fd):[^\s"']|stdin\k<q>)`;
+/**
  * OPTION_PASSWORDS for lists of arguments: `keep` stays and `value` is hidden. MySQL's and MariaDB's `"-p…"` (a bare
  * `"-p"` prompts, and `"-P"` is a port), `"-p", "…"` after sshpass, mongo's clients and a registry's login,
  * `"-a", "…"` after redis-cli, `"-u", "admin:…"` after curl and wget, `"-U", "admin%…"` after smbclient, openssl's
@@ -297,8 +314,10 @@ const LIST_NO_VALUE = String.raw`(?:[Nn]one|[Nn]ull|nil|undefined|[Ss]tr(?:ing)?
  * it's replaced, a mapping's value and next key (`inMapping`: `"name": "--password", "description": …`) and the
  * option's own name exactly (`ownName`: click's `"--api-key", "api_key"`).
  */
+/** MySQL's and MariaDB's row of LIST_PASSWORDS, which needs a `-p` in the text: skipped without one, as MYSQL_PASSWORD is. */
+const LIST_MYSQL = new RegExp(String.raw`(?<keep>${listProgram(CLIENT)}${LIST_ARGS}${listOption("-p")})(?<value>${listValue("-p")})`, "g");
 const LIST_PASSWORDS: readonly RegExp[] = [
-  new RegExp(String.raw`(?<keep>${listProgram(CLIENT)}${LIST_ARGS}${listOption("-p")})(?<value>${listValue("-p")})`, "g"),
+  LIST_MYSQL,
   new RegExp(String.raw`(?<keep>${listProgram("sshpass|mongo|mongosh|mongodump|mongorestore|mongoexport|mongoimport")}${LIST_ARGS}${listOption("-p")}(?:\k<q>${LIST_SEP}\k<q>)?)(?<value>${listValue("(?:-p)?")})`, "g"),
   new RegExp(String.raw`(?<keep>${listProgram("docker|podman|nerdctl|buildah|helm")}${LIST_ARGS}${LIST_SEP}["']?login["']?${LIST_ARGS}${listPair("-p|--password")})(?<value>${listValue("")})`, "g"),
   new RegExp(String.raw`(?<keep>${listProgram("redis-cli")}${LIST_ARGS}${listPair("-a")})(?<value>${listValue("")})`, "g"),
@@ -306,7 +325,13 @@ const LIST_PASSWORDS: readonly RegExp[] = [
   new RegExp(String.raw`(?<keep>${listProgram("smbclient")}${LIST_ARGS}${listPair("-U")}[^\s"',%\]]*%)(?<value>${listValue(String.raw`[^\s"',%\]]*%`)})`, "g"),
   new RegExp(String.raw`(?<keep>${listProgram("openssl")}${LIST_ARGS}${listPair("-k")})(?<value>${listValue("")})`, "g"),
   new RegExp(String.raw`(?<keep>${listProgram("openssl")}${LIST_ARGS}${listPair("-pass(?:in|out)?")}pass:)(?<value>${listValue("pass:")})`, "g"),
-  new RegExp(String.raw`(?<keep>(?<![^\s,[(])(?<q>["'])(?!${LIST_SWITCH_OFF})(?<option>${SECRET_OPTION})\k<q>${LIST_SEP}\k<q>)(?<value>(?!-)${LIST_NOT_VALUE}(?!(?:${LIST_HOLDER}|${LIST_NO_VALUE})\k<q>)(?:(?!\k<q>)\S){3,})(?=\k<q>)`, "g"),
+  // htpasswd's `-nb user password` and `-b file user password`, and `net use \\srv\share password` (also after
+  // `/user:name`), as their lines are read (memory-v7-1).
+  new RegExp(String.raw`(?<keep>${listProgram("htpasswd")}${listHtpasswd(true)}${LIST_SEP}${LIST_ELEMENT}${listOption("")})(?<value>${listValue("")})`, "g"),
+  new RegExp(String.raw`(?<keep>${listProgram("htpasswd")}${listHtpasswd(false)}${LIST_SEP}${LIST_ELEMENT}${LIST_SEP}${LIST_ELEMENT}${listOption("")})(?<value>${listValue("")})`, "g"),
+  new RegExp(String.raw`(?<keep>${listProgram("net")}${LIST_SEP}["']?${anyCase("use")}["']?(?:${LIST_SEP}["']?[A-Za-z]:["']?)?${LIST_SEP}["']?\\{2,4}[^\s"',\]]+["']?${listOption("")})(?<value>(?!/)${listValue("")})`, "g"),
+  new RegExp(String.raw`(?<keep>${listProgram("net")}${LIST_SEP}["']?${anyCase("use")}["']?${LIST_ARGS}${LIST_SEP}["']?/${anyCase("user")}:[^\s"',\]]+["']?${listOption("")})(?<value>(?!/)${listValue("")})`, "g"),
+  new RegExp(String.raw`(?<keep>(?<![^\s,[(])(?<q>["'])(?!${LIST_SWITCH_OFF})(?<option>${SECRET_OPTION})\k<q>${LIST_SEP}\k<q>)(?<value>(?!-)${LIST_NOT_VALUE}(?!(?:${LIST_HOLDER}|${LIST_NO_VALUE})\k<q>)${LIST_NAMES_SOURCE}(?:(?!\k<q>)\S){3,})(?=\k<q>)`, "g"),
 ];
 
 /**
@@ -325,6 +350,43 @@ function ownName(option: string, value: string): boolean {
  */
 function inMapping(text: string, at: number, end: number, q: string): boolean {
   return /:[ \t]*$/.test(text.slice(Math.max(0, at - 32), at)) && new RegExp(String.raw`^${q}[ \t]*:`).test(text.slice(end, end + 34));
+}
+
+/** A quoted list element or a bracket, for hideClientLists: a string's escapes taken as they come, so it stays linear. */
+const LIST_TOKEN = /[[\]()]|"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'/g;
+const CLIENT_ELEMENT = new RegExp(String.raw`^(?:${CLIENT})(?:\.exe)?$`, "i");
+const LIST_HOLDER_WHOLE = new RegExp(String.raw`^${LIST_HOLDER}$`);
+
+/**
+ * MySQL's and MariaDB's attached `"-p…"` anywhere in a bracketed list that names the client, however many elements
+ * stand between them (a 21-element list: memory-y7-1), past LIST_PASSWORDS's twelve. One scan of the text's quoted
+ * elements and brackets with a stack of lists, so it is linear however the text is made; never a bare `"-p"`, a
+ * variable, a template or a placeholder (as listValue).
+ */
+function hideClientLists(text: string): string {
+  if (!text.includes("-p")) return text;
+  const stack: boolean[] = [];
+  const hide: [number, number][] = [];
+  for (const m of text.matchAll(LIST_TOKEN)) {
+    if (m[1] === undefined && m[2] === undefined) {
+      if (m[0] === "[" || m[0] === "(") stack.push(false);
+      else stack.pop();
+      continue;
+    }
+    if (stack.length === 0) continue;
+    const word = m[1] ?? m[2] ?? "";
+    // The client as an element of its own, alone or with its folder, never an option's folder (`"-I/usr/include/mysql"`).
+    if (!word.startsWith("-") && CLIENT_ELEMENT.test(word.split(/[\\/]/).at(-1) ?? "")) stack[stack.length - 1] = true;
+    const value = word.slice(2);
+    if (stack[stack.length - 1] && word.startsWith("-p") && value !== "" && !/^[$%{<*[]/.test(value) && !LIST_HOLDER_WHOLE.test(value)) {
+      hide.push([m.index + 3, m.index + m[0].length - 1]);
+    }
+  }
+  if (hide.length === 0) return text;
+  let out = "";
+  let at = 0;
+  for (const [from, to] of hide) { out += text.slice(at, from) + SECRET_HIDDEN; at = to; }
+  return out + text.slice(at);
 }
 
 /** URL credentials: `://user:pass@` (and `://:pass@`, a password with no user: commands-remote-r10-6) becomes `://[secret hidden]@`. */
@@ -404,12 +466,13 @@ const passes = (guarded: boolean): readonly ((text: string) => string)[] => [
   ...TOKEN_PATTERNS.map(re => (re === PRIVATE_KEY ? hidePrivateKeys : (t: string) => t.replace(re, SECRET_HIDDEN))),
   ...VALUE_PATTERNS.map(re => (t: string) => (guarded && !(VALUE_NEEDS.get(re) ?? []).every(n => t.includes(n)) ? t : t.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN))),
   ...OPTION_PASSWORDS.map(re => (t: string) => (guarded && re === MYSQL_PASSWORD && !t.includes("-p") ? t : t.replace(re, (_m, keep: string, quote: string, _value: string, after?: string) => `${keep}${quote}${SECRET_HIDDEN}${quote}${typeof after === "string" ? after : ""}`))),
-  ...LIST_PASSWORDS.map(re => (t: string) => t.replace(re, (...m) => {
+  ...LIST_PASSWORDS.map(re => (t: string) => (guarded && re === LIST_MYSQL && !t.includes("-p") ? t : t.replace(re, (...m) => {
     const g = m[m.length - 1] as { keep: string; value: string; q?: string; option?: string };
     const [match, at, whole] = [String(m[0]), m[m.length - 3] as number, m[m.length - 2] as string];
     const leave = g.option !== undefined && (ownName(g.option, g.value) || inMapping(whole, at, at + match.length, g.q ?? ""));
     return leave ? match : `${g.keep}${SECRET_HIDDEN}`;
-  })),
+  }))),
+  hideClientLists,
   ...CONFIG_PATTERNS.map(re => (t: string) => t.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN)),
   t => t.replace(URL_CREDENTIALS, `://${SECRET_HIDDEN}@`),
   hideKeyValues,
