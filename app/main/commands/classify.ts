@@ -1105,12 +1105,12 @@ class Classifier {
   /**
    * The values the text gives a word (formsOf): null for one with a part Ember can't see (with `unseen`, the form with
    * UNSEEN where that part stands: commands-y6-2), a resolved word its own value (`T=deploy; make -j "$T"`:
-   * commands-remote-w5-2).
+   * commands-remote-w5-2). `ps`: a PowerShell word, whose variables are PowerShell's.
    */
-  knownForms(a: Arg, unseen = false): (string | null)[] {
+  knownForms(a: Arg, unseen = false, ps = false): (string | null)[] {
     if (a.v !== null) return [a.v];
     if (!a.parts) return [unseen ? UNSEEN : null];
-    return this.formsOf(a.parts).map(f => (f.includes(UNSEEN) && !unseen ? null : f.replace(PATTERN, "")));
+    return this.formsOf(a.parts, ps ? this.psVarValues : this.varValues).map(f => (f.includes(UNSEEN) && !unseen ? null : f.replace(PATTERN, "")));
   }
 
   /** The forms a word may take with the values the text gave its variables (UNSEEN for any other part). */
@@ -1249,8 +1249,29 @@ class Classifier {
     this.judge((sc.path.flavour === "win32" ? win32 : posix).join(abs, "x"), use, sc.path, text, sc);
   }
 
+  /**
+   * Links this text makes to Ember's folder or a folder that holds it (`ln -s ~/.config L`, a junction to
+   * %LOCALAPPDATA%): a later part of the same text that names a path through one reaches what it points to, which the
+   * target can't show when it is probed, as the link isn't there yet (commands-remote-c7-1).
+   */
+  private linkAliases: { link: string; to: string; env: PathEnv }[] = [];
+
+  /** Notes that `link` will lead to `to` (both absolute), when `to` is Ember's own folder or holds it. */
+  noteLink(link: string, to: string, env: PathEnv): void {
+    if (!isEmberPath(to, env) && !holdsEmberPath(to, env)) return;
+    if (this.linkAliases.length < MAX_FORMS && !this.linkAliases.some(l => l.link === link && l.to === to)) this.linkAliases.push({ link, to, env });
+  }
+
   /** §3.6's rules on one absolute path. */
-  private judge(abs: string, use: PathUse, env: PathEnv, text: string, sc: Scope, isPrefix = false): void {
+  private judge(abs: string, use: PathUse, env: PathEnv, text: string, sc: Scope, isPrefix = false, throughLink = false): void {
+    // A path through a link this text made is judged where it leads too, once (a link to a link is followed no further).
+    if (!throughLink) {
+      for (const l of this.linkAliases) {
+        if (l.env.flavour !== env.flavour || !isUnder(abs, l.link, env)) continue;
+        const mod = env.flavour === "win32" ? win32 : posix;
+        this.judge(mod.join(l.to, mod.relative(l.link, abs)), use, env, text, sc, isPrefix, true);
+      }
+    }
     if (isEmberPath(abs, env) || (sc.path !== env && isEmberPath(abs, sc.path))) this.refuseWith("ember.path", accessOf(use));
     // A glob's fixed folder: what it holds is judged by the pattern (useGlob), not the whole folder.
     if (!isPrefix && (use === "deleteTree" || use === "move" || use === "permTree") && holdsEmberPath(abs, env)) this.refuseWith("ember.path", "safety");
@@ -6783,6 +6804,27 @@ reg(NATIVE, ["diskutil"], h => {
   else if (/^(mount|unmount|umount|mountdisk|unmountdisk|eject|apfs|cs|ar|enablejournal|disablejournal|rename|repair)/.test(verb)) h.e.add("system", "system.kernel", "Changes how the system works.");
 });
 
+/**
+ * A link a command makes at each of `links` (as written, any form a variable may give) to `target`: noted, so a later
+ * part of the text that reads or changes a path through it is judged where it leads (commands-remote-c7-1, v7-4). A
+ * symbolic link's relative target is read beside the link (`link`), a hard link's or a junction's from the current
+ * folder (`cwd`); `both` where the program may do either.
+ */
+function noteLinks(h: H, links: readonly Arg[], target: Arg, base: "link" | "cwd" | "both"): void {
+  const mod = h.sc.path.flavour === "win32" ? win32 : posix;
+  const at = (cwd: string, p: string): string => resolveTargetPath(p, { os: h.sc.os, home: h.sc.home ?? "", cwd });
+  const ps = h.sc.family === "powershell";
+  const targets = h.e.knownForms(target, false, ps).filter((t): t is string => t !== null && t !== "");
+  for (const form of links.flatMap(l => h.e.knownForms(l, false, ps))) {
+    if (form === null || form === "" || (!h.sc.cwd && !isAbsolute(form, h.sc.path.flavour) && !form.startsWith("~"))) continue;
+    const link = at(h.sc.cwd ?? "", form);
+    for (const t of targets) {
+      if (base !== "link" && h.sc.cwd) h.e.noteLink(link, at(h.sc.cwd, t), h.sc.path);
+      if (base !== "cwd") h.e.noteLink(link, at(mod.dirname(link), t), h.sc.path);
+    }
+  }
+}
+
 // cp, mv, install, ln, rsync (local): the destination may exist (§3.5.1).
 function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   // Main's table gave them all the next word, so other words were the files copied: judged that way too (commands-held-8).
@@ -6818,6 +6860,23 @@ function copyLike(h: H, kind: "cp" | "mv" | "install" | "ln"): void {
   const bsdContents = (s: Arg): boolean => h.key === "cp" && h.sc.os === "darwin" && /[\\/]$/.test(s.v ?? "");
   // -T, and ln's -n, take the name as it is.
   const asIs = has(p, "T", "no-target-directory") || (kind === "ln" && has(p, "n", "no-dereference"));
+  // ln, and cp's -s and -l (also shortened to any prefix GNU takes, `--sy`, `--l`), make links to each source: a later
+  // part of the line that goes through one to Ember's files is judged there (commands-remote-c7-1, commands-v7-2).
+  const longPrefix = (...names: string[]): boolean => p.opts.some(o => o.name.length > 2 && o.name.startsWith("--") && names.some(n => n.startsWith(o.name.slice(2))));
+  const symbolic = kind === "ln" ? has(p, "s", "symbolic") || longPrefix("symbolic") : kind === "cp" && (has(p, "s") || longPrefix("symbolic-link"));
+  const hard = kind === "ln" ? !symbolic : kind === "cp" && (has(p, "l") || longPrefix("link"));
+  if (symbolic || hard) {
+    // `ln -r` writes the target relative to the link from where it is named here.
+    const base = !symbolic || (kind === "ln" && (has(p, "r", "relative") || longPrefix("relative"))) ? "cwd" : "link";
+    const mod = h.sc.path.flavour === "win32" ? win32 : posix;
+    const destForms = h.e.knownForms(dest).filter((f): f is string => f !== null && f !== "");
+    for (const s of sources) {
+      // Into a folder the link is named for its source; a name that may be a folder may be either.
+      const name = s.v === null || s.glob ? null : baseName(s.v.replace(/[\\/]+$/, ""), h.sc.path.flavour);
+      const links = destForms.flatMap(f => (asIs || name === null ? [f] : intoFolder ? [mod.join(f, name)] : [f, mod.join(f, name)]));
+      noteLinks(h, links.map(lit), s, base);
+    }
+  }
   /** The file a source becomes in the folder (`cp a dir` makes dir/a), probed once; null for files Ember can't name. */
   const insides = new Map<Arg, Obj | null>();
   const inside = (s: Arg): Obj | null => {
@@ -12331,6 +12390,9 @@ reg(CMDLETS, ["new-item"], h => {
   if (/symboliclink|junction|hardlink/.test(type)) {
     const targets = b.named.get("Value") ?? [];
     for (const t of targets) h.e.usePath(t, "read", h.sc);
+    // What a later part reaches through the link (commands-remote-c7-1); a symbolic link's relative target may be read
+    // beside the link or from the current folder, by PowerShell's version (commands-v7-4).
+    for (const t of targets) noteLinks(h, files, t, type === "symboliclink" ? "both" : "cwd");
     // A link to a download runs the download (commands-remote-c2-2).
     for (const o of objs) h.e.carryCopies(targets, o, h.sc, true);
   }
@@ -12632,6 +12694,9 @@ reg(CMD_BUILTINS, ["type", "dir", "tree", "more", "find", "findstr", "fc", "comp
   if (h.key === "mklink") {
     const link = ops[0] ? h.e.usePath(ops[0], "write", h.sc) : null;
     if (ops[1]) h.e.usePath(ops[1], "read", h.sc);
+    // What a later part reaches through the link: a symbolic one's relative target is read beside it, a junction's
+    // and a hard link's from here (commands-remote-c7-1, v7-4).
+    if (ops[0] && ops[1]) noteLinks(h, [ops[0]], ops[1], sw.has("j") || sw.has("h") ? "cwd" : "link");
     // A link to a download runs the download (commands-remote-c2-2).
     if (link && ops[1]) h.e.carryCopies([ops[1]], link, h.sc, true);
     return;

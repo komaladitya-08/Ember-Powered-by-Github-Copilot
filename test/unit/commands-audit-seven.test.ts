@@ -36,3 +36,46 @@ describe("protected paths handed to opaque shell contexts", () => {
     expect(win("set X=1 & dir %USERPROFILE%", "cmd")).toBe("run");
   });
 });
+
+describe("links to folders that hold Ember's", () => {
+  const linux = (command: string) => runCase({ cmd: command, verdict: "run", context: "linux", missing: ["/home/ana/bridge"] }, { shell: "bash", context: "linux" }).decision.verdict;
+
+  it("refuses a later part of the line that reaches Ember's settings through a link it made (commands-remote-c7-1, i6a)", () => {
+    for (const command of [
+      "ln -s ~/.config config-link; cat config-link/ember/settings.json",
+      "ln -s ~ home-link; sed -i s/a/b/ home-link/.config/ember/settings.json",
+      'base=~/.config; ln -s "$base" config-link; cat config-link/ember/settings.json',
+      "ln -s ~/.config links/; cat links/.config/ember/settings.json",
+    ]) expect(linux(command), command).toBe("refuse");
+    for (const command of [
+      "New-Item -ItemType Junction -Path link -Value $env:LOCALAPPDATA; Get-Content link\\ember\\settings.json",
+      "$d = $env:LOCALAPPDATA; New-Item -ItemType Junction -Path link -Value $d; Get-Content link\\ember\\settings.json",
+    ]) expect(win(command, "powershell"), command).toBe("refuse");
+    expect(win("mklink /J link %LOCALAPPDATA% & type link\\ember\\settings.json", "cmd")).toBe("refuse");
+  });
+
+  it("reads a symbolic link's relative target beside the link (commands-v7-4)", () => {
+    for (const command of [
+      "ln -s .config /home/ana/bridge; cat /home/ana/bridge/ember/settings.json",
+      "ln -s . /home/ana/bridge; cat /home/ana/bridge/.config/ember/settings.json",
+      "ln -sT .config /home/ana/bridge; cat /home/ana/bridge/ember/settings.json",
+      "ln --symbolic .config /home/ana/bridge; cat /home/ana/bridge/ember/settings.json",
+      'd=/home/ana/bridge; ln -s .config "$d"; cat /home/ana/bridge/ember/settings.json',
+    ]) expect(linux(command), command).toBe("refuse");
+    expect(win('New-Item -ItemType SymbolicLink -Path "$env:LOCALAPPDATA\\bridge" -Value ember; Get-Content "$env:LOCALAPPDATA\\bridge\\settings.json"', "powershell")).toBe("refuse");
+    expect(win('mklink /D "%LOCALAPPDATA%\\bridge" ember & type "%LOCALAPPDATA%\\bridge\\settings.json"', "cmd")).toBe("refuse");
+  });
+
+  it("follows the links cp makes too, by any prefix of its long options (commands-remote-c7-1, commands-v7-2)", () => {
+    for (const option of ["--symbolic-link", "--sy", "-s", "-as", "--link", "--l"]) {
+      expect(linux(`cp ${option} ~/.config config-link; cat config-link/ember/settings.json`), option).toBe("refuse");
+    }
+  });
+
+  it("still makes ordinary links, and links to those folders, when nothing reaches Ember's files through them", () => {
+    for (const command of ["ln -s build build-link", "ln -s notes.txt notes-link", "ln -s ~/.config cfg", "ln -s ~ H; cat H/notes.txt", "ln -sr .config /home/ana/bridge"]) {
+      expect(linux(command), command).toBe("run");
+    }
+    expect(win("New-Item -ItemType Junction -Path link -Value C:\\Users\\ana\\proj; Get-Content link\\a.txt", "powershell")).toBe("run");
+  });
+});

@@ -843,7 +843,9 @@ Remove-Item -Recurse $d`, `$d = Join-Path $env:LOCALAPPDATA 'ember'`), and so do
 after a `sh -c` text, which are its `$0`, `$1`… (`sh -c 'cat "$0/settings.json"' ~/.config/ember`), a PowerShell loop
 Ember can't read that names one of them, or a folder that holds them where it deletes or moves something (`foreach ($f
 in @($env:LOCALAPPDATA)) { Remove-Item -Recurse $f }`), a cmd variable set on the line (`set "D=%LOCALAPPDATA%\ember" &
-type "%D%\settings.json"`),
+type "%D%\settings.json"`), a path through a link the same command makes to them or to a folder that holds them (`ln -s
+~/.config L; cat L/ember/settings.json`, `cp -s`, a symbolic link's target read beside the link, a PowerShell junction
+or `mklink`; making the link alone runs, and a later command is judged by where the link really leads),
 `printf -v` and the text a here-string or here-document gives `read` or `xargs` (`while read f; do rm -rf "$f"; done <<<
 ~/.config/ember`); when it names a folder that holds them for a delete or a move (`for f in ~; do rm -rf "$f"; done`),
 and when a name Ember can't see stands where one of Ember's folders is (`rm -rf ~/.config/$x`, or a cut or a default
