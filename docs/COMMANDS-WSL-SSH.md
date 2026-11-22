@@ -848,9 +848,10 @@ loop's list or a variable the command sets names them (`for f in ~/.config/ember
 `d=~/.config/ember; rm -rf "$d"`, `d=~/.config; rm -rf "$d"/emb*`), in PowerShell too (`$d = "$env:LOCALAPPDATA\ember";
 Remove-Item -Recurse $d`, `$d = Join-Path $env:LOCALAPPDATA 'ember'`), and so do `set --` (`"$1"`, `"$@"`), the words
 after a `sh -c` text, which are its `$0`, `$1`… (`sh -c 'cat "$0/settings.json"' ~/.config/ember`), a PowerShell loop
-Ember can't read that names one of them, or a folder that holds them where it deletes or moves something (`foreach ($f
-in @($env:LOCALAPPDATA)) { Remove-Item -Recurse $f }`), a cmd variable set on the line (`set "D=%LOCALAPPDATA%\ember" &
-type "%D%\settings.json"`), a path through a link the same command makes to them or to a folder that holds them (`ln -s
+Ember can't read that names one of them, or a folder that holds them as what it deletes or moves (`foreach ($f in
+@($env:LOCALAPPDATA)) { Remove-Item -Recurse $f }`; a folder only listed or echoed beside a deletion is not refused), a
+cmd variable set on the line, also from a profile variable or another such variable (`set "D=%LOCALAPPDATA%\ember" &
+type "%D%\settings.json"`, `set D=%LOCALAPPDATA%& set E=%D%\ember& type %E%\settings.json`), a path through a link the same command makes to them or to a folder that holds them (`ln -s
 ~/.config L; cat L/ember/settings.json`, `cp -s`, a symbolic link's target read beside the link, a PowerShell junction
 or `mklink`; making the link alone runs, and a later command is judged by where the link really leads),
 `printf -v` and the text a here-string or here-document gives `read` or `xargs` (`while read f; do rm -rf "$f"; done <<<

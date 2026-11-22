@@ -96,8 +96,8 @@ function filterPrograms(key: string, args: readonly Arg[]): (string | null)[] {
   const given = values(p, "e", ...(key === "sed" ? ["expression"] : ["source"]));
   return given.length ? given : [p.operands[0]?.v ?? null];
 }
-/** A Windows text's words that delete or move a tree, in PowerShell (and its aliases) or cmd: fallbackScan's ancestors. */
-const WIN_REMOVES = /(^|[^\w-])(remove-item|ri|rm|rmdir|rd|del|erase|move-item|mi|mv|move|rename-item|rni|ren|rename)(?![\w-])/i;
+/** A Windows command word that deletes or moves a tree, in PowerShell (and its aliases) or cmd: removesHeld's. */
+const WIN_REMOVES = /^@?(remove-item|ri|rm|rmdir|rd|del|erase|move-item|mi|mv|move|rename-item|rni|ren|rename)(\.exe)?$/i;
 /** The shell's positional parameters (`$1`…`$9`, `$@`, `$*`), as `set --` gives them values. */
 const POSITIONAL: readonly string[] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "@", "*"];
 /** What `read` may set from a text: each of its lines, and each word of each line. */
@@ -2738,19 +2738,17 @@ class Engine extends Classifier {
     const p = lexCmd(text);
     this.noteUnclear(p.unclear);
     if (p.fatal) { this.fallbackScan(text, sc); return; }
+    // A variable a `set` gives a value is judged where it is used, by that value (cmdWord, cmdSetValue): the text is
+    // never scanned whole for paths, which refused a profile folder only listed or echoed (commands-remote-c3-2).
     this.cmdLine(p, child(sc, { family: "cmd", shell: "cmd" }));
-    // cmd expands `%D%` when it reads the line, so a `set` on it may hand a later part a path Ember never saw as one:
-    // the whole text is scanned for Ember's own paths too, asking nothing more (commands-remote-c3-2).
-    if (!this.refuse && this.envChanged) this.fallbackScan(text, sc, false);
   }
 
   /**
    * A text that couldn't be parsed is unclear; Ember's flat refusals still apply to what it can see in it (a program
    * that synthesises input, an Ember path or an `ember:` URL anywhere in it). On Windows a profile variable it can
-   * resolve (`$env:LOCALAPPDATA`, `%LOCALAPPDATA%`) and a quoted value count as the paths they name. `question`
-   * false: a scan for refusals alone, of a text that was parsed.
+   * resolve (`$env:LOCALAPPDATA`, `%LOCALAPPDATA%`) and a quoted value count as the paths they name.
    */
-  private fallbackScan(text: string, sc: Scope, question = true): void {
+  private fallbackScan(text: string, sc: Scope): void {
     // Opaque Windows blocks and cmd assignments still expose known profile paths (commands-remote-c3-2).
     const known: string[] = [];
     const shown = sc.path.flavour !== "win32" ? text : text.replace(/\$\{?(env:[A-Za-z_]\w*|HOME|PWD)\}?|%([A-Za-z_]\w*)%/gi, (whole: string, ps: string | undefined, cmd: string | undefined, offset: number) => {
@@ -2762,19 +2760,44 @@ class Engine extends Classifier {
     });
     const quoted = [...shown.matchAll(/(["'])([^"'\r\n]*)\1/g)].map(m => m[2].slice(m[2].indexOf("=") + 1));
     const tokens = [...shown.split(/[\s;|&()<>'"`$={}]+/), ...known, ...quoted].filter(t => t !== "");
-    // A folder that holds Ember's (`$env:LOCALAPPDATA`, the profile) counts only where the text deletes or moves
-    // something: `foreach (...) { Remove-Item -Recurse $f }` may be that folder, `dir %USERPROFILE%` only lists it.
-    const removes = sc.path.flavour === "win32" && WIN_REMOVES.test(text);
+    const at = { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "/" };
+    const paths: string[] = [];
     for (const t of tokens) {
       const base = (t.split(/[\\/]/).pop() ?? t).toLowerCase().replace(/\.(exe|com|bat|cmd)$/, "");
       if (INPUT_SYNTH.has(base)) this.refuseWith("ember.input", "input");
       if (/^ember:/i.test(t)) this.refuseWith("ember.url", "input");
       if (/^[~/\\]|^[A-Za-z]:[\\/]/.test(t) && (sc.home || !t.startsWith("~"))) {
-        const abs = resolveTargetPath(t, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "/" });
-        if (isEmberPath(abs, sc.path) || (removes && holdsEmberPath(abs, sc.path))) this.refuseWith("ember.path", "safety");
+        paths.push(t);
+        if (isEmberPath(resolveTargetPath(t, at), sc.path)) this.refuseWith("ember.path", "safety");
       }
     }
-    if (question && this.findings.every(f => f.cls !== "unclear")) this.unclear("unclear.syntax");
+    if (sc.path.flavour === "win32") this.removesHeld(shown, paths, at, sc);
+    if (this.findings.every(f => f.cls !== "unclear")) this.unclear("unclear.syntax");
+  }
+
+  /**
+   * A Windows text Ember couldn't parse: a folder that holds Ember's (`$env:LOCALAPPDATA`, the profile) is refused only
+   * as what one of its deletes or moves is given, the command's own word or a variable standing first in it, which may
+   * be any path the text names (`foreach ($f in @($env:LOCALAPPDATA)) { Remove-Item -Recurse $f }`). A path only
+   * listed or echoed, and a file beneath the folder (`rm "$f\proj\out.txt"`), are not (commands-remote-c3-2).
+   */
+  private removesHeld(shown: string, paths: readonly string[], at: Parameters<typeof resolveTargetPath>[1], sc: Scope): void {
+    const named = [...new Set(paths)];
+    for (const segment of shown.split(/[;|&{}()\r\n]+/)) {
+      const words = segment.trim().split(/\s+/).map(w => w.replace(/^["']+|["']+$/g, "")).filter(w => w !== "");
+      if (words.length < 2 || !WIN_REMOVES.test(words[0])) continue;
+      for (const w of words.slice(1)) {
+        if (/^-|^\/[A-Za-z?]$/.test(w)) continue;
+        // A variable may be any path the text names; past the cap, each of them as it is (the rest of the word unread).
+        const lead = /^(\$\{?[\w:]+\}?|%\w+%)/.exec(w);
+        const forms = !lead ? [w] : named.length > MAX_FORMS ? named : named.map(p => p + w.slice(lead[0].length));
+        for (const f of forms) {
+          if (!/^[~/\\]|^[A-Za-z]:[\\/]/.test(f)) continue;
+          const abs = resolveTargetPath(f, at);
+          if (isEmberPath(abs, sc.path) || holdsEmberPath(abs, sc.path)) this.refuseWith("ember.path", "safety");
+        }
+      }
+    }
   }
 
   // ----------------------------------------------------------------------------------------------------------------
@@ -3286,9 +3309,14 @@ class Engine extends Classifier {
     let v = "";
     let unresolved = false;
     const win = sc.windows;
+    // A variable the text itself set (`set D=%LOCALAPPDATA%`) stands in `parts` by its name, so Ember's own refusal
+    // judges each value it was given (`type %D%\ember\settings.json`: commands-remote-c3-2); a word with any other
+    // part Ember can't see keeps none, and is judged as before.
+    const parts: (string | { name: string })[] = [];
+    let partsKnown = true;
     for (const seg of w.segs) {
-      if (seg.t === "lit") { v += seg.s; continue; }
-      if (seg.t === "unres") { unresolved = true; continue; }
+      if (seg.t === "lit") { v += seg.s; parts.push(seg.s); continue; }
+      if (seg.t === "unres") { unresolved = true; partsKnown = false; continue; }
       const n = seg.name.toLowerCase();
       const known: Record<string, string | null | undefined> = {
         userprofile: win?.home ?? sc.home, temp: win?.temp, tmp: win?.temp, localappdata: win?.localAppData, appdata: win?.appData,
@@ -3297,10 +3325,13 @@ class Engine extends Classifier {
         programfiles: win ? `${drive(win.systemRoot)}\\Program Files` : undefined,
       };
       const val = known[n];
-      if (val === undefined || val === null) unresolved = true;
-      else v += val;
+      if (val !== undefined && val !== null) { v += val; parts.push(val); continue; }
+      unresolved = true;
+      if (this.psVarValues.has(`env:${n}`)) parts.push({ name: `env:${n}` });
+      else partsKnown = false;
     }
-    return { v: unresolved ? null : v, raw: w.raw, glob: !unresolved && /[*?]/.test(v) };
+    if (!unresolved) return { v, raw: w.raw, glob: /[*?]/.test(v) };
+    return { v: null, raw: w.raw, glob: false, ...(partsKnown ? { parts } : {}) };
   }
 
   private cmdSimple(c: CSimple, sc: Scope, o: { stdinPipe: boolean; pipedFrom?: number }): void {
@@ -12817,6 +12848,36 @@ reg(CMD_BUILTINS, ["type", "dir", "tree", "more", "find", "findstr", "fc", "comp
 reg(CMD_BUILTINS, ["cd", "chdir"], h => NATIVE.cd(h));
 reg(CMD_BUILTINS, ["echo", "echo."], h => { textProgram(h); });
 /** Windows' own variables, whose prefix listing (`set PATH`) shows nothing secret. */
+/**
+ * Keeps the value `set NAME=…` gives a variable, for the words that use it later (cmdWord), for Ember's own refusal
+ * only: `set D=%LOCALAPPDATA%` then `%D%\ember\settings.json` is Ember's settings (commands-remote-c3-2). A value with
+ * a part Ember can't see is one it can't see; spaces around it are dropped, as Windows drops them from a path's parts.
+ */
+function cmdSetValue(h: H, ops: readonly Arg[]): void {
+  const parts: (string | { name: string | null; cut?: true; value?: string; alt?: string })[] = [];
+  let seen = true;
+  ops.forEach((o, k) => {
+    if (k > 0) parts.push(" ");
+    if (o.v !== null) parts.push(o.v);
+    else if (o.parts) parts.push(...o.parts);
+    else seen = false;
+  });
+  const at = parts.findIndex(p => typeof p !== "string" || p.includes("="));
+  const head = parts[at];
+  if (typeof head !== "string") return;
+  const eq = head.indexOf("=");
+  const name = (parts.slice(0, at).join("") + head.slice(0, eq)).trim();
+  if (!/^[A-Za-z_][\w.-]*$/.test(name)) return;
+  const rest = [head.slice(eq + 1), ...parts.slice(at + 1)].filter(p => p !== "");
+  const first = rest[0];
+  const last = rest[rest.length - 1];
+  if (typeof first === "string") rest[0] = first.trimStart();
+  if (typeof last === "string") rest[rest.length - 1] = (rest.length === 1 ? (rest[0] as string) : last).trimEnd();
+  const value: Arg | null = !seen ? null : rest.every(p => typeof p === "string")
+    ? lit(rest.join(""))
+    : { v: null, raw: "", glob: false, parts: rest };
+  h.e.setPsVar(`env:${name.toLowerCase()}`, value);
+}
 const CMD_SET_PLAIN = /^(path|pathext|computername|username|userdomain|userprofile|os|processor_architecture|processor_identifier|number_of_processors|temp|tmp|homedrive|homepath|appdata|localappdata|programfiles|programdata|systemroot|systemdrive|windir|comspec|prompt|psmodulepath|public|cd|date|time|errorlevel)$/i;
 reg(CMD_BUILTINS, ["set"], h => {
   const { sw, ops } = cmdSwitches(h);
@@ -12830,6 +12891,7 @@ reg(CMD_BUILTINS, ["set"], h => {
   // well-known names are ordinary.
   if (eq < 0) { if (!CMD_SET_PLAIN.test(name.trim())) h.e.add("secret", "secret.env", SAYS.env); return; }
   h.e.envChanged = true;
+  cmdSetValue(h, ops);
   if (RISKY_ASSIGNMENTS.has(name.toUpperCase()) || RISKY_ASSIGNMENTS.has(name) || /^(pathext|comspec)$/i.test(name)) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
   if (commandLineSecret(text)) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
 });

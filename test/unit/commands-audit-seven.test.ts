@@ -36,6 +36,30 @@ describe("protected paths handed to opaque shell contexts", () => {
     expect(win('set "D=project" & echo %D%', "cmd")).toBe("run");
     expect(win("set X=1 & dir %USERPROFILE%", "cmd")).toBe("run");
   });
+
+  it("refuses a profile folder only as what a delete or move is given, never one listed or echoed beside it (commands-remote-c3-2 review A)", () => {
+    // Each of these asked before the ports, for a deletion or a word Ember can't name, and asks as it did.
+    for (const [command, shell] of [
+      ["set B=build& dir %USERPROFILE% & rd /s /q %B%", "cmd"],
+      ["set OUT=out& echo %USERPROFILE% & move a.txt %OUT%", "cmd"],
+      ["set P=%USERPROFILE%& cd /d %P% & del /q *.tmp", "cmd"],
+      ['foreach ($f in @($env:USERPROFILE)) { Get-ChildItem $f; rm "$f\\proj\\out.txt" }', "powershell"],
+    ] as const) expect(win(command, shell), command).toBe("ask");
+    // Echoing a path that holds Ember's folder name reads none of its files.
+    expect(win("set X=1 & echo C:\\Users\\ana\\AppData\\Local\\ember", "cmd")).toBe("run");
+    // What the delete is given is still judged.
+    expect(win("set D=%LOCALAPPDATA%& rd /s /q %D%", "cmd")).toBe("refuse");
+    expect(win("set X=1 & rd /s /q %LOCALAPPDATA%", "cmd")).toBe("refuse");
+  });
+
+  it("refuses Ember's settings reached through a cmd variable built from a profile variable (commands-remote-c3-2 review B)", () => {
+    for (const command of [
+      "set D=%LOCALAPPDATA% & type %D%\\ember\\settings.json",
+      'set "D=%localappdata%" & type "%D%\\ember\\settings.json"',
+      "set D=%LOCALAPPDATA%& set E=%D%\\ember& type %E%\\settings.json",
+    ]) expect(win(command, "cmd"), command).toBe("refuse");
+    expect(win("set D=%LOCALAPPDATA%& dir %D%", "cmd")).not.toBe("refuse");
+  });
 });
 
 describe("database command arguments", () => {
