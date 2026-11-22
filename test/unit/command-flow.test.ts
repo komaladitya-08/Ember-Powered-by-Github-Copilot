@@ -3142,6 +3142,30 @@ describe("a command that would ask, in Autopilot (autopilot.ts; modes-D2, modes-
     expect(phases(h)).toEqual(["decided", "started", "ended"]);
   });
 
+  it("refuses a PowerShell loop that deletes Ember's own folder, never announcing it as code Ember can't read (commands-remote-c3-2, i6a)", async () => {
+    setCommandJudge(null);
+    const WIN: TargetBinding = { ...LOCAL, screenOs: "win32", shellOs: "win32" };
+    const facts: Partial<RunnerFacts> = {
+      os: "win32", shells: ["powershell", "cmd"], shellPaths: { powershell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", cmd: "C:\\Windows\\System32\\cmd.exe" },
+      script: null, home: "C:\\Users\\ana", user: "ana", ember: { paths: ["C:\\Users\\ana\\AppData\\Local\\ember"], pids: [10], names: /^ember$/ },
+    };
+    for (const command of [
+      '$d = "$env:LOCALAPPDATA\\ember"; foreach ($f in @($d)) { Remove-Item -Recurse $f }',
+      "foreach ($f in @($env:LOCALAPPDATA)) { Remove-Item -Recurse $f }",
+    ]) {
+      const h = auto({ binding: WIN, facts, words: "tidy up" });
+      expect((await call(h, { target: "this computer", shell: "powershell", command })).resultType, command).toBe("denied");
+      expect(h.asked, command).toEqual([]);
+      expect(h.announced, command).toEqual([]);
+      expect(h.starts, command).toEqual([]);
+      expect(h.audit.find(e => e.phase === "decided"), command).toMatchObject({ verdict: "refuse", rules: ["ember.path"] });
+    }
+    // A loop that only lists the folder above Ember's is code Ember can't read, announced as before.
+    const h = auto({ binding: WIN, facts, words: "list my app data" });
+    expect((await call(h, { target: "this computer", shell: "powershell", command: "foreach ($f in Get-ChildItem $env:LOCALAPPDATA) { Write-Output $f.Name }" })).resultType).toBe("success");
+    expect(h.asked).toEqual([]);
+  });
+
   it.each<[string, "linux" | "win32", string]>([
     ["root", "linux", "Commands here run as root (the administrator)."],
     ["an administrator", "win32", "Ember is running as an administrator here."],

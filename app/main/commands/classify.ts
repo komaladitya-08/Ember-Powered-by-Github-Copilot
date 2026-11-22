@@ -96,6 +96,8 @@ function filterPrograms(key: string, args: readonly Arg[]): (string | null)[] {
   const given = values(p, "e", ...(key === "sed" ? ["expression"] : ["source"]));
   return given.length ? given : [p.operands[0]?.v ?? null];
 }
+/** A Windows text's words that delete or move a tree, in PowerShell (and its aliases) or cmd: fallbackScan's ancestors. */
+const WIN_REMOVES = /(^|[^\w-])(remove-item|ri|rm|rmdir|rd|del|erase|move-item|mi|mv|move|rename-item|rni|ren|rename)(?![\w-])/i;
 /** The shell's positional parameters (`$1`…`$9`, `$@`, `$*`), as `set --` gives them values. */
 const POSITIONAL: readonly string[] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "@", "*"];
 /** What `read` may set from a text: each of its lines, and each word of each line. */
@@ -888,7 +890,7 @@ class Classifier {
 
   setVar(name: string, values: readonly Arg[] | null, sc: Scope, loop = false, exported = false): void {
     if (!loop) this.setsVars = true;
-    if (!/^([A-Za-z_]\w*|[1-9@*])$/.test(name)) return;
+    if (!/^([A-Za-z_]\w*|[0-9@*])$/.test(name)) return;
     if (!loop) this.loopVars.delete(name);
     if (sc.family !== "posix") return;
     if (values !== null) this.varRaws.set(name, [...(this.varRaws.get(name) ?? []), ...values.map(a => a.raw)]);
@@ -898,6 +900,23 @@ class Classifier {
     else this.pendingSets.push({ name, forms, sc });
     const all = [...new Set([...(this.varValues.get(name) ?? []), ...forms])];
     this.varValues.set(name, all.length > MAX_FORMS ? [UNSEEN] : all);
+  }
+
+  /**
+   * Runs `judge` with the shell's $0, $1… given the words a `sh -c` text is handed after it (any of them, as after a
+   * `shift`), then puts back what they held before: only for Ember's own refusal, as every variable's values are.
+   */
+  withPositional(values: readonly Arg[], sc: Scope, judge: () => void): void {
+    const names = ["0", ...POSITIONAL];
+    const saved = names.map(n => [this.varValues.get(n), this.wordVars.has(n)] as const);
+    for (const n of names) { this.varValues.delete(n); if (values.length) this.setVar(n, values, sc, true); }
+    try { judge(); } finally {
+      names.forEach((n, k) => {
+        const [v, words] = saved[k];
+        if (v === undefined) this.varValues.delete(n); else this.varValues.set(n, v);
+        if (words) this.wordVars.add(n); else this.wordVars.delete(n);
+      });
+    }
   }
 
   /**
@@ -2691,24 +2710,42 @@ class Engine extends Classifier {
     this.noteUnclear(p.unclear);
     if (p.fatal) { this.fallbackScan(text, sc); return; }
     this.cmdLine(p, child(sc, { family: "cmd", shell: "cmd" }));
+    // cmd expands `%D%` when it reads the line, so a `set` on it may hand a later part a path Ember never saw as one:
+    // the whole text is scanned for Ember's own paths too, asking nothing more (commands-remote-c3-2).
+    if (!this.refuse && this.envChanged) this.fallbackScan(text, sc, false);
   }
 
   /**
    * A text that couldn't be parsed is unclear; Ember's flat refusals still apply to what it can see in it (a program
-   * that synthesises input, an Ember path or an `ember:` URL anywhere in it).
+   * that synthesises input, an Ember path or an `ember:` URL anywhere in it). On Windows a profile variable it can
+   * resolve (`$env:LOCALAPPDATA`, `%LOCALAPPDATA%`) and a quoted value count as the paths they name. `question`
+   * false: a scan for refusals alone, of a text that was parsed.
    */
-  private fallbackScan(text: string, sc: Scope): void {
-    const tokens = text.split(/[\s;|&()<>'"`$={}]+/).filter(t => t !== "");
+  private fallbackScan(text: string, sc: Scope, question = true): void {
+    // Opaque Windows blocks and cmd assignments still expose known profile paths (commands-remote-c3-2).
+    const known: string[] = [];
+    const shown = sc.path.flavour !== "win32" ? text : text.replace(/\$\{?(env:[A-Za-z_]\w*|HOME|PWD)\}?|%([A-Za-z_]\w*)%/gi, (whole: string, ps: string | undefined, cmd: string | undefined, offset: number) => {
+      const value = this.psValue([{ t: "var", name: ps ?? `env:${cmd}` }], whole, sc, true).v;
+      if (value === null) return whole;
+      const suffix = /^[\\/][^\s"'`;|&()<>{}]*/.exec(text.slice(offset + whole.length))?.[0] ?? "";
+      known.push(value + suffix);
+      return value;
+    });
+    const quoted = [...shown.matchAll(/(["'])([^"'\r\n]*)\1/g)].map(m => m[2].slice(m[2].indexOf("=") + 1));
+    const tokens = [...shown.split(/[\s;|&()<>'"`$={}]+/), ...known, ...quoted].filter(t => t !== "");
+    // A folder that holds Ember's (`$env:LOCALAPPDATA`, the profile) counts only where the text deletes or moves
+    // something: `foreach (...) { Remove-Item -Recurse $f }` may be that folder, `dir %USERPROFILE%` only lists it.
+    const removes = sc.path.flavour === "win32" && WIN_REMOVES.test(text);
     for (const t of tokens) {
       const base = (t.split(/[\\/]/).pop() ?? t).toLowerCase().replace(/\.(exe|com|bat|cmd)$/, "");
       if (INPUT_SYNTH.has(base)) this.refuseWith("ember.input", "input");
       if (/^ember:/i.test(t)) this.refuseWith("ember.url", "input");
       if (/^[~/\\]|^[A-Za-z]:[\\/]/.test(t) && (sc.home || !t.startsWith("~"))) {
         const abs = resolveTargetPath(t, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "/" });
-        if (isEmberPath(abs, sc.path)) this.refuseWith("ember.path", "safety");
+        if (isEmberPath(abs, sc.path) || (removes && holdsEmberPath(abs, sc.path))) this.refuseWith("ember.path", "safety");
       }
     }
-    if (this.findings.every(f => f.cls !== "unclear")) this.unclear("unclear.syntax");
+    if (question && this.findings.every(f => f.cls !== "unclear")) this.unclear("unclear.syntax");
   }
 
   // ----------------------------------------------------------------------------------------------------------------
@@ -2943,8 +2980,8 @@ class Engine extends Classifier {
         // A home Ember doesn't know stays `~` (judged as some user's home, never probed: usePath).
         else if (!sc.home) { v += "~"; parts.push("~"); pattern += "~"; }
         else { v += sc.home; parts.push(sc.home); pattern += sc.home.replace(/[*?[\]\\]/g, "\\$&"); }
-      } else if (seg.t === "unres" && /^\$[1-9@*]$/.test(seg.why)) {
-        // `$1`, `"$@"`: the values `set --` gives them (commands-remote-v4-4).
+      } else if (seg.t === "unres" && /^\$[0-9@*]$/.test(seg.why)) {
+        // `$1`, `"$@"`: the values `set --` gives them, and `$0` too in a `sh -c` text (commands-remote-v4-4).
         unresolved = true;
         parts.push({ name: seg.why.slice(1) });
       } else if (seg.t === "unres" && seg.of !== undefined) {
@@ -7364,7 +7401,11 @@ reg(NATIVE, [...Object.keys(POSIX_SHELLS), ...OTHER_SHELLS], h => {
       return;
     }
     if (!posixShell) { h.e.unclear("unclear.other-shell", `Ember can't read ${h.key}'s language.`); emberText(h, text.v); return; }
-    h.e.nested(text.v, posixShell === "bash" ? "bash" : posixShell === "zsh" ? "zsh" : "sh", h.sc, `${h.key} -c`, {}, pipedInto(h));
+    // The words after the text are its $0, $1…: the text is judged with them, as `set --` gives them, so Ember's own
+    // refusal follows `sh -c 'cat "$0/settings.json"' ~/.config/ember` (commands-remote-v4-4, v5-2).
+    const body = text.v;
+    const shell = posixShell === "bash" ? "bash" : posixShell === "zsh" ? "zsh" : "sh";
+    h.e.withPositional(h.args.slice(cIdx + 2), h.sc, () => h.e.nested(body, shell, h.sc, `${h.key} -c`, {}, pipedInto(h)));
     return;
   }
   const script = p.operands[0];

@@ -839,7 +839,11 @@ settings.json`) or given to `patch -d` or `--directory` (also shortened, down to
 patch names there (`patch -d ~/.config/ember -p0 < x.patch`; a folder Ember can't see there asks), and when a shell
 loop's list or a variable the command sets names them (`for f in ~/.config/ember/*; do …`,
 `d=~/.config/ember; rm -rf "$d"`, `d=~/.config; rm -rf "$d"/emb*`), in PowerShell too (`$d = "$env:LOCALAPPDATA\ember";
-Remove-Item -Recurse $d`, `$d = Join-Path $env:LOCALAPPDATA 'ember'`), and so do `set --` (`"$1"`, `"$@"`),
+Remove-Item -Recurse $d`, `$d = Join-Path $env:LOCALAPPDATA 'ember'`), and so do `set --` (`"$1"`, `"$@"`), the words
+after a `sh -c` text, which are its `$0`, `$1`… (`sh -c 'cat "$0/settings.json"' ~/.config/ember`), a PowerShell loop
+Ember can't read that names one of them, or a folder that holds them where it deletes or moves something (`foreach ($f
+in @($env:LOCALAPPDATA)) { Remove-Item -Recurse $f }`), a cmd variable set on the line (`set "D=%LOCALAPPDATA%\ember" &
+type "%D%\settings.json"`),
 `printf -v` and the text a here-string or here-document gives `read` or `xargs` (`while read f; do rm -rf "$f"; done <<<
 ~/.config/ember`); when it names a folder that holds them for a delete or a move (`for f in ~; do rm -rf "$f"; done`),
 and when a name Ember can't see stands where one of Ember's folders is (`rm -rf ~/.config/$x`, or a cut or a default
