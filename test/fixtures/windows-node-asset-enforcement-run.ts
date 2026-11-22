@@ -96,7 +96,7 @@ export const WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS: readonly Readonly<{ pat
   Object.freeze({"path":"app/main/commands/taint.ts","bytes":3507,"sha256":"7b8b6f9897bc26d64d95a6d0eec55a43c6d7ee6d0e5e18907b4786642c4eaa27"}),
   Object.freeze({"path":"app/main/commands/types.ts","bytes":25613,"sha256":"1a014b2e4515148633bbe48d2002d5cf9905952e73737d1811fd253b80b37585"}),
   Object.freeze({"path":"app/main/commands/unroll.ts","bytes":9561,"sha256":"4dd3c0efdaa8dc66056a32a7e938fe4921f5b3238e94cc1f962cd56e02b3b62c"}),
-  Object.freeze({"path":"app/main/commands/words.ts","bytes":24842,"sha256":"edc5c7d792fa467fabe8ba9a7ef0d2c60649d9f1a72dedbfe843eee9e0d135a7"}),
+  Object.freeze({"path":"app/main/commands/words.ts","bytes":26102,"sha256":"05e2ebf7f996b84a631ace6a618d0329752875adaa6f2b3035bec534bca250c6"}),
   Object.freeze({"path":"app/main/hands/borrow.ts","bytes":32566,"sha256":"c2ddb58314a8a0f15c8d09aabaf3f2d287aea4fd7924b8f0d50fca2a9f1cb594"}),
   Object.freeze({"path":"app/main/hands/keymap.ts","bytes":3955,"sha256":"196c59f6d08096e599bf1b9ddf9d92364dfb8e687e23e0f429d804bedd8d0bab"}),
   Object.freeze({"path":"app/main/hands/terminals.ts","bytes":18675,"sha256":"45c634b15312a1a4b3a8e2ba0b934f71706dc449e8ea886ba73f8faa78c77372"}),

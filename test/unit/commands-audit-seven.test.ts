@@ -37,6 +37,29 @@ describe("protected paths handed to opaque shell contexts", () => {
   });
 });
 
+describe("a wrapper's option value Ember can't see", () => {
+  it("is read as text that may hold the command itself, as an attached one is (commands-q6-3, i6b, commands-v7-5)", () => {
+    for (const command of [
+      "xargs -P $(cat jobs.txt) echo", "xargs --max-procs $(cat jobs.txt) echo", "xargs -P $N echo",
+      "N='1 rm -rf ~'; xargs -P $N echo", "env -C $(cat folder.txt) echo", "env --chdir $D echo", "nice -n $(cat priority.txt) echo",
+      "parallel -j $(cat jobs.txt) echo", "parallel --jobs $N echo", "xargs -a $(cat input.txt) echo",
+    ]) {
+      const d = decide(command);
+      expect(d.verdict, command).toBe("ask");
+      expect(d.rules, command).toContain("unclear.program");
+    }
+  });
+
+  it("still runs a count, a value quoted whole and a folder Ember sees, and refuses Ember's own files (commands-v7-5)", () => {
+    for (const command of [
+      "xargs -P 4 echo", "xargs -P $(nproc) echo", "xargs --max-procs $(getconf _NPROCESSORS_ONLN) echo", "parallel -j $((2+2)) echo",
+      "env -C . echo", "nice -n 4 echo", 'N=4; xargs -P "$N" echo', 'd=input.txt; xargs -a "$d" echo',
+    ]) expect(decide(command).verdict, command).toBe("run");
+    expect(decide('d=~/.config/ember/settings.json; xargs -a "$d" echo').verdict).toBe("refuse");
+    expect(decide("N=4; xargs -P $N cat ~/.config/ember/settings.json").verdict).toBe("refuse");
+  });
+});
+
 describe("links to folders that hold Ember's", () => {
   const linux = (command: string) => runCase({ cmd: command, verdict: "run", context: "linux", missing: ["/home/ana/bridge"] }, { shell: "bash", context: "linux" }).decision.verdict;
 

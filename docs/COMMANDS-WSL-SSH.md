@@ -476,8 +476,9 @@ Ember stops and asks before a command that:
   `make -j $JOBS` runs, unless the command set it from a command's output, `X=$(cat jobs.txt); make -j $X`, or to
   words after the count that are targets, `T='4 deploy'; make -j $T`), and a value Ember can't see written straight
   after an option of a program that runs another one, quoted or not (`nice -n"$X" cmd`, `xargs -n$X cmd`, `env
-  -C"$d" cmd`), which may hold the command it runs; only `xargs -P` and `parallel -j` take a count there (`xargs
-  -P$(nproc) cmd`); and `rclone copy`, `sync` or `move` with more words than it takes, after an option Ember
+  -C"$d" cmd`), or apart from it unquoted (`xargs -P $N cmd`, `env -C $(cat folder.txt) cmd`), which may hold the
+  command it runs (`N='1 rm -rf ~'`); only `xargs -P` and `parallel -j` take a count there (`xargs -P$(nproc) cmd`),
+  and a value quoted whole is one word (`xargs -P "$N" cmd` runs); and `rclone copy`, `sync` or `move` with more words than it takes, after an option Ember
   doesn't know took a value (`rclone copy ./src remote:dst --max-transfer 10G`), so it can't tell where the files go;
   and a command behind an option that an earlier version of Ember read another way, where that reading asked:
   `git commit -S -m wip` (and `-u`, `--gpg-sign` or `--untracked-files` apart in front of `-m`), `redis-cli --tls GET
