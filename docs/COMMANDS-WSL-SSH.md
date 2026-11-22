@@ -568,7 +568,8 @@ this does."), whatever it does:
 
 Ember's own folder named in sight is refused before any of this. zsh's `if` and loops, and PowerShell's and cmd's `if` and `for` always ask, and so do an `if` in a shell the command starts (`bash -c '…'`), `case`, functions and `{ … }` groups. A loop
 whose variable is `PATH` or another that changes how commands are found says so on its card too ("It changes how
-commands are found or run."). A variable set after `then`, `do`, `else`, `!` or `time` is judged as one set at the
+commands are found or run."), and so does `xargs --process-slot-var` naming one, by any prefix xargs takes
+(`xargs -P4 --p=BASH_ENV bash -c …`), while `--process-slot-var=SLOT` runs. A variable set after `then`, `do`, `else`, `!` or `time` is judged as one set at the
 start of a command: `if true; then LD_PRELOAD=./x.so ls; fi` asks, as `LD_PRELOAD=./x.so ls` does.
 
 A variable set in front of a build tool that names a program or a command the tool runs is judged too, so Ember asks

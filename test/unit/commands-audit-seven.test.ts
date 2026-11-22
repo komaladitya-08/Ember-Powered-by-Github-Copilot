@@ -113,6 +113,26 @@ describe("a wrapper's option value Ember can't see", () => {
   });
 });
 
+describe("xargs child environments", () => {
+  it("asks before --process-slot-var names a variable that changes how its commands run, also shortened (commands-remote-c7-3, commands-v7-1)", () => {
+    for (const name of ["BASH_ENV", "PATH", "LD_PRELOAD"]) {
+      for (const option of [`--process-slot-var=${name}`, `--process-slot-var ${name}`, `--p=${name}`, `--pr=${name}`, `--p ${name}`]) {
+        const d = decide(`xargs -P4 ${option} bash -c 'echo okay' < urls.txt`);
+        expect(d.verdict, option).toBe("ask");
+        expect(d.rules, option).toContain("unclear.assignment");
+      }
+    }
+    expect(decide("xargs -P4 --process-slot-var=$NAME echo < urls.txt").verdict).toBe("ask");
+  });
+
+  it("runs a slot variable that changes nothing, and options it doesn't know (docs/APPROVALS.md)", () => {
+    for (const command of [
+      "xargs -P4 --process-slot-var=SLOT bash -c 'echo okay' < urls.txt", "xargs --not-an-option=value bash -c 'echo okay' < urls.txt",
+      "xargs --max-procs=4 echo < words.txt", "xargs --max-p=4 echo < words.txt", "xargs -n1 echo < words.txt",
+    ]) expect(decide(command).verdict, command).toBe("run");
+  });
+});
+
 describe("links to folders that hold Ember's", () => {
   const linux = (command: string) => runCase({ cmd: command, verdict: "run", context: "linux", missing: ["/home/ana/bridge"] }, { shell: "bash", context: "linux" }).decision.verdict;
 

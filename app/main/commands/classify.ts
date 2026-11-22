@@ -6661,15 +6661,34 @@ function payloadSends(h: H, ops: readonly Arg[]): boolean {
   return false;
 }
 
+/** GNU xargs's long options, which it takes shortened to any prefix only one of them has (`--p` is --process-slot-var). */
+const XARGS_LONG = ["null", "arg-file", "delimiter", "eof", "replace", "max-lines", "max-args", "max-procs", "open-tty", "process-slot-var",
+  "interactive", "no-run-if-empty", "max-chars", "show-limits", "verbose", "exit", "help", "version"];
+
 reg(NATIVE, ["xargs"], h => {
   // GNU's -l, -i and -e (and --max-lines, --replace, --eof) take a value only attached or after =: written alone, the
   // next word is the command (commands-remote-c4-1). BSD's -J, -R and -S take one.
-  const p = parseOpts(h.args, {
+  const spec: OptSpec = {
     shortValue: "adEILnPsJRS", shortOptional: "lie", longValue: ["arg-file", "delimiter", "max-args", "max-procs", "max-chars", "process-slot-var"],
     longOptional: ["eof", "replace", "max-lines"], stopAtOperand: true, jobCounts: ["P", "max-procs"],
+  };
+  // Its own options shortened as GNU takes them are read whole, so `--p BASH_ENV bash …` is --process-slot-var's value
+  // and then bash, never a program named BASH_ENV (commands-v7-1).
+  const first = parseOpts(h.args, spec);
+  const args = h.args.map((a, k) => {
+    const m = k < first.restAt && a.v !== null ? /^--([a-z-]+)(=.*)?$/s.exec(a.v) : null;
+    const full = m && !XARGS_LONG.includes(m[1]) ? XARGS_LONG.filter(n => n.startsWith(m[1])) : [];
+    return m && full.length === 1 ? { ...a, v: `--${full[0]}${m[2] ?? ""}` } : a;
   });
+  const p = parseOpts(args, spec);
+  // Each process's slot number goes into the variable it names: one that changes how commands are found or run
+  // (`BASH_ENV`, `PATH`, `LD_PRELOAD`), or one Ember can't see, starts the commands it runs with code it never read
+  // (commands-remote-c7-3, i6a); any other name (`SLOT`) changes nothing it runs.
+  for (const name of values(p, "process-slot-var")) {
+    if (name === null || RISKY_ASSIGNMENTS.has(name) || RISKY_ASSIGNMENT_PREFIX.test(name)) h.e.unclear("unclear.assignment", "It changes how commands are found or run.");
+  }
   // The file it reads its input from, a variable in it judged for Ember's own refusal (commands-remote-v5-2).
-  optionFiles(h, h.args, p, { read: ["a", "arg-file"] }, false);
+  optionFiles(h, args, p, { read: ["a", "arg-file"] }, false);
   // A bare -i or --replace replaces {}.
   const repl = values(p, "I", "replace", "i", "J")[0] ?? (has(p, "i", "replace") ? "{}" : undefined);
   const ops = p.operands.length ? p.operands : [lit("echo")];
