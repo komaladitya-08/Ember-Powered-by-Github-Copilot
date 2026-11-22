@@ -228,4 +228,13 @@ describe("links to folders that hold Ember's", () => {
     const builds = Array.from({ length: 33 }, (_, k) => `ln -s build/out${k} l${k}`).join("; ");
     expect(linux(`${builds}; cat build/ember/a.txt`)).not.toBe("refuse");
   });
+
+  it("follows a link to a link this command made to where it ends (review F)", () => {
+    for (const command of [
+      "ln -s ~/.config a; ln -s a b; cat b/ember/settings.json",
+      "ln -s ~/.config a; ln -s a b; ln -s b c; cat c/ember/settings.json",
+      "ln -s ~ h; ln -s h/.config c; cat c/ember/settings.json",
+    ]) expect(linux(command), command).toBe("refuse");
+    expect(linux("ln -s ~/.config a; ln -s a b; cat b/notes.txt")).toBe("run");
+  });
 });

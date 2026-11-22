@@ -1265,11 +1265,19 @@ class Classifier {
   /** More such links than linkAliases keeps were made: what one of them leads to is unknown (review E). */
   private linksUntracked = false;
 
-  /** Notes that `link` will lead to `to` (both absolute), when `to` is Ember's own folder or holds it. */
+  /**
+   * Notes that `link` will lead to `to` (both absolute), when `to` is Ember's own folder or holds it; a `to` through a
+   * link noted before leads where that one does, so a link to a link is followed to its end (`ln -s ~/.config a; ln
+   * -s a b`: review F).
+   */
   noteLink(link: string, to: string, env: PathEnv): void {
-    if ((!isEmberPath(to, env) && !holdsEmberPath(to, env)) || this.linkAliases.some(l => l.link === link && l.to === to)) return;
-    if (this.linkAliases.length < MAX_FORMS) this.linkAliases.push({ link, to, env });
-    else this.linksUntracked = true;
+    const mod = env.flavour === "win32" ? win32 : posix;
+    const ends = [to, ...this.linkAliases.filter(l => l.env.flavour === env.flavour && isUnder(to, l.link, env)).map(l => mod.join(l.to, mod.relative(l.link, to)))];
+    for (const end of ends) {
+      if ((!isEmberPath(end, env) && !holdsEmberPath(end, env)) || this.linkAliases.some(l => l.link === link && l.to === end)) continue;
+      if (this.linkAliases.length < MAX_FORMS) this.linkAliases.push({ link, to: end, env });
+      else this.linksUntracked = true;
+    }
   }
 
   /** §3.6's rules on one absolute path. */
@@ -1277,7 +1285,7 @@ class Classifier {
     // Past the links Ember keeps, a path that names one of Ember's folders by its name may go through one it didn't
     // keep, to that folder: refused, where a text with fewer links would be judged through them (review E).
     if (this.linksUntracked && !throughLink && namesEmberFolder(abs, env)) this.refuseWith("ember.path", accessOf(use));
-    // A path through a link this text made is judged where it leads too, once (a link to a link is followed no further).
+    // A path through a link this text made is judged where it leads too, once (noteLink followed a link to a link).
     if (!throughLink) {
       for (const l of this.linkAliases) {
         if (l.env.flavour !== env.flavour || !isUnder(abs, l.link, env)) continue;
