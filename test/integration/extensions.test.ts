@@ -16,7 +16,7 @@ import { SettingsStore } from "../../app/main/settings";
 import { createLogger } from "../../app/main/logger";
 import { ExtensionsService } from "../../app/main/extensions/service";
 import { AdminPolicySchema } from "../../app/main/admin";
-import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
+import { CONSENT_VERSION, FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import { clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "../../app/main/agent/runtime-temp";
 import type { EmberState } from "../../app/shared/overlay";
 import type { OS } from "../../app/shared/shortcuts";
@@ -117,7 +117,7 @@ describe("extensions on the real Copilot runtime", () => {
   it("installs a plugin, gives the conversation its tools, and gates every call", async () => {
     const settings = new SettingsStore(path.join(dir, "settings.json"));
     settings.load();
-    settings.update({ extensions: { on: true, consent: { version: FEATURE_CONSENT_VERSION.extensions, at: new Date().toISOString() } } });
+    settings.update({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() }, extensions: { on: true, consent: { version: FEATURE_CONSENT_VERSION.extensions, at: new Date().toISOString() } } });
     const asked: string[] = [];
     const answers: string[] = [];
     const audit: Record<string, unknown>[] = [];
@@ -200,7 +200,7 @@ describe("extensions on the real Copilot runtime", () => {
   it("stops a tool a server changes mid-session, and marks a failed call's text as untrusted (audit B1, B2)", async () => {
     const settings = new SettingsStore(path.join(dir, "settings-evil.json"));
     settings.load();
-    settings.update({ extensions: { on: true, consent: { version: FEATURE_CONSENT_VERSION.extensions, at: new Date().toISOString() } } });
+    settings.update({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() }, extensions: { on: true, consent: { version: FEATURE_CONSENT_VERSION.extensions, at: new Date().toISOString() } } });
     const asked: string[] = [];
     const answers: string[] = [];
     const audit: Record<string, unknown>[] = [];
@@ -304,7 +304,7 @@ describe("extensions on the real Copilot runtime", () => {
   it("never shows the conversation a tool description its server lists otherwise than the user agreed to (integrations-r9-1)", async () => {
     const settings = new SettingsStore(path.join(dir, "settings-sly.json"));
     settings.load();
-    settings.update({ extensions: { on: true, consent: { version: FEATURE_CONSENT_VERSION.extensions, at: new Date().toISOString() } } });
+    settings.update({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() }, extensions: { on: true, consent: { version: FEATURE_CONSENT_VERSION.extensions, at: new Date().toISOString() } } });
     const asked: string[] = [];
     const audit: Record<string, unknown>[] = [];
     const log = createLogger({ dir: path.join(dir, "logs") });
@@ -355,7 +355,7 @@ describe("extensions on the real Copilot runtime", () => {
   const setUp = (name: string, o: { launcher?: string } = {}) => {
     const settings = new SettingsStore(path.join(dir, `settings-${name}.json`));
     settings.load();
-    settings.update({ extensions: { on: true, consent: { version: FEATURE_CONSENT_VERSION.extensions, at: new Date().toISOString() } } });
+    settings.update({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() }, extensions: { on: true, consent: { version: FEATURE_CONSENT_VERSION.extensions, at: new Date().toISOString() } } });
     const asked: string[] = [];
     const audit: Record<string, unknown>[] = [];
     const log = createLogger({ dir: path.join(dir, "logs") });

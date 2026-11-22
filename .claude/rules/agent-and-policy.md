@@ -277,8 +277,9 @@ docs/DEVELOPING.md "Extensions: the runtime and the gate" is the design; app/mai
   Never hand the runtime a remote server's address (`type: "http"`): it follows a redirect to another host with the
   plugin's headers and the call's arguments (integrations-c9-4). A remote server is the launcher's `remote` spec,
   whose `bridge()` posts to that address alone and refuses every 3xx.
-- **Nothing runs** until `settings.extensions` is on with consent `>= FEATURE_CONSENT_VERSION.extensions` and the
-  admin's `features.extensions` isn't false (LOCKDOWN sets it false). The kill switch's `extensions` part stops them.
+- **Nothing runs** until `hasConsent` holds (“Before Ember starts” at `CONSENT_VERSION`: no probe, start, tool or
+  marketplace request before it, extensions-refresh-consent-1), `settings.extensions` is on with consent
+  `>= FEATURE_CONSENT_VERSION.extensions` and the admin's `features.extensions` isn't false (LOCKDOWN sets it false). The kill switch's `extensions` part stops them.
 
 ## Long-term memory
 

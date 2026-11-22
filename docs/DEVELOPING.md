@@ -426,7 +426,12 @@ destroys the page and discards unsent drafts.
     where the item reaches (the marketplace's source, or GitHub's Copilot service for a connector).
     The first yes also records extensions' own consent (`settings.extensions`, `FEATURE_CONSENT_VERSION.extensions`;
     `consentCard`'s words are pinned to that version in extensions-runtime.test.ts) and turns extensions on; nothing
-    loads before it. Connectors' catalog is empty for now (see "Extensions: the runtime and the gate").
+    loads before it. Neither card stands in for “Before Ember starts”: until its current version is agreed to (after
+    a `CONSENT_VERSION` bump too), no agreed extension is probed or started at launch, no tool is offered and no
+    marketplace request goes out (extensions-refresh-consent-1). Losing it stops a probe or an install under way,
+    whose late answer is dropped; an install the runtime had already downloaded still removes its copy, and Remove
+    still works, starting nothing (extensions-consent-review-1). Connectors' catalog is empty for now (see
+    "Extensions: the runtime and the gate").
   - With `features.extensions` false, or while Ember is locked down, the section says so and lists what was added,
     with nothing to change. A build without the extensions runtime says extensions aren't available yet.
   - Main's side is `app/main/extensions-ipc.ts` (`EXTENSIONS_IPC`: the settings window only, every argument checked,
@@ -995,7 +1000,8 @@ it builds on:
   - *At every call:* what the model is shown now is compared with the pin again; a tool that differs is denied and
     turned off the same way. A session never bound, or whose list can't be read, denies every extension call.
 - **Ember's gate decides every call** (`gate.ts`, from `onPreToolUse`): off (the admin's `features.extensions`,
-  LOCKDOWN, the user's switch or consent `FEATURE_CONSENT_VERSION.extensions`), stopped, disabled, changed, shown
+  LOCKDOWN, the user's switch, consent `FEATURE_CONSENT_VERSION.extensions` or “Before Ember starts” at
+  `CONSENT_VERSION`), stopped, disabled, changed, shown
   differently, or refused this turn: deny. After the user said no to a question (the Confirmer's `onDeny` tells
   `userSaidNo()` which task put it), a tool that changes things asks and is never announced, and Autopilot denies it
   (a refusal, never a question): while that task is queued or running and, once it is over, until the user next asks
