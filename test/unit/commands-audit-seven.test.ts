@@ -4,7 +4,8 @@
  * (docs/APPROVALS.md).
  */
 import { describe, expect, it } from "vitest";
-import { runCase } from "../fixtures/commands/corpus";
+import { classifyCommand } from "../../app/main/commands/classify";
+import { contextOf, runCase } from "../fixtures/commands/corpus";
 
 const decide = (command: string) => runCase({ cmd: command, verdict: "run", context: "linux" }, { shell: "bash", context: "linux" }).decision;
 const win = (command: string, shell: "cmd" | "powershell") => runCase({ cmd: command, shell, context: "win32", verdict: "run" }, { shell, context: "win32" }).decision.verdict;
@@ -50,6 +51,24 @@ describe("database command arguments", () => {
     expect(decide("O=''; redis-cli $O INFO").verdict).toBe("run");
     expect(decide("redis-cli INFO").verdict).toBe("run");
     expect(decide("O='--rdb /home/ana/.config/ember/settings.json'; redis-cli $O").verdict).toBe("refuse");
+  });
+});
+
+describe("an archive destination held in a variable", () => {
+  it("unpacks into each folder the variable names, never the current one (commands-remote-c7-2, i6b)", () => {
+    for (const option of ['-C "$d"', '-C"$d"', '--directory="$d"']) {
+      const d = decide(`d=~; tar ${option} -xf /tmp/x.tar`);
+      expect(d.verdict, option).toBe("ask");
+      expect(d.rules, option).toContain("archive.unpack");
+      expect(decide(`d=~/.config/ember; tar ${option} -xf /tmp/x.tar`).verdict, option).toBe("refuse");
+    }
+    const context = { ...contextOf("linux"), downloaded: new Set(["/home/ana/proj/x.tar"]) };
+    const unpack = classifyCommand('d=/tmp; tar -C "$d" -xf x.tar', "bash", context);
+    expect(unpack.downloads).toEqual(["/tmp"]);
+    const run = classifyCommand("bash /tmp/run.sh", "bash", { ...context, downloaded: new Set(unpack.downloads) });
+    expect(run.findings.map(f => f.rule)).toContain("escape.run-downloaded");
+    // A folder of the project's own still unpacks as before.
+    expect(decide('d=sub; tar -C "$d" -xf x.tar').verdict).toBe("run");
   });
 });
 

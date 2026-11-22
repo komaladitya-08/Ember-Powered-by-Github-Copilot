@@ -386,7 +386,9 @@ Ember stops and asks before a command that:
   'build.rustc-wrapper="./cc.sh"'`). `cat`, `grep`, `ls`, `cp`, `mv`, `tar`, `rm`, `git` and their like
   run, and a copy carries the mark on, unless an option tells one of them to run or load a file (`sdiff
   --diff-program=./fix a b`, `gio launch x.desktop`, `openssl req -config cfg` or `-config=cfg`, `gpg --homedir cfg`), which asks
-  the same way. What `7z x` and `unrar x` unpack from a downloaded archive is downloaded too, as with `tar` and `unzip`. A download whose name says plain data (a `.csv`, `.txt`, `.json`, a picture,
+  the same way. What `7z x` and `unrar x` unpack from a downloaded archive is downloaded too, as with `tar` and `unzip`
+  (tar's `-C "$d"` is the folder the line set `d` to, `d=/tmp; tar -C "$d" -xf x.tar` marking `/tmp`, and unpacking
+  into the home folder that way asks as `tar -C ~ -xf x.tar` does). A download whose name says plain data (a `.csv`, `.txt`, `.json`, a picture,
   a document) isn't code a program runs, so `python3 analyze.py data.csv` runs; a file of options after `@` counts
   whatever it is called. What `gh api`, `gh gist view` and
   `glab api` print into a file is a download too, and so is fetched text copied from the pipe (`curl … | install

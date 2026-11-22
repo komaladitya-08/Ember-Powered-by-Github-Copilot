@@ -7110,6 +7110,19 @@ function tarMembers(h: H, a: readonly Arg[], p: Parsed): Arg[] {
     return { ...op, v, raw: v };
   });
 }
+/**
+ * The word for tar's -C (--directory) when Ember can't see all of it: a separate value (`-C "$d"`), or one attached to
+ * the option, which tar's table reads as a member (`-C"$d"`, `--directory="$d"`), without the option's letters.
+ */
+function tarUnseenDir(a: readonly Arg[], p: Parsed): Arg | null {
+  const o = p.opts.find(x => x.value === null && (x.name === "-C" || optIs(x.name, "directory", p.long)));
+  if (o) return o.parts ? { v: null, raw: a[o.at].raw, glob: false, parts: o.parts } : a[o.at + 1] ?? null;
+  const w = a.find(x => x.v === null && x.parts !== undefined && /^(-C|--dir[a-z]*=)/.test(typeof x.parts[0] === "string" ? x.parts[0] : ""));
+  if (!w?.parts || typeof w.parts[0] !== "string") return null;
+  const first = w.parts[0].replace(/^(-C|--dir[a-z]*=)/, "");
+  return { v: null, raw: w.raw, glob: false, parts: [...(first ? [first] : []), ...w.parts.slice(1)] };
+}
+
 reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
   const a = [...h.args];
   // Old-style bundled first argument (`tar xzf x.tgz`).
@@ -7155,13 +7168,25 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
     return;
   }
   if (extract) {
-    const into = dir ? h.e.usePath(lit(dir), "write", h.sc) : h.e.usePath(lit("."), "write", h.sc);
+    // A folder Ember can't see all of (`-C "$d"`, `-C"$d"`, `--directory="$d"`) that the text gives values is each of
+    // them, never the current folder (commands-remote-c7-2, i6b); one it gives none is judged for Ember's own refusal
+    // and unpacks as before, while what comes from a download there may be anywhere.
+    const unseen = dir === undefined || dir === null ? tarUnseenDir(a, p) : null;
+    const forms = unseen ? h.e.knownForms(unseen) : [];
+    const known = forms.filter((f): f is string => f !== null && f !== "");
+    const named = unseen !== null && known.length > 0 && known.length === forms.length;
+    if (unseen !== null && !named) h.e.judgeUnseen(unseen, "write", h.sc);
+    const intos = named ? known.map(f => h.e.usePath(lit(f), "write", h.sc)) : [h.e.usePath(lit(dir ?? "."), "write", h.sc)];
     const risky = has(p, "P", "absolute-names", "overwrite", "unlink-first", "U", "recursive-unlink");
-    if (risky || into.abs === null || !inWorkTree(into.abs, h.sc.path)) {
-      h.e.add("destroy", "archive.unpack", `Unpacks ${archive ?? "an archive"} over files in ${into.text === "." ? thisFolder(h, into) : into.text}.`, { objects: [into] });
+    const fromDownload = (archive && h.e.isDownloaded(lit(archive), h.sc)) || (archive === "-" || !archive) && (h.s.fetchBefore || h.e.pipe.carried === true);
+    for (const into of intos) {
+      if (risky || into.abs === null || !inWorkTree(into.abs, h.sc.path)) {
+        h.e.add("destroy", "archive.unpack", `Unpacks ${archive ?? "an archive"} over files in ${into.text === "." ? thisFolder(h, into) : into.text}.`, { objects: [into] });
+      }
+      // From a download, or a pipe that fetched one or packs one (`tar cf - x.sh | tar xf - -C tools`: commands-remote-c2-2):
+      // into a folder Ember can't name, anything may be it.
+      if (fromDownload) { if (into.abs) h.e.downloads.push(into.abs); if (into.abs === null || (unseen !== null && !named)) h.e.markUnnamed(null, h.sc); }
     }
-    // From a download, or a pipe that fetched one or packs one (`tar cf - x.sh | tar xf - -C tools`: commands-remote-c2-2).
-    if ((archive && h.e.isDownloaded(lit(archive), h.sc)) || (archive === "-" || !archive) && (h.s.fetchBefore || h.e.pipe.carried === true)) if (into.abs) h.e.downloads.push(into.abs);
     objsOf(h, p.operands, "write");
   }
 });
