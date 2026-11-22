@@ -1875,6 +1875,11 @@ An edit back to the host in force, or of the same host, is saved at once as befo
 sentence about turning it off to go back to Copilot (`providerConsentText(host, "in-use")`, as first run's step for a
 provider in use): turning the switch off puts the held edit away, as "Keep using" does, and saves only the switch, so
 the address in force and its saved key are kept and come back with the switch (integrations-v4-1).
+A key typed but not yet saved belongs to the host it was typed for, in Home and in first run alike (`typedKeyFor` in
+app/shared/provider.ts; integrations-v7-2, first-run-v7-1): an address changed to another host or port clears it from
+its field, and first run's step opened again clears it as the saved address comes back. A path edit and an address
+still being typed keep it, a key typed before any address goes with the first one entered, and a check or a save sends
+it to that host only. The provider in force and its saved key stay as they were.
 
 - **Is it there?** Nothing else contacts the endpoint before the first request, so the same GET (`probeProvider`,
   main's `providers.api.test()`) is made before Ember connects to a server on this computer, and after a turn or a

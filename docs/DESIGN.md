@@ -624,6 +624,9 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   the consent note for that exact host, and one prominent button, “Agree and check the models”, which saves, keeps the
   key, records the yes and asks the service for its model list. Nothing says the provider works until that answers; a
   failure is written in the step (status line, red words) and a provider that didn't answer is switched off again.
+  A key typed there belongs to the host it was typed for: another host or port in the address clears its field, and so
+  does the saved address coming back as the step opens again; a path edit or an address still being typed keeps it
+  (first-run-v7-1).
   A service that answers has its models named (“It lists 1 model: llama3.2:3b.”, Home's `providerTestText`), and a
   model name typed that its list doesn't hold fails the check on that field, naming what is listed (“<host> answered,
   but it doesn't list gpt-4.1. It lists 1 model: llama3.2:3b. Enter that name.”), instead of passing a name the first

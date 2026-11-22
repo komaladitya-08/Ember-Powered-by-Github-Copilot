@@ -387,8 +387,10 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await p.fill("#w-p-conductor", "gpt-4.1");
     await next(p).click();
     await expect.poll(async () => (await calls(p)).filter(c => c === "test").length).toBe(1);
-    // Edit the address while the first check is out, and check again: that one answers first, with success.
+    // Edit the address while the first check is out, and check again: that one answers first, with success. The key
+    // typed for the first host stays with it, so the new host is given its own (first-run-v7-1).
     await p.fill("#w-p-url", "https://other.example.com/v1");
+    await p.fill("#w-p-key", "sk-x-for-other-host");
     await next(p).click();
     await expect.poll(async () => (await calls(p)).filter(c => c === "test").length).toBe(2);
     await settle(p, "test", { ok: true, host: "other.example.com", models: 1 }, 1);
@@ -408,6 +410,52 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await p.getByRole("button", { name: "Use my own provider" }).click();
     expect(await p.locator("#w-p-result").innerText()).toBe("");
   });
+
+  for (const inUse of [false, true]) it(`(e2) a key typed for one server never goes to another entered after it, during ${inUse ? "an edit of my provider in use" : "new setup"} (first-run-v7-1)`, async () => {
+    const provider = { on: true, baseUrl: "https://a.example.com/v1", conductor: "fixture-model", consent: { version: 1, at: "2026-11-09T12:00:00Z", host: "a.example.com" } };
+    const p = await open(inUse ? { provider, liveState: true, providerState: { keySaved: true }, agent: readyAgent({ login: undefined, service: { kind: "user", host: "a.example.com" } }) } : {});
+    const keptProvider = await p.evaluate(() => structuredClone(window.__frState.settings.provider));
+    const reopen = async () => {
+      if (inUse) {
+        await next(p).click();
+        await expect.poll(() => p.locator("#w-title").innerText()).toBe("Checking this computer");
+        await p.locator("#w-back").click();
+      } else await p.getByRole("button", { name: "Use my own provider" }).click();
+    };
+    await reopen();
+    await p.fill("#w-p-url", "https://b.example.com/v1");
+    await p.fill("#w-p-conductor", "fixture-model");
+    await p.fill("#w-p-key", "fixture-key-for-b");
+    // A path edit and an address still being typed keep the key with its host.
+    await p.fill("#w-p-url", "https://b.example.com/v2");
+    expect(await p.locator("#w-p-key").inputValue()).toBe("fixture-key-for-b");
+    await p.fill("#w-p-url", "https://");
+    expect(await p.locator("#w-p-key").inputValue()).toBe("fixture-key-for-b");
+    // Another host: the key goes, and nothing sends it there.
+    await p.fill("#w-p-url", "https://c.example.com/v1");
+    expect(await p.locator("#w-p-key").inputValue()).toBe("");
+    await next(p).click();
+    if (inUse) {
+      await expect.poll(() => calls(p)).toContain("test-draft:c.example.com");
+      expect(await calls(p)).not.toContain("test-draft:c.example.com+key");
+      expect(await p.evaluate(() => window.__frState.settings.provider)).toEqual(keptProvider);
+      expect(await p.evaluate(() => window.emberProvider!.state())).toMatchObject({ keySaved: true, host: "a.example.com", inForce: true });
+    } else {
+      expect(await focusedId(p)).toBe("w-p-key");
+      expect((await calls(p)).filter(c => c === "saveKey" || c === "test" || c.startsWith("agree:") || c.startsWith("test-draft:"))).toEqual([]);
+    }
+    // The port is part of the recipient too.
+    await p.fill("#w-p-key", "fixture-key-for-c");
+    await p.fill("#w-p-url", "https://c.example.com:8443/v1");
+    expect(await p.locator("#w-p-key").inputValue()).toBe("");
+    // Opened again, the saved address comes back into the field: a key typed for another one doesn't come with it.
+    await p.fill("#w-p-url", "https://b.example.com/v1");
+    await p.fill("#w-p-key", "fixture-key-for-b");
+    await p.locator("#w-back").click();
+    await reopen();
+    expect(await p.locator("#w-p-key").inputValue()).toBe("");
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 30_000);
 
   it("(f) a text-only fallback is explained, never an empty selector (FE #5), in the review and in Home's selector", async () => {
     const p = await open({ agent: readyAgent({ models: [{ id: "mini", name: "Mini", vision: false, cost: 0 }], conductorModel: "mini", workerModel: "mini" }) });
@@ -1372,6 +1420,34 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await p.evaluate(() => window.__frState.settings.provider)).toMatchObject({ type: "anthropic", baseUrl: "http://127.0.0.1:18309/v1", conductor: "other-model", consent: { host: "127.0.0.1:18309" } });
     expect((p as Page & { errors: string[] }).errors).toEqual([]);
   }, 30_000);
+
+  it("(am2) Home keeps a key typed for a held edit's host with that host, and takes it out before another host or port could receive it (integrations-v7-2)", async () => {
+    const p = await open({ home: true, liveState: true, providerState: { keySaved: true },
+      agent: readyAgent({ login: undefined, service: { kind: "user", host: "a.example" } }),
+      provider: { on: true, baseUrl: "https://a.example/v1", conductor: "mock-model", consent: { version: 1, at: "2026-11-09T00:00:00Z", host: "a.example" } } });
+    await p.locator("#byok-url").fill("https://b.example/v1"); await p.keyboard.press("Tab");
+    await p.locator("#byok-key").fill("b-fixture-key");
+    // A path edit and an address still being typed keep it.
+    await p.locator("#byok-url").fill("https://b.example/v2");
+    expect(await p.locator("#byok-key").inputValue()).toBe("b-fixture-key");
+    await p.locator("#byok-url").fill("https://");
+    expect(await p.locator("#byok-key").inputValue()).toBe("b-fixture-key");
+    // Another host: out of the field, and its check goes without it.
+    await p.locator("#byok-url").fill("https://c.example/v1");
+    expect(await p.locator("#byok-key").inputValue()).toBe("");
+    await p.keyboard.press("Tab");
+    await p.waitForTimeout(AGREE_ARM_MS + 100);
+    await p.locator("#byok-yes").click();
+    await expect.poll(() => calls(p)).toContain("test-draft:c.example");
+    expect(await calls(p)).not.toContain("test-draft:c.example+key");
+    expect(await p.evaluate(() => window.__frState.settings.provider.baseUrl)).toBe("https://a.example/v1");
+    // The port is part of the recipient too.
+    await p.locator("#byok-key").fill("c-fixture-key");
+    await p.locator("#byok-url").fill("https://c.example:8443/v1");
+    expect(await p.locator("#byok-key").inputValue()).toBe("");
+    expect((await calls(p)).filter(c => c === "saveKey" || c.startsWith("agree:"))).toEqual([]);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
 
   it("(ai) “Use GitHub Copilot instead” while I'm busy says I'll switch once I've finished, keeps Continue, and offers Copilot's sign-in once the switch is made (first-run-v4-1)", async () => {
     const service = { kind: "user", host: "api.example.com" };

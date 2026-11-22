@@ -167,6 +167,19 @@ export function heldAnswer(r: { ok: boolean; cause?: string }): "answered" | "un
   return r.cause === "no-list" ? "unlisted" : "failed";
 }
 
+/**
+ * What becomes of an API key typed into a field but not yet saved, as the address beside it changes (integrations-v7-2,
+ * first-run-v7-1): a key belongs to the host it was typed for (`boundTo`), and never goes to another one. An address that
+ * isn't one yet (`host` null: typing under way) changes nothing; the same host, by another path, keeps it; a key typed
+ * with no address beside it is bound to the first host entered; a different host or port drops it, so the person types
+ * that host's own key.
+ */
+export function typedKeyFor(boundTo: string | null, host: string | null): { keep: true; boundTo: string | null } | { keep: false } {
+  if (!host) return { keep: true, boundTo };
+  if (boundTo === null || boundTo === host) return { keep: true, boundTo: host };
+  return { keep: false };
+}
+
 /** The host (with its port, when it has one) of a valid endpoint, as the consent card and the setup check name it; null otherwise. */
 export function endpointHost(url: string): string | null {
   if (endpointProblem(url) !== null) return null;
