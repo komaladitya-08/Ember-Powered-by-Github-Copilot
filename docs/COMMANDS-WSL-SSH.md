@@ -196,8 +196,8 @@ Ember stops and asks before a command that:
   ask whenever the folder is there: "Replaces files in ~/Documents if they exist."),
   `truncate`, formatting or partitioning a disk, emptying the trash, giving a container a folder outside your project
   that it can change (`docker run -v ~/Documents:/d`; a read-only `:ro` mount doesn't ask), changing or deleting what
-  a database holds (`psql -c 'DROP TABLE x'`, `redis-cli FLUSHALL`, and the same given on the client's input:
-  `redis-cli <<< FLUSHALL`, `echo 'db.dropDatabase()' | mongosh`; commands or code on its input or its line that
+  a database holds (`psql -c 'DROP TABLE x'`, `redis-cli FLUSHALL`, also after an options variable that is empty,
+  `O=''; redis-cli $O FLUSHALL`, and the same given on the client's input: `redis-cli <<< FLUSHALL`, `echo 'db.dropDatabase()' | mongosh`; commands or code on its input or its line that
   Ember can't see or follow ask too, such as `redis-cli "$CMD"` and options held in a variable, `redis-cli $OPTS`;
   a file redis-cli's options name is judged as that file, so `redis-cli --rdb ~/.bashrc`, which writes a dump over
   it, asks; so is the file `psql -o` writes its results to, which asks when it is there, the one `psql -L` or

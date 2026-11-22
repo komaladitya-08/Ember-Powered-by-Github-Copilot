@@ -6309,8 +6309,14 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
     // and the files that options split out of it name judged as written out, never making it run (commands-z6-2).
     const [word, ...rest] = p.operands;
     if (word?.v === null) {
+      // An empty value splits into no words at all, so the word after it is the command (`O=''; redis-cli $O
+      // FLUSHALL`), and so is a later word of one value the text gave (commands-q6-1).
+      const after = rest.flatMap(a => {
+        const forms = a.v === null ? h.e.knownForms(a) : [a.v];
+        return a.v !== null ? [a.v] : forms.length === 1 && forms[0] !== null ? forms[0].split(/\s+/).filter(w => w !== "") : [null];
+      });
       for (const f of h.e.knownForms(word)) {
-        redisCommand(h, f === null ? [null] : [...f.trim().split(/\s+/), ...rest.map(a => a.v)]);
+        redisCommand(h, f === null ? [null] : [...f.trim().split(/\s+/).filter(w => w !== ""), ...after]);
         const split = f === null ? [] : [...f.split(/\s+/).filter(w => w !== "").map(w => lit(w)), ...rest];
         if (split.length) optionFiles(h, split, parseOpts(split, spec), files);
       }

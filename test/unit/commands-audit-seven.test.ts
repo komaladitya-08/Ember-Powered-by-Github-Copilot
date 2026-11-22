@@ -37,6 +37,22 @@ describe("protected paths handed to opaque shell contexts", () => {
   });
 });
 
+describe("database command arguments", () => {
+  it("reads the Redis command after an empty options variable as the command it is (commands-q6-1, i6b)", () => {
+    for (const command of [
+      "O=''; redis-cli $O FLUSHALL", "O=''; redis-cli ${O} FLUSHALL", 'O=""; redis-cli "$O" FLUSHALL', "A=''; B=''; redis-cli $A $B FLUSHALL",
+      "O=''; redis-cli -h x $O flushall", "O=''; redis-cli $O FLUSHDB",
+    ]) {
+      const d = decide(command);
+      expect(d.verdict, command).toBe("ask");
+      expect(d.classes, command).toContain("destroy");
+    }
+    expect(decide("O=''; redis-cli $O INFO").verdict).toBe("run");
+    expect(decide("redis-cli INFO").verdict).toBe("run");
+    expect(decide("O='--rdb /home/ana/.config/ember/settings.json'; redis-cli $O").verdict).toBe("refuse");
+  });
+});
+
 describe("a wrapper's option value Ember can't see", () => {
   it("is read as text that may hold the command itself, as an attached one is (commands-q6-3, i6b, commands-v7-5)", () => {
     for (const command of [
