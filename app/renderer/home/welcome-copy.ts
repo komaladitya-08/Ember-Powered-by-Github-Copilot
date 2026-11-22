@@ -210,6 +210,8 @@ export const CONSENT_TEXT = {
   declined: "Then I'll stay off: nothing is read, heard or sent. Agree here whenever you're ready. If you quit me now, I'll ask again the next time you open me.",
   quit: "Quit Ember",
   notSaved: "I couldn't save your agreement, so nothing is on yet. Try again.",
+  /** Beside Agree while the summary can't name where requests go yet: it waits for that (first-run-c7-1). */
+  waiting: "Checking where your requests go… Wait a moment.",
 } as const;
 
 /**

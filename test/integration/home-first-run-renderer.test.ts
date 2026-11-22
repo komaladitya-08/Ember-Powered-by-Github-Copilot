@@ -46,7 +46,8 @@ const SIGNED_OUT = { phase: "signed-out", detail: "Not signed in.", models: [], 
 const CARD = commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts: { kind: "local", privileged: false, windows: false, podman: false, byok: false } });
 const ALL_ROWS = ["commands", "memory", "voice", "screenshots", "interactive"].map(row => ({ row, offered: true, why: null }));
 
-interface Seed { consent?: number; firstRun?: { rows: unknown[]; commands: unknown }; agreeDone?: { ok: boolean; failed: string[] }; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean; viewport?: { width: number; height: number } }
+/** `holdProvider`: main's provider state isn't answered until the test does (`providerState` in __frPend). */
+interface Seed { holdProvider?: boolean; consent?: number; firstRun?: { rows: unknown[]; commands: unknown }; agreeDone?: { ok: boolean; failed: string[] }; admin?: Record<string, unknown>; agent?: Record<string, unknown>; checks?: unknown[]; providerState?: Record<string, unknown>; noBridge?: boolean; slowAgree?: boolean; failOff?: boolean; home?: boolean; provider?: Record<string, unknown>; liveState?: boolean; viewport?: { width: number; height: number } }
 
 let browser: Browser;
 let server: http.Server;
@@ -83,7 +84,7 @@ async function open(seed: Seed = {}): Promise<Page> {
   (page as Page & { errors: string[] }).errors = errors;
   const returning = (seed.consent ?? 99) > 0 && (seed.consent ?? 99) < CONSENT_VERSION;
   const firstRun = seed.firstRun ?? (returning ? { rows: [{ row: "interactive", offered: true, why: null }], commands: null } : { rows: ALL_ROWS, commands: { title: CARD.title, body: CARD.body, sha256: CARD.sha256 } });
-  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge, slowAgree, failOff, liveState, firstRun, agreeDone, version }) => {
+  await page.addInitScript(({ settings, admin, environment, agent, providerState, noBridge, slowAgree, failOff, liveState, firstRun, agreeDone, version, holdProvider }) => {
     window.__frFailOff = failOff;
     window.__frCalls = []; window.__frPend = {};
     window.__frState = { settings, agent };
@@ -139,13 +140,15 @@ async function open(seed: Seed = {}): Promise<Page> {
     if (!noBridge) {
       window.emberProvider = {
         state: async () => {
+          if (holdProvider) return await defer("providerState") as never;
           const p = window.__frState.settings.provider as { on: boolean; baseUrl: string; consent?: { host?: string } };
           const host = hostOf(p.baseUrl);
           const agreed = !!host && p.consent?.host === host;
           const live = liveState ? { inForce: p.on && agreed, host, agreed, keySaved: !!host && keyHost === host } : {};
           return { allowed: true, managed: null, keySaved: false, keyring: true, inForce: false, host: null, agreed: false, ...providerState, ...live };
         },
-        onChanged: () => () => undefined,
+        // Main's word that the provider changed, as `providerChanged` (a test emits it).
+        onChanged: (fn: () => void) => { (subs.providerChanged ??= []).push(fn); return () => undefined; },
         saveKey: () => { window.__frCalls.push("saveKey"); keyHost = hostOf(window.__frState.settings.provider.baseUrl); return Promise.resolve({ ok: true }); },
         removeKey: async () => ({ ok: true }),
         agree: (host: string, move?: object) => {
@@ -162,7 +165,7 @@ async function open(seed: Seed = {}): Promise<Page> {
         test: (draft?: { host: string; key?: string }) => { window.__frCalls.push(draft ? `test-draft:${draft.host}${draft.key ? "+key" : ""}` : "test"); return defer("test") as never; },
       };
     }
-  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff, liveState: !!seed.liveState, firstRun, agreeDone: seed.agreeDone ?? { ok: true, failed: [] }, version: CONSENT_VERSION });
+  }, { settings, admin, environment, agent: seed.agent ?? SIGNED_OUT, providerState: seed.providerState ?? {}, noBridge: !!seed.noBridge, slowAgree: !!seed.slowAgree, failOff: !!seed.failOff, liveState: !!seed.liveState, firstRun, agreeDone: seed.agreeDone ?? { ok: true, failed: [] }, version: CONSENT_VERSION, holdProvider: !!seed.holdProvider });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/home/index.html`);
   if (seed.home) { await page.waitForSelector("a[href='#copilot-h']"); await page.locator("a[href='#copilot-h']").first().click(); } else await page.waitForSelector("#welcome:not([hidden])");
   return page;
@@ -1741,6 +1744,42 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     await next(d).click();
     await expect.poll(async () => (await calls(d)).some(x => x.startsWith("agreeFirstRun:"))).toBe(true);
     expect((c as Page & { errors: string[] }).errors).toEqual([]);
+  }, 20_000);
+
+  it("(y2) Agree waits until the summary can name where my requests go, and is armed afresh when that changes (first-run-c7-1)", async () => {
+    const p = await open({ consent: 0, holdProvider: true });
+    const agreed = async () => (await calls(p)).some(c => c.startsWith("agreeFirstRun:"));
+    const answer = (state: Record<string, unknown>) => p.evaluate(s => { for (const q of window.__frPend.providerState?.splice(0) ?? []) q.resolve(s); }, state);
+    await next(p).click();
+    await expect.poll(() => p.locator("#w-title").innerText()).toBe("What I do, and what I don't");
+    await p.waitForTimeout(AGREE_ARM_MS + 100);
+    // Main hasn't said whether my own provider is in force: the summary can't name the recipient, and Agree waits, saying why.
+    expect(await p.locator("#w-points").innerText()).toContain("a model service I can't tell yet");
+    expect(await next(p).getAttribute("aria-disabled")).toBe("true");
+    expect(await p.locator("#w-why").innerText()).toBe("Checking where your requests go… Wait a moment.");
+    await next(p).evaluate(e => (e as HTMLButtonElement).click());
+    expect(await agreed()).toBe(false);
+    const state = { allowed: true, managed: null, keySaved: false, keyring: true, inForce: false, host: null, agreed: false };
+    await answer(state);
+    await expect.poll(() => p.locator("#w-points").innerText()).toContain("GitHub Copilot");
+    expect(await next(p).getAttribute("aria-disabled")).toBeNull();
+    expect(await p.locator("#w-why").innerText()).toBe("");
+    // The time spent waiting doesn't count: a press as the recipient appears agrees to nothing.
+    await next(p).evaluate(e => (e as HTMLButtonElement).click());
+    expect(await agreed()).toBe(false);
+    await p.waitForTimeout(AGREE_ARM_MS + 100);
+    // Main says the provider changed: unknown again until it answers, then another recipient, armed afresh.
+    await p.evaluate(() => window.__frEmit("providerChanged", undefined));
+    await expect.poll(() => p.locator("#w-points").innerText()).toContain("a model service I can't tell yet");
+    await answer({ ...state, inForce: true, host: "new.example.com", agreed: true });
+    await expect.poll(() => p.locator("#w-points").innerText()).toContain("new.example.com");
+    await next(p).evaluate(e => (e as HTMLButtonElement).click());
+    expect(await agreed()).toBe(false);
+    // Once it has been on screen a moment, Agree does what it says.
+    await p.waitForTimeout(AGREE_ARM_MS + 100);
+    await next(p).click();
+    await expect.poll(agreed).toBe(true);
+    expect((p as Page & { errors: string[] }).errors).toEqual([]);
   }, 20_000);
 
   it("(q2) tells me about you says why memory is paused under a model service, shows no answers it couldn't keep, and goes on with Continue (memory-c1-2)", async () => {

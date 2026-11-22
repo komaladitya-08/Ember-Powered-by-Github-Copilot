@@ -107,6 +107,11 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
    */
   const shownAt = { agree: -Infinity, quit: -Infinity };
   /**
+   * What the consent step showed when Agree was last armed (the recipient, the summary's points, what changed): another
+   * one arms it afresh, so a press can't agree to words the person had no time to read (first-run-c7-1).
+   */
+  let shownConsent: string | null = null;
+  /**
    * First run's rows (owner decision of 2026-11-12, app/shared/first-run.ts): main's view of them, read again when what
    * decides them changes (`rowsKey`), and the switches as the user left them (each offered row starts on).
    */
@@ -287,11 +292,15 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const a = status?.admin;
     // Named as the full text under it names it: the organisation's service, the user's own provider while it is in
     // force, otherwise GitHub Copilot; never Copilot while another service would answer (first-run-r2-2).
-    const service = recipientWords(deps.destination(), true);
+    const destination = deps.destination();
+    const service = recipientWords(destination, true);
     const points = consentPoints({ service, kept: a ? keptWords(a) : "kept 30 days", locked: !!a && a.error !== null });
     $("w-points").replaceChildren(...points.map(p => { const li = el("li", { textContent: p.text }); li.dataset.icon = p.icon; return li; }));
     // Agreed to an earlier version: what changed since, above the usual points (first-run-4).
     const changed = changes();
+    // Another recipient or other words than Agree was armed for: armed afresh from now (first-run-c7-1).
+    const shownKey = JSON.stringify([destination, points, changed]);
+    if (!consented() && shownKey !== shownConsent) { shownConsent = shownKey; shownAt.agree = performance.now(); }
     $("w-changes").hidden = !changed.length;
     $("w-changes-h").textContent = CONSENT_AGAIN.changes;
     if (JSON.stringify(changed) !== JSON.stringify([...$("w-changes-list").children].map(li => li.textContent))) {
@@ -308,7 +317,10 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if ($("w-consent-note").textContent !== note) $("w-consent-note").textContent = note;
     if (consented()) return { label: NAV.next, why: "", alt: "" };
     // The rows say what the agreement turns on: it waits for them (main's answer comes at once).
-    return { label: CONSENT_TEXT.agree, why: rowsView ? "" : "Getting ready…", alt: declined ? CONSENT_TEXT.quit : CONSENT_TEXT.notNow };
+    // Nor is anything agreed to while the summary can't say where requests go: it waits for main's answer, which comes
+    // at once or with the next provider change (first-run-c7-1).
+    const why = !rowsView ? "Getting ready…" : destination.kind === "unknown" ? CONSENT_TEXT.waiting : "";
+    return { label: CONSENT_TEXT.agree, why, alt: declined ? CONSENT_TEXT.quit : CONSENT_TEXT.notNow };
   }
 
   /** The “Hey Ember” card's text as Home's Voice section shows it (its own element), without its download sentence. */
@@ -976,8 +988,11 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   next.addEventListener("click", () => {
     if (next.getAttribute("aria-disabled") === "true") return;
     if (step === "consent" && !consented()) {
-      // Drawn just now where Get started was: a double click's second press agrees to nothing (first-run-c1-1).
-      if (!armed(shownAt.agree)) return;
+      // Drawn just now where Get started was: a double click's second press agrees to nothing (first-run-c1-1). What is
+      // agreed to is read again at the press: a recipient that changed or isn't known never takes an older arm
+      // (first-run-c7-1).
+      render();
+      if (next.getAttribute("aria-disabled") === "true" || !armed(shownAt.agree)) return;
       if (!rowsView) return;
       declined = false;
       agreeNote = "";

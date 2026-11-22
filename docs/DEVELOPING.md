@@ -182,7 +182,9 @@ destroys the page and discards unsent drafts.
 - **First run** is six essential steps in the settings window, with optional character and personalisation detours (`app/renderer/home/welcome.ts`, its words
   in `welcome-copy.ts`): Ember says hello; you choose a character; you read what Ember does and doesn't do (five short
   lines, the full text under **Read the full text**; both name where a request goes: GitHub Copilot, your own model
-  provider while it is in force, or the organisation's model service), then what the one agreement turns on (owner
+  provider while it is in force, or the organisation's model service; until Ember knows which, Agree waits, and the
+  half second that guards it from a stray press starts again whenever the recipient or the words shown change:
+  first-run-c7-1), then what the one agreement turns on (owner
   decision of 2026-11-12, `app/shared/first-run.ts`, `app/main/first-run.ts`): five rows, each with a switch that is on
   by default and its own card's full text from the same source Settings uses (commands on this computer, this
   computer's commands card as main builds it; memory, `MEMORY_CONSENT_TEXT`; listening for “Hey Ember” with spoken

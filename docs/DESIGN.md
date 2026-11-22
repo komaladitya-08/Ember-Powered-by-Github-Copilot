@@ -666,7 +666,9 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   and the step's own part. The buttons follow the step, never stuck to the window's foot: Back leading, the step's
   quiet choice (Not now, Skip for now, Cancel), then its one prominent button, with the reason beside it whenever it
   waits (`aria-describedby`). Not now leaves focus on the note that says what it did, and Agree and Quit Ember drop a
-  press for half a second after they appear, so a double click or a held Enter can't agree or quit (first-run-c1-1). Sign in
+  press for half a second after they appear, so a double click or a held Enter can't agree or quit (first-run-c1-1).
+  Agree also waits while the summary can't name where requests go (“Checking where your requests go… Wait a moment.”
+  beside it), and its half second starts again whenever the recipient or the words shown change (first-run-c7-1). Sign in
   keeps focus on its own button while it waits, and a cancelled sign-in moves it to the title, so a second Enter
   neither cancels nor skips (first-run-r3). Rows that need the user, the tries and **Ready to start** are grouped rows on `--surface-1`;
   the full consent text and the setup rows' details are disclosures (an accent chevron and words) over a
