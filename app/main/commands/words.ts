@@ -202,16 +202,6 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
   // A numeric option's next word in a table of record (numericAny, numericCountOnly), else as above.
   const takesNext = (name: string, k: number): boolean => k + 1 < args.length
     && ((spec.numericAny ?? []).includes(name) || ((spec.numericCountOnly ?? []).includes(name) ? countWord(args[k + 1].raw) : numberNext(k)));
-  // Before a command, a separate value Ember can't see (`xargs -P $N echo`, `env -C $(cat d.txt) echo`) is text the
-  // shell may split into more words, the first of them the command (`N='1 rm -rf ~'` runs rm): the option keeps the
-  // value, for its own checks, and what runs is a command Ember can't name, as for an attached value above, unless the
-  // value is only a job count as written (commands-v7-5, commands-q6-3). A value quoted whole (`-P "$N"`) is one word
-  // whatever it holds, so the command is still the word after it.
-  const unseenValue = (k: number, name: string): Parsed | null => {
-    const value = args[k + 1];
-    if (!spec.stopAtOperand || value.v !== null || /^"[^"]*"$/.test(value.raw) || ((spec.jobCounts ?? []).includes(name.replace(/^--?/, "")) && countWord(value.raw))) return null;
-    return { opts, operands: [...operands, ...args.slice(k + 1)], restAt: k + 1, missingValue, long: new Set([...longValue, ...longNumeric, ...(spec.longOptional ?? [])]) };
-  };
   for (let k = 0; k < args.length; k++) {
     const a = args[k];
     const v = a.v;
@@ -255,8 +245,8 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
       const name = `--${eq >= 0 ? body.slice(0, eq) : body}`;
       if (eq >= 0) opts.push({ name, value: body.slice(eq + 1), at: k });
       else if (longValue.has(name.slice(2))) {
-        if (k + 1 < args.length) { opts.push({ name, value: args[k + 1].v, at: k }); const unseen = unseenValue(k, name); if (unseen) return unseen; k++; } else { opts.push({ name, value: null, at: k }); missingValue = true; }
-      } else if (longNumeric.has(name.slice(2)) && takesNext(name.slice(2), k)) { opts.push({ name, value: args[k + 1].v, at: k }); const unseen = unseenValue(k, name); if (unseen) return unseen; k++; } else opts.push({ name, at: k });
+        if (k + 1 < args.length) { opts.push({ name, value: args[k + 1].v, at: k }); k++; } else { opts.push({ name, value: null, at: k }); missingValue = true; }
+      } else if (longNumeric.has(name.slice(2)) && takesNext(name.slice(2), k)) { opts.push({ name, value: args[k + 1].v, at: k }); k++; } else opts.push({ name, at: k });
       continue;
     }
     // A short cluster: -rf, -fFILE, -C dir.
@@ -269,13 +259,13 @@ export function parseOpts(args: readonly Arg[], spec: OptSpec = {}): Parsed {
         // rest of the word is the cluster's other letters, as main read them (`nmake -jf FILE`: commands-held-x9-4).
         if (attached && (spec.numericCountOnly ?? []).includes(c) && !countWord(attached)) { opts.push({ name: `-${c}`, at: k }); continue; }
         if (attached) opts.push({ name: `-${c}`, value: attached, at: k });
-        else if (shortNumeric.includes(c) && takesNext(c, k)) { opts.push({ name: `-${c}`, value: args[k + 1].v, at: k }); const unseen = unseenValue(k, `-${c}`); if (unseen) return unseen; k++; } else opts.push({ name: `-${c}`, at: k });
+        else if (shortNumeric.includes(c) && takesNext(c, k)) { opts.push({ name: `-${c}`, value: args[k + 1].v, at: k }); k++; } else opts.push({ name: `-${c}`, at: k });
         break;
       }
       if (shortValue.includes(c)) {
         const attached = v.slice(j + 1);
         if (attached) opts.push({ name: `-${c}`, value: attached, at: k });
-        else if (k + 1 < args.length) { opts.push({ name: `-${c}`, value: args[k + 1].v, at: k }); const unseen = unseenValue(k, `-${c}`); if (unseen) return unseen; k++; } else { opts.push({ name: `-${c}`, value: null, at: k }); missingValue = true; }
+        else if (k + 1 < args.length) { opts.push({ name: `-${c}`, value: args[k + 1].v, at: k }); k++; } else { opts.push({ name: `-${c}`, value: null, at: k }); missingValue = true; }
         break;
       }
       opts.push({ name: `-${c}`, at: k });

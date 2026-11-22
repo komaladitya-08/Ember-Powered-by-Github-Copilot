@@ -105,9 +105,7 @@ The **memory core** is built, in `app/main/memory/`, pure TypeScript with no nat
   Smith": memory-x7-3). It uses the commands redactor's patterns (OpenAI, Anthropic, Stripe, Hugging Face, GitLab,
   SendGrid, DigitalOcean and Twilio keys among them, and a password given to a program's option, on its line or as its own element of a list of
   arguments: a compose healthcheck's `["CMD", "mysqladmin", "ping", "-phunter2"]`, `["sshpass", "-p", "hunter2", …]`,
-  memory-q6-1; the client named in any case or with Windows' `.exe` (`"Redis-Cli"`, `"CURL.EXE"`, `"MYSQL.EXE"`), a MySQL
-  `-p…` however long the list, htpasswd's `"-nb", "user", "…"` and `net use`'s password after the share, memory-v7-1,
-  memory-y7-1; never where the password is read from (`"-pass", "env:PW"`), never what follows an option that takes no value, `"--no-password"`, a word for no value or a type,
+  memory-q6-1; never what follows an option that takes no value, `"--no-password"`, a word for no value or a type,
   `"none"`, `"string"`, `"store_true"`, the next key of a mapping that holds the option, or exactly the option's own name,
   `@click.option("--api-key", "api_key")`: memory-x7-1), a Luhn check for cards and mod 97 for IBANs. Words like "required" or "saved" where the
   value would be ("the password for Netflix is saved in 1Password") aren't a value ("its", "never", "typed", "entered",
