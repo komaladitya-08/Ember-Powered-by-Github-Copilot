@@ -173,6 +173,12 @@ environment, only through `scripts/runtime-env-live.sh`, which gives it a networ
 
 ### Using Ember
 
+Closing Home keeps its unsent conversation draft and waiting-message recovery in memory for this run; reopening
+Home (the handle, the shortcuts or the launcher) brings them back. It still ends Home's Listen once, Voice Match
+teaching and Project work. No draft is written to disk or sent automatically. Signing out or changing account clears
+the conversation and draft; a policy lockdown clears the draft too, including while Home is hidden. Quitting Ember
+destroys the page and discards unsent drafts.
+
 - **First run** is six essential steps in the settings window, with optional character and personalisation detours (`app/renderer/home/welcome.ts`, its words
   in `welcome-copy.ts`): Ember says hello; you choose a character; you read what Ember does and doesn't do (five short
   lines, the full text under **Read the full text**; both name where a request goes: GitHub Copilot, your own model
