@@ -4,7 +4,7 @@
  * (docs/APPROVALS.md).
  */
 import { describe, expect, it } from "vitest";
-import { classifyCommand } from "../../app/main/commands/classify";
+import { type ClassificationExtra, classifyCommand } from "../../app/main/commands/classify";
 import { contextOf, runCase } from "../fixtures/commands/corpus";
 
 const decide = (command: string) => runCase({ cmd: command, verdict: "run", context: "linux" }, { shell: "bash", context: "linux" }).decision;
@@ -69,6 +69,24 @@ describe("an archive destination held in a variable", () => {
     expect(run.findings.map(f => f.rule)).toContain("escape.run-downloaded");
     // A folder of the project's own still unpacks as before.
     expect(decide('d=sub; tar -C "$d" -xf x.tar').verdict).toBe("run");
+  });
+});
+
+describe("scripts in a folder the wrapper chooses", () => {
+  const classify = (command: string) => classifyCommand(command, "bash", contextOf("linux")) as ClassificationExtra;
+
+  it("reads a script on stdin from the line's own folder, where the shell opens it (commands-q6-2, i6b)", () => {
+    for (const command of ["env -C . sh < deploy.sh", "env --chdir=. bash < deploy.sh", "env -C /tmp -- sh -s < deploy.sh", "env -C. sh <deploy.sh"]) {
+      expect(classify(command).scripts.map(s => s.path), command).toContain("/home/ana/proj/deploy.sh");
+    }
+  });
+
+  it("still asks before a script by a relative name runs from a folder Ember can't tell, and runs what names none (commands-q6-2)", () => {
+    for (const command of ["env -C . sh build.sh", "env -C /tmp bash build.sh"]) {
+      expect(classify(command).findings.map(f => f.rule), command).toContain("unclear.folder");
+      expect(decide(command).verdict, command).toBe("ask");
+    }
+    expect(decide("env -C . echo hi").verdict).toBe("run");
   });
 });
 

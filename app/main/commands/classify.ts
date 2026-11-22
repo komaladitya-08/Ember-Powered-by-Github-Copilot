@@ -283,6 +283,11 @@ interface Scope {
    * target can't check them, so none is probed and an overwrite of one always asks.
    */
   foreign?: boolean;
+  /**
+   * The folder the shell opens this command's redirections in, where a wrapper moved the program it runs elsewhere
+   * (`env -C x sh < deploy.sh` reads deploy.sh from here, not from x): set only then (commands-q6-2).
+   */
+  redirCwd?: string | null;
 }
 
 /** A redirection, family-neutral. */
@@ -4140,7 +4145,8 @@ class Engine extends Classifier {
     const savedPipe = this.pipe;
     const savedCd = this.cdTarget;
     const before = this.commands.length;
-    this.classifyText(text, shell, child(sc, { ...o, wrappers: [...sc.wrappers, wrapper], depth: sc.depth + 1 }, { pipedIn: stdin }));
+    // The nested shell opens its own redirections where it runs (Scope.redirCwd is the outer line's).
+    this.classifyText(text, shell, child(sc, { ...o, redirCwd: undefined, wrappers: [...sc.wrappers, wrapper], depth: sc.depth + 1 }, { pipedIn: stdin }));
     this.at = savedAt;
     this.program = savedProg;
     this.pipe = savedPipe;
@@ -6035,16 +6041,22 @@ function sqlFromStdin(h: H, client?: SqlClient): void {
  * the file read first and judged as its own text (commands-remote-r10-4).
  */
 function stdinFile(h: H, client?: SqlClient): void {
+  const at = redirScope(h);
   for (const r of h.s.redirs) {
     if (r.kind !== "read" || !r.target) continue;
-    if (h.e.isDownloaded(r.target, h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+    if (h.e.isDownloaded(r.target, at)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
     else if (r.target.v) nameCheck(h, r.target.v);
     // A client whose commands Ember doesn't read (redis-cli, mongosh) runs the file as code: one the task wrote asks, as
     // a Python script it wrote does (r10-commands-y10-3).
-    if (client === undefined) { if (r.target.v !== null && !STREAM_NAME.test(r.target.v)) h.e.recordScript(r.target, "code", h.sc); continue; }
+    if (client === undefined) { if (r.target.v !== null && !STREAM_NAME.test(r.target.v)) h.e.recordScript(r.target, "code", at); continue; }
     if (r.target.v === null) h.e.unclear("unclear.sql", "It runs database commands from a file Ember can't name.");
-    else if (!STREAM_NAME.test(r.target.v)) h.e.recordScript(r.target, client, h.sc);
+    else if (!STREAM_NAME.test(r.target.v)) h.e.recordScript(r.target, client, at);
   }
+}
+
+/** The scope a command's own redirections are opened in: the line's folder, where a wrapper moved the program (Scope.redirCwd). */
+function redirScope(h: H): Scope {
+  return h.sc.redirCwd === undefined ? h.sc : { ...h.sc, cwd: h.sc.redirCwd };
 }
 
 /** redis-cli's commands that only read or watch (anything else changes the database). */
@@ -7575,8 +7587,9 @@ function intoInterpreter(h: H, readAs?: ScriptRef["as"]): void {
     // (`fish < x`, `cmake -P - < x`) asks: what runs is never left unread by default (commands-remote-r11-1).
     for (const r of h.s.redirs) {
       if (r.kind !== "read" || !r.target) continue;
-      if (h.e.isDownloaded(r.target, h.sc)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
-      if (readAs !== undefined) h.e.recordScript(r.target, readAs, h.sc);
+      const at = redirScope(h);
+      if (h.e.isDownloaded(r.target, at)) h.e.add("escape", "escape.run-downloaded", SAYS.runsDownloaded);
+      if (readAs !== undefined) h.e.recordScript(r.target, readAs, at);
       else h.e.unclear("unclear.stdin-code", "Runs code Ember can't see.");
     }
     return;
@@ -8072,8 +8085,10 @@ reg(NATIVE, ["env"], h => {
   }
   // `env -C` changes folder as the kernel does (`..` after a link leads beside its target) and leaves PWD naming the old
   // one, so a shell it starts begins from the real path: the folder is unknown to what it runs (as after `cd -P`).
-  const cwd = values(p, "C", "chdir").length ? null : h.sc.cwd;
-  h.e.unwrap(h, rest, "env", { cwd });
+  const moved = values(p, "C", "chdir").length > 0;
+  const cwd = moved ? null : h.sc.cwd;
+  // Its own redirections stay the shell's, opened where the line is (`env -C . sh < deploy.sh`: commands-q6-2).
+  h.e.unwrap(h, rest, "env", { cwd, ...(moved && h.sc.redirCwd === undefined ? { redirCwd: h.sc.cwd } : {}) });
 });
 // wslvar prints a Windows environment variable (or, with -s/-l, the system's or the user's shell folders).
 reg(NATIVE, ["wslvar"], h => {

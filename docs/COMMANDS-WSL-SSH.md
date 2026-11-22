@@ -932,7 +932,8 @@ an earlier command printed text that looked like instructions.").
   it: `cd /srv/x && true ; cat ../.config/ember/settings.json` asks, `cd ~/.config && ls ; rm -rf ember` is refused,
   and `cd build && make ; make test` runs. Inside a longer command, what follows `cd -P`, and what `env -C <folder>` runs, has no
   folder Ember knows (only the computer knows where a link leads), so a name relative to it asks ("Ember can't tell
-  which folder this command runs in."); `set -P`, `set -o physical` (also as `set -euo physical`), zsh's `-w`,
+  which folder this command runs in."), while the command's own redirections are still the shell's, opened where the
+  line is, so `env -C . sh < deploy.sh` reads deploy.sh there first and judges it as any script; `set -P`, `set -o physical` (also as `set -euo physical`), zsh's `-w`,
   `chase_links`, `chase_dots` or `cdable_vars`, a command that sets or removes `PWD` itself, and a shell started without it (`env -i`,
   `env -u PWD`, `exec -c`) make later `cd`s go where Ember doesn't follow, so they ask ("It makes the shell follow links
   when it changes folder, which Ember doesn't follow.", or "It changes how commands are found or run.").
