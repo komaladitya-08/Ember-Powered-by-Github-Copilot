@@ -13,7 +13,7 @@
   ];
   const row = (o) => ({
     projectId: "p-app", folder: "/home/me/work/app", isolation: "folder", permissionMode: "manual", agentMode: "interactive", model: "gpt-5.5",
-    open: true, busy: false, pending: 0, unread: 0, pinned: false, archived: false, createdBy: "user", createdAt: now - 3_600_000, updatedAt: now - 600_000, ...o,
+    open: true, busy: false, pending: 0, unread: 0, pinned: false, archived: false, sandbox: "on", createdBy: "user", createdAt: now - 3_600_000, updatedAt: now - 600_000, ...o,
   });
   const sessions = new Map([
     ["s-login", row({ id: "s-login", name: "Fix the login redirect", pinned: true, updatedAt: now - 120_000 })],
@@ -168,7 +168,7 @@
       l.attached = true;
       const events = l.kept.filter(e => since === undefined || e.seq > since);
       step(`attach:${id}`);
-      return { ok: true, value: { row: sessions.get(id), events, pending: [...pending.values()].filter(p => p.sessionId === id), seq: l.seq } };
+      return { ok: true, value: { row: sessions.get(id), events, pending: [...pending.values()].filter(p => p.sessionId === id), seq: l.seq, ...(since === undefined ? { reset: true } : {}) } };
     },
     detach(id) { calls.push(`detach:${id}`); log(id).attached = false; },
     async send(m) {

@@ -134,6 +134,13 @@ export const CATCHING_UP = "Catching up…";
 export function earlierItems(n: number): string { return `Show ${n.toLocaleString("en-GB")} earlier ${n === 1 ? "item" : "items"}`; }
 export function notSent(why: string): string { return `Not sent: ${why}`; }
 export const QUEUED_TAG = "Queued";
+/** Where a session's commands run, as main says once it has opened the session in this run (`CodeSessionRow.sandbox`). */
+export function sandboxWords(sandbox: string | undefined): string {
+  if (sandbox === "on") return "In the sandbox";
+  if (sandbox === "no-network") return "In the sandbox, without the network";
+  if (sandbox === "off") return "Outside the sandbox";
+  return "";
+}
 export const STEERED_TAG = "Sent into the turn";
 export function attachedNames(names: readonly string[]): string { return names.length === 1 ? `Attached: ${names[0]}` : `Attached: ${names.join(", ")}`; }
 export const CODE_COPY = "Copy";
@@ -430,7 +437,7 @@ export function oauthLead(url: string, reason?: string): string {
   const why = reason === "refresh" || reason === "reauth" ? "Its sign-in has run out." : reason === "upscope" ? "It needs more access." : "It needs you to sign in.";
   return `${why} Its address: ${url}`;
 }
-export const OAUTH_SIGN_IN = "Sign in…";
+export const OAUTH_NOTE = "Signing in from here isn't offered yet.";
 export const OAUTH_NOT_NOW = "Not now";
 export function samplingTitle(server: string): string { return `“${server}” asks to use the model`; }
 export const SAMPLING_NOTE = "Allowing this isn't offered yet.";

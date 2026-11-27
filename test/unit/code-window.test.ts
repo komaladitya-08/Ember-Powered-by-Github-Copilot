@@ -46,18 +46,23 @@ describe("the coding window", () => {
   });
 
   it("opens nothing while the build has no coding preload, then one window, brought forward when asked again", () => {
-    expect(openCodeWindow("linux", () => false)).toBeNull();
+    expect(openCodeWindow("linux", { exists: () => false })).toBeNull();
     expect(electron.made).toHaveLength(0);
-    const first = openCodeWindow("linux", f => f.endsWith(`${path.sep}code.cjs`));
+    const unregister = vi.fn();
+    const register = vi.fn(() => unregister);
+    const first = openCodeWindow("linux", { exists: f => f.endsWith(`${path.sep}code.cjs`), register });
     expect(first).not.toBeNull();
-    expect(openCodeWindow("linux", () => true)).toBe(first);
+    expect(register).toHaveBeenCalledTimes(1);
+    expect(openCodeWindow("linux", { exists: () => true, register })).toBe(first);
+    expect(register).toHaveBeenCalledTimes(1);
     expect(electron.made).toHaveLength(1);
     expect(electron.made[0].shown).toBe(1);
     expect(electron.made[0].focused).toBe(1);
     // Once closed, the next open makes a new one.
     electron.made[0].destroyed = true;
     electron.made[0].handlers.get("closed")?.({ preventDefault() {} });
-    openCodeWindow("linux", () => true);
+    expect(unregister).toHaveBeenCalledTimes(1);
+    openCodeWindow("linux", { exists: () => true });
     expect(electron.made).toHaveLength(2);
   });
 });

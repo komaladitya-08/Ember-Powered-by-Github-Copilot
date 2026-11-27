@@ -162,7 +162,9 @@ export function envelope(s: CodeState, env: CodeEventEnvelope): CodeState {
 export function attached(s: CodeState, sessionId: string, a: CodeAttached, since?: number): CodeState {
   // Whether a turn is under way is main's to say here: the kept history has no `session.idle` (the SDK doesn't keep it),
   // so a replayed `assistant.turn_start` would otherwise leave every attached session working.
-  let t = { ...attachedTranscript(s.transcripts[sessionId], a.events, a.seq, since), busy: a.row.busy };
+  // `reset` (main's): the events are the whole kept history, so what was shown is dropped and drawn again.
+  const reset = (a as CodeAttached & { reset?: boolean }).reset === true;
+  let t = { ...attachedTranscript(s.transcripts[sessionId], a.events, a.seq, reset ? undefined : since), busy: a.row.busy };
   const pending: Record<string, CodePendingRequest> = Object.fromEntries(Object.entries(s.pending).filter(([, p]) => p.sessionId !== sessionId));
   for (const p of a.pending) { pending[p.requestId] = p; t = requestOpened(t, p.requestId, p.kind, p.data); }
   // A request this transcript shows as open that main no longer has waiting was answered while the window was away.

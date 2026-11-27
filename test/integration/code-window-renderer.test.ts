@@ -84,6 +84,7 @@ describe.skipIf(gate)("the coding window", () => {
     const created = JSON.parse((await calls(page)).find(c => c.startsWith("create:"))!.slice(7));
     expect(created).toEqual({ projectId: "p-app", isolation: "worktree", baseBranch: "main", model: "gpt-5.5", reasoningEffort: "high", agentMode: "interactive", permissionMode: "manual", name: "Return to the page after sign-in" });
     await expect.poll(() => page.locator("#session-title").textContent()).toBe("Return to the page after sign-in");
+    expect(await page.locator("#session-where").textContent()).toBe("app · worktree ember/new-session · In the sandbox");
     const sid = (await calls(page)).find(c => c.startsWith("attach:s-new"))!.slice(7);
 
     // ── A message, the streamed reply and a command's row ──
@@ -119,7 +120,7 @@ describe.skipIf(gate)("the coding window", () => {
     await page.keyboard.press("Tab");
     expect(await focusedText(page)).toBe("Allow for this session");
     await page.keyboard.press("Enter");
-    await expect.poll(() => calls(page)).toContain('respond:perm-1:{"kind":"approve-for-session","approval":{"kind":"write"}}');
+    await expect.poll(() => calls(page)).toContain('respond:perm-1:{"kind":"approve-for-session"}');
     await expect.poll(() => log.locator(".record").first().textContent()).toBe("Allowed for this session, by you.");
     await expect.poll(() => page.locator("#needs-bar").isHidden()).toBe(true);
     // The edit's row shows the diff its request carried, and the sub-agent's row opens on its own work.

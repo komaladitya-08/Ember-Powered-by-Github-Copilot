@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ELICITATION_CANCEL, ELICITATION_DECLINE, FEEDBACK_MAX, autoModeCard, elicitationAccept, elicitationCard, grants, limitsAnswer, limitsCard, oauthCard,
-  permissionAnswer, permissionCard, planExitAnswer, planExitCard, questionAnswer, questionCard,
+  permissionAnswer, permissionCard, permissionDecision, planExitAnswer, planExitCard, questionAnswer, questionCard,
 } from "../../app/renderer/code/requests";
 
 const shell = { requestId: "r", permissionRequest: { kind: "shell", fullCommandText: "rm -rf build && npm run build", intention: "Clean build", commands: [{ identifier: "rm", readOnly: false }, { identifier: "npm run", readOnly: false }], possiblePaths: ["build"], possibleUrls: [{ url: "https://registry.npmjs.org" }], hasWriteFileRedirection: true, warning: "Deletes files", canOfferSessionApproval: true, requestSandboxBypass: true, requestSandboxBypassReason: "needs network" }, promptRequest: { assistedApproval: { recommendation: "requireApproval", reason: "deletes" } }, riskAssessment: { level: "high" } };
@@ -23,23 +23,33 @@ describe("permission cards", () => {
     expect(permissionCard({ permissionRequest: { kind: "workflow", name: "deploy", phases: 3 } }).view).toEqual({ kind: "other", sdkKind: "workflow", details: "{\n  \"name\": \"deploy\",\n  \"phases\": 3\n}" });
   });
 
-  it("answer with the SDK's decision for exactly an offered choice, its scope built from the request", () => {
+  it("answer main with exactly an offered choice, and the person's reason only on Don't allow", () => {
     const choices = ["approve-once", "approve-for-session", "reject"];
-    expect(permissionAnswer(shell, choices, "approve-once")).toEqual({ kind: "approve-once" });
-    expect(permissionAnswer(shell, choices, "approve-for-session")).toEqual({ kind: "approve-for-session", approval: { kind: "commands", commandIdentifiers: ["rm", "npm run"] } });
-    expect(permissionAnswer(shell, choices, "reject", "  not the build folder  ")).toEqual({ kind: "reject", feedback: "not the build folder" });
-    expect(permissionAnswer(shell, choices, "reject", "x".repeat(FEEDBACK_MAX + 5))).toEqual({ kind: "reject", feedback: "x".repeat(FEEDBACK_MAX) });
-    expect(permissionAnswer(shell, choices, "reject", "   ")).toEqual({ kind: "reject" });
+    expect(permissionAnswer(choices, "approve-for-session")).toEqual({ kind: "approve-for-session" });
+    expect(permissionAnswer(choices, "approve-once", "ignored")).toEqual({ kind: "approve-once" });
+    expect(permissionAnswer(choices, "reject", "  not the build folder  ")).toEqual({ kind: "reject", feedback: "not the build folder" });
+    expect(permissionAnswer(choices, "reject", "   ")).toEqual({ kind: "reject" });
+    expect(permissionAnswer(choices, "reject", "x".repeat(FEEDBACK_MAX + 5))).toEqual({ kind: "reject", feedback: "x".repeat(FEEDBACK_MAX) });
+    expect(permissionAnswer(["approve-once", "reject"], "approve-for-session")).toBeNull();
+  });
+
+  it("say what each choice covers as the SDK's decision, its scope built from the request", () => {
+    const choices = ["approve-once", "approve-for-session", "reject"];
+    expect(permissionDecision(shell, choices, "approve-once")).toEqual({ kind: "approve-once" });
+    expect(permissionDecision(shell, choices, "approve-for-session")).toEqual({ kind: "approve-for-session", approval: { kind: "commands", commandIdentifiers: ["rm", "npm run"] } });
+    expect(permissionDecision(shell, choices, "reject", "  not the build folder  ")).toEqual({ kind: "reject", feedback: "not the build folder" });
+    expect(permissionDecision(shell, choices, "reject", "x".repeat(FEEDBACK_MAX + 5))).toEqual({ kind: "reject", feedback: "x".repeat(FEEDBACK_MAX) });
+    expect(permissionDecision(shell, choices, "reject", "   ")).toEqual({ kind: "reject" });
     // Never a choice main didn't offer, whatever the window is asked.
-    expect(permissionAnswer(shell, ["approve-once", "reject"], "approve-for-session")).toBeNull();
+    expect(permissionDecision(shell, ["approve-once", "reject"], "approve-for-session")).toBeNull();
     const url = { permissionRequest: { kind: "url", url: "https://docs.example.com/a" } };
     const all = ["approve-for-session", "approve-permanently", "approve-read-only-for-session"];
-    expect(permissionAnswer(url, all, "approve-for-session")).toEqual({ kind: "approve-for-session", domain: "docs.example.com" });
-    expect(permissionAnswer(url, all, "approve-permanently")).toEqual({ kind: "approve-permanently", domain: "docs.example.com" });
-    expect(permissionAnswer({ permissionRequest: { kind: "url", url: "file:///etc/passwd" } }, all, "approve-permanently")).toBeNull();
-    expect(permissionAnswer({ permissionRequest: { kind: "read", path: "/home/me/app/a.ts" } }, all, "approve-read-only-for-session")).toEqual({ kind: "approve-read-only-for-session", directories: ["/home/me/app"] });
-    expect(permissionAnswer({ permissionRequest: { kind: "mcp", serverName: "gh", toolName: "merge" } }, all, "approve-for-session")).toEqual({ kind: "approve-for-session", approval: { kind: "mcp", serverName: "gh", toolName: "merge" } });
-    expect(permissionAnswer({ permissionRequest: { kind: "shell", commands: [] } }, all, "approve-for-session")).toBeNull();
+    expect(permissionDecision(url, all, "approve-for-session")).toEqual({ kind: "approve-for-session", domain: "docs.example.com" });
+    expect(permissionDecision(url, all, "approve-permanently")).toEqual({ kind: "approve-permanently", domain: "docs.example.com" });
+    expect(permissionDecision({ permissionRequest: { kind: "url", url: "file:///etc/passwd" } }, all, "approve-permanently")).toBeNull();
+    expect(permissionDecision({ permissionRequest: { kind: "read", path: "/home/me/app/a.ts" } }, all, "approve-read-only-for-session")).toEqual({ kind: "approve-read-only-for-session", directories: ["/home/me/app"] });
+    expect(permissionDecision({ permissionRequest: { kind: "mcp", serverName: "gh", toolName: "merge" } }, all, "approve-for-session")).toEqual({ kind: "approve-for-session", approval: { kind: "mcp", serverName: "gh", toolName: "merge" } });
+    expect(permissionDecision({ permissionRequest: { kind: "shell", commands: [] } }, all, "approve-for-session")).toBeNull();
     expect([grants("approve-once"), grants("reject"), grants("user-not-available")]).toEqual([true, false, false]);
   });
 });

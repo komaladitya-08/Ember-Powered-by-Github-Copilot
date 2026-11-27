@@ -105,6 +105,11 @@ export interface Transcript {
   lastSeq: number;
   /** A gap in `seq` was seen: the window must attach again before anything more is applied. */
   stale: boolean;
+  /**
+   * The session's history was rewound or cut (`session.snapshot_rewind`, `session.truncation`): what is shown no longer
+   * holds, so the window attaches again without a seq and draws the kept history afresh.
+   */
+  rebuild?: boolean;
   recent: readonly string[];
   items: readonly Item[];
   /** A turn is under way (from `assistant.turn_start` to `session.idle`). */
@@ -163,8 +168,10 @@ const QUIET = new Set([
   "mcp.tools.list_changed", "mcp.resources.list_changed", "mcp.prompts.list_changed", "session.title_changed",
   "session.context_changed", "session.usage_info", "assistant.usage", "assistant.intent", "assistant.turn_start", "assistant.turn_end",
   "pending_messages.modified", "session.background_tasks_changed", "session.idle", "command.queued", "command.completed",
-  "session.fusion_route_started", "assistant.fusion_phase_started", "assistant.fusion_phase_activity",
+  "session.fusion_route_started", "assistant.fusion_phase_started", "assistant.fusion_phase_activity", "sandbox.decision",
 ]);
+/** Main's debug events (model.message, model.messages_snapshot, model.call_*): large, and never the transcript's. */
+const DEBUG_PREFIX = "model.";
 
 const keep = <T>(list: readonly T[], max: number): T[] => (list.length > max ? list.slice(list.length - max) : list.slice());
 
@@ -477,7 +484,7 @@ export function reduceEvent(t: Transcript, e: CodeSdkEvent): Transcript {
   // State-only events, then the rest kept as they came.
   const s = stateOnly(t, e, mine);
   if (s) return s;
-  if (QUIET.has(e.type)) return t;
+  if (QUIET.has(e.type) || e.type.startsWith(DEBUG_PREFIX)) return t;
   return append(t, { kind: "event", key, ...at, type: e.type, data: d });
 }
 
@@ -521,6 +528,8 @@ function stateOnly(t: Transcript, e: CodeSdkEvent, mine: boolean): Transcript | 
     case "session.background_tasks_changed": return { ...t, versions: { ...t.versions, background: t.versions.background + 1 } };
     case "session.idle": return mine ? { ...t, busy: false, intent: undefined, compacting: false, items: settle(t.items) } : t;
     case "session.shutdown": return { ...t, busy: false, items: settle(t.items) };
+    case "session.snapshot_rewind":
+    case "session.truncation": return { ...t, stale: true, rebuild: true };
     default: return null;
   }
 }

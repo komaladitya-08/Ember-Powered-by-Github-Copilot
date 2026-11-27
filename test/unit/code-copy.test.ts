@@ -41,6 +41,7 @@ describe("the coding window's words", () => {
     expect(copy.remedy("sign_in")).toBe("Sign in to GitHub again, then try again.");
     expect(copy.remedy("allow_sandbox_outbound")).toBe("Let the sandbox reach the internet (Customise › Sandbox), then try again.");
     expect(copy.remedy("unknown")).toBe("");
+    expect(["on", "no-network", "off", undefined].map(copy.sandboxWords)).toEqual(["In the sandbox", "In the sandbox, without the network", "Outside the sandbox", ""]);
   });
 
   it("words a card's records by who answered", () => {

@@ -105,7 +105,8 @@ export class CodeApp {
     if (running) return running;
     const t = this.state.transcripts[id];
     if (t && !resync && !t.stale) return Promise.resolve();
-    const since = t ? t.lastSeq : undefined;
+    // After a rewind or a cut the whole history is asked for again.
+    const since = t && !t.rebuild ? t.lastSeq : undefined;
     const job = (async () => {
       try {
         const r = await this.api.attach(id, since);
@@ -186,7 +187,18 @@ export class CodeApp {
       r = picker === "agent" ? await this.api.setAgentMode(sessionId, mode as never) : await this.api.setPermissionMode(sessionId, mode as never);
     } catch { r = { ok: false, reason: UNREACHABLE }; }
     const row = this.state.sessions.byId[sessionId];
-    if (!r.ok) { this.set(s => setNote(s, sessionId, picker, modeRefused(picker, mode, picker === "agent" ? row?.agentMode : row?.permissionMode, reasonOf(r)))); return; }
+    if (!r.ok) {
+      // Main names the mode still in force in its refusal's code ("mode:<mode>").
+      const held = r.code?.startsWith("mode:") ? r.code.slice(5) : undefined;
+      const was = picker === "agent" ? row?.agentMode : row?.permissionMode;
+      const why = reasonOf(r);
+      this.set(s => {
+        const cur = s.sessions.byId[sessionId];
+        const next = cur && held ? rowChanged(s, picker === "agent" ? { ...cur, agentMode: held as never } : { ...cur, permissionMode: held as never }) : s;
+        return setNote(next, sessionId, picker, modeRefused(picker, mode, held ?? was, why));
+      });
+      return;
+    }
     const inForce = r.value.mode;
     this.set(s => {
       const was = s.sessions.byId[sessionId];

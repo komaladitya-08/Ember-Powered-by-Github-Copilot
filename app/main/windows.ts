@@ -85,10 +85,13 @@ let codeWindow: BrowserWindow | null = null;
 
 /**
  * Opens the coding window, or brings the one open to the front. null (and nothing opens) while the build has no
- * coding preload yet (`dist/app/preload/code.cjs`, which comes with the session layer): the page can't reach main
- * without it. main.ts calls this behind the coding setting once that setting exists.
+ * coding preload (`dist/app/preload/code.cjs`): the page can't reach main without it. `register` is the session
+ * layer's `codeWindows.register(webContents)` (app/main/code/ipc.ts), which main.ts passes: a window's IPC is refused
+ * until it is registered, and its unregister function runs when the window closes. main.ts calls this behind
+ * `settings.code.enabled`.
  */
-export function openCodeWindow(os: OS, exists: (file: string) => boolean = fs.existsSync): BrowserWindow | null {
+export function openCodeWindow(os: OS, o: { exists?: (file: string) => boolean; register?: (contents: BrowserWindow["webContents"]) => () => void } = {}): BrowserWindow | null {
+  const exists = o.exists ?? fs.existsSync;
   if (codeWindow && !codeWindow.isDestroyed()) {
     if (codeWindow.isMinimized()) codeWindow.restore();
     codeWindow.show();
@@ -97,7 +100,11 @@ export function openCodeWindow(os: OS, exists: (file: string) => boolean = fs.ex
   }
   if (!exists(path.join(appDir, "preload", "code.cjs"))) return null;
   const win = codeWindow = createCodeWindow(os);
-  win.on("closed", () => { if (codeWindow === win) codeWindow = null; });
+  const unregister = o.register?.(win.webContents);
+  win.on("closed", () => {
+    if (codeWindow === win) codeWindow = null;
+    try { unregister?.(); } catch { /* a window already gone is no longer registered */ }
+  });
   return win;
 }
 

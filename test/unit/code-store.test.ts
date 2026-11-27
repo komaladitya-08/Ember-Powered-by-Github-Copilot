@@ -76,6 +76,13 @@ describe("the coding window's store", () => {
     expect(caught.transcripts.a.items.map(i => i.kind)).toEqual(["user", "assistant", "user", "note"]);
   });
 
+  it("draws the whole history afresh when main says the attach is a reset, whatever seq the window had", () => {
+    let s = attached(base(), "a", attach(row({ id: "a" }), [env("a", 1, "user.message", { content: "old" }), env("a", 2, "user.message", { content: "gone" })]));
+    s = attached(s, "a", { ...attach(row({ id: "a" }), [env("a", 1, "user.message", { content: "old" })], [], 9), reset: true } as never, 2);
+    expect(s.transcripts.a.items.map(i => i.kind === "user" && i.text)).toEqual(["old"]);
+    expect(s.transcripts.a.lastSeq).toBe(9);
+  });
+
   it("takes main's word on whether a turn runs, and on what still waits, when it attaches", () => {
     const history = [env("a", 1, "assistant.turn_start", { turnId: "t" }), env("a", 2, "permission.requested", { requestId: "old" }), env("a", 3, "user_input.requested", { requestId: "live" })];
     const s = attached(base(), "a", attach(row({ id: "a", busy: false }), history, [{ sessionId: "a", requestId: "live", kind: "user-input", data: { question: "?" }, openedAt: 3 }, { sessionId: "a", requestId: "replayed", kind: "sampling", data: {}, openedAt: 4 }]));

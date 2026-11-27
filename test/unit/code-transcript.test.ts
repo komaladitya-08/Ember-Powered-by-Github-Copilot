@@ -210,8 +210,9 @@ describe("notes, problems and requests", () => {
     expect(only(requestOpened(t, "new", "sampling", { serverName: "s" }), "request")).toHaveLength(9);
   });
 
-  it("keeps an event type it has no drawing for as a folded event item, and drops quiet ones", () => {
-    const t = play(ev("session.brand_new_thing", { a: 1 }), ev("session.tools_updated", { model: "m" }), ev("model.call_failure", { source: "x" }));
+  it("keeps an event type it has no drawing for as a folded event item, and drops quiet and debug ones", () => {
+    const t = play(ev("session.brand_new_thing", { a: 1 }), ev("session.tools_updated", { model: "m" }), ev("model.call_failure", { source: "x" }),
+      ev("model.messages_snapshot", { messages: [] }), ev("model.message", { content: "x" }), ev("sandbox.decision", { allowed: true }));
     expect(t.items).toEqual([expect.objectContaining({ kind: "event", type: "session.brand_new_thing", data: { a: 1 } })]);
   });
 });
@@ -236,6 +237,13 @@ describe("envelopes: replay, gaps and attach", () => {
     expect(gap.stale).toBe(true);
     expect(gap.items).toBe(t.items);
     expect(applyEnvelope(gap, { sessionId: "s", seq: 4, event: ev("abort", {}) })).toBe(gap);
+  });
+
+  it("asks to attach again from the start after a rewind or a cut", () => {
+    for (const type of ["session.snapshot_rewind", "session.truncation"]) {
+      const t = reduceEvent(play(ev("user.message", { content: "a" })), ev(type, { eventsRemoved: 1, upToEventId: "x" }));
+      expect([t.stale, t.rebuild], type).toEqual([true, true]);
+    }
   });
 
   it("catches up from the last seq on attach, and builds the history again without one (keeping a message not yet confirmed)", () => {

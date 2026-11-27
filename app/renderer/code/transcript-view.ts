@@ -89,7 +89,8 @@ export function mountTranscript(app: CodeApp, root: HTMLElement): { render(s: Co
     const diffs = diffsByTool(t);
     // A message queued from here waits in the queue strip once main has taken it; it shows here when the SDK sends it.
     for (const i of t.items) if (i.kind === "user" && i.local && !sentSeen.has(i.key)) { sentSeen.add(i.key); nearEnd = true; }
-    const top = (children.get(undefined) ?? []).filter(i => !(i.kind === "user" && i.local && i.delivery === "enqueue" && i.messageId && !i.problem));
+    // Hooks show only when one failed (they run around every tool call).
+    const top = (children.get(undefined) ?? []).filter(i => !(i.kind === "user" && i.local && i.delivery === "enqueue" && i.messageId && !i.problem) && !(i.kind === "hook" && i.state !== "failed"));
     const from = Math.max(0, top.length - windowSize);
     earlier.hidden = from === 0;
     earlier.textContent = earlierItems(from);

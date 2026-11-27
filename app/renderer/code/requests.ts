@@ -112,11 +112,22 @@ function folderOf(path: string): string | null {
 }
 
 /**
- * The SDK's decision for `choice` on this request (`PermissionDecision`), with the scope each approval needs, built
- * from the request itself: a session approval names the request's own commands, tool or kind, a read's folder or a
- * URL's domain. null when `choice` isn't one the card offers or the scope can't be built (the card then sends nothing).
+ * The answer to a permission request as main takes it: `{ kind }`, exactly one of the choices main offered, with the
+ * person's reason on Don't allow. Main builds the SDK's decision and its scope from the request it holds; the window
+ * never names a scope. null when `choice` isn't one the card offers (the card then sends nothing).
  */
-export function permissionAnswer(data: unknown, choices: readonly string[], choice: string, feedback = ""): Record<string, unknown> | null {
+export function permissionAnswer(choices: readonly string[], choice: string, feedback = ""): { kind: string; feedback?: string } | null {
+  if (!choices.includes(choice)) return null;
+  const why = choice === "reject" ? feedback.trim().slice(0, FEEDBACK_MAX) : "";
+  return why ? { kind: choice, feedback: why } : { kind: choice };
+}
+
+/**
+ * The SDK's own decision for `choice` (`PermissionDecision`), its scope built from the request: what main sends for
+ * `permissionAnswer`'s `{ kind }` (kept here so the window and its tests say what each choice covers, as "Allow for
+ * this session" names its commands). null when the scope can't be built.
+ */
+export function permissionDecision(data: unknown, choices: readonly string[], choice: string, feedback = ""): Record<string, unknown> | null {
   if (!choices.includes(choice)) return null;
   const r = sub(data, "permissionRequest") ?? {};
   const kind = str(r, "kind");
@@ -320,10 +331,9 @@ export function oauthCard(data: unknown): OauthCard {
   return { server: str(data, "serverName") ?? "", url: str(data, "serverUrl") ?? "", ...(str(data, "reason") ? { reason: str(data, "reason") } : {}) };
 }
 /**
- * An MCP sign-in has no answer the window can make itself (the token comes from the sign-in main runs): it asks main
- * to sign in, or says not now (`McpAuthHandler`'s `{ kind: "cancelled" }`).
+ * An MCP sign-in is answered with a token (`McpAuthHandler`'s `{ kind: "token", accessToken }`), which only a sign-in
+ * main runs can get: the window offers Not now (`{ kind: "cancelled" }`) until main has a way to start one.
  */
-export const OAUTH_SIGN_IN = { kind: "sign-in" } as const;
 export const OAUTH_CANCEL = { kind: "cancelled" } as const;
 
 /** A sampling request: an MCP server asks to use the session's model. The window offers only to refuse it for now. */
@@ -331,4 +341,4 @@ export function samplingServer(data: unknown): string { return str(data, "server
 export const SAMPLING_REFUSE = {} as const;
 
 /** The request kinds that a press grants something by (their granting answers wait until the card was in view). */
-export const GRANTING_KINDS: readonly CodeRequestKind[] = ["permission", "exit-plan-mode", "auto-mode-switch", "session-limits", "mcp-oauth"];
+export const GRANTING_KINDS: readonly CodeRequestKind[] = ["permission", "exit-plan-mode", "auto-mode-switch", "session-limits"];

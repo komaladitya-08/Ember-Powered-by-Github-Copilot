@@ -15,7 +15,7 @@ import type { CodeApp } from "./app";
 import {
   ANSWER_LABEL, ANSWER_SEND, AUTO_ANSWERS, AUTO_TITLE, CARD_LEAD, COPY_ADDRESS, ELICITATION_CANCEL, ELICITATION_DECLINE, ELICITATION_SUBMIT,
   ELICITATION_URL, ELICITATION_URL_DONE, FIELDS, LIMITS_ADD, LIMITS_AMOUNT, LIMITS_AMOUNT_NEEDED, LIMITS_CANCEL, LIMITS_TITLE, LIMITS_UNSET, MANAGED,
-  NEEDS_YOU, NOT_BUILT, OAUTH_NOT_NOW, OAUTH_SIGN_IN, PLAN_EXIT_TITLE, PLAN_FEEDBACK, PLAN_KEEP, PLAN_LABEL, QUESTION_LEAD, READ_ONLY, REASON_LABEL,
+  NEEDS_YOU, NOT_BUILT, OAUTH_NOTE, OAUTH_NOT_NOW, PLAN_EXIT_TITLE, PLAN_FEEDBACK, PLAN_KEEP, PLAN_LABEL, QUESTION_LEAD, READ_ONLY, REASON_LABEL,
   REASON_SUMMARY, RECOMMENDED, SAMPLING_NOTE, SAMPLING_REFUSE, SENDING, WRITES_FILES, answeredRecord, assistedLine, autoLead, autoRecord, covers,
   decisionLabel, elicitationLead, elicitationRecord, fieldProblem, genericRecord, limitsLead, limitsRecord, oauthLead, oauthTitle, permissionRecord,
   permissionTitle, planAction, planRecord, riskLine, samplingTitle, sandboxBypass, warningLine,
@@ -24,7 +24,7 @@ import { diffView } from "./diff-view";
 import { copyText, el, idPart } from "./dom";
 import { markdownNodes } from "./markdown-dom";
 import {
-  AUTO_MODE_ANSWERS, ELICITATION_CANCEL as EL_CANCEL, ELICITATION_DECLINE as EL_DECLINE, FEEDBACK_MAX, ANSWER_MAX, OAUTH_CANCEL, OAUTH_SIGN_IN as OAUTH_GO,
+  AUTO_MODE_ANSWERS, ELICITATION_CANCEL as EL_CANCEL, ELICITATION_DECLINE as EL_DECLINE, FEEDBACK_MAX, ANSWER_MAX, OAUTH_CANCEL,
   SAMPLING_REFUSE as SAMPLE_NO, autoModeCard, elicitationAccept, elicitationCard, grants, limitsAnswer, limitsCard, oauthCard, permissionAnswer,
   permissionCard, planExitAnswer, planExitCard, questionAnswer, questionCard, samplingServer, type FormField,
 } from "./requests";
@@ -178,12 +178,10 @@ export function requestCard(item: RequestItem, ctx: CardContext): HTMLElement {
     case "mcp-oauth": {
       const o = oauthCard(item.data);
       card.append(el("p", { className: "card-text", textContent: oauthLead(o.url, o.reason) }));
-      const go = btn(OAUTH_SIGN_IN, "oauth-go");
-      grant(go, () => answer(OAUTH_GO));
       const no = btn(OAUTH_NOT_NOW, "oauth-no");
       no.addEventListener("click", () => answer(OAUTH_CANCEL));
-      actions.append(go, no);
-      card.append(actions);
+      actions.append(no);
+      card.append(el("p", { className: "hint", textContent: OAUTH_NOTE }), actions);
       break;
     }
     case "sampling": {
@@ -258,7 +256,7 @@ function drawPermission(card: HTMLElement, item: RequestItem, ctx: CardContext, 
   for (const choice of choices) {
     const b = btn(decisionLabel(choice, v.kind), choice);
     const go = () => {
-      const payload = permissionAnswer(item.data, choices, choice, choice === "reject" ? reason.value : "");
+      const payload = permissionAnswer(choices, choice, choice === "reject" ? reason.value : "");
       if (!payload) { problem.textContent = NOT_BUILT; return; }
       answer(payload);
     };

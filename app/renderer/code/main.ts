@@ -14,7 +14,7 @@ import { heldLive } from "../shared/held-live";
 import { CodeApp } from "./app";
 import { requestTitle } from "./cards";
 import { mountComposer } from "./composer";
-import { CUSTOMISE, GO_TO_REQUEST, NEW_SESSION, PALETTE_ACTIONS, PALETTE_TITLE, SIDEBAR_RESIZE, TAB_NAMES, needsYouBar, paletteHint, paletteTab, pathTail, sessionTitle } from "./copy";
+import { CUSTOMISE, GO_TO_REQUEST, NEW_SESSION, PALETTE_ACTIONS, PALETTE_TITLE, SIDEBAR_RESIZE, TAB_NAMES, needsYouBar, paletteHint, paletteTab, pathTail, sandboxWords, sessionTitle } from "./copy";
 import { mountCustomise, sectionId } from "./customise";
 import { byId, setText } from "./dom";
 import { mountPalette, primaryKey, slashAction, type PaletteAction } from "./palette";
@@ -77,7 +77,8 @@ function start(api: EmberCodeApi): void {
       if (row) {
         setText(title, sessionTitle(row));
         const project = s.projects.byId[row.projectId];
-        setText(where, [project?.name, row.isolation === "worktree" ? `worktree ${row.branch ?? ""}`.trim() : pathTail(row.folder)].filter(Boolean).join(" · "));
+        const box = sandboxWords((row as typeof row & { sandbox?: string }).sandbox);
+        setText(where, [project?.name, row.isolation === "worktree" ? `worktree ${row.branch ?? ""}`.trim() : pathTail(row.folder), box].filter(Boolean).join(" · "));
       }
       if (s.view.kind === "session" && s.view.id !== shownId) {
         shownId = s.view.id;
