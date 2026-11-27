@@ -27,6 +27,9 @@ const common = { bundle: true, sourcemap: true, logLevel: "info", absWorkingDir:
   define: { __EMBER_CODING_PRIVACY_WORKER_SOURCE__: JSON.stringify(privacyWorker), __EMBER_CODING_DRAFT_WORKER_SOURCE__: JSON.stringify(draftWorker) } };
 
 const pages = ["home", "overlay", "handle", "ask", "mic", "desk", "command", "prompt", "vault"];
+// The preloads: every page's, and the coding window's (app/preload/code.ts, docs/CODING-APP.md), built whether or not
+// its page (app/renderer/code) is in `pages` yet.
+const preloads = [...new Set([...pages, "code"])];
 
 // The remote agent's bundle takes app/remote/capture-stub.ts wherever code imports app/main/perception/capture.ts, so
 // sharp's loader never enters it (§5.2.2). esbuild's own `alias` maps package names only, so this plugin maps the file.
@@ -167,7 +170,7 @@ await Promise.all([
   }),
   build({
     ...common,
-    entryPoints: pages.map(p => ({ in: `app/preload/${p}.ts`, out: p })),
+    entryPoints: preloads.map(p => ({ in: `app/preload/${p}.ts`, out: p })),
     outdir: "dist/app/preload",
     outExtension: { ".js": ".cjs" },
     platform: "node",

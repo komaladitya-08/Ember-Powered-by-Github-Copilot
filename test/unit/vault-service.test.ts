@@ -265,7 +265,7 @@ describe("main's wiring of the vault", () => {
   /** Main's own handler source, run with fakes (as host.test.ts runs them with the real host). */
   const handlerOf = (src: string, deps: Record<string, unknown>) => {
     let run!: () => Promise<void>;
-    deps = { forgetCurrentCoding: async () => undefined, chatRef: null, ...deps };
+    deps = { forgetCurrentCoding: async () => undefined, chatRef: null, codeRef: null, ...deps };
     const names = Object.keys(deps);
     new Function("ipcMain", "IPC", "guard", ...names, `let signOuts = 0, accountErasures = 0, signInAbort = null, currentToken = "t", askHistory = [], memoryEpoch = 0;\n${src}`)(
       { handle: (_c: string, h: () => Promise<void>) => { run = h; } }, { signOut: "s", memoryForgetAll: "m" }, (fn: unknown) => fn, ...names.map(n => deps[n]));

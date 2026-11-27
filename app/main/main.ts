@@ -153,6 +153,9 @@ import { ChatSessions } from "./agent/chat-sessions";
 import { ChatUnavailable } from "./agent/chat-session";
 import { ChatRuntime } from "./agent/chat-runtime";
 import { chatPolicy } from "./agent/chat-policy";
+import { CodeRuntime } from "./code/runtime";
+import { CodeHub } from "./code/hub";
+import { CodeWindows, registerCodeIpc } from "./code/ipc";
 import { emberPathsOf } from "./targets/runtime";
 import { registerFirstRunIpc } from "./first-run";
 import { firstRunAllowsVoice } from "../shared/first-run";
@@ -1582,6 +1585,9 @@ function start(): void {
   let betterRecallRef: BetterRecall | null = null;
   let vaultRef: VaultService | null = null;
   let chatRef: ChatSessions | null = null;
+  let codeRef: CodeHub | null = null;
+  /** The coding windows (app/main/code/ipc.ts): the window's creator registers its webContents; until then every sender is refused. */
+  const codeWindows = new CodeWindows(isTrustedSender);
   const killSwitch = new KillSwitch(() => [
     { name: "borrow", stop: () => borrowRef?.stop() },
     { name: "speech", stop: () => voice?.hush() },
@@ -1598,6 +1604,8 @@ function start(): void {
     { name: "vault", stop: () => vaultRef?.stopPart().stop() },
     // Every native chat's turn ends, its background agents are cancelled and its waiting requests rejected.
     { name: "chat", stop: () => chatRef?.stopAll() },
+    // Every coding session's turn ends, its background agents are cancelled and its waiting requests refused.
+    { name: "code", stop: () => codeRef?.stopAll() },
     // The user's take-over of the desk ends too (its keys are released).
     { name: "desk", stop: () => deskViewRef?.handBack() },
     { name: "motion", stop: () => { overlay?.setBorrowing(false); deskViewRef?.setDriving(false); showState({ focus: null, gesture: null }); } },
@@ -2633,6 +2641,8 @@ function start(): void {
     const vaultGone = vault.forgetAll();
     // Every native chat stops and is let go: each was opened under the sign-in that ends here.
     void chatRef?.accountEnded();
+    // Every coding session stops and is let go too.
+    void codeRef?.accountEnded();
     // While still connected: delete this account's conversation so the next sign-in starts fresh.
     try {
       await agent?.forgetConversation();
@@ -3867,6 +3877,32 @@ function start(): void {
       setAgentMode: (id, mode) => chat.setAgentMode(id, mode),
       stop: id => chat.stop(id),
     }, { log: log.child("chat") });
+    // Coding sessions (app/main/code/, docs/CODING-APP.md): dormant until settings.code.enabled is on, in a tokenless
+    // runtime of their own in the SDK's full Copilot mode, behind consent, the organisation's policy and the kill
+    // switch's "code" part. Folders and files come only from main's own pickers, owned by the coding window.
+    const codeRuntime = new CodeRuntime({ userData, runtimePath: runtime.path, env: process.env, redact: vaultRedactor });
+    const codeOwner = () => BrowserWindow.getFocusedWindow() ?? undefined;
+    const code = codeRef = new CodeHub({
+      hasConsent: () => consented(), enabled: () => settings.get().code.enabled, policy: () => chatPolicy(admin),
+      vaultFilled: () => vaultRedactor.active, access: () => agent?.chatAccess() ?? null, client: () => codeRuntime.client(), userData,
+      protectedPaths: () => emberPathsOf({ os: platform.os, userData, resourcesPath: process.resourcesPath, packaged: app.isPackaged, env: process.env, emberPaths: codingStorage.protectedPaths }),
+      place: () => ({ os: platform.os, home: app.getPath("home") }),
+      audit: () => audit, emit: (channel, payload, to) => codeWindows.send(channel, payload, to), log: log.child("code"), redact: vaultRedactor,
+      pickFolder: async () => {
+        const owner = codeOwner();
+        const picked = owner ? await dialog.showOpenDialog(owner, { properties: ["openDirectory"] }) : await dialog.showOpenDialog({ properties: ["openDirectory"] });
+        return picked.canceled || picked.filePaths.length !== 1 ? null : picked.filePaths[0];
+      },
+      pickFiles: async root => {
+        const owner = codeOwner();
+        const o = { defaultPath: root, properties: ["openFile", "multiSelections"] as ("openFile" | "multiSelections")[] };
+        const picked = owner ? await dialog.showOpenDialog(owner, o) : await dialog.showOpenDialog(o);
+        return picked.canceled ? null : picked.filePaths;
+      },
+    });
+    settings.onChange(() => { void code.changed(); });
+    app.on("will-quit", () => { void code.dispose().finally(() => codeRuntime.stop()); });
+    registerCodeIpc(ipcMain, code, codeWindows, { log: log.child("code") });
     // Perception: the accessibility sidecar (text) and the window system's capture (images). Linux starts the Python
     // AT-SPI sidecar (no launch); Windows and macOS the shared host (Windows: Ember's own binary in node mode; macOS: a
     // utility process, review #177).
@@ -4363,6 +4399,7 @@ function start(): void {
         void resetProjectCoding().catch(() => log.warn("coding.private_cleanup_incomplete"));
         // Native chats were opened under the account before: they stop and are let go (as at sign-out).
         void chatRef?.accountEnded();
+        void codeRef?.accountEnded();
       },
       // A reminder the user set is due (reminders.ts): said too when replies are spoken, and a notification while away.
       onReminder: r => {

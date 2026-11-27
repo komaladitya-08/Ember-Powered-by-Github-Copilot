@@ -967,6 +967,38 @@ needs “Before Ember starts” at `CONSENT_VERSION` 16, which says what a chat 
 journey (`EMBER_CHAT_LIVE=1`, test/integration/home-chat-live.test.ts) fakes the folder picker by replacing
 `dialog.showOpenDialog` in main through Playwright, as the coding journeys do: there is no switch for it.
 
+### Coding sessions (the session layer)
+
+Ember as a coding agent (docs/CODING-APP.md) is built in `app/main/code/`, behind `settings.code.enabled` (off by
+default: no coding runtime starts and every coding channel refuses). Its contract with the coding window is
+`app/shared/code.ts`; the window's preload is `app/preload/code.ts` (`window.emberCode`).
+
+- **CodeRuntime** (runtime.ts): one tokenless runtime for the run in the SDK's full Copilot mode (`mode: "copilot-cli"`),
+  its state in `<userData>/code/copilot`. Each session turns on file change tracking, skills, memory, custom
+  instructions, on-demand instruction discovery, host git, the session store and infinite sessions; the GitHub sign-in
+  goes with each session, never in the runtime's environment.
+- **SessionRuntime** (session-runtime.ts): one per open session. Every SDK event goes to the windows attached to it
+  as a `CodeEventEnvelope` with a per-session `seq`, redacted (vault values, GitHub tokens) and bounded
+  (`CODE_LIMITS.eventData`, `truncated` when cut); the last `CODE_LIMITS.replay` are kept for `attach(id, sinceSeq)`,
+  and older history comes from the SDK's own log (`sessions.readPersistedEvents`). Every request kind has one pending
+  table, answered once through `respond` and cleared for every window with who answered.
+- **Sandbox**: on where `sandbox.getHostSupport` says so (Ember's data, install and policy denied; outbound network
+  where the host's sandbox has it, else the row says `no-network`); where there is none the session runs without one
+  and its row says `sandbox: "off"`. A pre-tool hook refuses any tool whose arguments name Ember's data, sandbox or
+  none. A repository's own hooks (`.github/hooks`) run only inside the sandbox and in a folder the user trusts.
+- **Worktrees**: a session with isolation "worktree" works in `<userData>/code/worktrees/<session>` on a new branch
+  `ember/<short id>` from the base branch, removed with the session (its branch is kept).
+- **Guards** (hub.ts, guards.ts): consent, the setting, the organisation's policy (none under LOCKDOWN or with
+  `features.actions: false`; a permission mode it forbids is refused with the mode that stays), a vault fill, the
+  kill switch's `code` part, sign-out, and the window's RPC calls (`CODE_RPC`, then no sandbox switch, no permission
+  mode, no path of Ember's data). The audit log's `code` entries record each session's start, open, close and end,
+  each decision with who made it (`by`: user, companion, system or sdk), each mode change and each message's length.
+- **The window**: its creator registers its webContents with main's `codeWindows` (app/main/code/ipc.ts
+  `CodeWindows.register`); until then every sender is refused.
+
+The integration suite is test/integration/code-session.test.ts (the bundled runtime and the mock model, Linux: git,
+and bubblewrap for the sandbox).
+
 ### Extensions: the runtime and the gate
 
 The runtime is `app/main/extensions/` (ExtensionsService, the `ExtensionsApi` Home calls); the contract is
@@ -1805,6 +1837,7 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | The Copilot runtime's temporary files (large tool output it saves; 0700, emptied at each connect and at sign-out) | `~/.config/ember/copilot-tmp/` |
 | Marketplaces the user added, and the runtime's copy of their catalogues | `~/.config/ember/copilot/settings.json`, `~/.config/ember/copilot/.cache/copilot/marketplaces/` |
 | Chats with Copilot (only once “Chat with Copilot in a folder” is on): the chat runtime's own sessions, kept between runs so a chat opens again from Home's Chats (0700) | `~/.config/ember/chat/` |
+| Coding sessions (only once `settings.code.enabled` is on): the coding runtime's own sessions (`copilot/`), Ember's index of projects and sessions (`index.json`, 0600) and the worktrees it made (`worktrees/`) (0700) | `~/.config/ember/code/` |
 
 A hand edit of `settings.json` that Ember can't use is copied aside as `settings.json.bad-<time>` (the three newest
 are kept); one it can repair is tidied once it has stayed the same for 2 s. When Ember starts on one that isn't JSON
