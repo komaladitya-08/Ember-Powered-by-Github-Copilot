@@ -148,12 +148,18 @@ import { VaultService, registerVaultHomeIpc } from "./vault/service";
 import { VaultRedactor } from "./vault/redact";
 import { VAULT_IPC } from "../shared/vault";
 import { registerApprovalsIpc } from "./approvals-ipc";
+import { registerChatIpc } from "./chat-ipc";
+import { ChatSessions } from "./agent/chat-sessions";
+import { ChatUnavailable } from "./agent/chat-session";
+import { ChatRuntime } from "./agent/chat-runtime";
+import { chatPolicy } from "./agent/chat-policy";
+import { emberPathsOf } from "./targets/runtime";
 import { registerFirstRunIpc } from "./first-run";
 import { firstRunAllowsVoice } from "../shared/first-run";
 import { EXTENSIONS_SEAL_FILE, ExtensionSeal } from "./extensions/seal";
 import { PROVIDER_SEAL_FILE, ProviderRecord, ProviderSeal, type ProviderRecordDeps } from "./provider-record";
 import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, userProviderInForce, checkAgain, createProviderService, ownProviderAuth, providerSummary, providerWaitingHost, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
-import { PROVIDER_IPC } from "../shared/ipc";
+import { CHAT_IPC, PROVIDER_IPC } from "../shared/ipc";
 import { APPROVALS_IPC, modeCardVersion, modeRank } from "../shared/approvals";
 import { recentLimit } from "../shared/ipc";
 import { endpointHost } from "../shared/provider";
@@ -1575,6 +1581,7 @@ function start(): void {
   let learningRef: MemoryLearning | null = null;
   let betterRecallRef: BetterRecall | null = null;
   let vaultRef: VaultService | null = null;
+  let chatRef: ChatSessions | null = null;
   const killSwitch = new KillSwitch(() => [
     { name: "borrow", stop: () => borrowRef?.stop() },
     { name: "speech", stop: () => voice?.hush() },
@@ -1589,6 +1596,8 @@ function start(): void {
     { name: "extensions", stop: () => extensionsRef?.stopPart().stop() },
     // The vault's Secure Form closes, and nothing more is asked in it.
     { name: "vault", stop: () => vaultRef?.stopPart().stop() },
+    // Every native chat's turn ends, its background agents are cancelled and its waiting requests rejected.
+    { name: "chat", stop: () => chatRef?.stopAll() },
     // The user's take-over of the desk ends too (its keys are released).
     { name: "desk", stop: () => deskViewRef?.handBack() },
     { name: "motion", stop: () => { overlay?.setBorrowing(false); deskViewRef?.setDriving(false); showState({ focus: null, gesture: null }); } },
@@ -3821,6 +3830,41 @@ function start(): void {
     const provider = fixedProvider;
     const runtime = locateRuntime({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, env: app.isPackaged ? {} : process.env, runtimeId: sys.paths.runtimeId, exe: sys.paths.runtimeExe });
     if (!runtime.exists) log.error("agent.runtime_missing", { path: runtime.path });
+    // Native chat sessions (app/main/agent/chat-sessions.ts): dormant until settings.chat.native is on, in a tokenless
+    // runtime of their own, behind consent, the organisation's policy and the kill switch's "chat" part.
+    const chatRuntime = new ChatRuntime({ userData, runtimePath: runtime.path, env: process.env, redact: vaultRedactor });
+    const chat = chatRef = new ChatSessions({
+      hasConsent: () => consented(), enabled: () => settings.get().chat.native, policy: () => chatPolicy(admin),
+      vaultFilled: () => vaultRedactor.active, access: () => agent?.chatAccess() ?? null, client: () => chatRuntime.client(),
+      protectedPaths: () => emberPathsOf({ os: platform.os, userData, resourcesPath: process.resourcesPath, packaged: app.isPackaged, env: process.env, emberPaths: codingStorage.protectedPaths }),
+      audit: () => audit, emit: event => sendToHome(CHAT_IPC.event, event), log: log.child("chat"), redact: vaultRedactor,
+    });
+    settings.onChange(() => { void chat.changed(); });
+    app.on("will-quit", () => { void chat.dispose().finally(() => chatRuntime.stop()); });
+    // Home's chat channels: the settings window's own page only, as guard. A new chat's folder comes from main's own
+    // picker, never from the page.
+    registerChatIpc(ipcMain, event => {
+      const url = event.senderFrame?.url ?? "";
+      return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
+    }, {
+      list: () => chat.list(),
+      create: async name => {
+        const why = chat.refusal();
+        if (why) throw new ChatUnavailable(why);
+        const owner = home;
+        if (!owner || owner.isDestroyed()) return null;
+        const selected = await dialog.showOpenDialog(owner, { properties: ["openDirectory"] });
+        if (selected.canceled || selected.filePaths.length !== 1) return null;
+        return chat.create(selected.filePaths[0], name);
+      },
+      resume: id => chat.resume(id),
+      send: (id, text) => chat.send(id, text),
+      decide: (id, requestId, decision) => chat.decide(id, requestId, decision),
+      answer: (id, requestId, answer, wasFreeform) => chat.answer(id, requestId, answer, wasFreeform),
+      setPermissionMode: (id, mode) => chat.setPermissionMode(id, mode),
+      setAgentMode: (id, mode) => chat.setAgentMode(id, mode),
+      stop: id => chat.stop(id),
+    }, { log: log.child("chat") });
     // Perception: the accessibility sidecar (text) and the window system's capture (images). Linux starts the Python
     // AT-SPI sidecar (no launch); Windows and macOS the shared host (Windows: Ember's own binary in node mode; macOS: a
     // utility process, review #177).

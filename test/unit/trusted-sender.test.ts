@@ -9,6 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import { COMMANDS_IPC } from "../../app/shared/commands";
 import { PROMPT_IPC } from "../../app/shared/remote-ui";
 import { TARGETS_IPC } from "../../app/shared/targets";
+import { CHAT_IPC } from "../../app/shared/ipc";
 import { COMMANDS_EXTRA_IPC } from "../../app/renderer/command/model";
 import { createCommandWindowController } from "../../app/main/commands/window";
 import { createPromptWindowController } from "../../app/main/remote/prompt-window";
@@ -171,5 +172,16 @@ describe("each preload bridges only its own window's channels", () => {
     bridge.channels.length = 0;
     for (const fn of Object.values(bridge.exposed.get("ember")!)) if (typeof fn === "function") (fn as (...a: unknown[]) => unknown)(() => undefined);
     for (const c of bridge.channels) expect(c).not.toMatch(/^(commands|prompt|targets):/);
+  });
+
+  it("the settings window's: chat:* through emberChat only, and no chat channel through the other bridges", async () => {
+    const chat = await channelsOf("../../app/preload/home", "emberChat");
+    for (const c of chat) expect(c).toMatch(/^chat:/);
+    expect(new Set(chat)).toEqual(new Set(Object.values(CHAT_IPC)));
+    for (const world of ["ember", "emberTargets", "emberExtensions", "emberProvider", "emberVault"]) {
+      bridge.channels.length = 0;
+      for (const fn of Object.values(bridge.exposed.get(world) ?? {})) if (typeof fn === "function") (fn as (...a: unknown[]) => unknown)(() => undefined);
+      for (const c of bridge.channels) expect(c, world).not.toMatch(/^chat:/);
+    }
   });
 });

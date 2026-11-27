@@ -735,6 +735,30 @@ export interface EmberAskApi {
 }
 
 /**
+ * The native chat session's channels (app/shared/chat.ts, app/main/chat-ipc.ts); main takes every one only from the
+ * settings window.
+ */
+export const CHAT_IPC = {
+  /** The sessions of this run and the ones kept from earlier runs (ChatSessionRow[]). */
+  list: "chat:list",
+  /** Main opens a folder picker of its own and, on a choice, a new session there (an optional friendly name). */
+  create: "chat:create",
+  /** Opens a kept session again by its id, with its history. */
+  resume: "chat:resume",
+  send: "chat:send",
+  /** A person's decision on a pending permission request (session id, request id, ChatDecision). */
+  decide: "chat:decide",
+  /** A person's answer to the model's question (session id, request id, answer text, whether it was typed). */
+  answer: "chat:answer",
+  setPermissionMode: "chat:set-permission-mode",
+  setAgentMode: "chat:set-agent-mode",
+  /** Stops a session's turn (its background agents too, and rejects what waits). */
+  stop: "chat:stop",
+  /** Main's push of each ChatEvent to the settings window. */
+  event: "chat:event",
+} as const;
+
+/**
  * Home's Extensions section (app/main/extensions-ipc.ts, app/renderer/home/extensions.ts): main takes these only from
  * the settings window, checks every argument's type and size, and answers in plain words (never the runtime's raw text).
  */

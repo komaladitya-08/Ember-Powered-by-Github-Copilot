@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import { EXTENSIONS_IPC, IPC, PROVIDER_IPC, type CodingWorkspaceState, type EmberExtensionsApi, type EmberHomeApi, type EmberProviderApi, type Presence, type ReminderRow, type UpdateStatus, type RoutineRow, type SignInProgress, type Status, type VoiceStatus, type VoiceWord } from "../shared/ipc";
+import { CHAT_IPC, EXTENSIONS_IPC, IPC, PROVIDER_IPC, type CodingWorkspaceState, type EmberExtensionsApi, type EmberHomeApi, type EmberProviderApi, type Presence, type ReminderRow, type UpdateStatus, type RoutineRow, type SignInProgress, type Status, type VoiceStatus, type VoiceWord } from "../shared/ipc";
 import type { Settings } from "../main/settings";
 import type { ConversationTurnChange, HistoryProblemKind } from "../shared/conversation";
 import type { AgentStatus, AnswerStream, TranscriptEntry } from "../main/agent/host";
@@ -10,6 +10,7 @@ import { APPROVALS_IPC, type ApprovalsState } from "../shared/approvals";
 import { FIRST_RUN_IPC } from "../shared/first-run";
 import { VAULT_IPC, type EmberVaultHomeApi } from "../shared/vault";
 import type { EmberTargetsApi } from "../renderer/home/computers-copy";
+import type { ChatEvent, EmberChatApi } from "../shared/chat";
 
 const listen = <T>(channel: string, fn: (v: T) => void) => {
   const handler = (_e: IpcRendererEvent, v: T) => fn(v);
@@ -196,3 +197,19 @@ const vault: EmberVaultHomeApi = {
   forgetAll: () => ipcRenderer.invoke(VAULT_IPC.forgetAll),
 };
 contextBridge.exposeInMainWorld("emberVault", vault);
+
+// Native chat sessions: CHAT_IPC's channels only; main takes them only from this window, checks every argument
+// (app/main/chat-ipc.ts) and picks a new chat's folder itself.
+const chat: EmberChatApi = {
+  list: () => ipcRenderer.invoke(CHAT_IPC.list),
+  create: name => (name === undefined ? ipcRenderer.invoke(CHAT_IPC.create) : ipcRenderer.invoke(CHAT_IPC.create, name)),
+  resume: id => ipcRenderer.invoke(CHAT_IPC.resume, id),
+  send: (id, text) => ipcRenderer.invoke(CHAT_IPC.send, id, text),
+  decide: (id, requestId, decision) => ipcRenderer.invoke(CHAT_IPC.decide, id, requestId, decision),
+  answer: (id, requestId, answer, wasFreeform) => ipcRenderer.invoke(CHAT_IPC.answer, id, requestId, answer, wasFreeform),
+  setPermissionMode: (id, mode) => ipcRenderer.invoke(CHAT_IPC.setPermissionMode, id, mode),
+  setAgentMode: (id, mode) => ipcRenderer.invoke(CHAT_IPC.setAgentMode, id, mode),
+  stop: id => ipcRenderer.invoke(CHAT_IPC.stop, id),
+  onEvent: fn => listen<ChatEvent>(CHAT_IPC.event, fn),
+};
+contextBridge.exposeInMainWorld("emberChat", chat);
