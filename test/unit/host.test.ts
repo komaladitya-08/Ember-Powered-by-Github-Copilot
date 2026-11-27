@@ -5795,7 +5795,7 @@ describe("keeping the recent conversation across restarts (opt-in)", () => {
     const slice = (from: string, to: string) => { const a = main.indexOf(from); expect(a).toBeGreaterThan(-1); return main.slice(a, main.indexOf(to, a)); };
     const handlerOf = (src: string, deps: Record<string, unknown>) => {
       let run!: () => Promise<void>;
-      deps = { forgetCurrentCoding: async () => undefined, resetProjectCoding: privateCodingReset, ...deps };
+      deps = { forgetCurrentCoding: async () => undefined, resetProjectCoding: privateCodingReset, chatRef: null, ...deps };
       const names = Object.keys(deps);
       new Function("ipcMain", "IPC", "guard", ...names, `let signOuts = 0, accountErasures = 0, signInAbort = null, currentToken = "t", askHistory = [], memoryEpoch = 0;\n${src}`)(
         { handle: (_c: string, h: () => Promise<void>) => { run = h; } }, { signOut: "s", memoryForgetAll: "m" }, (fn: unknown) => fn, ...names.map(n => deps[n]));

@@ -217,6 +217,21 @@ export class ChatSessions {
     return this.refusal() ? this.stopAll() : Promise.resolve();
   }
 
+  /**
+   * Sign-out or another account: every session's turn stops (what waits is rejected) and every session is let go,
+   * since each was opened under the sign-in that has ended. Nothing more goes under it; one is opened again only by a
+   * resume under the sign-in in force then. What the runtime keeps on disk stays. Never rejects: sign-out goes on
+   * whatever a session does as it goes (a failure is logged).
+   */
+  async accountEnded(): Promise<void> {
+    try {
+      await this.stopAll();
+    } catch (err) {
+      this.d.log?.warn("chat.stop_failed", { err: err instanceof Error ? err.name : "unknown" });
+    }
+    await this.dispose();
+  }
+
   /** Lets every session go (what the runtime keeps on disk stays). */
   async dispose(): Promise<void> {
     const all = [...this.sessions.values()];

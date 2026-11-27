@@ -21,6 +21,8 @@ describe("stillStoppingWords", () => {
     expect(stillStoppingWords(["agent", "targets"], ["build-01", "db-02"])).toBe("I've told everything to stop. Still stopping: tasks, commands, build-01 and db-02…");
     expect(stillStoppingWords(["speech", "borrow", "desk"])).toBe("I've told everything to stop. Still stopping: speaking, the borrowed mouse and Ember's desk…");
     expect(stillStoppingWords(["something-new"])).toBe("I've told everything to stop. Still stopping: another part of Ember…");
+    // Native chats are a part of their own (main's "chat"), named as people call them.
+    expect(stillStoppingWords(["chat"])).toBe("I've told everything to stop. Still stopping: chats…");
     expect(stillStoppingWords(["targets"])).not.toMatch(/agent|targets|borrow/);
   });
 });

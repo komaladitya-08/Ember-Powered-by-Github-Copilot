@@ -20,13 +20,14 @@ it("disconnects and clears credentials even when memory erasure fails, while rej
   const resetProjectCoding = vi.fn(async () => undefined);
   const forgetSessionWords = vi.fn();
   const vault = { forgetAll: vi.fn(() => true) };
+  const chatRef = { accountEnded: vi.fn(async () => undefined) };
   let run!: () => Promise<void>;
-  const install = new Function("ipcMain", "IPC", "guard", "agent", "tokens", "keeper", "providers", "refusedTokens", "resetAnswerSpeech", "forgetProject", "forgetCurrentCoding", "resetProjectCoding", "forgetSessionWords", "vault", `
+  const install = new Function("ipcMain", "IPC", "guard", "agent", "tokens", "keeper", "providers", "refusedTokens", "resetAnswerSpeech", "forgetProject", "forgetCurrentCoding", "resetProjectCoding", "forgetSessionWords", "vault", "chatRef", `
     let signOuts = 0, accountErasures = 0, signInAbort = null, currentToken = "fake", askHistory = ["fake"];
     ${main.slice(start, end)}
     return () => ({ signOuts, accountErasures, currentToken, askHistory });
   `);
-  const state = install({ handle: (_channel: string, handler: () => Promise<void>) => { run = handler; } }, { signOut: "sign-out" }, (fn: unknown) => fn, agent, tokens, keeper, providers, refusedTokens, resetAnswerSpeech, forgetProject, forgetCurrentCoding, resetProjectCoding, forgetSessionWords, vault);
+  const state = install({ handle: (_channel: string, handler: () => Promise<void>) => { run = handler; } }, { signOut: "sign-out" }, (fn: unknown) => fn, agent, tokens, keeper, providers, refusedTokens, resetAnswerSpeech, forgetProject, forgetCurrentCoding, resetProjectCoding, forgetSessionWords, vault, chatRef);
   await expect(run()).rejects.toBe(failure);
   // What the person asked this session goes too, so none of it is suggested to the next one (memory-r9-2).
   expect(forgetSessionWords).toHaveBeenCalledOnce();
@@ -36,6 +37,8 @@ it("disconnects and clears credentials even when memory erasure fails, while rej
   expect(forgetCurrentCoding).toHaveBeenCalledOnce();
   expect(resetProjectCoding).toHaveBeenCalledOnce();
   expect(resetProjectCoding.mock.invocationCallOrder[0]).toBeLessThan(vault.forgetAll.mock.invocationCallOrder[0]);
+  // Every native chat stops and is let go: each was opened under the sign-in that ends.
+  expect(chatRef.accountEnded).toHaveBeenCalledOnce();
   // And so does the vault, whole (vault-6).
   expect(vault.forgetAll).toHaveBeenCalledOnce();
   expect(vault.forgetAll.mock.invocationCallOrder[0]).toBeLessThan(agent.forgetConversation.mock.invocationCallOrder[0]);

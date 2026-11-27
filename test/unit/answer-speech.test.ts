@@ -48,6 +48,7 @@ function wiring() {
     const forgetCurrentCoding = async () => undefined;
     const forgetSessionWords = () => {};
     const vault = { forgetAll: () => true };
+    const chatRef = null;
     ${speech}
     ${signOut}
     return {

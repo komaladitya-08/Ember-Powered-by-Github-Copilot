@@ -2631,6 +2631,8 @@ function start(): void {
     // The vault goes whole with the account, at once and whatever fails below: its open form closes, a Save still
     // being sealed keeps nothing, and its file is removed.
     const vaultGone = vault.forgetAll();
+    // Every native chat stops and is let go: each was opened under the sign-in that ends here.
+    void chatRef?.accountEnded();
     // While still connected: delete this account's conversation so the next sign-in starts fresh.
     try {
       await agent?.forgetConversation();
@@ -4359,6 +4361,8 @@ function start(): void {
         askHistory = []; forgetSessionWords(); forgetProject("all");
         void forgetCoding().catch(err => log.warn("coding.workspace_not_forgotten", { err }));
         void resetProjectCoding().catch(() => log.warn("coding.private_cleanup_incomplete"));
+        // Native chats were opened under the account before: they stop and are let go (as at sign-out).
+        void chatRef?.accountEnded();
       },
       // A reminder the user set is due (reminders.ts): said too when replies are spoken, and a notification while away.
       onReminder: r => {

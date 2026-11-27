@@ -162,6 +162,29 @@ describe("native chat sessions and Stop", () => {
   });
 });
 
+describe("native chat sessions at sign-out and an account change", () => {
+  it("stop every session and let it go, so nothing more is sent under the sign-in that ended", async () => {
+    const t = setup();
+    const one = await t.chats.create("/w/one");
+    const two = await t.chats.create("/w/two");
+    await t.chats.send(one.id, "hello");
+    await t.chats.accountEnded();
+    expect(t.made.map(s => [s.stops >= 1, s.closed])).toEqual([[true, true], [true, true]]);
+    // A session opened under the old sign-in can't be sent to: it is no longer open in this run.
+    await expect(t.chats.send(two.id, "after")).rejects.toThrow(CHAT_REFUSALS.unknown);
+    expect((await t.chats.list()).filter(r => r.open)).toEqual([]);
+  });
+
+  it("is what main's sign-out and account change call (main.ts)", async () => {
+    const fs = await import("node:fs");
+    const main = fs.readFileSync("app/main/main.ts", "utf8");
+    const signOut = main.slice(main.indexOf("ipcMain.handle(IPC.signOut"), main.indexOf("ipcMain.handle(IPC.cancelSignIn"));
+    expect(signOut).toContain("chatRef?.accountEnded()");
+    const changed = main.slice(main.indexOf("onAccountChanged: () => {"), main.indexOf("onReminder:"));
+    expect(changed).toContain("chatRef?.accountEnded()");
+  });
+});
+
 describe("native chat sessions' audit", () => {
   it("records each decision and each tool's end with who decided, a message by its length, and never its words", async () => {
     const t = setup();
