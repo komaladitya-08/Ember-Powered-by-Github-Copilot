@@ -1,0 +1,71 @@
+/* The panel's Terminal tab (panel-terminal.ts): Copilot's commands (the running one first) and the person's own
+   command line. Output is plain monospace text; ANSI colours become the design system's text tones (`.t-*`). Tokens
+   only, opaque surfaces, no motion; Increase Contrast and forced colours in the blocks at the end. */
+.pt { display: grid; gap: 22px; min-width: 0; }
+.pt[hidden], .pt [hidden] { display: none; }
+.pt-agent, .pt-user { display: grid; gap: 8px; min-width: 0; }
+.pt-h { margin: 0; font: var(--type-headline); }
+.pt-sub { margin: 0; color: var(--label-2); font: var(--type-footnote); font-weight: 600; }
+.pt-uhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pt-empty, .pt-where, .pt-note { margin: 0; color: var(--label-2); font: var(--type-footnote); text-wrap: pretty; overflow-wrap: anywhere; }
+.pt-note:empty { display: none; }
+.pt-running { display: grid; gap: 6px; }
+.pt-running:empty { display: none; }
+.pt-list { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.pt-earlier { justify-self: start; }
+
+.pt-cmd { display: grid; gap: 6px; min-width: 0; padding: 10px 12px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--separator); }
+.pt-cmd.first { box-shadow: inset 0 0 0 1px var(--separator), inset 3px 0 0 var(--accent); }
+.pt-cmdline { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 8px; align-items: start; margin: 0; }
+.pt-cmdline::before { content: ""; width: 14px; height: 14px; margin-top: 2px; background: var(--sym-tint); -webkit-mask: var(--sym) center / contain no-repeat; }
+.pt-code { min-width: 0; font: var(--type-callout); font-family: var(--ember-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.pt-who, .pt-end, .pt-quiet { margin: 0; color: var(--label-2); font: var(--type-footnote); font-variant-numeric: tabular-nums; }
+.pt-quiet:empty { display: none; }
+.pt-out, .pt-uout {
+  margin: 0; padding: 8px 10px; border-radius: var(--r-xs); background: var(--surface-0); color: var(--label);
+  font: var(--type-footnote); font-family: var(--ember-mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto; tab-size: 4;
+}
+.pt-out:focus-visible, .pt-scroll:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.pt-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ANSI colours, as the design system's tones that pass as text (blue and cyan stay the label: no blue passes as words). */
+.ansi.b { font-weight: 700; }
+.ansi.t-red { color: var(--red-text); }
+.ansi.t-green { color: var(--green-text); }
+.ansi.t-yellow { color: var(--yellow); }
+.ansi.t-purple { color: var(--purple-text); }
+.ansi.t-dim { color: var(--label-3); }
+
+/* The person's own command line. */
+.pt-scroll { display: grid; gap: 10px; max-height: 44vh; overflow: auto; padding: 8px 10px; border-radius: var(--r-md); background: var(--surface-0); box-shadow: inset 0 0 0 1px var(--separator); }
+.pt-entry { display: grid; gap: 4px; min-width: 0; }
+.pt-ran { display: flex; gap: 6px; margin: 0; }
+.pt-prompt { color: var(--label-3); font: var(--type-callout); font-family: var(--ember-mono); }
+.pt-uout { padding: 0; background: none; max-height: none; overflow: visible; color: var(--label); }
+.pt-entry .pt-end { display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: 6px; align-items: center; }
+.pt-entry .pt-end::before { content: ""; width: 12px; height: 12px; background: var(--sym-tint); -webkit-mask: var(--sym) center / contain no-repeat; }
+.pt-busy { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 8px; align-items: center; margin: 0; color: var(--label-2); font: var(--type-footnote); overflow-wrap: anywhere; }
+.pt-busy::before { content: ""; width: 14px; height: 14px; background: var(--sym-tint); -webkit-mask: var(--sym) center / contain no-repeat; }
+.pt-line { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 6px; align-items: center; }
+.pt-line .pt-cancel[hidden], .pt-line .pt-run[hidden] { display: none; }
+.pt-input {
+  box-sizing: border-box; width: 100%; min-width: 0; min-height: calc(28px * var(--text-scale)); padding: 4px 8px; border: 0; border-radius: var(--r-xs);
+  -webkit-appearance: none; appearance: none; background: var(--wash-7); box-shadow: inset 0 0 0 1px var(--control-edge); color: var(--label); font: var(--type-callout);
+}
+.pt-input { font-family: var(--ember-mono); }
+.pt-input:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.pt-hint { margin: 0; }
+
+/* A transcript row the panel's "Show in transcript" moved focus to. */
+#transcript .tool[tabindex="-1"]:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--separator), var(--focus-ring); }
+
+@media (prefers-contrast: more) {
+  .pt-cmd, .pt-scroll { box-shadow: inset 0 0 0 1px var(--control-edge); }
+  .pt-cmd.first { box-shadow: inset 0 0 0 1px var(--control-edge), inset 3px 0 0 var(--accent); }
+}
+@media (forced-colors: active) {
+  .pt-cmd, .pt-scroll, .pt-out { border: 1px solid CanvasText; }
+  .pt-cmd.first { border-left: 3px solid Highlight; }
+  .pt-cmdline::before, .pt-entry .pt-end::before, .pt-busy::before { background: CanvasText; }
+  #transcript .tool[tabindex="-1"]:focus-visible { outline: 2px solid Highlight; }
+}

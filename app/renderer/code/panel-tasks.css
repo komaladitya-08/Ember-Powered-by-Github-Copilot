@@ -1,0 +1,49 @@
+/* The panel's Agents and tasks tab (panel-tasks.ts): its bar, the background tasks, this turn's sub-agents, starting
+   an agent, schedules; and the count on its tab (panel.ts `badge`). Tokens only, opaque surfaces, no motion (a running
+   task's clock is text changed in place); Increase Contrast and forced colours in the blocks at the end. */
+.tab-badge {
+  display: inline-block; min-width: 1.4em; margin-left: 6px; padding: 0 5px; box-sizing: border-box; border-radius: var(--r-capsule);
+  background: var(--wash-12); color: var(--label); font: var(--type-caption); font-weight: 600; text-align: center; font-variant-numeric: tabular-nums;
+}
+.pk { display: grid; gap: 18px; min-width: 0; }
+.pk[hidden], .pk [hidden] { display: none; }
+.pk-bar { display: flex; flex-wrap: wrap; gap: 6px; }
+.pk-note { margin: 0; color: var(--label-2); font: var(--type-footnote); overflow-wrap: anywhere; }
+.pk-note:empty { display: none; }
+.pk-sec { display: grid; gap: 8px; min-width: 0; }
+.pk-h { margin: 0; font: var(--type-headline); }
+.pk-empty { margin: 0; color: var(--label-2); font: var(--type-footnote); text-wrap: pretty; }
+.pk-list { display: grid; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.pk-row { display: grid; gap: 4px; min-width: 0; padding: 10px 12px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--separator); }
+.pk-name { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 8px; align-items: start; margin: 0; }
+.pk-name::before { content: ""; width: 14px; height: 14px; margin-top: 2px; background: var(--sym-tint); -webkit-mask: var(--sym) center / contain no-repeat; }
+.pk-title { min-width: 0; margin: 0; font: var(--type-callout); font-weight: 600; overflow-wrap: anywhere; }
+.pk-state { color: var(--label-2); font: var(--type-footnote); white-space: nowrap; }
+.pk-facts { margin: 0; color: var(--label-3); font: var(--type-caption); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.pk-doing { margin: 0; color: var(--label-2); font: var(--type-footnote); overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
+.pk-code { font: var(--type-footnote); font-family: var(--ember-mono); overflow-wrap: anywhere; color: var(--label-2); }
+.pk-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.pk-msg { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; margin-top: 4px; }
+.pk-input, .pk-select, .pk-field {
+  box-sizing: border-box; width: 100%; min-width: 0; min-height: calc(28px * var(--text-scale)); padding: 4px 8px; border: 0; border-radius: var(--r-xs);
+  -webkit-appearance: none; appearance: none; background: var(--wash-7); box-shadow: inset 0 0 0 1px var(--control-edge); color: var(--label); font: var(--type-callout);
+}
+.pk-select { padding-right: 28px; cursor: pointer; }
+.pk-select option { background: var(--surface-2); color: var(--label); }
+.pk-field { resize: vertical; }
+:is(.pk-input, .pk-select, .pk-field):focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.pk-form { display: grid; gap: 6px; min-width: 0; padding: 10px 12px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--separator); }
+.pk-form .hint { margin: 0; }
+.pk-label { font: var(--type-footnote); font-weight: 600; color: var(--label); }
+.pk-start > summary { font: var(--type-headline); }
+.pk-start > .pk-form, .pk-start > .pk-empty { margin-top: 8px; }
+
+@media (prefers-contrast: more) {
+  .pk-row, .pk-form { box-shadow: inset 0 0 0 1px var(--control-edge); }
+  .tab-badge { box-shadow: inset 0 0 0 1px var(--control-edge); }
+}
+@media (forced-colors: active) {
+  .pk-row, .pk-form { border: 1px solid CanvasText; }
+  .pk-name::before { background: CanvasText; }
+  .tab-badge { border: 1px solid ButtonText; }
+}
