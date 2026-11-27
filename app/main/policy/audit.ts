@@ -23,8 +23,12 @@ export interface AuditEntry {
    * `chat`: a native chat session (agent/chat-sessions.ts): `phase` opened, resumed, mode, sent (`chars`), permission
    * (the SDK's `kind` of request, its `decision`, `by` whom) or tool (`tool`, `success`, `by`, `exitCode`); never a
    * command, a file's contents, a path or the person's words.
+   * `code`: a coding session (app/main/code/hub.ts): `phase` start, open, close, end, sent (`chars`, `attachments`),
+   * decision (the SDK's `kind` of request, its `decision`, `by` whom), mode, interrupt, update, fork, companion
+   * (`command`); with `by` the actor (user, companion, system, or the SDK); never a command, a path, a file's words or
+   * the person's words.
    */
-  event: "decision" | "action" | "confirm" | "task" | "stop" | "command" | "remote" | "wsl" | "extension" | "autonomy" | "read" | "provider" | "chat";
+  event: "decision" | "action" | "confirm" | "task" | "stop" | "command" | "remote" | "wsl" | "extension" | "autonomy" | "read" | "provider" | "chat" | "code";
   [key: string]: unknown;
 }
 

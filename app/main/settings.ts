@@ -314,6 +314,11 @@ export const SettingsSchema = z.object({
    * SDK's own tools and permissions. Dormant until `native` is on: nothing is offered or started before.
    */
   chat: z.object({ native: z.boolean().default(false) }).default({ native: false }),
+  /**
+   * Ember as a coding agent (docs/CODING-APP.md; app/main/code/): coding sessions on the Copilot SDK in its full
+   * Copilot mode. Dormant until `enabled` is on: no coding runtime is started and the coding window's channels refuse.
+   */
+  code: z.object({ enabled: z.boolean().default(false) }).default({ enabled: false }),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;

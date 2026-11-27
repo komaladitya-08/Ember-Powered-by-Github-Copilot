@@ -1,0 +1,391 @@
+/**
+ * The coding hub and its sessions (app/main/code/hub.ts, session-runtime.ts) over a fake SDK client: the session's
+ * full-mode options, the sandbox and Ember's data denied, the pending table for every kind of request (each answered
+ * once through the SDK's own call and cleared with who answered), Stop, the pre-tool hook, numbered events with
+ * attach and replay, and the hub's guards (the setting, consent, the organisation's policy, a vault fill, a
+ * connection, the audit log, the RPC guards, sign-out).
+ */
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { CopilotClient, SessionConfig } from "@github/copilot-sdk";
+import { CodeHub, type CodeHubDeps } from "../../app/main/code/hub";
+import { CODE_REFUSALS } from "../../app/main/code/guards";
+import { SessionIndex, indexFile } from "../../app/main/code/session-index";
+import { KillSwitch } from "../../app/main/agent/killswitch";
+import type { ChatPolicy } from "../../app/main/agent/chat-policy";
+import type { AuditEntry } from "../../app/main/policy/audit";
+import type { CodeEventEnvelope, CodePendingRequest, CodeRequestKind, CodeSessionRow } from "../../app/shared/code";
+
+const OPEN: ChatPolicy = { managedSettings: {}, permissionModes: ["manual", "assisted", "allow-all"], standing: true };
+const quiet = { info() {}, warn() {} };
+
+/** A fake SDK client: one session per create or resume, its RPC calls recorded, its events emitted by the test. */
+function fakeClient(o: { sandbox?: "full" | "no-network" | "none"; pending?: { requestId: string }[]; history?: unknown[] } = {}) {
+  const calls: { method: string; params: unknown }[] = [];
+  const configs: SessionConfig[] = [];
+  const support = o.sandbox === "none" ? { supported: false, capabilities: [] }
+    : { supported: true, capabilities: [{ name: "shell", supported: true }, { name: "denied_paths", supported: true }, { name: "network", supported: o.sandbox !== "no-network" }] };
+  let mode = "manual";
+  let agent = "interactive";
+  let trusted = false;
+  let n = 0;
+  const rec = (method: string, answer: unknown = { success: true }) => async (params?: unknown) => { calls.push({ method, params }); return typeof answer === "function" ? (answer as (p: unknown) => unknown)(params) : answer; };
+  const rpc = {
+    options: { update: rec("options.update") },
+    sandbox: { getEnforcementStatus: rec("sandbox.getEnforcementStatus", { required: false, blocked: false }) },
+    permissions: {
+      setMode: rec("permissions.setMode", (p: { mode: string }) => { mode = p.mode; return { success: true, mode }; }),
+      getMode: async () => ({ mode }),
+      handlePendingPermissionRequest: rec("permissions.handlePendingPermissionRequest"),
+      locations: { resolve: async () => ({ locationKey: "repo:acme/app", locationType: "repo" }) },
+      pendingRequests: async () => ({ items: o.pending ?? [] }),
+      paths: { list: rec("permissions.paths.list", { paths: [] }) },
+      folderTrust: { isTrusted: async () => ({ trusted }), addTrusted: rec("permissions.folderTrust.addTrusted", () => { trusted = true; return { success: true }; }) },
+    },
+    mode: { get: async () => agent, set: rec("mode.set", (p: { mode: string }) => { agent = p.mode; return { status: "ok", modelChanged: false }; }) },
+    name: { get: async () => ({ name: "" }), set: rec("name.set", undefined) },
+    model: { getCurrent: async () => ({ modelId: "mock-model" }) },
+    ui: Object.fromEntries(["handlePendingUserInput", "handlePendingExitPlanMode", "handlePendingAutoModeSwitch", "handlePendingSessionLimitsExhausted", "handlePendingSampling", "handlePendingElicitation"].map(m => [m, rec(`ui.${m}`)])),
+    mcp: { oauth: { handlePendingRequest: rec("mcp.oauth.handlePendingRequest") } },
+    history: { listRewindPoints: rec("history.listRewindPoints", { fileChangeTrackingEnabled: true, points: [] }) },
+    cancelAllBackgroundAgents: rec("cancelAllBackgroundAgents"),
+    interruptMainTurn: rec("interruptMainTurn"),
+  };
+  const session = (id: string) => ({ sessionId: id, rpc, send: rec("send", "msg-1"), abort: rec("abort", undefined), disconnect: rec("disconnect", undefined) });
+  const client = {
+    rpc: {
+      sandbox: { getHostSupport: async () => support },
+      sessions: { readPersistedEvents: async () => ({ events: o.history ?? [], cursor: "c", hasMore: false, cursorStatus: "ok" }), fork: rec("sessions.fork", { sessionId: "forked-1" }) },
+      models: { list: rec("models.list", { models: [{ id: "m" }] }) },
+    },
+    createSession: async (c: SessionConfig) => { configs.push(c); return session(c.sessionId!); },
+    resumeSession: async (id: string, c: SessionConfig) => { configs.push(c); return session(id); },
+    listSessions: async () => [],
+    getSessionMetadata: async () => undefined,
+    deleteSession: rec("deleteSession", undefined),
+  } as unknown as CopilotClient;
+  /** Emits an SDK event the way the SDK dispatches it: its broadcast handlers first, then the session's listeners. */
+  const emit = (type: string, data: Record<string, unknown>, ephemeral = false) => {
+    const c = configs.at(-1)!;
+    if (type === "elicitation.requested") void c.onElicitationRequest?.({ sessionId: "s", message: String(data.message ?? "") });
+    if (type === "mcp.oauth_required") void c.onMcpAuthRequest?.(data as never, { sessionId: "s" });
+    if (type === "user_input.requested") void c.onUserInputRequest?.(data as never, { sessionId: "s" });
+    c.onEvent?.({ id: `e${++n}`, parentId: null, timestamp: "t", type, data, ...(ephemeral ? { ephemeral: true } : {}) } as never);
+  };
+  return { client, rpc, calls, configs, emit, called: (method: string) => calls.filter(c => c.method === method) };
+}
+
+let dir: string;
+let userData: string;
+let work: string;
+beforeEach(() => {
+  dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ember-code-hub-")));
+  userData = path.join(dir, "userdata");
+  work = path.join(dir, "work");
+  fs.mkdirSync(userData);
+  fs.mkdirSync(work);
+});
+afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+function harness(over: Partial<CodeHubDeps> = {}, fake = fakeClient()) {
+  const audit: AuditEntry[] = [];
+  const sent: { channel: string; payload: unknown; to?: string }[] = [];
+  const deps: CodeHubDeps = {
+    hasConsent: () => true, enabled: () => true, policy: () => OPEN, vaultFilled: () => false,
+    access: () => ({ provider: { type: "openai", baseUrl: "http://127.0.0.1:1/v1", apiKey: "test" }, model: "mock-model", service: "user" }),
+    client: async () => fake.client, userData, protectedPaths: () => [userData], place: () => ({ os: "linux", home: dir }),
+    audit: () => ({ write: e => audit.push(e) }), emit: (channel, payload, to) => sent.push({ channel, payload, ...(to ? { to } : {}) }),
+    pickFolder: async () => work, pickFiles: async () => [path.join(work, "a.txt")], log: quiet,
+    git: async args => { if (args[0] === "rev-parse" && args[1] === "--show-toplevel") return `${work}\n`; if (args[1] === "--abbrev-ref") return "main\n"; throw new Error("no"); },
+    index: new SessionIndex(indexFile(path.join(userData, "code"))).load(),
+    ...over,
+  };
+  const hub = new CodeHub(deps);
+  const events = (to = "w1") => sent.filter(s => s.channel === "code:event" && s.to === to).map(s => s.payload as CodeEventEnvelope);
+  const requests = () => sent.filter(s => s.channel === "code:request").map(s => s.payload as CodePendingRequest | { resolved: string; by: string });
+  const rows = () => sent.filter(s => s.channel === "code:row").map(s => s.payload as CodeSessionRow);
+  return { hub, fake, audit, sent, events, requests, rows, deps };
+}
+
+async function started(h: ReturnType<typeof harness>, options = {}): Promise<string> {
+  const r = await h.hub.dispatch({ type: "create", options }, "user");
+  if (!r.ok) throw new Error(r.reason);
+  await h.hub.dispatch({ type: "attach", sessionId: r.value.id }, "user", "w1");
+  return r.value.id;
+}
+
+describe("a coding session's options", () => {
+  it("run the SDK's full Copilot mode in the chosen folder, with file tracking, and the sandbox denying Ember's data with outbound network", async () => {
+    const h = harness();
+    const id = await started(h, { model: "gpt-x", reasoningEffort: "high", agent: "explore" });
+    const c = h.fake.configs[0];
+    expect(c).toMatchObject({ sessionId: id, workingDirectory: work, model: "gpt-x", reasoningEffort: "high", agent: "explore", enableFileChangeTracking: true, enableSkills: true,
+      memory: { enabled: true }, enableOnDemandInstructionDiscovery: true, enableHostGitOperations: true, enableSessionStore: true, enableSessionTelemetry: false, enableFileHooks: false });
+    expect(c).not.toHaveProperty("gitHubToken");
+    const update = h.fake.called("options.update")[0].params as { sandboxConfig: { enabled: boolean; allowBypass: boolean; userPolicy: { filesystem: { deniedPaths: string[] }; network: { allowOutbound: boolean } } } };
+    expect(update.sandboxConfig).toMatchObject({ enabled: true, allowBypass: false, userPolicy: { network: { allowOutbound: true } } });
+    expect(update.sandboxConfig.userPolicy.filesystem.deniedPaths).toContain(userData);
+    expect(h.fake.called("sandbox.getEnforcementStatus")).toHaveLength(1);
+    expect(h.rows().at(-1)).toMatchObject({ id, sandbox: "on", open: true, model: "mock-model" });
+  });
+
+  it("run without a sandbox where this computer has none, saying so on the row, with the repository's own hooks off", async () => {
+    const h = harness({}, fakeClient({ sandbox: "none" }));
+    const id = await started(h);
+    expect(h.fake.called("options.update")).toEqual([]);
+    expect(h.fake.configs[0].enableFileHooks).toBe(false);
+    expect((await h.hub.dispatch({ type: "list" }, "user")).sessions.find(r => r.id === id)?.sandbox).toBe("off");
+    const where = harness({}, fakeClient({ sandbox: "no-network" }));
+    const other = await started(where);
+    expect((await where.hub.dispatch({ type: "list" }, "user")).sessions.find(r => r.id === other)?.sandbox).toBe("no-network");
+  });
+
+  it("turn the repository's own hooks on only in the sandbox and once the user trusts the folder", async () => {
+    const h = harness();
+    const id = await started(h);
+    const hooksOn = () => h.fake.called("options.update").some(c => (c.params as { enableFileHooks?: boolean }).enableFileHooks === true);
+    expect(hooksOn()).toBe(false);
+    expect(await h.hub.dispatch({ type: "rpc", call: { scope: "session", sessionId: id, method: "permissions.folderTrust.addTrusted", params: { path: work } } }, "user")).toMatchObject({ ok: true });
+    expect(hooksOn()).toBe(true);
+    const bare = harness({}, fakeClient({ sandbox: "none" }));
+    const other = await started(bare);
+    await bare.hub.dispatch({ type: "rpc", call: { scope: "session", sessionId: other, method: "permissions.folderTrust.addTrusted", params: { path: work } } }, "user");
+    expect(bare.fake.called("options.update")).toEqual([]);
+  });
+
+  it("refuse a tool whose arguments name Ember's data before it runs, and every tool after Stop", async () => {
+    const h = harness({}, fakeClient({ sandbox: "none" }));
+    await started(h);
+    const pre = h.fake.configs[0].hooks!.onPreToolUse!;
+    const ask = (toolArgs: unknown) => pre({ toolName: "view", toolArgs, sessionId: "s", timestamp: 0, workingDirectory: work } as never, { sessionId: "s" } as never);
+    expect(await ask({ path: path.join(userData, "settings.json") })).toMatchObject({ permissionDecision: "deny", permissionDecisionReason: CODE_REFUSALS.emberToolPath });
+    expect(await ask({ path: path.join(work, "a.txt") })).toBeUndefined();
+    await h.hub.stopAll();
+    expect(await ask({ path: path.join(work, "a.txt") })).toMatchObject({ permissionDecision: "deny" });
+  });
+});
+
+/** What answering each kind of request sends to the SDK. */
+const KINDS: { kind: CodeRequestKind; event: string; done: string; data: Record<string, unknown>; payload: unknown; method: string }[] = [
+  { kind: "permission", event: "permission.requested", done: "permission.completed", data: { permissionRequest: { kind: "shell", fullCommandText: "npm test", intention: "t", commands: [{ identifier: "npm test", readOnly: false }], possiblePaths: [], possibleUrls: [], hasWriteFileRedirection: false, canOfferSessionApproval: true } },
+    payload: { kind: "approve-for-location" }, method: "permissions.handlePendingPermissionRequest" },
+  { kind: "user-input", event: "user_input.requested", done: "user_input.completed", data: { question: "Which?", choices: ["a", "b"], allowFreeform: false }, payload: { answer: "a", wasFreeform: false }, method: "ui.handlePendingUserInput" },
+  { kind: "exit-plan-mode", event: "exit_plan_mode.requested", done: "exit_plan_mode.completed", data: { summary: "s", planContent: "", actions: ["interactive"], recommendedAction: "interactive" }, payload: { approved: true, selectedAction: "interactive" }, method: "ui.handlePendingExitPlanMode" },
+  { kind: "auto-mode-switch", event: "auto_mode_switch.requested", done: "auto_mode_switch.completed", data: {}, payload: "no", method: "ui.handlePendingAutoModeSwitch" },
+  { kind: "session-limits", event: "session_limits_exhausted.requested", done: "session_limits_exhausted.completed", data: { maxAiCredits: 5, usedAiCredits: 5 }, payload: { action: "cancel" }, method: "ui.handlePendingSessionLimitsExhausted" },
+  { kind: "sampling", event: "sampling.requested", done: "sampling.completed", data: { serverName: "x", mcpRequestId: 1 }, payload: {}, method: "ui.handlePendingSampling" },
+  { kind: "elicitation", event: "elicitation.requested", done: "elicitation.completed", data: { message: "Pick" }, payload: { action: "decline" }, method: "(handler)" },
+  { kind: "mcp-oauth", event: "mcp.oauth_required", done: "mcp.oauth_completed", data: { serverName: "x", serverUrl: "https://x", reason: "initial" }, payload: { kind: "cancelled" }, method: "(handler)" },
+];
+
+describe("a pending request", () => {
+  for (const k of KINDS) {
+    it(`of kind ${k.kind} is shown to every window, answered once through the SDK's own call, and cleared with who answered`, async () => {
+      const h = harness();
+      const id = await started(h);
+      const requestId = `r-${k.kind}`;
+      h.fake.emit(k.event, { requestId, ...k.data }, k.kind !== "permission");
+      const opened = h.requests().find((r): r is CodePendingRequest => "requestId" in r && r.requestId === requestId);
+      expect(opened).toMatchObject({ sessionId: id, kind: k.kind });
+      if (k.kind === "permission") expect(opened?.choices).toEqual(["approve-once", "approve-for-session", "approve-for-location", "reject"]);
+      expect((await h.hub.dispatch({ type: "attach", sessionId: id, sinceSeq: 0 }, "user", "w2")).ok && h.hub.waiting().map(p => p.requestId)).toEqual([requestId]);
+      expect(await h.hub.dispatch({ type: "respond", answer: { sessionId: id, requestId, kind: k.kind, payload: k.payload } }, "user")).toEqual({ ok: true });
+      if (k.method !== "(handler)") expect(h.fake.called(k.method).at(-1)?.params).toMatchObject({ requestId });
+      if (k.kind === "permission") expect(h.fake.called(k.method).at(-1)?.params).toMatchObject({ result: { kind: "approve-for-location", locationKey: "repo:acme/app" } });
+      expect(h.requests()).toContainEqual({ resolved: requestId, sessionId: id, by: "user" });
+      expect(h.hub.waiting()).toEqual([]);
+      expect(await h.hub.dispatch({ type: "respond", answer: { sessionId: id, requestId, kind: k.kind, payload: k.payload } }, "user")).toMatchObject({ ok: false, reason: CODE_REFUSALS.request });
+      h.fake.emit(k.done, { requestId, ...(k.kind === "permission" ? { result: { kind: "approved-for-location" } } : {}) }, true);
+      if (k.kind === "permission") expect(h.audit.some(e => e.phase === "decision" && e.kind === "permission" && e.decision === "approved-for-location" && e.by === "user")).toBe(true);
+    });
+  }
+
+  it("is answered by the person, never by the companion acting for them (docs/CODING-APP.md §5)", async () => {
+    const h = harness();
+    const id = await started(h);
+    h.fake.emit("permission.requested", { requestId: "c1", ...KINDS[0].data });
+    expect(await h.hub.dispatch({ type: "respond", answer: { sessionId: id, requestId: "c1", kind: "permission", payload: { kind: "approve-once" } } }, "companion"))
+      .toEqual({ ok: false, reason: CODE_REFUSALS.companionAnswer });
+    expect(h.hub.waiting().map(p => p.requestId)).toEqual(["c1"]);
+  });
+
+  it("stays waiting when its answer couldn't reach the runtime, and is over for every window when the runtime turns the answer down", async () => {
+    const h = harness();
+    const id = await started(h);
+    h.fake.emit("user_input.requested", { requestId: "x1", ...KINDS[1].data }, true);
+    const ui = h.fake.rpc.ui as Record<string, unknown>;
+    const real = ui.handlePendingUserInput;
+    ui.handlePendingUserInput = async () => { throw new Error("connection lost"); };
+    expect(await h.hub.dispatch({ type: "respond", answer: { sessionId: id, requestId: "x1", kind: "user-input", payload: { answer: "a", wasFreeform: false } } }, "user")).toMatchObject({ ok: false });
+    expect(h.hub.waiting().map(p => p.requestId)).toEqual(["x1"]);
+    ui.handlePendingUserInput = async () => ({ success: false });
+    expect(await h.hub.dispatch({ type: "respond", answer: { sessionId: id, requestId: "x1", kind: "user-input", payload: { answer: "a", wasFreeform: false } } }, "user")).toMatchObject({ ok: false });
+    expect(h.hub.waiting()).toEqual([]);
+    expect(h.requests()).toContainEqual({ resolved: "x1", sessionId: id, by: "sdk" });
+    ui.handlePendingUserInput = real;
+  });
+
+  it("that the SDK's assisted judge approves is approved by it, never shown", async () => {
+    const h = harness();
+    const id = await started(h);
+    await h.hub.dispatch({ type: "setPermissionMode", sessionId: id, mode: "assisted" }, "user");
+    h.fake.emit("permission.requested", { requestId: "j1", ...KINDS[0].data, promptRequest: { assistedApproval: { recommendation: "approve" } } });
+    await new Promise(r => setTimeout(r, 0));
+    expect(h.hub.waiting()).toEqual([]);
+    expect(h.fake.called("permissions.handlePendingPermissionRequest").at(-1)?.params).toMatchObject({ requestId: "j1", result: { kind: "approve-once" }, decisionContext: { source: "assisted_approval" } });
+  });
+
+  it("is refused on Stop, within the kill switch's budget: a permission rejected, the turn aborted, background agents cancelled, and only a refusal taken after", async () => {
+    const h = harness();
+    const id = await started(h);
+    h.fake.emit("permission.requested", { requestId: "p1", ...KINDS[0].data });
+    h.fake.emit("exit_plan_mode.requested", { requestId: "p2", ...KINDS[2].data }, true);
+    const pulled = await new KillSwitch(() => [h.hub.stopPart()], { info() {}, warn() {}, error() {}, debug() {}, child() { return this; } } as never).pull("hotkey");
+    expect(pulled.ms).toBeLessThan(300);
+    expect(h.fake.called("permissions.handlePendingPermissionRequest").at(-1)?.params).toMatchObject({ requestId: "p1", result: { kind: "reject" } });
+    expect(h.fake.called("ui.handlePendingExitPlanMode").at(-1)?.params).toMatchObject({ requestId: "p2", response: { approved: false } });
+    expect(h.fake.called("abort")).toHaveLength(1);
+    expect(h.fake.called("cancelAllBackgroundAgents")).toHaveLength(1);
+    expect(h.requests()).toContainEqual({ resolved: "p1", sessionId: id, by: "system" });
+    h.fake.emit("permission.requested", { requestId: "p3", ...KINDS[0].data });
+    await new Promise(r => setTimeout(r, 0));
+    expect(h.fake.called("permissions.handlePendingPermissionRequest").at(-1)?.params).toMatchObject({ requestId: "p3", result: { kind: "reject" } });
+  });
+
+  it("left waiting when the runtime stopped comes back when the session is opened again, with its choices", async () => {
+    const request = { requestId: "old", ...KINDS[0].data };
+    const fake = fakeClient({ pending: [{ requestId: "old" }], history: [{ id: "h1", timestamp: "t", type: "user.message", data: { content: "hi" } }, { id: "h2", timestamp: "t", type: "permission.requested", data: request }] });
+    const h = harness({}, fake);
+    h.deps.index!.addSession("kept", { projectId: "p", folder: work, isolation: "folder", createdBy: "user" });
+    const attached = await h.hub.dispatch({ type: "attach", sessionId: "kept" }, "user", "w1");
+    if (!attached.ok) throw new Error(attached.reason);
+    expect(attached.value.reset).toBe(true);
+    expect(attached.value.events.map(e => [e.seq, e.event.type])).toEqual([[1, "user.message"], [2, "permission.requested"]]);
+    expect(attached.value.pending).toEqual([expect.objectContaining({ requestId: "old", kind: "permission", choices: expect.arrayContaining(["approve-once", "reject"]) })]);
+    expect(fake.configs[0]).toMatchObject({ continuePendingWork: true });
+  });
+});
+
+describe("a coding window's events", () => {
+  it("come numbered one after another to the windows attached; a window that attaches again from its last seq gets only what it missed", async () => {
+    const h = harness();
+    const id = await started(h);
+    const base = (await h.hub.dispatch({ type: "attach", sessionId: id }, "user", "w1") as { value: { seq: number } }).value.seq;
+    h.fake.emit("assistant.message_delta", { deltaContent: "a" }, true);
+    h.fake.emit("assistant.message", { content: "ab" });
+    expect(h.events().filter(e => e.seq > base).map(e => e.seq)).toEqual([base + 1, base + 2]);
+    await h.hub.dispatch({ type: "detach", sessionId: id }, "user", "w1");
+    h.fake.emit("assistant.turn_end", {});
+    expect(h.events().some(e => e.event.type === "assistant.turn_end")).toBe(false);
+    await new Promise(r => setTimeout(r, 0));
+    expect(h.rows().filter(r => r.id === id).at(-1)?.unread).toBe(1);
+    const caught = await h.hub.dispatch({ type: "attach", sessionId: id, sinceSeq: base + 2 }, "user", "w1");
+    if (!caught.ok) throw new Error(caught.reason);
+    expect(caught.value.events.map(e => e.event.type)).toEqual(["assistant.turn_end"]);
+    expect(caught.value).toMatchObject({ seq: base + 3, row: { unread: 0 } });
+    expect(caught.value.reset).toBeUndefined();
+  });
+
+  it("never carry a value the vault filled", async () => {
+    const canary = "VAULTCANARY-1f2e3d";
+    const h = harness({ redact: { active: true, holds: t => JSON.stringify(t).includes(canary), text: s => s.split(canary).join("[vault]"), deep: <T>(v: T) => v } });
+    await started(h);
+    h.fake.emit("tool.execution_complete", { toolCallId: "c", success: true, result: { content: `x ${canary}` } });
+    expect(JSON.stringify(h.events())).not.toContain(canary);
+  });
+});
+
+describe("the coding hub's guards", () => {
+  it("start nothing while the feature is off, before consent, under a policy that allows none, after a vault fill, or offline", async () => {
+    for (const [over, why] of [
+      [{ enabled: () => false }, CODE_REFUSALS.off], [{ hasConsent: () => false }, CODE_REFUSALS.consent],
+      [{ policy: () => null }, CODE_REFUSALS.policy], [{ vaultFilled: () => true }, CODE_REFUSALS.vault], [{ access: () => null }, CODE_REFUSALS.offline],
+    ] as [Partial<CodeHubDeps>, string][]) {
+      const h = harness(over);
+      expect(await h.hub.dispatch({ type: "create", options: {} }, "user")).toEqual({ ok: false, reason: why });
+      expect(h.fake.configs).toEqual([]);
+    }
+    const before = harness({ hasConsent: () => false });
+    let asked = false;
+    before.deps.client = async () => { asked = true; return before.fake.client; };
+    expect((await before.hub.dispatch({ type: "list" }, "user")).sessions).toEqual([]);
+    expect(asked).toBe(false);
+  });
+
+  it("keep the organisation's cap on permission modes, saying which mode stays, and audit each change with who made it", async () => {
+    const h = harness({ policy: () => ({ ...OPEN, permissionModes: ["manual"] }) });
+    const id = await started(h);
+    expect(await h.hub.dispatch({ type: "setPermissionMode", sessionId: id, mode: "allow-all" }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.modeRefused, code: "mode:manual" });
+    expect(h.fake.called("permissions.setMode").map(c => (c.params as { mode: string }).mode)).not.toContain("allow-all");
+    expect(await h.hub.dispatch({ type: "create", options: { permissionMode: "allow-all" } }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.modeRefused });
+    expect(await h.hub.dispatch({ type: "setAgentMode", sessionId: id, mode: "plan" }, "companion")).toEqual({ ok: true, value: { mode: "plan" } });
+    expect(h.audit).toContainEqual(expect.objectContaining({ event: "code", phase: "mode", by: "companion", agentMode: "plan" }));
+    expect(h.audit).toContainEqual(expect.objectContaining({ event: "code", phase: "companion", command: "setAgentMode" }));
+  });
+
+  it("record a message as its length only, and stop the session when a record can't be written", async () => {
+    const h = harness();
+    const id = await started(h);
+    expect(await h.hub.dispatch({ type: "send", message: { sessionId: id, prompt: "fix the bug in parser.ts" } }, "user")).toEqual({ ok: true, value: { messageId: "msg-1" } });
+    expect(h.audit).toContainEqual(expect.objectContaining({ phase: "sent", chars: 24, by: "user" }));
+    expect(JSON.stringify(h.audit)).not.toContain("parser");
+    h.deps.audit = () => ({ write: () => { throw new Error("disk full"); } });
+    expect(await h.hub.dispatch({ type: "send", message: { sessionId: id, prompt: "again" } }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.audit });
+    expect(h.fake.called("abort").length).toBeGreaterThan(0);
+  });
+
+  it("attach only paths main offered or in the session's folder, never Ember's data, and pictures within the limit", async () => {
+    const h = harness();
+    const id = await started(h);
+    fs.writeFileSync(path.join(work, "a.txt"), "a");
+    const picked = await h.hub.dispatch({ type: "pickAttachments", sessionId: id }, "user");
+    expect(picked).toEqual({ ok: true, value: [{ type: "file", path: path.join(work, "a.txt"), displayName: "a.txt" }] });
+    const send = (attachments: unknown) => h.hub.dispatch({ type: "send", message: { sessionId: id, prompt: "see", attachments: attachments as never } }, "user");
+    expect(await send([{ type: "file", path: path.join(work, "a.txt") }])).toMatchObject({ ok: true });
+    expect(await send([{ type: "file", path: path.join(dir, "elsewhere.txt") }])).toEqual({ ok: false, reason: CODE_REFUSALS.attachment });
+    expect(await send([{ type: "file", path: path.join(userData, "settings.json") }])).toEqual({ ok: false, reason: CODE_REFUSALS.attachment });
+    expect(await send([{ type: "blob", data: "aGk=", mimeType: "text/html" }])).toEqual({ ok: false, reason: CODE_REFUSALS.attachment });
+    expect(await send([{ type: "blob", data: "aGk=", mimeType: "image/png" }])).toMatchObject({ ok: true });
+  });
+
+  it("let a window call the SDK's RPC methods on the allow-list, and refuse the rest in plain words", async () => {
+    const h = harness();
+    const id = await started(h);
+    expect(await h.hub.dispatch({ type: "rpc", call: { scope: "session", sessionId: id, method: "history.listRewindPoints" } }, "user")).toEqual({ ok: true, value: { fileChangeTrackingEnabled: true, points: [] } });
+    expect(await h.hub.dispatch({ type: "rpc", call: { scope: "client", method: "models.list" } }, "user")).toEqual({ ok: true, value: { models: [{ id: "m" }] } });
+    expect(await h.hub.dispatch({ type: "rpc", call: { scope: "session", sessionId: id, method: "options.update", params: { sandboxConfig: { enabled: false } } } }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.rpcNotAllowed });
+    expect(await h.hub.dispatch({ type: "rpc", call: { scope: "session", sessionId: id, method: "permissions.paths.list", params: { where: userData } } }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.rpcPath });
+    expect(await h.hub.dispatch({ type: "rpc", call: { scope: "session", sessionId: "nope", method: "history.listRewindPoints" } }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.closed });
+  });
+
+  it("stop every session when the gate closes, and stop and let go of every one at sign-out", async () => {
+    let consent = true;
+    const h = harness({ hasConsent: () => consent });
+    const id = await started(h);
+    consent = false;
+    await h.hub.changed();
+    expect(h.fake.called("abort")).toHaveLength(1);
+    consent = true;
+    await h.hub.accountEnded();
+    expect(h.fake.called("disconnect")).toHaveLength(1);
+    expect((await h.hub.dispatch({ type: "list" }, "user")).sessions.find(r => r.id === id)?.open).toBe(false);
+    expect(h.audit).toContainEqual(expect.objectContaining({ phase: "close", session: id }));
+  });
+
+  it("keeps pinned and archived in Ember's index, forks into a new row that names its parent, and removes a session with its record", async () => {
+    const h = harness();
+    const id = await started(h, { name: "First" });
+    expect(await h.hub.dispatch({ type: "update", sessionId: id, change: { pinned: true, archived: true, name: "Renamed" } }, "user")).toMatchObject({ ok: true, value: { pinned: true, archived: true, name: "Renamed" } });
+    expect(h.fake.called("name.set").at(-1)?.params).toEqual({ name: "Renamed" });
+    const forked = await h.hub.dispatch({ type: "fork", sessionId: id, name: "Fork" }, "user");
+    expect(forked).toMatchObject({ ok: true, value: { id: "forked-1", parentId: id, name: "Fork", open: false } });
+    expect(await h.hub.dispatch({ type: "remove", sessionId: id }, "user")).toEqual({ ok: true });
+    expect(h.fake.called("deleteSession").at(-1)?.params).toBe(id);
+    expect(h.deps.index!.session(id)).toBeUndefined();
+    expect(h.sent).toContainEqual({ channel: "code:row", payload: { removed: id } });
+    expect(await h.hub.dispatch({ type: "remove", sessionId: id }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.unknown });
+  });
+});

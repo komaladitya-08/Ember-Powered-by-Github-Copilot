@@ -33,6 +33,8 @@ export interface CodeSdkEvent {
   agentId?: string;
   /** True for events the SDK does not keep: they are never replayed. */
   ephemeral?: boolean;
+  /** Set by main when it cut long strings in `data` to fit CODE_LIMITS.eventData (each cut string ends "…"). */
+  truncated?: boolean;
 }
 
 /** An event on its way to a window. `seq` counts up by one per session; a gap means: attach again. */
@@ -107,6 +109,12 @@ export interface CodeSessionRow {
   archived: boolean;
   /** The session this one was forked from or started by, if any. */
   parentId?: string;
+  /**
+   * The SDK's sandbox for this session's tools: "on" (with outbound network), "no-network" (on, but this computer's
+   * sandbox has no network for commands) or "off" (this computer has no sandbox: the tools run without one). Absent
+   * until the session has been opened in this run.
+   */
+  sandbox?: "on" | "no-network" | "off";
   /** Who started it. */
   createdBy: CodeActor;
   createdAt: number;
@@ -155,6 +163,12 @@ export interface CodeAttached {
   pending: CodePendingRequest[];
   /** The last `seq` sent for this session. */
   seq: number;
+  /**
+   * True when `events` is the session's whole kept history rather than what followed `sinceSeq` (no `sinceSeq`, or
+   * one this run no longer holds): drop what was shown and draw it again. Its seqs may skip numbers, since ephemeral
+   * events (deltas, request events) aren't kept by the SDK.
+   */
+  reset?: boolean;
 }
 
 /** Why a command did nothing, as a sentence a person can read (never raw SDK text). */
