@@ -173,7 +173,7 @@ describe("main.ts's Step 0b hooks (§11.3), for the packages that replace S0a's 
     // While the bubble says Ember is still waiting, at Stop response instead (accessibility-visual-2).
     expect(MAIN).toContain('const showHomeFromKeys = () => { showHome(); const at = keysLanding(agent?.conversationTurn ?? "idle", keyboardRoute(shortcutsTaken ?? [], sc, fb)); if (at) sendToHome(IPC.focusSection, at); };');
     // Ember started again, the Dock, and the settings shortcut; not the handle menu's Settings… (a pointer's way).
-    expect(MAIN).toContain('app.on("second-instance", (_e, argv) => { const ask = wantsAsk(argv); log.info("instance.second", ask ? { ask } : {}); const view = ask ? startView({ onboarded: settings.get().onboarded, showSettings: false, atLogin: false, sessionProblem: !!sessionGreeting(readEnvironment()), ask }) : "settings"; if (view === "ask") openAsk({ source: "launcher" }); else showHomeFromKeys(); });');
+    expect(MAIN).toContain('app.on("second-instance", (_e, argv) => { const ask = wantsAsk(argv); log.info("instance.second", ask ? { ask } : {}); const view = ask ? startView({ onboarded: settings.get().onboarded, showSettings: false, atLogin: false, sessionProblem: !!sessionGreeting(readEnvironment()), ask }) : "settings"; if (view === "ask") openAsk({ source: "launcher" }); else if (ask || !showCode()) showHomeFromKeys(); });');
     expect(MAIN).toContain('app.on("activate", () => showHomeFromKeys());');
     expect(MAIN).toContain("settings: showHomeFromKeys,");
     expect(MAIN).toContain("click: () => { opens = true; showHome(); } },");

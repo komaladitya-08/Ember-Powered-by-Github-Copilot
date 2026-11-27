@@ -77,7 +77,7 @@ function start(api: EmberCodeApi): void {
       if (row) {
         setText(title, sessionTitle(row));
         const project = s.projects.byId[row.projectId];
-        const box = sandboxWords((row as typeof row & { sandbox?: string }).sandbox);
+        const box = sandboxWords(row.sandbox);
         setText(where, [project?.name, row.isolation === "worktree" ? `worktree ${row.branch ?? ""}`.trim() : pathTail(row.folder), box].filter(Boolean).join(" · "));
       }
       if (s.view.kind === "session" && s.view.id !== shownId) {

@@ -120,6 +120,6 @@ describe("the coding window's preload", () => {
   });
 
   it("is built with the other preloads", () => {
-    expect(fs.readFileSync(path.resolve("scripts/build-app.mjs"), "utf8")).toContain('const preloads = [...new Set([...pages, "code"])];');
+    expect(fs.readFileSync(path.resolve("scripts/build-app.mjs"), "utf8")).toContain("entryPoints: pages.map(p => ({ in: `app/preload/${p}.ts`, out: p })),");
   });
 });

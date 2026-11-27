@@ -134,7 +134,7 @@ export const WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS: readonly Readonly<{ pat
   Object.freeze({"path":"packages/bubble/src/index.ts","bytes":776,"sha256":"1d98069f0d8d002e130635499f69136c3cc2da93eae2726b23fe5c52ed43a2c4"}),
   Object.freeze({"path":"packages/bubble/src/markdown.ts","bytes":3319,"sha256":"ec6253300d0857ac10fdb50837b67a3174fc1d14a0a5c02ebbc9eabd59b3884b"}),
   Object.freeze({"path":"packages/bubble/src/whole.ts","bytes":5125,"sha256":"6ac982feefc80daf8782374dad0132ba46eb5cb1fd682ac20c65ba38179be798"}),
-  Object.freeze({"path":"scripts/build-app.mjs","bytes":9915,"sha256":"d823cc2b1e4ed6b2db4cd07feaf923c5cb92ce319e0513d65dece35fc49acd7c"}),
+  Object.freeze({"path":"scripts/build-app.mjs","bytes":9699,"sha256":"9f4dbc46a611938178cffbdf5e1b5fd48b9a2ea713f4828792377586a2a0acef"}),
   Object.freeze({"path":"scripts/experimental/build-windows-node-asset-enforcement.mjs","bytes":23563,"sha256":"d8166e94f242fe638a1a6e389c20d87324665819f23e303e02b76741263b305d"}),
   Object.freeze({"path":"scripts/package/windows-node-toolchain.d.mts","bytes":1096,"sha256":"2aac9976c7f2d80c45999486815e1331af07bfc11324d5d658fec9e1e19837d5"}),
   Object.freeze({"path":"scripts/package/windows-node-toolchain.mjs","bytes":6934,"sha256":"d1539b3ddabb1ac10d93b951f1b861894c0ac0064cd034a11c8aa30112250a7e"}),

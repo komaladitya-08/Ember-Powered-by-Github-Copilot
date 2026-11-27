@@ -76,6 +76,6 @@ describe("the coding window's page", () => {
   it("is built with the other pages, and its preload when there is one", () => {
     const build = read("scripts/build-app.mjs");
     expect(build).toContain('const pages = ["home", "overlay", "handle", "ask", "mic", "desk", "command", "prompt", "vault", "code"];');
-    expect(build).toContain("entryPoints: preloads.map(p => ({ in: `app/preload/${p}.ts`, out: p })),");
+    expect(build).toContain("entryPoints: pages.map(p => ({ in: `app/preload/${p}.ts`, out: p })),");
   });
 });

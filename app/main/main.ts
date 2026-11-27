@@ -26,7 +26,7 @@ import { ANSWER_CLOSED_STATUS, TaskVoiceTrust, VoiceRefusals, answerStatusOnQues
 import { ModeRecord, modeIntents } from "./policy/mode-record";
 import { ModeSeal } from "./policy/mode-seal";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
-import { createCommandWindow, createHomeWindow, createPromptWindow, createVaultWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
+import { createCommandWindow, createHomeWindow, createPromptWindow, createVaultWindow, isTrustedSender, keepClearOf, openCodeWindow, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
 import { IPC, TASKS_PUSH_MS, type CodingWorkspaceState, type Status, type SignInProgress, type AskContext, type ListenOnceStatus, type VoiceMatchStatus, type ProjectSelection, type ProjectResult, type ProjectWorkspaceReply, type HearResult, type RetryResult } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, answerEndShown, askSuggestions, askSuggestionsComing, bubbleBoxOf, suggestOf, suggestionsShown, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
@@ -646,7 +646,7 @@ function start(): void {
     const ask = wantsAsk(argv);
     log.info("instance.second", ask ? { ask } : {});
     const view = ask ? startView({ onboarded: settings.get().onboarded, showSettings: false, atLogin: false, sessionProblem: !!sessionGreeting(readEnvironment()), ask }) : "settings";
-    if (view === "ask") openAsk({ source: "launcher" }); else showHomeFromKeys();
+    if (view === "ask") openAsk({ source: "launcher" }); else if (ask || !showCode()) showHomeFromKeys();
   });
 
   // No page may open windows or navigate away from our bundled files.
@@ -1588,6 +1588,9 @@ function start(): void {
   let codeRef: CodeHub | null = null;
   /** The coding windows (app/main/code/ipc.ts): the window's creator registers its webContents; until then every sender is refused. */
   const codeWindows = new CodeWindows(isTrustedSender);
+  // The coding window (docs/CODING-APP.md §4): opened only while coding sessions are on, and registered with the hub's
+  // channels for as long as it is open. False when they are off or the window couldn't open: the caller shows Home.
+  const showCode = (): boolean => settings.get().code.enabled && !!openCodeWindow(platform.os, { register: contents => codeWindows.register(contents) });
   const killSwitch = new KillSwitch(() => [
     { name: "borrow", stop: () => borrowRef?.stop() },
     { name: "speech", stop: () => voice?.hush() },
@@ -4732,6 +4735,8 @@ function start(): void {
       setupNeeded: env.checks.some(needsUser) });
     if (view === "ask") openAsk({ source: "launcher" });
     else if (view === "settings") showHome();
+    // With coding sessions on, starting Ember by hand opens the coding window too (never at login).
+    if (view === "greet" && !atLogin) showCode();
     // The hello waits for Copilot to connect (at most a few seconds), so it doesn't say "not connected" too early.
     else setTimeout(() => void Promise.race([brainStart, new Promise(r => setTimeout(r, 5000))]).then(() => greet()), 800);
     // macOS: opening Ember.app again (Dock, Finder) reactivates this one instead of starting a second, so settings
