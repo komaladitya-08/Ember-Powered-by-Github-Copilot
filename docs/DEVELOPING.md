@@ -948,6 +948,25 @@ Match verified it.
 The first time it starts, Ember explains what it reads, what it sends and what it keeps, and does nothing until you
 agree.
 
+### Chats with Copilot in a folder
+
+Off by default. **Chat with Copilot in a folder** (Settings › Projects, `settings.chat.native`) wakes Home's **Chats**
+pane (app/renderer/home/chat.ts over the preload's `window.emberChat`): native Copilot SDK sessions in a folder you
+choose in main's own folder picker, with the SDK's own tools and its own permission system shown as it is. Each chat
+has two pickers: the SDK's permission mode (“Ask every time (manual)”, “Let a second model check (assisted)”, “Allow
+everything (allow-all)”) and its agent mode (“Step by step (interactive)”, “Plan first (plan)”, “Keep going
+(autopilot)”); Home shows the mode the SDK says is in force, and says why when a change wasn't applied (the
+organisation's policy or the model service). A permission request is a card in the transcript with exactly the
+decisions the SDK offers for it (“Allow once”, “Allow for this chat”, “Allow reading here for this chat”, “Always allow
+this site”, “Don't allow” with an optional reason); its approvals take a press only once the card has been in view for
+half a second, never a held key, and it becomes a record of what was decided and by whom (you, the second model's
+check, Copilot's own rules, allow-all or Stop). Stop ends the shown chat's turn; Stop everything ends every chat's,
+and so do signing out and another account signing in, which also let every open chat go. The switch is locked off
+while the organisation's policy turns acting off (`features.actions: false`) or Ember is locked down. Turning it on
+needs “Before Ember starts” at `CONSENT_VERSION` 16, which says what a chat reads, runs, sends and keeps. The live
+journey (`EMBER_CHAT_LIVE=1`, test/integration/home-chat-live.test.ts) fakes the folder picker by replacing
+`dialog.showOpenDialog` in main through Playwright, as the coding journeys do: there is no switch for it.
+
 ### Extensions: the runtime and the gate
 
 The runtime is `app/main/extensions/` (ExtensionsService, the `ExtensionsApi` Home calls); the contract is
@@ -1785,6 +1804,7 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | Extensions: what is installed and the tools the user agreed to (0600), Ember's copy of each plugin, and the process ids of the servers running (folders 0700) | `~/.config/ember/extensions/` (`extensions.json`, `plugins/<id>/`, `run/`, and `off/` while a change couldn't be saved) |
 | The Copilot runtime's temporary files (large tool output it saves; 0700, emptied at each connect and at sign-out) | `~/.config/ember/copilot-tmp/` |
 | Marketplaces the user added, and the runtime's copy of their catalogues | `~/.config/ember/copilot/settings.json`, `~/.config/ember/copilot/.cache/copilot/marketplaces/` |
+| Chats with Copilot (only once “Chat with Copilot in a folder” is on): the chat runtime's own sessions, kept between runs so a chat opens again from Home's Chats (0700) | `~/.config/ember/chat/` |
 
 A hand edit of `settings.json` that Ember can't use is copied aside as `settings.json.bad-<time>` (the three newest
 are kept); one it can repair is tidied once it has stayed the same for 2 s. When Ember starts on one that isn't JSON

@@ -34,8 +34,13 @@ import type { TargetId } from "./targets";
  * command and it does no more than commands-card.ts EXACT_ONLY says, shown first with a few seconds to stop it), that a
  * command Ember doesn't know runs, announced (the owner's decision of 2026-11-14), and that Assisted and Autopilot ask
  * less (PLAN.md §10 Settled 28; first-run-r10-7, -r10-8, accessibility-c11-1, r11-copy-x11-1, -x11-3).
+ * 16 (2026-11-27): once the user turns on “Chat with Copilot in a folder” (`settings.chat.native`, off by default), a
+ * native Copilot chat reads and changes files in a folder they choose and runs commands there, asking as the chat's
+ * permission mode says, sends what it reads to the model service, and its sessions are kept in the data folder's
+ * `chat` directory between runs, where Ember otherwise deletes Copilot's state at quit (owner decision: "GitHub
+ * Copilot SDK first").
  */
-export const CONSENT_VERSION = 15;
+export const CONSENT_VERSION = 16;
 
 /**
  * What each bump of CONSENT_VERSION changed, in Ember's words, for someone who agreed to an earlier version: first run
@@ -43,6 +48,7 @@ export const CONSENT_VERSION = 15;
  * Ember starts" says (home-welcome.test.ts pairs every line with the full text's words). A bump adds its line here.
  */
 export const CONSENT_CHANGES: Readonly<Record<number, string>> = {
+  16: "If you turn on “Chat with Copilot in a folder” in Projects, a chat can read and change files in the folder you choose and run commands there, asking first as its permission mode says, and what it reads goes to your model service. I keep those chats on this computer so you can open them again after I restart.",
   15: "If you choose Save coding draft, I encrypt complete captured files, the last request and summary, and historical check outcomes on this computer until you forget the draft or choose Forget everything. Opening a saved draft never resumes work. Using its edits requires a newly chosen folder, a new import review and a new request. When you start a new request from an imported draft, its saved request and summary may go to your connected model as historical context. If you separately enable public dependencies for a WSL coding project, I may send its locked public npm package names and versions to registry.npmjs.org after the normal approval decision for that exact set. I send no project files or private registry credentials there, and commands remain offline.",
   14: "When you ask for coding work, I copy the project folder you chose and may send requested files and command output to your model, leaving the original unchanged. Exports keep all captured files, including unchanged files, until you remove them. Private copies I can't verify as removed may remain and block new coding work.",
   13: "If you choose Save projects, I encrypt project names, goals and session outcomes on this computer until you choose Forget saved projects or Forget everything. Opening a checkpoint never resumes work.",

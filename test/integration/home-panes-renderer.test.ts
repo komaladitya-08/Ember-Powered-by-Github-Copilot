@@ -393,7 +393,12 @@ describe.skipIf(gate)("Home's Search settings, as the person reads the results (
 
   it("finds the conversation's history, deleting, starting at log-in and the shortcuts by everyday words (home-13)", async () => {
     const page = await open("home");
-    for (const q of ["history", "clear history", "chat"]) expect((await results(page, q))[0], q).toMatch(/^Home: /);
+    for (const q of ["history", "clear history"]) expect((await results(page, q))[0], q).toMatch(/^Home: /);
+    // "chat" also names Copilot's chats in a folder (their switch, in Projects, by its own words); the conversation is
+    // still found by it.
+    const chat = await results(page, "chat");
+    expect(chat.slice(0, 2)).toEqual(["Projects: Chats", "Projects: Chat with Copilot in a folder"]);
+    expect(chat.some(r => r.startsWith("Home: ")), "chat").toBe(true);
     for (const q of ["start at login", "autostart"]) expect((await results(page, q))[0], q).toMatch(/^Your Ember: /);
     // "login" alone is also what the vault keeps (its own words, so it comes first); starting at log-in is still found (vault-3).
     const login = await results(page, "login");

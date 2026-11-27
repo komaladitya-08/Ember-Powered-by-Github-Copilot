@@ -71,6 +71,7 @@ import { MEMORY_PAGE_SIZE, MEMORY_SOURCES, memoryPage } from "./memory-view";
 import { homeFrameGap } from "./frame-gap";
 import type { TaskEntry } from "../../shared/activity";
 import { STATUS_RETRIES, STATUS_RETRY_MS, statusFence } from "./status-fence";
+import { mountChats } from "./chat";
 
 declare global {
   interface Window { ember: EmberHomeApi }
@@ -190,6 +191,7 @@ function applySettings(s: Settings): void {
   providerSettings(s);
   ($("login") as HTMLInputElement).checked = s.startAtLogin;
   ($("keep-conversation") as HTMLInputElement).checked = s.keepConversation;
+  chats.settings(s);
   $("conversation-retention").textContent = conversationRetention(s.keepConversation);
   ($("reduce-motion") as HTMLInputElement).checked = s.reduceMotion;
   ($("more-time") as HTMLInputElement).checked = s.moreTime;
@@ -257,6 +259,8 @@ function save(patch: SettingsPatch): Promise<boolean> {
   // Only the Settings main returns after a save counts: anything else (a literal false) is not a saved choice.
   return window.ember.updateSettings(patch).then(r => (r !== null && typeof r === "object" ? true : failed(undefined)), failed);
 }
+// Chats (chat.ts): native Copilot sessions in a folder, dormant until their switch in Projects is on.
+const chats = mountChats({ api: window.emberChat, save });
 
 // ───── The line under the title: recomputed whenever anything it depends on changes ─────
 /** Signed out while the user's own provider's card waits: the host it names, the way on instead of Copilot (integrations-r3-1). */
@@ -663,6 +667,7 @@ function renderAdmin(a: Status["admin"]): void {
     if (to && before && after && words) { before.textContent = words[0]; after.textContent = words[1]; to.remove(); }
   }
   lastAdmin = a;
+  chats.admin(a);
   if (agent) renderAgent(agent);
   renderRecipient();
   renderTagline();
@@ -2839,6 +2844,7 @@ function renderVoice(v: VoiceStatus): void {
   speakLive.hold(micHeld(v));
   naturalLive.hold(micHeld(v));
   holdTaskNews(micHeld(v));
+  chats.hold(micHeld(v));
   renderVoiceFix();
   const text = heardThrough(v.detail && v.state === "error" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state, v.state, v.detail, v.micLabel);
   $("voice-text").textContent = text;

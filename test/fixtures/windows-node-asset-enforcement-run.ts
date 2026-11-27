@@ -115,7 +115,7 @@ export const WINDOWS_NODE_ASSET_ENFORCEMENT_SOURCE_PINS: readonly Readonly<{ pat
   Object.freeze({"path":"app/shared/activity.ts","bytes":20419,"sha256":"a9afdd2136c2042ed12ba7a915a3d46ce3e13fe1ef728bda6d45674f2f064422"}),
   Object.freeze({"path":"app/shared/approvals.ts","bytes":4994,"sha256":"ab1e8054cc5087ac4d9bb701a79e81af64b77a02604332719d186d47e0da0e91"}),
   Object.freeze({"path":"app/shared/apps.ts","bytes":8902,"sha256":"15a49bdec897cc3883ef7b0476876f609441024a56c92173316acd6721ab338e"}),
-  Object.freeze({"path":"app/shared/consent.ts","bytes":11649,"sha256":"802df997b97afc94ec6a7e6f9c8eef40007a29208c128f2c91ce5800860733e5"}),
+  Object.freeze({"path":"app/shared/consent.ts","bytes":12463,"sha256":"11da6515ffac56f694f3655f87f95ce374a3f613f88279ca3eb9ccafe9ef20d9"}),
   Object.freeze({"path":"app/shared/conversation.ts","bytes":3863,"sha256":"ca434fc3d20c0270f0213e385038aa3da93d3428405bc8bd41b27c45eb12d92e"}),
   Object.freeze({"path":"app/shared/never-look.ts","bytes":3693,"sha256":"6eb65d9cc3335b0e75c3b03dcac3eb761ad8b6dd4d38068ec74cc1200fd4d6b7"}),
   Object.freeze({"path":"app/shared/overlay.ts","bytes":16714,"sha256":"15c5d373f53d0dd93e59119e72927447d3bbee51b66ed5005374b8753e7b57f5"}),
