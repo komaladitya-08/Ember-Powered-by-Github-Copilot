@@ -75,7 +75,7 @@ describe("a native chat session's runtime config", () => {
     const managed: ChatPolicy = { ...OPEN, managedSettings: { permissions: { deny: ["Shell"] } } };
     const { chat } = await open(f, { policy: managed, gitHubToken: "gho_test", model: "m", name: "  My chat  " });
     const c = f.config();
-    expect(c).toMatchObject({ availableTools: ["builtin:*"], workingDirectory: fs.realpathSync(work), enableConfigDiscovery: false, streaming: true, gitHubToken: "gho_test", model: "m",
+    expect(c).toMatchObject({ availableTools: ["builtin:*"], workingDirectory: fs.realpathSync.native(work), enableConfigDiscovery: false, streaming: true, gitHubToken: "gho_test", model: "m",
       managedSettings: { permissions: { deny: ["Shell"] } } });
     expect(c.sessionId).toMatch(/^ember-chat-/);
     expect(await c.onPermissionRequest!({ kind: "shell" } as never, { sessionId: "x" })).toEqual({ kind: "no-result" });
