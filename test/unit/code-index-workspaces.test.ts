@@ -13,7 +13,7 @@ import { SessionIndex, indexFile, writeAtomic } from "../../app/main/code/sessio
 import { FolderRefused, createWorktree, gitFacts, plainBranch, removeWorktree, repositoryOf, safeSessionPart, usableFolder, worktreePlan, worktreesDir, type GitRunner } from "../../app/main/code/workspaces";
 
 let dir: string;
-beforeEach(() => { dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ember-code-index-"))); });
+beforeEach(() => { dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "ember-code-index-"))); });
 afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
 const posixModes = process.platform !== "win32";

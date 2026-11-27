@@ -82,7 +82,7 @@ let dir: string;
 let userData: string;
 let work: string;
 beforeEach(() => {
-  dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "ember-code-hub-")));
+  dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "ember-code-hub-")));
   userData = path.join(dir, "userdata");
   work = path.join(dir, "work");
   fs.mkdirSync(userData);
