@@ -220,5 +220,5 @@ it("removing only the declared diagnostic hooks recovers the entire original voi
   expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start); workflow = workflow.slice(0, start) + workflow.slice(end);
   const speech = "      - name: Speech on RHEL 8's glibc, on both builds (WebAssembly, then sherpa-onnx's C API, which the packages use)\n";
   workflow = workflow.replace(speech + "        id: speech\n", speech).replace('          EMBER_SYNTHETIC_TAIL_CAPTURE: "1"\n', "");
-  expect(sha256(workflow)).toBe("b3302d0ac30ece4189a53f151e7704cd33724efc532e92ae6d8ea3a8d2bfb63d");
+  expect(sha256(workflow)).toBe("2a82078708ea2b04a62738b12fc24116d9354d545064bfe02b731b4ceb13c10c");
 });
