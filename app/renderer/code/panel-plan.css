@@ -1,0 +1,34 @@
+/* The panel's Plan tab (panel-plan.ts): the waiting exit-plan-mode card (styles.css's card), the plan drawn from its
+   Markdown, its editor, the to-dos with their state symbols beside their words, and the Autopilot objective. Tokens
+   only; its own forced-colours block. */
+
+.pl-waiting { padding-bottom: 4px; }
+.pl-doc { min-width: 0; padding: 10px 12px; border-radius: var(--r-sm); background: var(--surface-2); overflow-wrap: anywhere; outline: none; }
+.pl-doc:focus-visible { box-shadow: var(--focus-ring); }
+.pt textarea.pl-editor { min-height: calc(200px * var(--text-scale)); font: var(--type-footnote); font-family: var(--ember-mono); tab-size: 2; }
+
+.pl-progress { color: var(--label-2); font: var(--type-footnote); font-variant-numeric: tabular-nums; }
+.pl-todos { list-style: none; margin: 0; padding: 0; display: grid; min-width: 0; }
+.pl-todo { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 8px; padding: 7px 0; box-shadow: 0 1px 0 var(--separator); }
+.pl-todo:last-child { box-shadow: none; }
+.pl-sym { width: 14px; height: 14px; margin-top: 2px; background: var(--sym-tint); -webkit-mask: var(--sym) center / contain no-repeat; }
+.pl-todo-words { display: grid; gap: 1px; min-width: 0; }
+.pl-todo-title { font: var(--type-callout); overflow-wrap: anywhere; }
+.pl-todo[data-state="done"] .pl-todo-title, .pl-todo[data-state="skipped"] .pl-todo-title { color: var(--label-2); }
+.pl-todo[data-state="in-progress"] .pl-todo-title { font-weight: 600; }
+.pl-todo-state, .pl-todo-after { color: var(--label-2); font: var(--type-caption); overflow-wrap: anywhere; }
+.pl-todo-desc { color: var(--label-2); font: var(--type-footnote); overflow-wrap: anywhere; text-wrap: pretty; }
+
+.pl-obj { display: grid; gap: 4px; min-width: 0; padding: 10px 12px; border-radius: var(--r-sm); background: var(--surface-2); }
+.pl-obj-meta { display: flex; align-items: center; gap: 6px; color: var(--label-2); font: var(--type-footnote); font-variant-numeric: tabular-nums; }
+.pl-obj-meta::before { content: ""; flex: none; width: 12px; height: 12px; background: var(--sym-tint); -webkit-mask: var(--sym) center / contain no-repeat; }
+.pl-obj-text { font: var(--type-callout); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+@media (prefers-contrast: more) {
+  .pl-doc, .pl-obj { box-shadow: inset 0 0 0 1px var(--control-edge); }
+}
+
+@media (forced-colors: active) {
+  .pl-doc, .pl-obj { border: 1px solid CanvasText; }
+  .pl-sym, .pl-obj-meta::before { background: CanvasText; }
+}

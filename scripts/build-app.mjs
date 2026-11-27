@@ -5,7 +5,7 @@
 // and the remote agent into dist/remote: ember-remote.cjs (plain Node, run on computers reached over SSH) and
 // meta.json (esbuild's metafile, which the agent's bundle test checks).
 import { build, buildSync } from "esbuild";
-import { cp, mkdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { stageWindowsNodeToolchainDevelopment } from "./package/windows-node-toolchain-dev.mjs";
@@ -190,6 +190,10 @@ for (const p of pages) {
     await cp(new URL(`app/renderer/${p}/${f}`, root), new URL(`renderer/${p}/${f}`, out)).catch(err => {
       if (!(f === "styles.css" && err.code === "ENOENT")) throw err;
     });
+  }
+  // A page's further stylesheets beside styles.css (the coding window's panel tabs each have one), linked by its index.html.
+  for (const f of await readdir(new URL(`app/renderer/${p}/`, root))) {
+    if (f.endsWith(".css") && f !== "styles.css") await cp(new URL(`app/renderer/${p}/${f}`, root), new URL(`renderer/${p}/${f}`, out));
   }
 }
 // What every page shares: the design tokens and controls (renderer/shared/ember.css), and the typeface they set

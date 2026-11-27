@@ -301,6 +301,8 @@ details.disclose > summary:focus-visible { outline: none; box-shadow: var(--focu
 @media (hover: hover) { .tab:hover { color: var(--label); background: var(--wash-6); } }
 .tab:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .tab[aria-selected="true"]:focus-visible { box-shadow: inset 0 -2px 0 var(--accent), var(--focus-ring); }
+/* A tab's mark (PanelTab.mark: a request waiting there), its words in the tab's name for a screen reader. */
+.tab-mark { display: inline-block; width: 10px; height: 10px; margin-inline-start: 6px; vertical-align: -1px; background: var(--sym-tint); -webkit-mask: var(--sym) center / contain no-repeat; }
 .panel-close { all: unset; cursor: pointer; width: 24px; height: 24px; border-radius: var(--r-xs); display: grid; place-items: center; }
 .panel-close::before { content: ""; width: 12px; height: 12px; background: var(--label-2); -webkit-mask: var(--icon-close) center / contain no-repeat; }
 .panel-close:focus-visible { outline: none; box-shadow: var(--focus-ring); }
@@ -398,6 +400,7 @@ details.disclose > summary:focus-visible { outline: none; box-shadow: var(--focu
   .meter-track { border: 1px solid CanvasText; }
   .meter-fill { background: CanvasText; }
   .tag { border: 1px solid CanvasText; }
+  .tab-mark { background: CanvasText; }
   .d-add, .d-del { background: Canvas; }
   .md-link { color: LinkText; }
 }

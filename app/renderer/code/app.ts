@@ -4,7 +4,7 @@
  * `window.emberCode`. Each command it sends says nothing for itself: what main answers (a row, a refusal's sentence,
  * the mode in force) goes into the store, and the views draw that. Views get this object and never call main.
  */
-import { CODE_LIMITS, type CodeAttachment, type CodeCreate, type CodeDone, type CodeRequestAnswer, type CodeRpcCall, type EmberCodeApi } from "../../shared/code";
+import { CODE_LIMITS, type CodeAttachment, type CodeCreate, type CodeDone, type CodeEventEnvelope, type CodeRequestAnswer, type CodeRpcCall, type EmberCodeApi } from "../../shared/code";
 import { agentsFrom, modelsFrom, queueFrom } from "./catalog";
 import { slashCommands, type SlashCommand } from "./completions";
 import { UNREACHABLE, modeRefused } from "./copy";
@@ -37,12 +37,21 @@ export class CodeApp {
   readonly triggers = new Map<string, string[]>();
   /** The live-region hook: what is said assertively (a request) and politely (a whole reply). */
   onSaid: ((kind: "asks" | "said", text: string) => void) | null = null;
+  /** Views watching the SDK's events as they come (a panel that reads again on a signal-only event). */
+  private eventWatchers = new Set<(env: CodeEventEnvelope) => void>();
 
   constructor(readonly api: EmberCodeApi) {
     this.state = { ...EMPTY_STATE, ui: loadUi() };
     api.onEvent(env => this.set(s => envelope(s, env)));
     api.onRow(change => this.set(s => rowChanged(s, change)));
     api.onRequest(change => this.set(s => requestChanged(s, change)));
+    api.onEvent(env => { for (const fn of this.eventWatchers) fn(env); });
+  }
+
+  /** Call `fn` with each of main's envelopes after the store has taken it; returns the way to stop. */
+  watchEvents(fn: (env: CodeEventEnvelope) => void): () => void {
+    this.eventWatchers.add(fn);
+    return () => { this.eventWatchers.delete(fn); };
   }
 
   /** A view to draw on every change. */

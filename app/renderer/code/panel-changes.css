@@ -1,0 +1,83 @@
+/* The panel's Changes tab (panel-changes.ts): the mode and whitespace bar, the files with their lines (the shared
+   diff rows of styles.css, with the chosen lines marked by an edge as well as their aria-selected), the Review strip,
+   Git and Rewind. Tokens only; its own forced-colours block. */
+
+.ch-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.ch-tools { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-inline-start: auto; }
+.ch-ws { display: inline-flex; align-items: center; gap: 6px; color: var(--label-2); font: var(--type-footnote); cursor: pointer; }
+.ch-summary { display: grid; gap: 6px; min-width: 0; }
+.ch-summary:empty { display: none; }
+.ch-count { color: var(--label-2); font: var(--type-footnote); font-variant-numeric: tabular-nums; }
+
+/* Files: a disclosure each, its chevron turning as it opens. */
+.ch-files { list-style: none; margin: 0 -8px; padding: 0; display: grid; gap: 2px; min-width: 0; }
+.ch-file { display: grid; gap: 6px; min-width: 0; }
+.ch-file-head { all: unset; cursor: pointer; display: grid; grid-template-columns: 10px minmax(0, 1fr); column-gap: 8px; row-gap: 1px; padding: 6px 8px; border-radius: var(--r-xs); }
+.ch-file-head::before { content: "" / ""; grid-row: 1 / span 2; align-self: start; margin-top: 4px; width: 10px; height: 10px; background: var(--label-2); -webkit-mask: var(--sym-chevron) center / contain no-repeat; transition: transform var(--t-snappy) var(--spring-snappy); }
+.ch-file-head[aria-expanded="true"]::before { transform: rotate(90deg); }
+@media (hover: hover) { .ch-file-head:hover { background: var(--wash-6); } }
+.ch-file-head:focus-visible { box-shadow: var(--focus-ring); }
+.ch-path { min-width: 0; font: var(--type-footnote); font-family: var(--ember-mono); overflow-wrap: anywhere; }
+.ch-meta { display: flex; flex-wrap: wrap; gap: 8px; color: var(--label-2); font: var(--type-caption); font-variant-numeric: tabular-nums; }
+.ch-n { white-space: nowrap; }
+.ch-file-body { display: grid; gap: 6px; min-width: 0; padding: 0 8px 8px; }
+
+/* Lines: a list of options; the chosen ones carry an accent edge, the one the keys are on a hairline box. */
+.ch-lines { max-height: 440px; cursor: default; user-select: none; }
+/* Narrower number columns than the transcript's diffs: the panel may be 260 px wide. */
+.ch-lines > div { grid-template-columns: 2.8em 2.8em 1.3em minmax(0, 1fr); }
+.ch-lines > [role="option"]:not([aria-disabled="true"]) { cursor: pointer; }
+.ch-lines > .chosen { box-shadow: inset 3px 0 0 var(--accent); }
+.ch-lines > .chosen.d-ctx { background: var(--wash-8); }
+.ch-lines:focus-visible > .active { box-shadow: inset 0 0 0 1px var(--label-2); }
+.ch-lines:focus-visible > .active.chosen { box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--label-2); }
+.ch-file-foot { display: grid; gap: 6px; min-width: 0; justify-items: start; }
+.ch-file-foot:empty { display: none; }
+.ch-comment { justify-self: stretch; padding: 10px 12px; border-radius: var(--r-sm); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--control-edge); }
+.ch-comment .ch-quote { background: var(--surface-0); }
+.ch-quote { margin: 0; padding: 6px 8px; border-radius: var(--r-xs); background: var(--surface-2); color: var(--label-2); font: var(--type-footnote); font-family: var(--ember-mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 120px; overflow: auto; }
+
+/* The Review strip: the comments waiting to be sent, with the window's one prominent button here. */
+.ch-review { display: grid; gap: 10px; padding: 12px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--control-edge); min-width: 0; }
+.ch-review .ch-quote { background: var(--surface-0); }
+.ch-review-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ch-review-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; min-width: 0; }
+.ch-rc { display: grid; gap: 4px; min-width: 0; }
+.ch-rc + .ch-rc { padding-top: 10px; box-shadow: 0 -1px 0 var(--separator); }
+.ch-rc-where { font: var(--type-footnote); font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.ch-rc-text { font: var(--type-callout); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Rewind: the points, newest first, and the one being looked at with its question. */
+.rw-list { list-style: none; margin: 0; padding: 0; display: grid; min-width: 0; }
+.rw-point { display: grid; gap: 2px; min-width: 0; padding: 8px 0; box-shadow: 0 1px 0 var(--separator); }
+.rw-point:first-child { padding-top: 0; }
+.rw-when { color: var(--label-3); font: var(--type-caption); font-variant-numeric: tabular-nums; }
+.rw-msg { font: var(--type-callout); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.rw-changes { color: var(--label-2); font: var(--type-footnote); font-variant-numeric: tabular-nums; }
+.rw-go { justify-self: start; margin-top: 4px; }
+.rw-confirm { display: grid; gap: 8px; min-width: 0; margin-top: 6px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--control-edge); outline: none; }
+.rw-confirm:focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.rw-sub { font: var(--type-footnote); font-weight: 600; }
+.rw-files { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; min-width: 0; }
+.rw-files li { display: grid; min-width: 0; }
+.rw-path { font: var(--type-footnote); font-family: var(--ember-mono); overflow-wrap: anywhere; }
+.rw-what { color: var(--label-2); font: var(--type-caption); font-variant-numeric: tabular-nums; }
+.rw-modes { display: grid; gap: 6px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.rw-modes legend { padding: 0; margin-bottom: 2px; color: var(--label-2); font: var(--type-footnote); }
+.rw-mode { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 8px; row-gap: 1px; align-items: center; }
+.rw-mode label { font: var(--type-callout); cursor: pointer; }
+.rw-mode .hint { grid-column: 2; }
+.rw-mode input:disabled + label { opacity: 0.4; cursor: default; }
+.rw-warn { font: var(--type-footnote); font-weight: 600; overflow-wrap: anywhere; text-wrap: pretty; }
+
+@media (prefers-contrast: more) {
+  .ch-lines > .chosen { box-shadow: inset 4px 0 0 var(--accent); }
+}
+
+@media (forced-colors: active) {
+  .ch-file-head::before { background: CanvasText; }
+  .ch-review, .rw-confirm, .ch-comment, .ch-quote { border: 1px solid CanvasText; }
+  .ch-lines > .chosen { forced-color-adjust: none; background: Highlight; color: HighlightText; box-shadow: none; }
+  .ch-lines > .chosen .d-sign, .ch-lines > .chosen .d-no { color: HighlightText; }
+  .ch-lines:focus-visible > .active { outline: 2px solid CanvasText; outline-offset: -2px; }
+}

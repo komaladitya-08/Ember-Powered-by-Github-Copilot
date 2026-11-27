@@ -149,6 +149,88 @@
     step("long-turn");
   }
 
+  // ── The panel's Changes and Plan tabs: scripted answers to workspaces.diff, history.*, plan.* and the Autopilot
+  //    objective, as the SDK's generated types shape them. s-login tracks its files from its first turn; s-vitest
+  //    didn't (its session diff falls back to the uncommitted one and it can't rewind); a new session has nothing yet.
+  //    window.__fake.panels holds each call's params (`params`), and `fail[method]` makes that method refused with a
+  //    sentence, as main refuses. ──
+  const panels = { params: [], fail: {}, plans: new Map(), objectives: new Map(), rewound: new Set() };
+  const app = (p) => `/home/me/work/app/${p}`;
+  const OAUTH = "--- /dev/null\n+++ b/src/oauth.ts\n@@ -0,0 +1,4 @@\n+export function back(next: unknown): string {\n+  if (typeof next !== \"string\") return \"/\";\n+  return next.startsWith(\"/\") && !next.startsWith(\"//\") ? next : \"/\";\n+}\n";
+  const SPACES = "--- a/src/util.ts\n+++ b/src/util.ts\n@@ -1,3 +1,3 @@\n export const a = 1;\n-export const b  = 2;\n+export const b = 2;\n export const c = 3;\n";
+  const TEST = "--- a/test/login.test.ts\n+++ b/test/login.test.ts\n@@ -10,4 +10,7 @@ describe(\"sign-in\", () => {\n   it(\"signs in\", ok);\n+  it(\"returns to the page it came from\", async () => {\n+    expect(await signIn(\"/settings\")).toBe(\"/settings\");\n+  });\n });\n";
+  const PKG = "--- a/package.json\n+++ b/package.json\n@@ -5,7 +5,7 @@\n   \"devDependencies\": {\n-    \"vitest\": \"^3.2.0\"\n+    \"vitest\": \"^4.0.0\"\n   }\n";
+  const file = (path, changeType, diff, extra = {}) => ({ path, changeType, diff, ...extra });
+  panels.plans.set("s-login", "## Plan\n\n1. Read `next` in the login handler\n2. Do the same in `src/oauth.ts`\n3. Add tests for both, including **one that tries another host**\n\n- Keep the old behaviour for a missing `next`\n");
+  panels.objectives.set("s-login", { content: "Make every sign-in path return people to where they were, with tests.", status: "active", turnCount: 3 });
+  const TODOS = {
+    rows: [
+      { id: "read-next", title: "Read next in the login handler", status: "done", createdAt: "2026-11-27 09:40:00" },
+      { id: "oauth", title: "Do the same in the OAuth callback", status: "in_progress", description: "src/oauth.ts redirects after the provider answers." },
+      { id: "tests", title: "Add tests for both", status: "pending" },
+      { id: "host", title: "Test another host is refused", status: "blocked" },
+    ],
+    dependencies: [{ todoId: "tests", dependsOn: "read-next" }, { todoId: "tests", dependsOn: "oauth" }, { todoId: "host", dependsOn: "tests" }],
+  };
+  const panelRpc = {
+    "workspaces.diff": (c) => {
+      const mode = c.params?.mode, ws = c.params?.ignoreWhitespace === true, sid = c.sessionId;
+      if (sid === "s-vitest") {
+        const changes = [file("package.json", "modified", PKG)];
+        return mode === "branch" ? { requestedMode: "branch", mode: "branch", baseBranch: "main", isFallback: false, changes }
+          : { requestedMode: mode, mode: "unstaged", isFallback: mode === "session", ...(mode === "session" ? { unavailableReason: "file-change-tracking-disabled" } : {}), changes };
+      }
+      if (sid !== "s-login" || panels.rewound.has(sid)) return { requestedMode: mode, mode, isFallback: false, changes: [] };
+      const session = [file("src/login.ts", "modified", DIFF), file("src/oauth.ts", "added", OAUTH), file("docs/redirects.md", "renamed", "", { oldPath: "docs/old.md" }), ...(ws ? [] : [file("src/util.ts", "modified", SPACES)])];
+      if (mode === "unstaged") return { requestedMode: mode, mode, isFallback: false, changes: [file("src/login.ts", "modified", DIFF), file("test/login.test.ts", "modified", TEST)] };
+      if (mode === "branch") return { requestedMode: mode, mode, isFallback: false, baseBranch: "main", changes: [...session, file("vendor/huge.js", "modified", "", { isTruncated: true })] };
+      return { requestedMode: mode, mode, isFallback: false, changes: session };
+    },
+    "history.listRewindPoints": (c, l) => {
+      if (c.sessionId === "s-vitest") return { fileChangeTrackingEnabled: false, unavailableReason: "file-change-tracking-disabled", points: [] };
+      const points = l.kept.filter(e => e.event.type === "user.message").map((e, i) => ({
+        eventId: e.event.id, userMessage: e.event.data.content, timestamp: e.event.timestamp,
+        canRestoreFiles: c.sessionId === "s-login", fileCount: c.sessionId === "s-login" ? 2 : 0, turnChangedFiles: i > 0, linesAdded: 7, linesRemoved: 1, isAutopilotContinuation: false,
+      }));
+      return { fileChangeTrackingEnabled: true, points };
+    },
+    "history.previewRewind": (c) => (c.sessionId === "s-login"
+      ? { available: true, fileCount: 2, files: [{ path: app("src/login.ts"), changeType: "modified", linesAdded: 3, linesRemoved: 1 }, { path: app("src/oauth.ts"), changeType: "created", linesAdded: 4, linesRemoved: 0 }] }
+      : { available: false, reason: "file-change-tracking-disabled", fileCount: 0, files: [] }),
+    "history.rewind": (c, l) => {
+      if (sessions.get(c.sessionId)?.busy) return { outcome: "session-busy", restoredFiles: [], skippedFiles: [] };
+      const at = l.kept.findIndex(e => e.event.id === c.params.eventId);
+      if (at < 0) return { outcome: "truncation-failed", restoredFiles: [], skippedFiles: [], error: "Event not found: internal detail" };
+      const removed = l.kept.length - at;
+      l.kept = l.kept.slice(0, at);
+      const files = c.params.mode === "conversation-and-files";
+      if (files) panels.rewound.add(c.sessionId);
+      later(10, () => emit(c.sessionId, "session.snapshot_rewind", { eventId: c.params.eventId, eventsRemoved: removed }, eph));
+      return { outcome: "success", eventsRemoved: removed, restoredFiles: files ? [app("src/login.ts"), app("src/oauth.ts")] : [], skippedFiles: files ? [{ path: app("README.md"), reason: "user-modified" }] : [] };
+    },
+    "plan.read": (c) => { const p = panels.plans.get(c.sessionId); return { exists: p !== undefined, content: p ?? null, path: p !== undefined ? `/home/me/.copilot/session-state/${c.sessionId}/plan.md` : null }; },
+    "plan.update": (c) => { panels.plans.set(c.sessionId, c.params.content); later(5, () => emit(c.sessionId, "session.plan_changed", { operation: "update" })); return null; },
+    "plan.delete": (c) => { panels.plans.delete(c.sessionId); later(5, () => emit(c.sessionId, "session.plan_changed", { operation: "delete" })); return null; },
+    "plan.readSqlTodosWithDependencies": (c) => (c.sessionId === "s-login" ? TODOS : { rows: [], dependencies: [] }),
+    "plan.readSqlTodos": (c) => ({ rows: c.sessionId === "s-login" ? TODOS.rows : [] }),
+    "autopilotObjective.getState": (c) => {
+      const o = panels.objectives.get(c.sessionId);
+      return { state: o ? { id: 1, objective: o.content, status: o.status, turnCount: o.turnCount, creditCountNanoAiu: "0" } : null };
+    },
+    "workspaces.readAutopilotObjective": (c) => ({ content: panels.objectives.get(c.sessionId)?.content ?? null }),
+    "workspaces.writeAutopilotObjective": (c) => {
+      const was = panels.objectives.get(c.sessionId);
+      panels.objectives.set(c.sessionId, { content: c.params.content, status: "active", turnCount: was?.turnCount ?? 0 });
+      later(5, () => emit(c.sessionId, "session.autopilot_objective_changed", { id: 1, operation: was ? "update" : "create", status: "active" }));
+      return { operation: was ? "updated" : "created" };
+    },
+    "workspaces.deleteAutopilotObjective": (c) => {
+      const had = panels.objectives.delete(c.sessionId);
+      later(5, () => emit(c.sessionId, "session.autopilot_objective_changed", { operation: "delete" }));
+      return { deleted: had };
+    },
+  };
+
   const api = {
     async list() { calls.push("list"); return { projects: projects.slice(), sessions: [...sessions.values()] }; },
     async addProject() { calls.push("addProject"); const p = { id: "p-site", folder: "/home/me/work/site", name: "site", gitRoot: "/home/me/work/site", branch: "main" }; projects.unshift(p); return { ok: true, value: p }; },
@@ -221,6 +303,11 @@
     async rpc(c) {
       calls.push(`rpc:${c.scope}:${c.method}`);
       const l = c.sessionId ? log(c.sessionId) : null;
+      if (panelRpc[c.method]) {
+        panels.params.push({ method: c.method, sessionId: c.sessionId, params: c.params ?? null });
+        if (panels.fail[c.method]) return { ok: false, reason: panels.fail[c.method] };
+        return { ok: true, value: panelRpc[c.method](c, l) };
+      }
       switch (c.method) {
         case "models.list": return { ok: true, value: { models: [
           { id: "gpt-5.5", name: "GPT-5.5", capabilities: { supports: { reasoningEffort: true } }, supportedReasoningEfforts: ["low", "medium", "high", "xhigh"], defaultReasoningEffort: "medium" },
@@ -253,7 +340,7 @@
   };
   window.emberCode = api;
   window.__fake = {
-    calls, emit, sessions, pending,
+    calls, emit, sessions, pending, panels, request: openRequest, setRow,
     gap() { skip = true; },
     wait(name) { return reached.has(name) ? Promise.resolve() : new Promise(r => waiters.set(name, [...(waiters.get(name) ?? []), r])); },
     reached: (name) => reached.has(name),

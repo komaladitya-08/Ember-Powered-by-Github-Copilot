@@ -85,6 +85,8 @@ export interface CardContext {
   /** Main's pending entry (its choices), when main has it waiting. */
   pending: CodePendingRequest | undefined;
   answering: Answering | undefined;
+  /** Put before every id the card makes, where the same request's card is also drawn elsewhere (the Plan tab). */
+  idPrefix?: string;
 }
 
 const field = (dl: HTMLDListElement, label: string, value: Node | string) => { dl.append(el("dt", { textContent: label }), el("dd", {}, value)); };
@@ -93,7 +95,7 @@ const code = (text: string) => el("pre", { className: "card-code", textContent: 
 /** A request's card (or its record once answered). */
 export function requestCard(item: RequestItem, ctx: CardContext): HTMLElement {
   const title = requestTitle(item.request, item.data);
-  const id = `req-${idPart(item.requestId)}`;
+  const id = `${ctx.idPrefix ?? ""}req-${idPart(item.requestId)}`;
   if (item.done || (!ctx.pending && item.by)) {
     const done = el("div", { className: "card resolved", data: { request: item.requestId } },
       el("span", { className: "sr", textContent: `${title} ` }),

@@ -1,0 +1,56 @@
+/* The coding window's panel tabs' shared parts (panel-kit.ts): a tab's sections and headings, notes and problems,
+   inline forms and questions, a quiet text button and a segmented choice. Opaque, on the panel's --surface-1, from
+   ember.css's tokens only; every size a type token or scaled by --text-scale; its own forced-colours block. */
+
+.pt { display: grid; gap: 22px; min-width: 0; }
+.pt-section { display: grid; gap: 8px; min-width: 0; }
+.pt-body { display: grid; gap: 8px; min-width: 0; }
+.pt-body:empty { display: none; }
+.pt-h { margin: 0; font: var(--type-headline); letter-spacing: -0.006em; }
+.pt p { margin: 0; }
+.pt-note { padding: 8px 10px; border-radius: var(--r-xs); background: var(--surface-2); color: var(--label); font: var(--type-footnote); overflow-wrap: anywhere; text-wrap: pretty; }
+.pt-note:focus-visible, .pt-confirm:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.pt-problem { color: var(--red-text); font: var(--type-footnote); overflow-wrap: anywhere; text-wrap: pretty; }
+.pt-problem:empty { display: none; }
+.pt-empty { color: var(--label-2); font: var(--type-callout); text-wrap: pretty; overflow-wrap: anywhere; }
+.pt .hint { color: var(--label-2); font: var(--type-footnote); overflow-wrap: anywhere; text-wrap: pretty; }
+.pt-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.pt-form { display: grid; gap: 6px; min-width: 0; }
+.pt-form label, .pt-form legend { color: var(--label-2); font: var(--type-footnote); }
+.pt-form-title { font: var(--type-footnote); font-weight: 600; overflow-wrap: anywhere; }
+.pt :is(textarea, input[type="text"]) { box-sizing: border-box; width: 100%; min-width: 0; padding: 6px 8px; border: 0; border-radius: var(--r-xs); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--control-edge); color: var(--label); font: var(--type-callout); }
+.pt textarea { resize: vertical; }
+.pt :is(textarea, input[type="text"]):focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.pt :is(textarea, input[type="text"]):disabled { opacity: 0.4; }
+.pt input[type="radio"] { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+.pt input[type="radio"]:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: 50%; }
+.pt-confirm { display: grid; gap: 6px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--control-edge); }
+.pt-confirm-q { font: var(--type-callout); font-weight: 600; }
+
+/* A quiet text button (Remove, Delete…): words only, red for what removes something. */
+.link-btn { all: unset; cursor: pointer; display: inline-flex; align-items: center; min-height: calc(24px * var(--text-scale)); padding: 0 4px; border-radius: var(--r-xs); color: var(--label); font: var(--type-footnote); font-weight: 500; }
+.link-btn.danger, .btn.danger { color: var(--red-text); }
+@media (hover: hover) { .link-btn:hover { background: var(--wash-8); } }
+.link-btn:active { transform: scale(0.97); }
+.link-btn:focus-visible { box-shadow: var(--focus-ring); }
+
+/* A segmented choice (role="radiogroup"): the chosen segment raised on the track, in weight 600 with a check's edge. */
+.seg { display: inline-flex; flex-wrap: wrap; gap: 2px; max-width: 100%; padding: 2px; border-radius: var(--r-sm); background: var(--wash-6); box-shadow: inset 0 0 0 1px var(--control-edge); }
+.seg-item { all: unset; cursor: pointer; display: inline-flex; align-items: center; min-height: calc(22px * var(--text-scale)); padding: 0 9px; border-radius: var(--r-xs); color: var(--label-2); font: var(--type-footnote); font-weight: 500; white-space: nowrap; }
+.seg-item[aria-checked="true"] { color: var(--label); font-weight: 600; background: var(--wash-14); box-shadow: inset 0 0 0 1px var(--control-edge); }
+@media (hover: hover) { .seg-item:not([aria-checked="true"]):hover { color: var(--label); background: var(--wash-8); } }
+.seg-item:active { transform: scale(0.97); }
+.seg-item:focus-visible { box-shadow: var(--focus-ring); }
+.seg-item[aria-checked="true"]:focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+
+@media (prefers-contrast: more) {
+  .pt-note { box-shadow: inset 0 0 0 1px var(--control-edge); }
+}
+
+@media (forced-colors: active) {
+  .pt :is(textarea, input[type="text"]), .pt-confirm, .pt-note, .seg { border: 1px solid ButtonText; }
+  .seg-item { border: 1px solid transparent; }
+  .seg-item[aria-checked="true"] { border-color: Highlight; outline: 2px solid Highlight; outline-offset: -2px; }
+  .link-btn { color: ButtonText; text-decoration: underline; }
+  .pt-problem { color: CanvasText; }
+}

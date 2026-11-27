@@ -11,6 +11,8 @@
 import type { CodeApp, View } from "./app";
 import { PANEL_HIDE, PANEL_LABEL, PANEL_NO_SESSION, PANEL_RESIZE, PANEL_SHOW, TAB_EMPTY, TAB_NAMES } from "./copy";
 import { byId, el } from "./dom";
+import { changesTab } from "./panel-changes";
+import { planTab } from "./panel-plan";
 import type { CodeState } from "./store";
 
 /** What a tab's module gets: the app (its RPC calls go through `app.rpc`) and the state now. */
@@ -31,6 +33,8 @@ export interface PanelTab {
   label: string;
   /** Draw the tab into `host` (its tab panel, emptied first). */
   mount(host: HTMLElement, ctx: PanelContext): PanelInstance;
+  /** Words for a mark on the tab itself, drawn whether or not the tab is up (null: no mark), such as "needs you". */
+  mark?(s: CodeState): string | null;
 }
 
 const tabs = new Map<string, PanelTab>();
@@ -55,7 +59,8 @@ export function emptyTab(id: string): PanelTab {
     },
   };
 }
-for (const id of ["changes", "plan", "files", "terminal", "agents"]) registerPanelTab(emptyTab(id));
+const BUILT: Readonly<Record<string, PanelTab>> = { changes: changesTab, plan: planTab };
+for (const id of ["changes", "plan", "files", "terminal", "agents"]) registerPanelTab(BUILT[id] ?? emptyTab(id));
 
 export interface Panel extends View { toggle(open?: boolean): void; select(id: string): void }
 
@@ -85,6 +90,17 @@ export function mountPanel(app: CodeApp): Panel {
     for (const [id, m] of mounted) if (tabs.get(id) !== m.tab) { m.inst.dispose?.(); m.host.remove(); mounted.delete(id); }
   }
   listeners.add(() => { drawTabs(); render(app.state, null); });
+
+  /** Each tab's mark (a symbol, and its words after the tab's name in its accessible name), drawn when its words change. */
+  function drawMarks(s: CodeState): void {
+    for (const t of panelTabs()) {
+      const b = document.getElementById(`tab-${t.id}`);
+      const words = t.mark?.(s) ?? "";
+      if (!b || (b.dataset.mark ?? "") === words) continue;
+      if (words) { b.dataset.mark = words; b.setAttribute("aria-label", `${t.label}, ${words}`); } else { delete b.dataset.mark; b.removeAttribute("aria-label"); }
+      b.replaceChildren(t.label, ...(words ? [el("span", { className: "tab-mark", attrs: { "aria-hidden": "true" }, data: { status: "waiting" } })] : []));
+    }
+  }
 
   list.addEventListener("keydown", e => {
     const ids = panelTabs().map(t => t.id);
@@ -128,6 +144,7 @@ export function mountPanel(app: CodeApp): Panel {
 
   function render(s: CodeState, prev: CodeState | null): void {
     drawTabs();
+    drawMarks(s);
     const session = s.view.kind === "session" ? s.view.id : null;
     if (prev && prev.ui === s.ui && prev.view === s.view && !mounted.get(s.ui.panelTab)?.inst.render) return;
     const open = s.ui.panelOpen;
