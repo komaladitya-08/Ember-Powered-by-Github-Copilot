@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en" class="content">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+  <title>Ember</title>
+  <link rel="stylesheet" href="../shared/ember.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <p class="no-api-words">This window needs Ember to run it.</p>
+  <div class="code-app" id="code-app">
+    <nav id="sidebar" class="sidebar" aria-label="Projects and sessions">
+      <div class="side-head">
+        <label id="side-search-label" class="sr" for="side-search">Search sessions</label>
+        <input id="side-search" type="search" autocomplete="off" spellcheck="false">
+        <button id="side-new" type="button" class="btn quiet small">New session…</button>
+      </div>
+      <div id="side-list" class="side-list"></div>
+      <p id="side-note" class="side-note" role="status"></p>
+      <div class="side-foot">
+        <button id="side-archived" type="button" class="side-link" aria-pressed="false">Archived</button>
+        <button id="side-add" type="button" class="side-link">Add project…</button>
+        <button id="side-customise" type="button" class="side-link">Customise…</button>
+      </div>
+    </nav>
+    <div id="sidebar-resize" class="edge side-edge" role="separator" aria-orientation="vertical" tabindex="0"></div>
+    <main id="main" class="main">
+      <div class="topbar">
+        <button id="drawer-toggle" type="button" class="btn quiet small drawer-toggle" aria-controls="sidebar" aria-expanded="false">Sessions</button>
+        <div id="needs-bar" class="needs-bar" hidden>
+          <span class="needs-mark" data-status="waiting" aria-hidden="true"></span>
+          <span id="needs-words"></span>
+          <button id="needs-go" type="button" class="btn quiet small">Go to request</button>
+        </div>
+        <span class="topbar-gap"></span>
+        <button id="palette-button" type="button" class="btn quiet small">Commands</button>
+        <button type="button" class="btn quiet small panel-toggle" data-panel-toggle aria-controls="panel" aria-expanded="false">Panel</button>
+      </div>
+      <section id="session-view" class="session-view" aria-labelledby="session-title" hidden>
+        <header class="session-head">
+          <h1 id="session-title" tabindex="-1"></h1>
+          <p id="session-where" class="session-where"></p>
+        </header>
+        <div id="transcript" class="transcript" aria-label="Transcript" tabindex="-1"></div>
+        <form id="composer" class="composer" novalidate>
+          <div id="composer-queue" class="queue" hidden></div>
+          <p id="composer-working" class="working" role="status"></p>
+          <div id="composer-chips" class="chips" hidden></div>
+          <label id="composer-label" class="sr" for="composer-text">Message Copilot</label>
+          <div class="compose-box">
+            <textarea id="composer-text" rows="3" aria-describedby="composer-hint" aria-autocomplete="list" aria-controls="composer-popup" aria-expanded="false"></textarea>
+            <ul id="composer-popup" class="popup" role="listbox" hidden></ul>
+          </div>
+          <div class="compose-bar">
+            <button id="composer-attach" type="button" class="btn quiet small">Attach files…</button>
+            <span class="picker"><label id="pick-model-label" for="pick-model">Model</label><select id="pick-model"></select></span>
+            <span class="picker"><label id="pick-effort-label" for="pick-effort">Reasoning</label><select id="pick-effort"></select></span>
+            <span class="picker"><label id="pick-agent-mode-label" for="pick-agent-mode">Agent mode</label><select id="pick-agent-mode"></select></span>
+            <span class="picker"><label id="pick-permissions-label" for="pick-permissions">Permissions</label><select id="pick-permissions"></select></span>
+            <span class="send-group">
+            <span id="composer-meter" class="meter" role="meter" aria-valuemin="0" aria-valuemax="100" hidden><span class="meter-track" aria-hidden="true"><span class="meter-fill"></span></span><span class="meter-words" aria-hidden="true"></span></span>
+            <button id="composer-stop" type="button" class="btn quiet small" hidden>Stop</button>
+            <button id="composer-steer" type="button" class="btn quiet small" hidden>Steer now</button>
+            <button id="composer-send" type="submit" class="btn small">Send</button>
+            </span>
+          </div>
+          <p id="composer-hint" class="hint compose-hint"></p>
+          <p id="composer-note" class="compose-note" role="status"></p>
+        </form>
+      </section>
+      <section id="start-view" class="start-view" aria-labelledby="start-title" hidden></section>
+      <section id="customise-view" class="customise-view" aria-labelledby="customise-title" hidden></section>
+      <section id="empty-view" class="empty-view">
+        <p class="empty-mark" aria-hidden="true"></p>
+        <p class="empty-words">Choose a session, or start a new one.</p>
+        <button id="empty-new" type="button" class="btn">New session…</button>
+      </section>
+    </main>
+    <div id="panel-resize" class="edge panel-edge" role="separator" aria-orientation="vertical" tabindex="0" hidden></div>
+    <aside id="panel" class="panel" hidden>
+      <div class="panel-head">
+        <div id="panel-tabs" class="tabs" role="tablist" aria-label="Session panel"></div>
+        <button type="button" class="panel-close" data-panel-toggle aria-controls="panel"></button>
+      </div>
+      <div id="panel-body" class="panel-body"></div>
+    </aside>
+  </div>
+  <dialog id="palette" class="palette"></dialog>
+  <p id="live-asks" class="sr" aria-live="assertive"></p>
+  <p id="live-said" class="sr" role="status" aria-live="polite"></p>
+  <script src="main.js"></script>
+</body>
+</html>

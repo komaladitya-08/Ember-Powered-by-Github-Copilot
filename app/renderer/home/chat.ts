@@ -28,7 +28,7 @@ import {
   chatRowsInOrder, chatSendFailed, chatSent, chatShow, diffFor, pendingOf, type ChatCardRow, type ChatQuestionRow, type ChatRow, type ChatSessionView,
   type ChatState, type ChatToolRow,
 } from "./chat-model";
-import { diffRows } from "./chat-diff";
+import { diffRows } from "../shared/diff-rows";
 
 declare global { interface Window { emberChat?: EmberChatApi } }
 

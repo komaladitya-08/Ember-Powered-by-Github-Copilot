@@ -9,7 +9,7 @@ import {
   CHAT_OUTPUT_KEEP, NO_CHATS, chatAnswered, chatAnswering, chatDecideFailed, chatDeciding, chatEvent, chatList, chatModeSet, chatOpened,
   chatRowsInOrder, chatSendFailed, chatSent, diffFor, pendingOf, toolArgs, toolShape, type ChatCardRow, type ChatState, type ChatToolRow,
 } from "../../app/renderer/home/chat-model";
-import { diffRows } from "../../app/renderer/home/chat-diff";
+import { diffRows } from "../../app/renderer/shared/diff-rows";
 import {
   chatAgentName, chatAsksSaid, chatCardTitle, chatDecisionLabel, chatDiffSummary, chatModeRefused, chatPermissionHint, chatPermissionName,
   chatRecord, chatReplySaid, chatRowLabel, chatRowState, chatTitle, chatToolEnd, chatToolTitle, folderTail,

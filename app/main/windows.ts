@@ -1,5 +1,5 @@
 /**
- * The settings window ("home"), the command window ("Ember commands"), the prompt window and the vault's Secure Form,
+ * The settings window ("home"), the coding window, the command window ("Ember commands"), the prompt window and the vault's Secure Form,
  * the check that an IPC message comes from one of Ember's own bundled pages, what the settings page may change, and
  * the quit question's words. Every BrowserWindow keeps contextIsolation, the sandbox and a preload of its own. The command and prompt
  * windows are made here with their options per OS (L13: no other new module imports Electron); their controllers
@@ -52,6 +52,52 @@ export function createHomeWindow(os: OS): BrowserWindow {
   win.once("ready-to-show", () => win.show());
   zoomByKeys(win.webContents, os);
   void win.loadURL(pageUrl(path.join(appDir, "renderer", "home", "index.html")));
+  return win;
+}
+
+/** The coding window's usual and smallest sizes (docs/CODING-APP.md §4; app/renderer/code/styles.css lays out from 720 px). */
+export const CODE_SIZE = { width: 1200, height: 800, minWidth: 720, minHeight: 480 } as const;
+
+/**
+ * The coding window (docs/CODING-APP.md §4): a resizable normal app window, sized as Home is (the work area keeps it
+ * whole), zooming by keys as Home does. Its title stays "Ember", whatever the page calls itself, so it matches
+ * EMBER_WINDOW in policy.ts and no task reads or acts in it.
+ */
+export function createCodeWindow(os: OS): BrowserWindow {
+  const win = new BrowserWindow({
+    ...scaledSize({ ...CODE_SIZE }, 1, screen.getPrimaryDisplay().workAreaSize),
+    title: "Ember",
+    show: false,
+    backgroundColor: contentBackground(),
+    darkTheme: nativeTheme.shouldUseDarkColors,
+    autoHideMenuBar: true,
+    webPreferences: webPreferences("code"),
+  });
+  watchWorkArea(win, { minWidth: CODE_SIZE.minWidth, minHeight: CODE_SIZE.minHeight }, () => 1);
+  win.on("page-title-updated", e => e.preventDefault());
+  win.once("ready-to-show", () => win.show());
+  zoomByKeys(win.webContents, os);
+  void win.loadURL(pageUrl(path.join(appDir, "renderer", "code", "index.html")));
+  return win;
+}
+
+let codeWindow: BrowserWindow | null = null;
+
+/**
+ * Opens the coding window, or brings the one open to the front. null (and nothing opens) while the build has no
+ * coding preload yet (`dist/app/preload/code.cjs`, which comes with the session layer): the page can't reach main
+ * without it. main.ts calls this behind the coding setting once that setting exists.
+ */
+export function openCodeWindow(os: OS, exists: (file: string) => boolean = fs.existsSync): BrowserWindow | null {
+  if (codeWindow && !codeWindow.isDestroyed()) {
+    if (codeWindow.isMinimized()) codeWindow.restore();
+    codeWindow.show();
+    codeWindow.focus();
+    return codeWindow;
+  }
+  if (!exists(path.join(appDir, "preload", "code.cjs"))) return null;
+  const win = codeWindow = createCodeWindow(os);
+  win.on("closed", () => { if (codeWindow === win) codeWindow = null; });
   return win;
 }
 

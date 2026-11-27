@@ -5,6 +5,7 @@
 // and the remote agent into dist/remote: ember-remote.cjs (plain Node, run on computers reached over SSH) and
 // meta.json (esbuild's metafile, which the agent's bundle test checks).
 import { build, buildSync } from "esbuild";
+import { existsSync } from "node:fs";
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -26,10 +27,7 @@ const draftWorker = buildSync({ entryPoints: ["app/main/agent/coding-draft-worke
 const common = { bundle: true, sourcemap: true, logLevel: "info", absWorkingDir: fileURLToPath(root),
   define: { __EMBER_CODING_PRIVACY_WORKER_SOURCE__: JSON.stringify(privacyWorker), __EMBER_CODING_DRAFT_WORKER_SOURCE__: JSON.stringify(draftWorker) } };
 
-const pages = ["home", "overlay", "handle", "ask", "mic", "desk", "command", "prompt", "vault"];
-// The preloads: every page's, and the coding window's (app/preload/code.ts, docs/CODING-APP.md), built whether or not
-// its page (app/renderer/code) is in `pages` yet.
-const preloads = [...new Set([...pages, "code"])];
+const pages = ["home", "overlay", "handle", "ask", "mic", "desk", "command", "prompt", "vault", "code"];
 
 // The remote agent's bundle takes app/remote/capture-stub.ts wherever code imports app/main/perception/capture.ts, so
 // sharp's loader never enters it (§5.2.2). esbuild's own `alias` maps package names only, so this plugin maps the file.
@@ -170,7 +168,7 @@ await Promise.all([
   }),
   build({
     ...common,
-    entryPoints: preloads.map(p => ({ in: `app/preload/${p}.ts`, out: p })),
+    entryPoints: pages.map(p => ({ in: `app/preload/${p}.ts`, out: p })),
     outdir: "dist/app/preload",
     outExtension: { ".js": ".cjs" },
     platform: "node",

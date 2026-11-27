@@ -110,7 +110,13 @@ session is untrusted text. Stop reaches it first.
 ## 6. Build order
 
 1. **Session layer:** `app/main/code/`, the contract, the preload, tests against the real runtime.
-2. **Window shell:** the window, sidebar, start flow, transcript, composer, request cards.
+2. **Window shell:** the window, sidebar, start flow, transcript, composer, request cards. Built in `app/renderer/code/`: a pure store
+   (`store.ts`, `transcript.ts`: reducers over the SDK's events, idempotent by `seq` and event id, a gap marks the
+   session to attach again), its views (sidebar, start flow, transcript with request cards, composer, panel with empty
+   tabs registered through `registerPanelTab`, Customise's sections through `registerCustomiseSection`, the command
+   palette), and `createCodeWindow`/`openCodeWindow` in windows.ts, which open nothing until the build has the coding
+   preload. test/integration/code-window-renderer.test.ts plays a session against a scripted `window.emberCode`
+   (test/fixtures/code-window/fake-api.js).
 3. **Panels:** Changes, Plan, Files, Terminal, Agents and tasks.
 4. **Customise:** models, MCP, skills, plugins, agents, instructions, hooks, rules, sandbox, schedules, usage.
 5. **Companion as an option:** the switch, the hub tools, voice in the composer.

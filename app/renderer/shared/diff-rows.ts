@@ -1,5 +1,5 @@
 /**
- * A write request's unified diff as rows Home draws: each line a kind (added, removed, unchanged, a hunk's or a file's
+ * A unified diff as rows Home's chats and the coding window draw: each line a kind (added, removed, unchanged, a hunk's or a file's
  * header) with its line numbers, so added and removed lines are told apart by a sign and by words for screen readers,
  * never by colour alone (WCAG 1.4.1). The diff is the SDK's text, shown as it is, never interpreted. Pure.
  */
