@@ -230,6 +230,18 @@
       return { deleted: had };
     },
   };
+  // ── The panel's Files, Terminal and Agents and tasks tabs: the session's files, background tasks, schedules, agents ──
+  const LOGIN = "import { session } from \"./session\";\n\nexport async function signIn(req, res) {\n  await session.start(req, user);\n  const next = typeof req.query.next === \"string\" ? req.query.next : \"/\";\n  // Only a path on this site: never another host.\n  const redirectTo = next.startsWith(\"/\") && !next.startsWith(\"//\") ? next : \"/\";\n  res.redirect(redirectTo);\n}\n";
+  const sessionFiles = { "plan.md": "# Plan\n\n1. Read next\n2. Test it\n", "paste-1.txt": "a pasted log\n", "shot.png": "\u0089PNG\u0000\u0000\u0001" };
+  const iso = (ms) => new Date(ms).toISOString();
+  const tasks = () => ({ tasks: [
+    { type: "agent", id: "bg-1", toolCallId: "bg-call-1", displayName: "Check the OAuth flow", description: "Check the OAuth callback redirects", status: "running", startedAt: iso(Date.now() - 125_000), activeTimeMs: 120_000, activeStartedAt: iso(Date.now() - 5_000), agentType: "explore", prompt: "Check the OAuth callback", resolvedModel: "gpt-5.4-mini", executionMode: "background", latestResponse: "Reading src/oauth.ts" },
+    { type: "shell", id: "sh-1", description: "Watch the tests", command: "npm test -- --watch", status: "running", startedAt: iso(Date.now() - 60_000), attachmentMode: "detached", executionMode: "background" },
+    ...taskLog,
+  ] });
+  const taskLog = [{ type: "agent", id: "bg-0", toolCallId: "bg-call-0", displayName: "Read the docs", description: "Read the auth docs", status: "completed", startedAt: iso(now - 900_000), completedAt: iso(now - 840_000), agentType: "explore", prompt: "Read", result: "Done." }];
+  let schedules = [{ id: 1, intervalMs: 600_000, prompt: "Check CI", displayPrompt: "Check CI", recurring: true, nextRunAt: iso(now + 600_000) }];
+  const userRuns = new Map();
 
   const api = {
     async list() { calls.push("list"); return { projects: projects.slice(), sessions: [...sessions.values()] }; },
@@ -331,6 +343,51 @@
         case "queue.sendNow": { const q = l.queue.find(x => x.id === c.params.id); l.queue = l.queue.filter(x => x.id !== c.params.id); if (q) l.steering.push(q.displayText); return { ok: true, value: { steered: true } }; }
         case "model.switchTo": emit(c.sessionId, "session.model_change", { previousModel: "gpt-5.5", newModel: c.params.modelId, reasoningEffort: c.params.reasoningEffort ?? null }); return { ok: true, value: {} };
         case "model.setReasoningEffort": return { ok: true, value: { reasoningEffort: c.params.reasoningEffort } };
+        case "workspaces.diff":
+          if (c.params?.mode === "session") return { ok: true, value: { requestedMode: "session", mode: "session", isFallback: false, changes: [
+            { path: "src/login.ts", diff: "", changeType: "modified", contents: { before: "", after: LOGIN } },
+            { path: "assets/logo.png", diff: "", changeType: "added", contents: { after: "\u0089PNG\r\n\u0000\u0000" } },
+          ] } };
+          return { ok: true, value: { requestedMode: c.params?.mode, mode: "unstaged", isFallback: false, changes: [
+            { path: "src/login.ts", diff: DIFF, changeType: "modified" },
+            { path: "assets/logo.png", diff: "", changeType: "added" },
+            { path: "docs/old.md", diff: "", changeType: "deleted" },
+            { path: "../outside.txt", diff: "", changeType: "modified" },
+          ] } };
+        case "workspaces.listFiles": return { ok: true, value: { files: Object.keys(sessionFiles) } };
+        case "workspaces.statFile": { const f = sessionFiles[c.params.path]; return f === undefined ? { ok: false, reason: "That file isn't there." } : { ok: true, value: { isFile: true, isDirectory: false, size: f.length, mtimeMs: now, birthtimeMs: now } }; }
+        case "workspaces.readFile": { const f = sessionFiles[c.params.path]; return f === undefined ? { ok: false, reason: "That file isn't there." } : { ok: true, value: { content: f } }; }
+        case "shell.executeUserRequested": {
+          const sid = c.sessionId, id = c.params.requestId, command = c.params.command, call = `user-${id}`;
+          emit(sid, "tool.execution_start", { toolCallId: call, toolName: "bash", arguments: { command }, shellToolInfo: { displayCommand: command, hasWriteFileRedirection: false, possiblePaths: [] } });
+          if (command.startsWith("sleep")) {
+            later(30, () => emit(sid, "tool.shell_output", { toolCallId: call, text: "waiting…\n", stream: "stdout", sequence: 0 }, eph));
+            return new Promise(res => userRuns.set(id, () => { emit(sid, "tool.execution_complete", { toolCallId: call, success: false, isUserRequested: true, shellExecution: { exitCode: 130 } }); res({ ok: true, value: { toolCallId: call, success: false, output: "waiting…\n", exitCode: 130 } }); }));
+          }
+          const output = command === "git status" ? "On branch main\n\u001b[31mmodified:   src/login.ts\u001b[0m\n\u001b[32m\u001b[1mnew file:   assets/logo.png\u001b[0m\n\u001b]0;title\u0007" : `${command}: done\n`;
+          await new Promise(r => later(40, r));
+          emit(sid, "tool.shell_output", { toolCallId: call, text: output, stream: "stdout", sequence: 0 }, eph);
+          emit(sid, "tool.execution_complete", { toolCallId: call, success: true, isUserRequested: true, shellExecution: { exitCode: 0 }, sandboxed: true });
+          return { ok: true, value: { toolCallId: call, success: true, output, exitCode: 0 } };
+        }
+        case "shell.cancelUserRequested": { const fn = userRuns.get(c.params.requestId); userRuns.delete(c.params.requestId); if (fn) fn(); return { ok: true, value: { cancelled: !!fn } }; }
+        case "tasks.list": return { ok: true, value: tasks() };
+        case "tasks.getProgress": return { ok: true, value: { progress: c.params.id === "bg-1" ? { type: "agent", recentActivity: [{ message: "▸ view src/oauth.ts", timestamp: iso(now) }], latestIntent: "Reading the OAuth callback" } : c.params.id === "sh-1" ? { type: "shell", recentOutput: "PASS test/login.test.ts\nWaiting for file changes…\n" } : null } };
+        case "tasks.sendMessage": return { ok: true, value: { sent: true } };
+        case "tasks.cancel": return { ok: true, value: { cancelled: true } };
+        case "tasks.remove": { const i = taskLog.findIndex(t => t.id === c.params.id); if (i >= 0) taskLog.splice(i, 1); return { ok: true, value: { removed: i >= 0 } }; }
+        case "tasks.getCurrentPromotable": return { ok: true, value: {} };
+        case "tasks.promoteCurrentToBackground": return { ok: true, value: {} };
+        case "tasks.promoteToBackground": return { ok: true, value: { promoted: true } };
+        case "tasks.startAgent": taskLog.unshift({ type: "agent", id: `bg-${taskLog.length + 9}`, toolCallId: "", displayName: c.params.name, description: c.params.prompt, status: "running", startedAt: iso(Date.now()), agentType: c.params.agentType, prompt: c.params.prompt, executionMode: "background" }); later(5, () => emit(c.sessionId, "session.background_tasks_changed", {}, eph)); return { ok: true, value: { agentId: "agent-new" } };
+        case "fleet.start": return { ok: true, value: { started: true } };
+        case "agent.list": return { ok: true, value: { agents: [
+          { id: "explore", name: "explore", displayName: "Explore", description: "Looks through the code" },
+          { id: "task", name: "task", displayName: "Task", description: "Does one task" },
+          { id: "hidden", name: "hidden", displayName: "Hidden", description: "Sub-agent only", userInvocable: false },
+        ] } };
+        case "schedule.list": return { ok: true, value: { entries: schedules.slice() } };
+        case "schedule.stop": { const e = schedules.find(x => x.id === c.params.id); schedules = schedules.filter(x => x.id !== c.params.id); return { ok: true, value: e ? { entry: e } : {} }; }
         default: return { ok: false, reason: "Not in this test." };
       }
     },
