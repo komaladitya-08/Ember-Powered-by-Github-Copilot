@@ -635,20 +635,23 @@ describe("the Azure Key Vault passes on output with no value in it (stop-yield-x
   const fold = (passes: readonly ((t: string) => string)[], text: string) => passes.reduce((t, pass) => pass(t), text);
 
   it("takes one pass well under Stop's 300 ms over 4 MiB of secret ids with no value", () => {
-    // The best of five runs of each pass, so another program's load on the machine isn't counted (here: about 40 ms,
-    // the vault pass's 1,500 to 2,200 ms before). Three runs were too few on a Windows runner in the middle of the
-    // whole suite: 335 ms once, for passes that take 40 ms here.
-    let worst = 0;
-    for (const pass of REDACT_PASSES) {
-      let best = Infinity;
-      for (let k = 0; k < 5; k++) {
+    // What Stop waits for is the longest step of the redactor as output.ts runs it (redactSteps): a whole pass, or a
+    // slice of a pass that runs in slices. The best of three runs, so another program's load on the machine isn't
+    // counted (here: about 40 ms; the vault pass's 1,500 to 2,200 ms before). Timing each pass whole instead, the
+    // sliced ones too, read 335 and 361 ms on a Windows runner in the middle of the suite: time no Stop waits for.
+    let best = Infinity;
+    for (let run = 0; run < 3; run++) {
+      const steps = redactSteps(big);
+      let longest = 0;
+      for (;;) {
         const t0 = performance.now();
-        pass(big);
-        best = Math.min(best, performance.now() - t0);
+        const r = steps.next();
+        longest = Math.max(longest, performance.now() - t0);
+        if (r.done) break;
       }
-      worst = Math.max(worst, best);
+      best = Math.min(best, longest);
     }
-    expect(worst).toBeLessThan(300);
+    expect(best).toBeLessThan(300);
   }, 60_000);
 
   it("gives the same bytes as the passes without the check, with a value or without one", () => {
