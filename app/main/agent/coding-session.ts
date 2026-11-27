@@ -329,7 +329,7 @@ export class CodingSession {
 }
 
 /** Include the lexical path and the real path of any existing ancestor to cover ordinary symlink aliases. */
-async function protectedPath(input: string): Promise<string[]> {
+export async function protectedPath(input: string): Promise<string[]> {
   const absolute = path.resolve(input);
   let current = absolute;
   const tail: string[] = [];

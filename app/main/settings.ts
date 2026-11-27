@@ -309,6 +309,11 @@ export const SettingsSchema = z.object({
     consent: z.object({ interactive: ConsentRecord, assisted: ConsentRecord, autopilot: ConsentRecord })
       .default({ interactive: { version: 0, at: null }, assisted: { version: 0, at: null }, autopilot: { version: 0, at: null } }),
   }).default({ mode: "interactive", consent: { interactive: { version: 0, at: null }, assisted: { version: 0, at: null }, autopilot: { version: 0, at: null } } }),
+  /**
+   * Native chat sessions (app/main/agent/chat-sessions.ts): Copilot SDK sessions in a folder of the user's with the
+   * SDK's own tools and permissions. Dormant until `native` is on: nothing is offered or started before.
+   */
+  chat: z.object({ native: z.boolean().default(false) }).default({ native: false }),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;

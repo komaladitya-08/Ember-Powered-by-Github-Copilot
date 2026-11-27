@@ -1231,6 +1231,18 @@ export class AgentHost {
   get copilotClient(): CopilotClient | null {
     return this.status.phase === "ready" ? this.client : null;
   }
+
+  /**
+   * How a native chat session (chat-sessions.ts) signs in: the conversation's own model service and its worker's
+   * model, only while Copilot is ready (null otherwise). The token goes with each chat session, never to a runtime's
+   * environment (chat-runtime.ts).
+   */
+  chatAccess(): { gitHubToken?: string; provider?: ProviderConfig; model?: string; service: ServiceKind } | null {
+    if (this.status.phase !== "ready") return null;
+    const provider = this.active;
+    if (!provider && !this.token) return null;
+    return { ...(provider ? { provider: provider.config } : { gitHubToken: this.token! }), ...(this.status.workerModel ? { model: this.status.workerModel } : {}), service: kindOf(provider) };
+  }
   conductor: Conductor | null = null;
   tasks: TaskManager | null = null;
   /**
