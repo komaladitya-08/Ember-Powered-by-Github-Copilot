@@ -8,6 +8,7 @@
  */
 import { CODE_LIMITS, type CodeAttachment } from "../../shared/code";
 import type { CodeApp, View } from "./app";
+import { ATTACH_EVENT, attachmentsOf } from "./attach-event";
 import { accept, completionItems, moveHighlight, slashItems, triggerAt, type CompletionItem, type Trigger } from "./completions";
 import {
   ATTACH, BUSY_HINT, CONTEXT_LABEL, DEFAULT_EFFORT, DEFAULT_MODEL, DROP_ONLY_IMAGES, MESSAGE_LABEL, MESSAGE_PLACEHOLDER, PASTED_IMAGE, PICK_AGENT_MODE,
@@ -90,6 +91,8 @@ export function mountComposer(app: CodeApp): Composer {
     text.focus();
   }
   attachBtn.addEventListener("click", () => { void attachPicked(); });
+  // Files a panel tab offers (the Files tab's "Attach to message"), for this session only, as the picker's are added.
+  document.addEventListener(ATTACH_EVENT, e => { const list = attachmentsOf((e as CustomEvent).detail, sessionId); if (list?.length) addAttachments(list); });
 
   /** An image file as a blob attachment, or why it can't be one. */
   async function imageBlob(file: File, name: string): Promise<CodeAttachment | string> {

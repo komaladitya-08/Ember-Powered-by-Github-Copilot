@@ -35,6 +35,11 @@ export interface PanelTab {
   mount(host: HTMLElement, ctx: PanelContext): PanelInstance;
   /** Words for a mark on the tab itself, drawn whether or not the tab is up (null: no mark), such as "needs you". */
   mark?(s: CodeState): string | null;
+  /**
+   * A count after the tab's label, kept up to date whichever tab is up (null: none): `text` is shown, `label` is the
+   * tab's whole name for screen readers ("Agents and tasks, 2 running").
+   */
+  badge?(s: CodeState, ctx: PanelContext): { text: string; label: string } | null;
 }
 
 const tabs = new Map<string, PanelTab>();
@@ -142,9 +147,24 @@ export function mountPanel(app: CodeApp): Panel {
     app.setUi({ panelWidth: clamp(next) });
   });
 
+  function drawBadges(s: CodeState): void {
+    for (const t of panelTabs()) {
+      if (!t.badge) continue;
+      const b = list.querySelector<HTMLElement>(`#tab-${t.id}`);
+      if (!b) continue;
+      const got = t.badge(s, { app, state: () => app.state });
+      let mark = b.querySelector<HTMLElement>(".tab-badge");
+      if (!got) { mark?.remove(); b.removeAttribute("aria-label"); continue; }
+      if (!mark) b.append(mark = el("span", { className: "tab-badge", attrs: { "aria-hidden": "true" } }));
+      if (mark.textContent !== got.text) mark.textContent = got.text;
+      if (b.getAttribute("aria-label") !== got.label) b.setAttribute("aria-label", got.label);
+    }
+  }
+
   function render(s: CodeState, prev: CodeState | null): void {
     drawTabs();
     drawMarks(s);
+    drawBadges(s);
     const session = s.view.kind === "session" ? s.view.id : null;
     if (prev && prev.ui === s.ui && prev.view === s.view && !mounted.get(s.ui.panelTab)?.inst.render) return;
     const open = s.ui.panelOpen;

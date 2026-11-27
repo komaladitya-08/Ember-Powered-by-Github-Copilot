@@ -77,6 +77,11 @@ export interface ToolItem extends Base {
   result?: string;
   fileEdits: { path: string; kind: string }[];
   agent?: AgentRun;
+  /** When its start and its end came (the events' timestamps), for the Terminal tab's durations. */
+  startedAt?: string;
+  endedAt?: string;
+  /** A command the person ran themselves (`shell.executeUserRequested`): the SDK's `isUserRequested`. */
+  userRequested?: boolean;
 }
 
 export type NoteKind = "plan" | "todos" | "compaction" | "model" | "mode" | "permissions" | "skill" | "agent" | "abort" | "notification" | "info";
@@ -128,6 +133,8 @@ export interface Transcript {
   versions: { plan: number; todos: number; queue: number; background: number };
   /** Sub-agent instance ids → the tool call that started each. */
   agents: Readonly<Record<string, string>>;
+  /** Files of the session's own workspace folder the SDK says changed (`session.workspace_file_changed`): path → operation. */
+  workspaceFiles?: Readonly<Record<string, string>>;
 }
 
 export const EMPTY_TRANSCRIPT: Transcript = {
@@ -242,6 +249,7 @@ function toolFrom(e: CodeSdkEvent, key: string, owner: string | undefined): Tool
     ...(server && mcpTool ? { mcp: { server, tool: mcpTool } } : {}),
     ...(command ? { command } : {}),
     output: "", outputCut: false, lastSequence: -1, state: "running", fileEdits: [],
+    ...(e.timestamp ? { startedAt: e.timestamp } : {}),
   };
 }
 
@@ -388,6 +396,8 @@ export function reduceEvent(t: Transcript, e: CodeSdkEvent): Transcript {
         return {
           ...withOut, state: success ? "done" : "failed", progress: undefined, partial: undefined, fileEdits: edits,
           ...(exitCode !== undefined ? { exitCode } : {}),
+          ...(e.timestamp ? { endedAt: e.timestamp } : {}),
+          ...(bool(d, "isUserRequested") ? { userRequested: true } : {}),
           ...(bool(d, "sandboxed") !== undefined ? { sandboxed: bool(d, "sandboxed") } : {}),
           ...(!isShell && content ? { result: content } : {}),
           ...(err ? { error: { message: str(err, "message") ?? "", ...(str(err, "code") ? { code: str(err, "code") } : {}), ...(str(err, "remediation") ? { remediation: str(err, "remediation") } : {}) } } : {}),
@@ -526,6 +536,10 @@ function stateOnly(t: Transcript, e: CodeSdkEvent, mine: boolean): Transcript | 
     case "session.context_changed": return { ...t, context: { cwd: str(d, "cwd"), branch: str(d, "branch"), repository: str(d, "repository") } };
     case "pending_messages.modified": return { ...t, versions: { ...t.versions, queue: t.versions.queue + 1 } };
     case "session.background_tasks_changed": return { ...t, versions: { ...t.versions, background: t.versions.background + 1 } };
+    case "session.workspace_file_changed": {
+      const path = str(d, "path");
+      return path ? { ...t, workspaceFiles: { ...t.workspaceFiles, [path]: str(d, "operation") ?? "update" } } : t;
+    }
     case "session.idle": return mine ? { ...t, busy: false, intent: undefined, compacting: false, items: settle(t.items) } : t;
     case "session.shutdown": return { ...t, busy: false, items: settle(t.items) };
     case "session.snapshot_rewind":
