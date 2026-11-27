@@ -635,12 +635,13 @@ describe("the Azure Key Vault passes on output with no value in it (stop-yield-x
   const fold = (passes: readonly ((t: string) => string)[], text: string) => passes.reduce((t, pass) => pass(t), text);
 
   it("takes one pass well under Stop's 300 ms over 4 MiB of secret ids with no value", () => {
-    // The best of three runs of each pass, so another program's load on the machine isn't counted (here: about 170 ms,
-    // the vault pass's 1,500 to 2,200 ms before).
+    // The best of five runs of each pass, so another program's load on the machine isn't counted (here: about 40 ms,
+    // the vault pass's 1,500 to 2,200 ms before). Three runs were too few on a Windows runner in the middle of the
+    // whole suite: 335 ms once, for passes that take 40 ms here.
     let worst = 0;
     for (const pass of REDACT_PASSES) {
       let best = Infinity;
-      for (let k = 0; k < 3; k++) {
+      for (let k = 0; k < 5; k++) {
         const t0 = performance.now();
         pass(big);
         best = Math.min(best, performance.now() - t0);
