@@ -315,7 +315,9 @@
     async rpc(c) {
       calls.push(`rpc:${c.scope}:${c.method}`);
       const l = c.sessionId ? log(c.sessionId) : null;
-      if (panelRpc[c.method]) {
+      // Two journeys script workspaces.diff differently: the Changes tab's (panelRpc) by default, and the Files tab's
+      // (below) when its journey sets window.__fakeFilesDiff before this script loads.
+      if (panelRpc[c.method] && !(c.method === "workspaces.diff" && window.__fakeFilesDiff)) {
         panels.params.push({ method: c.method, sessionId: c.sessionId, params: c.params ?? null });
         if (panels.fail[c.method]) return { ok: false, reason: panels.fail[c.method] };
         return { ok: true, value: panelRpc[c.method](c, l) };

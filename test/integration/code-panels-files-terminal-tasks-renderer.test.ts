@@ -49,6 +49,8 @@ async function open(tab: string, viewport = { width: 1280, height: 900 }): Promi
   const page = await browser.newPage({ viewport }) as Page & { errors: string[] };
   page.errors = [];
   page.on("pageerror", e => page.errors.push(e.message));
+  // The stand-in answers workspaces.diff as this journey scripted it, not as the Changes tab's journey did.
+  await page.addInitScript(() => { (window as unknown as { __fakeFilesDiff: boolean }).__fakeFilesDiff = true; });
   await page.addInitScript({ path: FAKE });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/code/index.html`);
   await page.waitForSelector(".s-open", { state: "attached" });
