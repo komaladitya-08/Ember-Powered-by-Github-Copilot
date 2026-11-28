@@ -20,8 +20,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { CopilotClient, SessionEvent } from "@github/copilot-sdk";
 import type {
-  CodeActor, CodeAgentMode, CodeAttached, CodeAttachment, CodeCreate, CodeDone, CodeEventEnvelope, CodePendingRequest,
-  CodePermissionMode, CodeProject, CodeRequestAnswer, CodeRpcCall, CodeSend, CodeSessionRow,
+  CodeActor, CodeAgentMode, CodeAttached, CodeAttachment, CodeCreate, CodeDone, CodeEventEnvelope, CodeFileRead, CodeFolderListing,
+  CodePendingRequest, CodePermissionMode, CodeProject, CodeRequestAnswer, CodeRpcCall, CodeSend, CodeSessionRow,
 } from "../../shared/code";
 import { CODE_IPC, CODE_LIMITS, linkRefusal } from "../../shared/code";
 import type { AuditEntry } from "../policy/audit";
@@ -32,7 +32,9 @@ import type { ModelRedactor } from "../agent/redacting-client";
 import { friendlyError, type ServiceKind } from "../agent/presenter";
 import { protectedPath } from "../agent/coding-session";
 import { boundData, EventLog, eventRedactor } from "./events";
-import { CODE_REFUSALS, isInside, reachesEmberData, refuse, rpcRefusal } from "./guards";
+import { CODE_REFUSALS, isInside, reachesEmberData, refuse, rpcFailure, rpcRefusal } from "./guards";
+import { FolderPathRefused, listFolder, readFolderFile } from "./folder";
+import { KeptMissing, hideMcpSecrets, holdsKept, keptMerged } from "./mcp-secrets";
 import type { RequestChange } from "./pending";
 import { codeDir, codeRuntimeHome } from "./runtime";
 import { SessionIndex, indexFile, type IndexSession } from "./session-index";
@@ -59,7 +61,9 @@ export type CodeCommand =
   | { type: "pickAttachments"; sessionId: string }
   | { type: "rpc"; call: CodeRpcCall }
   | { type: "openLink"; url: string }
-  | { type: "markRead"; sessionId: string };
+  | { type: "markRead"; sessionId: string }
+  | { type: "listFolder"; sessionId: string; relDir: string }
+  | { type: "readFile"; sessionId: string; relPath: string };
 
 /** What each command answers. */
 export interface CodeAnswers {
@@ -82,6 +86,8 @@ export interface CodeAnswers {
   rpc: CodeDone<unknown>;
   openLink: CodeDone;
   markRead: void;
+  listFolder: CodeDone<CodeFolderListing>;
+  readFile: CodeDone<CodeFileRead>;
 }
 
 /** Where a change goes: one window's events, or every window's rows and requests. */
@@ -132,6 +138,10 @@ export interface CodeHubDeps {
 const IMAGE_TYPES: Readonly<Record<string, string>> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp" };
 /** Files one pick may return. */
 const PICK_MAX = CODE_LIMITS.attachments;
+/** Client methods that take the sign-in as a parameter: main adds it (the runtime has none of its own). */
+const TAKES_SIGN_IN: ReadonlySet<string> = new Set(["models.list", "account.getQuota"]);
+/** Paths offered for one session that are remembered for its attachments at most. */
+const OFFERED_MAX = 20_000;
 
 export class CodeHub {
   private readonly sessions = new Map<string, CodeSessionLike>();
@@ -204,6 +214,8 @@ export class CodeHub {
       case "rpc": return this.rpc(c.call);
       case "openLink": return this.openLink(c.url, actor);
       case "markRead": this.markRead(c.sessionId, from); return undefined;
+      case "listFolder": return this.listFolder(c.sessionId, c.relDir);
+      case "readFile": return this.readFile(c.sessionId, c.relPath);
     }
   }
 
@@ -581,21 +593,93 @@ export class CodeHub {
     this.gate();
     const place = { ...this.d.place(), ember: this.d.protectedPaths() };
     if (call.scope === "client") {
-      const why = rpcRefusal(call, { place });
+      // The worktrees Ember made for its sessions are theirs: a discovery call may name one (skills, agents,
+      // instructions and hooks of the files that session works in), though it lies in Ember's data folder.
+      const trees = this.index.sessionIds().map(id => this.index.session(id)?.worktree).filter((f): f is string => !!f);
+      const why = rpcRefusal(call, { place, own: trees });
       if (why) return refuse(why);
-      const fn = rpcFn((await this.d.client()).rpc, call.method);
+      const client = await this.d.client();
+      const fn = rpcFn(client.rpc, call.method);
       if (!fn) return refuse(CODE_REFUSALS.rpcNotAllowed);
-      return { ok: true, value: this.bound(await fn(call.params ?? {})) };
+      let params: unknown = call.params ?? {};
+      // The coding runtime is tokenless (runtime.ts): its account-wide lists answer "Not authenticated" unless the
+      // call carries the sign-in (probed on runtime 1.0.97), which only main has. Never a token the window sent.
+      if (TAKES_SIGN_IN.has(call.method) && params && typeof params === "object" && !Array.isArray(params)) {
+        const { gitHubToken: _ignored, ...rest } = params as Record<string, unknown>;
+        const token = this.d.access()?.gitHubToken;
+        params = token ? { ...rest, gitHubToken: token } : rest;
+      }
+      // A server's values the window was never sent come back as CODE_KEPT: the stored ones go in their place.
+      if ((call.method === "mcp.config.update" || call.method === "mcp.config.add") && holdsKept(params)) {
+        try { params = keptMerged(params, await this.rpcCall(() => client.rpc.mcp.config.list())); }
+        catch (err) { if (err instanceof KeptMissing) return refuse(CODE_REFUSALS.rpcKept); throw err; }
+      }
+      const value = await this.rpcCall(() => fn(params));
+      return { ok: true, value: this.bound(call.method === "mcp.config.list" ? hideMcpSecrets(value) : value) };
     }
     if (!call.sessionId) return refuse(CODE_REFUSALS.unknown);
     const s = this.sessions.get(call.sessionId);
     if (!s || s.closed) return refuse(CODE_REFUSALS.closed);
     const why = rpcRefusal(call, { place, cwd: s.folder, own: [sessionStateDir(codeRuntimeHome(this.d.userData), s.id)] });
     if (why) return refuse(why);
-    const value = await s.rpc(call.method, call.params ?? {});
+    const value = await this.rpcCall(() => s.rpc(call.method, call.params ?? {}));
     // The folder trusted now: its own hooks may run (in the sandbox only: SessionRuntime.trustChanged).
     if (call.method === "permissions.folderTrust.addTrusted") await s.trustChanged().catch(() => undefined);
     return { ok: true, value: this.bound(value) };
+  }
+
+  /** An SDK RPC call whose failure is said in Ember's words for a method that failed (`rpcFailure`), never the runtime's. */
+  private async rpcCall<T>(run: () => Promise<T>): Promise<T> {
+    try { return await run(); } catch (err) {
+      if (err instanceof CodeUnavailable) throw err;
+      this.d.log?.warn("code.rpc_failed", { err: err instanceof Error ? err.name : "unknown" });
+      throw new CodeUnavailable(rpcFailure(err instanceof Error ? err.message : ""));
+    }
+  }
+
+  /** The folder a session works in (open or kept) and the place its paths are judged; null for one Ember doesn't know. */
+  private sessionFolder(id: string): string | null {
+    return this.sessions.get(id)?.folder ?? this.index.session(id)?.folder ?? null;
+  }
+
+  /**
+   * A folder of the session's working folder (folder.ts): rooted there, never out of it after links, `.git` and what
+   * git ignores left out, never Ember's own data (a worktree Ember made is the session's own). The files it lists are
+   * ones the window may attach.
+   */
+  private async listFolder(id: string, relDir: string): Promise<CodeDone<CodeFolderListing>> {
+    this.gate();
+    const folder = this.sessionFolder(id);
+    if (!folder) return refuse(CODE_REFUSALS.unknown);
+    const where = { place: { ...this.d.place(), ember: this.d.protectedPaths() }, cwd: folder, own: [folder] };
+    let listing: CodeFolderListing;
+    try { listing = await listFolder(folder, relDir, this.git); } catch (err) {
+      if (err instanceof FolderPathRefused) return refuse(CODE_REFUSALS.folderPath);
+      this.d.log?.warn("code.list_folder_failed", { err: err instanceof Error ? err.name : "unknown" });
+      return refuse(CODE_REFUSALS.folderRead);
+    }
+    const entries = listing.entries.filter(e => reachesEmberData([e.path], where) === false);
+    let set = this.offered.get(id);
+    if (!set) this.offered.set(id, set = new Set());
+    for (const e of entries) if (e.kind === "file" && set.size < OFFERED_MAX) set.add(e.path);
+    return { ok: true, value: { ...listing, entries } };
+  }
+
+  /** A file of the session's working folder, as text within CODE_LIMITS.fileBytes, or why it isn't shown. */
+  private async readFile(id: string, relPath: string): Promise<CodeDone<CodeFileRead>> {
+    this.gate();
+    const folder = this.sessionFolder(id);
+    if (!folder) return refuse(CODE_REFUSALS.unknown);
+    let read: CodeFileRead & { real: string };
+    try { read = await readFolderFile(folder, relPath); } catch (err) {
+      if (err instanceof FolderPathRefused) return refuse(CODE_REFUSALS.folderPath);
+      this.d.log?.warn("code.read_file_failed", { err: err instanceof Error ? err.name : "unknown" });
+      return refuse(CODE_REFUSALS.folderRead);
+    }
+    const { real, ...value } = read;
+    if (reachesEmberData([real], { place: { ...this.d.place(), ember: this.d.protectedPaths() }, cwd: folder, own: [folder] }) !== false) return refuse(CODE_REFUSALS.rpcPath);
+    // Redacted as events are (the vault's values, GitHub's tokens), but not cut: CODE_LIMITS.fileBytes bounds it.
+    return { ok: true, value: "text" in value ? { text: eventRedactor(this.d.redact)(value.text), size: value.size } : value };
   }
 
   /**

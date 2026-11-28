@@ -19,7 +19,8 @@ import { gitRunner } from "../../app/main/code/workspaces";
 import { KillSwitch } from "../../app/main/agent/killswitch";
 import type { ChatPolicy } from "../../app/main/agent/chat-policy";
 import type { AuditEntry } from "../../app/main/policy/audit";
-import type { CodeEventEnvelope, CodePendingRequest, CodeRequestKind, CodeSessionRow } from "../../app/shared/code";
+import { CODE_KEPT, CODE_LIMITS, type CodeEventEnvelope, type CodePendingRequest, type CodeRequestKind, type CodeSessionRow } from "../../app/shared/code";
+import { REAL } from "../fixtures/code-window/real-shapes";
 
 const OPEN: ChatPolicy = { managedSettings: {}, permissionModes: ["manual", "assisted", "allow-all"], standing: true };
 const quiet = { info() {}, warn() {} };
@@ -508,5 +509,142 @@ describe("the coding hub's additions to the contract", () => {
     expect(await h.hub.dispatch({ type: "fork", sessionId: "tree-1" }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.forkTree });
     expect(h.fake.called("deleteSession").at(-1)?.params).toBe("forked-1");
     expect(h.deps.index!.session("forked-1")).toBeUndefined();
+  });
+});
+
+describe("the hub's window on the runtime's real answers", () => {
+  it("never sends an MCP server's variable or header values to the window, and puts the stored ones back on an edit (real mcp.config.list)", async () => {
+    const h = harness();
+    let stored = structuredClone(REAL.mcpConfigRaw) as unknown as { servers: Record<string, Record<string, unknown>> };
+    const sentUpdates: unknown[] = [];
+    (h.fake.client.rpc as unknown as Record<string, unknown>).mcp = { config: {
+      list: async () => structuredClone(stored),
+      update: async (p: { name: string; config: Record<string, unknown> }) => { sentUpdates.push(p); stored = { servers: { ...stored.servers, [p.name]: p.config } }; return null; },
+      add: async (p: unknown) => { sentUpdates.push(p); return null; },
+    } };
+    const listed = await h.hub.dispatch({ type: "rpc", call: { scope: "client", method: "mcp.config.list" } }, "user");
+    if (!listed.ok) throw new Error(listed.reason);
+    expect(JSON.stringify(listed.value)).not.toMatch(/s3cret|Bearer tok/);
+    const servers = (listed.value as typeof stored).servers;
+    expect(servers.probe.env).toEqual({ PROBE_SECRET: CODE_KEPT });
+    expect(servers.web.headers).toEqual({ Authorization: CODE_KEPT });
+    expect(servers.probe.command).toBe("/usr/bin/node");
+    // The window sends the marker back for a value left as it was: the runtime gets the stored one.
+    const updated = await h.hub.dispatch({ type: "rpc", call: { scope: "client", method: "mcp.config.update", params: { name: "probe", config: { ...servers.probe, args: ["/tmp/p/mcp-server.cjs", "--x"], env: { PROBE_SECRET: CODE_KEPT, NEW: "typed" } } } } }, "user");
+    expect(updated).toMatchObject({ ok: true });
+    expect(sentUpdates.at(-1)).toEqual({ name: "probe", config: { tools: ["*"], command: "/usr/bin/node", args: ["/tmp/p/mcp-server.cjs", "--x"], env: { PROBE_SECRET: "s3cret", NEW: "typed" } } });
+    // A marker with nothing stored behind it is refused, never sent as a value.
+    const n = sentUpdates.length;
+    expect(await h.hub.dispatch({ type: "rpc", call: { scope: "client", method: "mcp.config.add", params: { name: "other", config: { command: "x", env: { K: CODE_KEPT } } } } }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.rpcKept });
+    expect(await h.hub.dispatch({ type: "rpc", call: { scope: "client", method: "mcp.config.update", params: { name: "probe", config: { command: "x", env: { OTHER: CODE_KEPT } } } } }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.rpcKept });
+    expect(sentUpdates.length).toBe(n);
+  });
+
+  it("says a runtime method's failure in Ember's words, never the model service's or the runtime's (real messages)", async () => {
+    const h = harness();
+    const id = await started(h);
+    (h.fake.rpc as unknown as Record<string, unknown>).workspaces = { statFile: async () => { throw new Error(REAL.errors.statFile); }, diff: async () => { throw new Error(REAL.errors.includeContents); } };
+    (h.fake.client.rpc as unknown as Record<string, unknown>).models = { list: async () => { throw new Error(REAL.errors.signedOut); } };
+    expect(await h.hub.dispatch({ type: "rpc", call: { scope: "session", sessionId: id, method: "workspaces.statFile", params: { path: "a.txt" } } }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.rpcUnsupported });
+    expect(await h.hub.dispatch({ type: "rpc", call: { scope: "session", sessionId: id, method: "workspaces.diff", params: { mode: "unstaged", includeContents: true } } }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.rpcUnsupported });
+    expect(await h.hub.dispatch({ type: "rpc", call: { scope: "client", method: "models.list", params: {} } }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.rpcSignIn });
+  });
+
+  it("gives the tokenless runtime's account-wide lists the sign-in, never a token the window sent (models.list answered Not authenticated)", async () => {
+    const token = "gho_" + "t".repeat(36);
+    const seen: unknown[] = [];
+    const h = harness({ access: () => ({ gitHubToken: token, model: "gpt-5.5", service: false }) });
+    (h.fake.client.rpc as unknown as Record<string, unknown>).models = { list: async (p: unknown) => { seen.push(p); return { models: [] }; } };
+    (h.fake.client.rpc as unknown as Record<string, unknown>).account = { getQuota: async (p: unknown) => { seen.push(p); return { quotaSnapshots: {} }; } };
+    expect(await h.hub.dispatch({ type: "rpc", call: { scope: "client", method: "models.list", params: { gitHubToken: "gho_window" } } }, "user")).toMatchObject({ ok: true });
+    expect(await h.hub.dispatch({ type: "rpc", call: { scope: "client", method: "account.getQuota", params: {} } }, "user")).toMatchObject({ ok: true });
+    expect(seen).toEqual([{ gitHubToken: token }, { gitHubToken: token }]);
+    // With a provider of the user's own there is no sign-in: none goes, the window's neither.
+    const own = harness();
+    const ownSeen: unknown[] = [];
+    (own.fake.client.rpc as unknown as Record<string, unknown>).models = { list: async (p: unknown) => { ownSeen.push(p); return { models: [] }; } };
+    await own.hub.dispatch({ type: "rpc", call: { scope: "client", method: "models.list", params: { gitHubToken: "gho_window" } } }, "user");
+    expect(ownSeen).toEqual([{}]);
+  });
+
+  it("lets a client discovery call name a worktree Ember made for a session, and still refuses the rest of Ember's data", async () => {
+    const h = harness();
+    const seen: unknown[] = [];
+    (h.fake.client.rpc as unknown as Record<string, unknown>).skills = { discover: async (p: unknown) => { seen.push(p); return { skills: [], errors: [] }; } };
+    h.deps.index!.addProject({ folder: work, name: "work", gitRoot: work });
+    const projectId = h.deps.index!.projectAt(work)!.id;
+    const tree = path.join(userData, "code", "worktrees", "tree-1");
+    h.deps.index!.addSession("tree-1", { projectId, folder: tree, isolation: "worktree", createdBy: "user", branch: "ember/tree1", worktree: tree, gitRoot: work });
+    expect(await h.hub.dispatch({ type: "rpc", call: { scope: "client", method: "skills.discover", params: { projectPaths: [tree] } } }, "user")).toMatchObject({ ok: true });
+    expect(seen).toEqual([{ projectPaths: [tree] }]);
+    expect(await h.hub.dispatch({ type: "rpc", call: { scope: "client", method: "skills.discover", params: { projectPaths: [path.join(userData, "code", "worktrees", "not-a-session")] } } }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.rpcPath });
+    expect(await h.hub.dispatch({ type: "rpc", call: { scope: "client", method: "skills.discover", params: { projectPaths: [path.join(userData, "settings.json")] } } }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.rpcPath });
+  });
+});
+
+describe.skipIf(!hasGit())("listing and reading a session's working folder (listFolder, readFile)", () => {
+  function repo(): void {
+    const g = (...a: string[]) => execFileSync("git", ["-C", work, ...a], { stdio: "ignore", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" } });
+    g("init", "-q", "-b", "main");
+    fs.mkdirSync(path.join(work, "src", "deep"), { recursive: true });
+    fs.mkdirSync(path.join(work, "ignored"));
+    fs.writeFileSync(path.join(work, ".gitignore"), "ignored/\n*.log\n");
+    fs.writeFileSync(path.join(work, "a.txt"), "alpha\n");
+    fs.writeFileSync(path.join(work, "src", "b.ts"), "export const b = 1;\n");
+    fs.writeFileSync(path.join(work, "src", "deep", "c.md"), "# C\n");
+    fs.writeFileSync(path.join(work, "debug.log"), "log\n");
+    fs.writeFileSync(path.join(work, "ignored", "x.txt"), "x\n");
+    fs.writeFileSync(path.join(work, "logo.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 1]));
+    fs.writeFileSync(path.join(work, "big.txt"), "x".repeat(CODE_LIMITS.fileBytes + 1));
+    fs.writeFileSync(path.join(userData, "settings.json"), "PRIVATE");
+    fs.symlinkSync(path.join(userData, "settings.json"), path.join(work, "escape.txt"));
+    fs.symlinkSync(path.join(work, "src"), path.join(work, "src-link"));
+    g("add", "."); g("commit", "-qm", "init");
+  }
+
+  it("lists a folder rooted at the session's folder, folders first, without .git, what git ignores or a link out of it, and offers its files for attaching", async () => {
+    repo();
+    const h = harness({ git: gitRunner() });
+    const id = await started(h);
+    const top = await h.hub.dispatch({ type: "listFolder", sessionId: id, relDir: "" }, "user");
+    if (!top.ok) throw new Error(top.reason);
+    expect(top.value.entries.map(e => [e.name, e.kind])).toEqual([["src", "folder"], ["src-link", "folder"], [".gitignore", "file"], ["a.txt", "file"], ["big.txt", "file"], ["logo.png", "file"]]);
+    expect(top.value.gitPrefix).toBe("");
+    expect(top.value.entries.find(e => e.name === "a.txt")).toEqual({ name: "a.txt", kind: "file", size: 6, path: path.join(work, "a.txt") });
+    const src = await h.hub.dispatch({ type: "listFolder", sessionId: id, relDir: "src" }, "user");
+    expect(src).toMatchObject({ ok: true, value: { entries: [{ name: "deep", kind: "folder" }, { name: "b.ts", kind: "file" }] } });
+    // A listed file may be attached.
+    expect(await h.hub.dispatch({ type: "send", message: { sessionId: id, prompt: "look", attachments: [{ type: "file", path: path.join(work, "src", "b.ts") }] } }, "user")).toMatchObject({ ok: true });
+    // Out of the folder, into .git, by a link or into Ember's data: refused with one sentence.
+    for (const rel of ["..", "../userdata", "/etc", ".git", "src/../../userdata", "escape.txt"]) {
+      expect(await h.hub.dispatch({ type: "listFolder", sessionId: id, relDir: rel }, "user"), rel).toEqual({ ok: false, reason: CODE_REFUSALS.folderPath });
+    }
+    expect(await h.hub.dispatch({ type: "readFile", sessionId: id, relPath: "escape.txt" }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.folderPath });
+    expect(await h.hub.dispatch({ type: "readFile", sessionId: id, relPath: ".git/config" }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.folderPath });
+  });
+
+  it("reads a file's text, says a binary or too large one is that, and lists a subfolder session with where it sits in its repository", async () => {
+    repo();
+    const h = harness({ git: gitRunner() });
+    const id = await started(h);
+    expect(await h.hub.dispatch({ type: "readFile", sessionId: id, relPath: "src/b.ts" }, "user")).toEqual({ ok: true, value: { text: "export const b = 1;\n", size: 20 } });
+    expect(await h.hub.dispatch({ type: "readFile", sessionId: id, relPath: "logo.png" }, "user")).toEqual({ ok: true, value: { binary: true, size: 7 } });
+    expect(await h.hub.dispatch({ type: "readFile", sessionId: id, relPath: "big.txt" }, "user")).toEqual({ ok: true, value: { tooLarge: true, size: CODE_LIMITS.fileBytes + 1 } });
+    expect(await h.hub.dispatch({ type: "readFile", sessionId: id, relPath: "nope.txt" }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.folderPath });
+    expect(await h.hub.dispatch({ type: "readFile", sessionId: "unknown-session", relPath: "a.txt" }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.unknown });
+    const sub = harness({ git: gitRunner(), pickFolder: async () => path.join(work, "src") });
+    const sid = await started(sub);
+    expect(await sub.hub.dispatch({ type: "listFolder", sessionId: sid, relDir: "" }, "user")).toMatchObject({ ok: true, value: { gitPrefix: "src/", entries: [{ name: "deep" }, { name: "b.ts" }] } });
+  });
+
+  it("lists a folder that isn't a repository with its build and dependency folders left out", async () => {
+    fs.mkdirSync(path.join(work, "node_modules"));
+    fs.mkdirSync(path.join(work, "lib"));
+    fs.writeFileSync(path.join(work, "x.js"), "1");
+    const h = harness({ git: gitRunner() });
+    const id = await started(h);
+    const r = await h.hub.dispatch({ type: "listFolder", sessionId: id, relDir: "" }, "user");
+    expect(r).toMatchObject({ ok: true, value: { entries: [{ name: "lib", kind: "folder" }, { name: "x.js", kind: "file" }] } });
+    expect((r as { value: { gitPrefix?: string } }).value.gitPrefix).toBeUndefined();
   });
 });

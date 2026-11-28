@@ -113,7 +113,7 @@ describe("the coding window's preload", () => {
     const shared = fs.readFileSync(path.resolve("app/shared/code.ts"), "utf8");
     const api = /export interface EmberCodeApi \{([\s\S]*?)\n\}/.exec(shared)![1];
     const methods = [...api.matchAll(/^\s+(\w+)\(/gm)].map(m => m[1]);
-    expect(methods.length).toBe(23);
+    expect(methods.length).toBe(25);
     for (const m of methods) expect(source, m).toMatch(new RegExp(`\\n  ${m}: `));
     expect(source).toContain('contextBridge.exposeInMainWorld("emberCode", api);');
     expect(source).not.toMatch(/ipcRenderer\.(invoke|send)\("/);

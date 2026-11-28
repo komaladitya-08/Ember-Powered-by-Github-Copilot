@@ -48,7 +48,33 @@ export const CODE_REFUSALS = {
   linkFailed: "Ember couldn't open that address in your browser.",
   projectHasSessions: "This project still has sessions. Delete them first, then remove the project.",
   forkTree: "Ember couldn't make a worktree for the copy of this session, so it didn't make the copy.",
+  rpcFailed: "Copilot couldn't do that just now.",
+  rpcSignIn: "That needs a GitHub Copilot account. Sign in to Copilot in Ember's settings to use it.",
+  rpcUnsupported: "This version of Copilot can't do that here.",
+  rpcBadRequest: "Copilot couldn't take that request.",
+  rpcMissing: "That isn't there any more.",
+  rpcNoMcp: "No MCP server has started in this session yet.",
+  rpcKept: "Ember couldn't keep a value it doesn't hold. Type the value again.",
+  folderPath: "That isn't a file or folder in this session's folder.",
+  folderRead: "Ember couldn't read that.",
 } as const;
+
+/**
+ * The sentence for an SDK RPC method that failed, from the runtime's own message, which is never shown (probed on
+ * runtime 1.0.97: "Not authenticated. Please authenticate first.", "includeContents is only supported for session
+ * diffs", "Session memory v2 is disabled for this session…", "ENOENT: No such file or directory", "missing field
+ * `providerKind`", "missing numeric parameter 'id'", "No MCP host initialized"). Never the model service's sentences:
+ * a method of the runtime's that failed is no problem with the model.
+ */
+export function rpcFailure(message: string): string {
+  const m = message.slice(0, 2_000);
+  if (/not authenticated|authenticate first|not signed in|unauthori[sz]ed/i.test(m)) return CODE_REFUSALS.rpcSignIn;
+  if (/no mcp host/i.test(m)) return CODE_REFUSALS.rpcNoMcp;
+  if (/\bENOENT\b|no such file|not found|does not exist|unknown (task|agent|schedule|server)/i.test(m)) return CODE_REFUSALS.rpcMissing;
+  if (/only supported|not supported|unsupported|is disabled|not available|not enabled|-32601|method not found/i.test(m)) return CODE_REFUSALS.rpcUnsupported;
+  if (/missing (field|numeric|parameter|required)|invalid (param|argument|type|value)|-32602|expected .* (got|received)/i.test(m)) return CODE_REFUSALS.rpcBadRequest;
+  return CODE_REFUSALS.rpcFailed;
+}
 
 /** A refusal with its sentence. */
 export const refuse = (reason: string, code?: string): CodeRefusal => ({ ok: false, reason, ...(code ? { code } : {}) });

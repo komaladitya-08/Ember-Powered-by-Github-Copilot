@@ -37,6 +37,8 @@ const api: EmberCodeApi = {
   onRequest: listener => listen(CODE_IPC.request, listener),
   openLink: url => ipcRenderer.invoke(CODE_IPC.openLink, url),
   markRead: sessionId => { ipcRenderer.send(CODE_IPC.markRead, sessionId); },
+  listFolder: (sessionId, relDir) => ipcRenderer.invoke(CODE_IPC.listFolder, sessionId, relDir),
+  readFile: (sessionId, relPath) => ipcRenderer.invoke(CODE_IPC.readFile, sessionId, relPath),
   onMicHeld: listener => {
     try { listener(micHeld); } catch { /* the page's own failure */ }
     return listen<unknown>(CODE_IPC.micHeld, v => { listener(v === true); });

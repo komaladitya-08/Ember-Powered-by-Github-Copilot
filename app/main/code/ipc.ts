@@ -65,6 +65,8 @@ const Mode = z.enum(["manual", "assisted", "allow-all"]);
 const Agent = z.enum(["interactive", "plan", "autopilot"]);
 const Position = z.object({ line: z.number().int().nonnegative().max(10_000_000), character: z.number().int().nonnegative().max(10_000_000) }).strict();
 const PathText = z.string().min(1).max(4096);
+/** A path relative to a session's folder ("" for its top): main resolves and checks it (folder.ts). */
+const RelPath = z.string().max(CODE_LIMITS.relPath).refine(p => !/[\0\r\n]/.test(p));
 const Attachment = z.discriminatedUnion("type", [
   z.object({ type: z.literal("file"), path: PathText, displayName: z.string().max(400).optional() }).strict(),
   z.object({ type: z.literal("directory"), path: PathText, displayName: z.string().max(400).optional() }).strict(),
@@ -126,6 +128,8 @@ export const CODE_ARGS = {
   rpc: { args: z.tuple([Rpc]), command: ([call]: [z.infer<typeof Rpc>]): CodeCommand => ({ type: "rpc", call }) },
   openLink: { args: z.tuple([z.string().min(1).max(CODE_LIMITS.link)]), command: ([url]: [string]): CodeCommand => ({ type: "openLink", url }) },
   markRead: { args: z.tuple([Id]), command: ([sessionId]: [string]): CodeCommand => ({ type: "markRead", sessionId }) },
+  listFolder: { args: z.tuple([Id, RelPath]), command: ([sessionId, relDir]: [string, string]): CodeCommand => ({ type: "listFolder", sessionId, relDir }) },
+  readFile: { args: z.tuple([Id, RelPath.min(1)]), command: ([sessionId, relPath]: [string, string]): CodeCommand => ({ type: "readFile", sessionId, relPath }) },
 } as const;
 
 type Channel = keyof typeof CODE_ARGS;

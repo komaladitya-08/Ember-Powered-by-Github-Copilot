@@ -173,7 +173,7 @@ export interface CodeAttached {
 
 /** Why a command did nothing, as a sentence a person can read (never raw SDK text). */
 export interface CodeRefusal { ok: false; reason: string; code?: string }
-export type CodeDone<T = void> = (T extends void ? { ok: true } : { ok: true; value: T }) | CodeRefusal;
+export type CodeDone<T = void> = ([T] extends [void] ? { ok: true } : { ok: true; value: T }) | CodeRefusal;
 
 /** A call to one of the SDK's RPC methods, by its dotted name (`CODE_RPC` lists the ones a window may call). */
 export interface CodeRpcCall {
@@ -239,7 +239,34 @@ export const CODE_LIMITS = {
   name: 120,
   /** Characters of an address the window asks main to open. */
   link: 2048,
+  /** Entries one `listFolder` answer lists at most (folders first, then files, each by name). */
+  folderEntries: 2_000,
+  /** Bytes of a working-folder file `readFile` gives the window; a larger one is `tooLarge`. */
+  fileBytes: 1024 * 1024,
+  /** Characters of a path relative to the session's folder that the window passes to `listFolder` or `readFile`. */
+  relPath: 4096,
 } as const;
+
+/**
+ * What main puts in place of each MCP server's variable and header value (and any other secret-named value) in
+ * `mcp.config.list`'s answer, so no value reaches the window. Sent back unchanged in `mcp.config.update`, it stands for
+ * the value Copilot already holds, which main puts back before the call.
+ */
+export const CODE_KEPT = "\u2022\u2022\u2022 kept by Ember \u2022\u2022\u2022";
+
+/** One entry of a folder in the session's working folder (`listFolder`). `path` is absolute, for an attachment. */
+export interface CodeFolderEntry { name: string; kind: "file" | "folder"; size?: number; path: string }
+/** A folder of the session's working folder, as main lists it. */
+export interface CodeFolderListing {
+  /** The entries, folders first, `.git` and what git (or, outside a repository, a short built-in list) ignores left out. */
+  entries: CodeFolderEntry[];
+  /** More entries than CODE_LIMITS.folderEntries: the rest aren't listed. */
+  truncated?: boolean;
+  /** The session's folder relative to its repository's top ("" at the top, "sub/" below it): `workspaces.diff`'s paths are the top's. Absent outside a repository. */
+  gitPrefix?: string;
+}
+/** A working-folder file as main reads it: its text, or why it isn't shown. */
+export type CodeFileRead = { text: string; size: number } | { binary: true; size: number } | { tooLarge: true; size: number };
 
 /**
  * Why main won't open `url` in the person's browser, or null when it will: only an http or https address within
@@ -305,6 +332,10 @@ export const CODE_IPC = {
   markRead: "code:mark-read",
   /** main → window: boolean, whether the microphone is open for a request (live regions hold meanwhile). */
   micHeld: "code:mic-held",
+  /** (sessionId, relDir) => CodeDone<CodeFolderListing>: a folder of the session's working folder ("" for its top). */
+  listFolder: "code:list-folder",
+  /** (sessionId, relPath) => CodeDone<CodeFileRead>: a file of the session's working folder, within CODE_LIMITS.fileBytes. */
+  readFile: "code:read-file",
 } as const;
 
 /** The API the coding window's preload exposes as `window.emberCode`. */
@@ -335,4 +366,8 @@ export interface EmberCodeApi {
   markRead(sessionId: string): void;
   /** Whether the microphone is open for a request; called at once with the latest value, then on each change. */
   onMicHeld(listener: (held: boolean) => void): () => void;
+  /** A folder of the session's working folder, by its path relative to that folder ("" for the top): main lists it. */
+  listFolder(sessionId: string, relDir: string): Promise<CodeDone<CodeFolderListing>>;
+  /** A file of the session's working folder, by its path relative to that folder: main reads it, bounded. */
+  readFile(sessionId: string, relPath: string): Promise<CodeDone<CodeFileRead>>;
 }
