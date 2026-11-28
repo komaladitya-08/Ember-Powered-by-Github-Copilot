@@ -142,7 +142,8 @@ describe("exporting a session", () => {
     const md = fs.readFileSync(file, "utf8");
     expect(md).toContain("## Copilot\n\nFixed.");
     expect(md).not.toContain("ghu_aaaaaaaa");
-    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    // Windows has no POSIX modes: a file there reports 0666 whatever it was created with.
+    if (process.platform !== "win32") expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     expect(h.audit).toContainEqual(expect.objectContaining({ phase: "export", by: "user", chars: md.length }));
     expect(JSON.stringify(h.audit)).not.toContain(file);
   });
