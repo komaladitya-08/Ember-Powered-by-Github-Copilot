@@ -9,6 +9,24 @@ const W = "/tmp/p/work";
 const STATE = "/tmp/p/userdata/code/copilot/session-state/s1";
 
 export const REAL = {
+  /**
+   * The view tool's answer for a 2×2 PNG (`tool.execution_complete` data, telemetry left out), and what
+   * `history.truncate` emits (28 November 2026, SDK 1.0.21, runtime 1.0.97, the mock model). A short provider key is a
+   * secret the runtime masks everywhere (stars in the base64 too), so this one was recorded with a long key.
+   */
+  viewImageComplete: {
+    toolCallId: "call_2", model: "mock-model", turnId: "0", rte: false, success: true,
+    result: {
+      content: "Viewed image file successfully.", detailedContent: `Viewed image file at path ${W}/pic.png`,
+      binaryResultsForLlm: [{ type: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFElEQVR4nGP4z8DAAMIM////ZwAAHu8E/KPItPcAAAAASUVORK5CYII=", mimeType: "image/png", description: `Image file at path ${W}/pic.png` }],
+    },
+  },
+  truncateRewind: { type: "session.snapshot_rewind", data: { upToEventId: "61d50fa0-4d0d-4a98-8b1a-bbbf051fca8e", eventsRemoved: 5 } },
+  /** `sessions.getSizes` and `sessions.pruneOld({ olderThanDays: 0, dryRun: true })`, client scope. */
+  sizes: { sizes: { "e890b420-4884-43df-a9e5-a2bc48ce003d": 255720 } },
+  pruneDry: { deleted: [], candidates: ["e890b420-4884-43df-a9e5-a2bc48ce003d"], skipped: [], freedBytes: 255720, dryRun: true },
+  /** `history.summarizeForHandoff` after two turns (the mock model's words). */
+  handoffSummary: { summary: "You said: f the appropriate sections, with special emphasis on the most recent operations." },
   diffSession: {
     requestedMode: "session", mode: "session", isFallback: false, changes: [
       { path: "a.txt", diff: "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,3 +1,4 @@\n alpha\n beta\n gamma\n+delta", changeType: "modified" },

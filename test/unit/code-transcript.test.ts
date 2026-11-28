@@ -239,11 +239,16 @@ describe("envelopes: replay, gaps and attach", () => {
     expect(applyEnvelope(gap, { sessionId: "s", seq: 4, event: ev("abort", {}) })).toBe(gap);
   });
 
-  it("asks to attach again from the start after a rewind or a cut", () => {
-    for (const type of ["session.snapshot_rewind", "session.truncation"]) {
-      const t = reduceEvent(play(ev("user.message", { content: "a" })), ev(type, { eventsRemoved: 1, upToEventId: "x" }));
-      expect([t.stale, t.rebuild], type).toEqual([true, true]);
-    }
+  it("asks to attach again from the start after a rewind or a cut of the history", () => {
+    const t = reduceEvent(play(ev("user.message", { content: "a" })), ev("session.snapshot_rewind", { eventsRemoved: 1, upToEventId: "x" }));
+    expect([t.stale, t.rebuild]).toEqual([true, true]);
+  });
+
+  it("keeps drawing after a context truncation, which cuts only what the model is sent (a kept history once went blank after it)", () => {
+    const all = envs("s", [ev("user.message", { content: "a" }), ev("session.truncation", { messagesRemovedDuringTruncation: 3, tokensRemovedDuringTruncation: 900 }), ev("assistant.message", { messageId: "m", content: "after" })]);
+    const t = attachedTranscript(undefined, all, 3);
+    expect([t.stale, t.rebuild]).toEqual([false, undefined]);
+    expect(t.items.map(i => i.kind)).toEqual(["user", "note", "assistant"]);
   });
 
   it("catches up from the last seq on attach, and builds the history again without one (keeping a message not yet confirmed)", () => {

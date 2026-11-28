@@ -11,6 +11,7 @@
  * unit-tested in test/unit/code-transcript.test.ts.
  */
 import type { CodeEventEnvelope, CodeRequestKind, CodeSdkEvent } from "../../shared/code";
+import { imageSrc, resultPictures, type Picture } from "./images";
 import { argsOf, arr, bool, num, rec, str, sub } from "./sdk";
 
 /** The most characters of output a tool row keeps (its last ones), and the most items a transcript keeps. */
@@ -36,7 +37,15 @@ export interface UserItem extends Base {
   /** Sent while a turn ran: queued, or steering it. */
   delivery?: "enqueue" | "immediate";
 }
-export interface AssistantItem extends Base { kind: "assistant"; messageId: string; text: string; streaming: boolean }
+export interface AssistantItem extends Base {
+  kind: "assistant"; messageId: string; text: string; streaming: boolean;
+  /** The sources the reply cites (`enableCitations`: `citations.sources`), as the SDK named them. */
+  sources?: Source[];
+}
+/** A source a reply cites: its title, and the web address or file it is, as the SDK sent them (shown; opened through main). */
+export interface Source { title: string; url?: string; path?: string }
+/** Sources one reply lists at most. */
+export const SOURCES_KEEP = 20;
 export interface ReasoningItem extends Base { kind: "reasoning"; reasoningId: string; text: string; streaming: boolean }
 
 /** A sub-agent the model started through a tool call (`subagent.*`). */
@@ -82,12 +91,19 @@ export interface ToolItem extends Base {
   endedAt?: string;
   /** A command the person ran themselves (`shell.executeUserRequested`): the SDK's `isUserRequested`. */
   userRequested?: boolean;
+  /** Pictures the result holds (images.ts: safe data URLs only), and how many weren't drawn. */
+  pictures?: Picture[];
+  picturesWithheld?: number;
 }
 
-export type NoteKind = "plan" | "todos" | "compaction" | "model" | "mode" | "permissions" | "skill" | "agent" | "abort" | "notification" | "info";
+export type NoteKind = "plan" | "todos" | "compaction" | "model" | "mode" | "permissions" | "skill" | "agent" | "abort" | "notification" | "info"
+  | "handoff" | "truncation" | "cleared" | "task" | "tool-search" | "tier" | "schedule" | "limits" | "recovery" | "reconnect"
+  | "workflow" | "deselected" | "custom" | "asset";
 export interface NoteItem extends Base { kind: "note"; note: NoteKind; fields: Record<string, string | number | boolean | undefined> }
 export interface HookItem extends Base { kind: "hook"; id: string; hookType: string; state: "running" | "done" | "failed"; error?: string }
 export interface ProblemItem extends Base { kind: "problem"; level: "error" | "warning"; message: string; remediation?: string; type?: string; url?: string }
+/** A picture the session made or was given (`session.binary_asset` of type "image"). */
+export interface ImageItem extends Base { kind: "image"; picture: Picture }
 export interface RequestItem extends Base {
   kind: "request";
   requestId: string;
@@ -103,7 +119,7 @@ export interface RequestItem extends Base {
 /** An event the window has no drawing for: kept, folded, with its type and data. */
 export interface EventItem extends Base { kind: "event"; type: string; data: unknown }
 
-export type Item = UserItem | AssistantItem | ReasoningItem | ToolItem | NoteItem | HookItem | ProblemItem | RequestItem | EventItem;
+export type Item = UserItem | AssistantItem | ReasoningItem | ToolItem | NoteItem | HookItem | ProblemItem | RequestItem | EventItem | ImageItem;
 
 export interface Transcript {
   /** The last envelope applied (0: none yet). */
@@ -111,7 +127,7 @@ export interface Transcript {
   /** A gap in `seq` was seen: the window must attach again before anything more is applied. */
   stale: boolean;
   /**
-   * The session's history was rewound or cut (`session.snapshot_rewind`, `session.truncation`): what is shown no longer
+   * The session's history was rewound or cut (`session.snapshot_rewind`): what is shown no longer
    * holds, so the window attaches again without a seq and draws the kept history afresh.
    */
   rebuild?: boolean;
@@ -128,6 +144,8 @@ export interface Transcript {
   permissionMode?: string;
   title?: string;
   context?: { cwd?: string; branch?: string; repository?: string };
+  /** A model call failed and the runtime is trying it again (`model.call_failure` with `retryAttempt`), until the turn moves on. */
+  retrying?: { attempt: number; model?: string };
   compacting: boolean;
   /** Bumped by the SDK's signal-only events, so a panel knows to read again (plan.read, queue.pendingItems, tasks.list). */
   versions: { plan: number; todos: number; queue: number; background: number };
@@ -179,6 +197,23 @@ const QUIET = new Set([
   // Seen in every real session (runtime 1.0.97): the system prompt as it was sent, a server leaving the session as it
   // starts again (its status says the rest) and the objective's changes (the Plan tab reads them).
   "system.message", "session.mcp_server_removed", "session.autopilot_objective_changed",
+  // Telemetry and bookkeeping (docs/CODING-APP.md §8): the auto router's choice and fusion's phases (a model change that
+  // follows says what changed), a managed plugin's progress, the usage record the runtime keeps beside every turn (seen
+  // in every kept history, runtime 1.0.97; Customise › Usage reads the totals), the quota and usage checkpoints and the
+  // completion receipt (counts of tools; `session.task_complete` says the outcome), an extension's pushed attachments.
+  "session.auto_mode_resolved", "session.fusion_route_failed", "session.fusion_resolved", "session.fusion_completed",
+  "assistant.fusion_phase_completed", "assistant.fusion_phase_failed", "session.managed_plugin_progress", "session.usage_record",
+  "session.extensions.attachments_pushed",
+  // A workflow run's revision counter only (its start and how it settled are drawn).
+  "workflow.run_updated",
+  // What Ember never registers, so the runtime has no reason to send it to a coding session: host tools
+  // (`external_tool.*`), host slash commands (`command.execute`), a header provider (`mcp.headers_refresh_*`), canvases
+  // and MCP Apps (not drawn in this window: docs/CODING-APP.md §8). Hidden rather than folded: nobody here could act on one.
+  "external_tool.requested", "external_tool.completed", "command.execute", "mcp.headers_refresh_required", "mcp.headers_refresh_completed",
+  "session.canvas.opened", "session.canvas.registry_changed", "session.canvas.closed", "session.canvas.unavailable", "session.canvas.recorded",
+  "session.canvas.removed", "mcp_app.tool_call_complete",
+  // A side question (`ui.ephemeralQuery`) is answered to whoever asked it, never into the transcript.
+  "ui.ephemeral_query",
 ]);
 /** Main's debug events (model.message, model.messages_snapshot, model.call_*): large, and never the transcript's. */
 const DEBUG_PREFIX = "model.";
@@ -267,6 +302,19 @@ function withTool(t: Transcript, id: string, key: string, owner: string | undefi
   return append(t, fn(bareTool(id, key, owner, tool)));
 }
 
+/** The sources an `assistant.message` cites (`citations.sources`): a title each, with its address or file. */
+function sourcesOf(d: unknown): Source[] {
+  const out: Source[] = [];
+  for (const s of arr(sub(d, "citations"), "sources")) {
+    const url = str(s, "url"), path = str(s, "path");
+    const title = str(s, "title") ?? url ?? path;
+    if (!title) continue;
+    out.push({ title: title.slice(0, 400), ...(url ? { url: url.slice(0, 2048) } : {}), ...(path ? { path: path.slice(0, 4096) } : {}) });
+    if (out.length >= SOURCES_KEEP) break;
+  }
+  return out;
+}
+
 /** System notifications come wrapped in `<system_notification>` tags: their words without the tags. */
 function notificationText(content: string): string {
   return content.replace(/<\/?[a-z_]+>/gi, "").replace(/\s+/g, " ").trim();
@@ -337,10 +385,12 @@ export function reduceEvent(t: Transcript, e: CodeSdkEvent): Transcript {
     }
     case "assistant.message": {
       const id = str(d, "messageId") ?? key, text = str(d, "content", true) ?? "";
-      if (t.items.some(isAssistant(id))) return { ...t, items: update(t.items, isAssistant(id), r => ({ ...r, text: text || r.text, streaming: false })) };
+      const sources = sourcesOf(d);
+      const cited = sources.length ? { sources } : {};
+      if (t.items.some(isAssistant(id))) return { ...t, retrying: undefined, items: update(t.items, isAssistant(id), r => ({ ...r, text: text || r.text, streaming: false, ...cited })) };
       // A message of tool calls only adds nothing.
-      if (!text.trim()) return t;
-      return append(t, { kind: "assistant", key, ...at, messageId: id, text, streaming: false });
+      if (!text.trim()) return t.retrying ? { ...t, retrying: undefined } : t;
+      return append({ ...t, retrying: undefined }, { kind: "assistant", key, ...at, messageId: id, text, streaming: false, ...cited });
     }
     case "assistant.reasoning_delta": {
       const id = str(d, "reasoningId"), text = str(d, "deltaContent", true) ?? "";
@@ -395,6 +445,7 @@ export function reduceEvent(t: Transcript, e: CodeSdkEvent): Transcript {
       const err = sub(d, "error");
       const exitCode = num(sub(d, "shellExecution"), "exitCode");
       const edits = arr(d, "fileEdits").map(f => ({ path: str(f, "path") ?? "", kind: str(f, "kind") ?? "edit" })).filter(f => f.path);
+      const pics = resultPictures(result);
       return withTool(t, id, key, owner, r => {
         const isShell = r.command !== undefined || exitCode !== undefined;
         // A shell's result is its output where none streamed (the SDK sends both); another tool's result is its own.
@@ -406,6 +457,7 @@ export function reduceEvent(t: Transcript, e: CodeSdkEvent): Transcript {
           ...(bool(d, "isUserRequested") ? { userRequested: true } : {}),
           ...(bool(d, "sandboxed") !== undefined ? { sandboxed: bool(d, "sandboxed") } : {}),
           ...(!isShell && content ? { result: content } : {}),
+          ...(pics.shown.length ? { pictures: pics.shown } : {}), ...(pics.withheld ? { picturesWithheld: pics.withheld } : {}),
           ...(err ? { error: { message: str(err, "message") ?? "", ...(str(err, "code") ? { code: str(err, "code") } : {}), ...(str(err, "remediation") ? { remediation: str(err, "remediation") } : {}) } } : {}),
         };
       });
@@ -494,6 +546,52 @@ export function reduceEvent(t: Transcript, e: CodeSdkEvent): Transcript {
       const kind = str(sub(d, "kind"), "type");
       return append(t, { kind: "note", key, ...at, note: "notification", fields: { text: notificationText(str(d, "content", true) ?? ""), type: kind } });
     }
+    // A session handed over from elsewhere (a remote or cloud session continued here): where from, and its summary.
+    case "session.handoff": {
+      const repo = sub(d, "repository");
+      return append(t, { kind: "note", key, ...at, note: "handoff", fields: { source: str(d, "sourceType"), repository: repo ? [str(repo, "owner"), str(repo, "name")].filter(Boolean).join("/") : undefined, summary: str(d, "summary", true) } });
+    }
+    // The runtime dropped earlier messages from the model's context to fit it (not the history: the transcript keeps them).
+    case "session.truncation":
+      return append(t, { kind: "note", key, ...at, note: "truncation", fields: { messages: num(d, "messagesRemovedDuringTruncation"), tokens: num(d, "tokensRemovedDuringTruncation") } });
+    case "session.context_cleared": return append(t, { kind: "note", key, ...at, note: "cleared", fields: { messages: num(d, "messagesCleared") } });
+    case "session.task_complete":
+      return append(t, { kind: "note", key, ...at, note: "task", fields: { outcome: str(d, "outcome") ?? (bool(d, "success") === false ? "blocked" : "completed"), summary: str(d, "summary", true), reason: str(d, "reason") } });
+    case "tool_search.activated": return append(t, { kind: "note", key, ...at, note: "tool-search", fields: { count: arr(d, "toolNames").length } });
+    case "model.call_failure": {
+      // The runtime tries a failed call again on its own; the composer says so until the reply comes or the turn ends.
+      const attempt = num(d, "retryAttempt");
+      return mine && attempt !== undefined ? { ...t, retrying: { attempt, ...(str(d, "model") ? { model: str(d, "model") } : {}) } } : t;
+    }
+    case "session.auto_tier_switch_failed": return append(t, { kind: "note", key, ...at, note: "tier", fields: { reason: str(d, "reason") } });
+    case "session.schedule_created":
+      return append(t, { kind: "note", key, ...at, note: "schedule", fields: { op: "created", prompt: str(d, "displayPrompt", true) ?? str(d, "prompt", true), recurring: bool(d, "recurring") ?? false } });
+    case "session.schedule_cancelled": return append(t, { kind: "note", key, ...at, note: "schedule", fields: { op: "cancelled" } });
+    // A schedule set to run again says nothing new: its creation said it repeats.
+    case "session.schedule_rearmed": return t;
+    case "session.session_limits_changed": return append(t, { kind: "note", key, ...at, note: "limits", fields: { max: num(sub(d, "sessionLimits"), "maxAiCredits") } });
+    case "session.permission_recovery": return append(t, { kind: "note", key, ...at, note: "recovery", fields: { status: str(d, "status"), attempts: arr(d, "attempts").length } });
+    case "session.mcp_server_needs_reconnect": return append(t, { kind: "note", key, ...at, note: "reconnect", fields: { server: str(d, "serverName") } });
+    case "session.model_deselected": return append(t, { kind: "note", key, ...at, note: "deselected", fields: { from: str(d, "previousModel") } });
+    case "workflow.run_started": {
+      const runId = str(d, "runId");
+      return append(t, { kind: "note", key, ...at, note: "workflow", fields: { run: runId, name: str(d, "workflowName"), state: "running" } });
+    }
+    case "workflow.run_settled": {
+      const runId = str(d, "runId");
+      const run = (i: Item): i is NoteItem => i.kind === "note" && i.note === "workflow" && !!runId && i.fields.run === runId;
+      const fields = { state: str(d, "status") ?? "done", failure: str(d, "failureType") };
+      if (find(t.items, run)) return { ...t, items: update(t.items, run, n => ({ ...n, fields: { ...n.fields, ...fields } })) };
+      return append(t, { kind: "note", key, ...at, note: "workflow", fields: { run: runId, ...fields } });
+    }
+    case "session.binary_asset": {
+      if (str(d, "type") === "image") {
+        const src = imageSrc(str(d, "mimeType"), str(d, "data"));
+        const description = str(d, "description")?.slice(0, 400);
+        if (src) return append(t, { kind: "image", key, ...at, picture: { src, ...(description ? { description } : {}) } });
+      }
+      return append(t, { kind: "note", key, ...at, note: "asset", fields: { description: str(d, "description"), image: str(d, "type") === "image", bytes: num(d, "byteLength") } });
+    }
     default: break;
   }
 
@@ -546,10 +644,12 @@ function stateOnly(t: Transcript, e: CodeSdkEvent, mine: boolean): Transcript | 
       const path = str(d, "path");
       return path ? { ...t, workspaceFiles: { ...t.workspaceFiles, [path]: str(d, "operation") ?? "update" } } : t;
     }
-    case "session.idle": return mine ? { ...t, busy: false, intent: undefined, compacting: false, items: settle(t.items) } : t;
-    case "session.shutdown": return { ...t, busy: false, items: settle(t.items) };
-    case "session.snapshot_rewind":
-    case "session.truncation": return { ...t, stale: true, rebuild: true };
+    case "session.idle": return mine ? { ...t, busy: false, intent: undefined, retrying: undefined, compacting: false, items: settle(t.items) } : t;
+    case "session.shutdown": return { ...t, busy: false, retrying: undefined, items: settle(t.items) };
+    // A rewind or `history.truncate` (which sends this too: probed on runtime 1.0.97) cut the history. A context
+    // truncation (`session.truncation`) cuts only what the model is sent, so it is a note, not a rebuild: as a rebuild in
+    // a kept history it left the transcript stale and dropped every event after it.
+    case "session.snapshot_rewind": return { ...t, stale: true, rebuild: true };
     default: return null;
   }
 }

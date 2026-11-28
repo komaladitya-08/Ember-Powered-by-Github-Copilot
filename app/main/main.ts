@@ -4010,6 +4010,8 @@ function start(): void {
       showHome();
       sendToHome(IPC.focusSection, "parts");
     });
+    // A session's "sign in" remedy: Home's Copilot section, where the sign-in is (the window only links).
+    ipcMain.on(CODE_IPC.openSignIn, event => { if (codeWindows.isCodeWindow(event)) { showHome(); sendToHome(IPC.focusSection, "copilot"); } });
     // Perception: the accessibility sidecar (text) and the window system's capture (images). Linux starts the Python
     // AT-SPI sidecar (no launch); Windows and macOS the shared host (Windows: Ember's own binary in node mode; macOS: a
     // utility process, review #177).

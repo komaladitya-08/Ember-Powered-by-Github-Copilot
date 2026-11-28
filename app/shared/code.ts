@@ -342,6 +342,8 @@ export const CODE_IPC = {
   companionState: "code:companion-state",
   /** () => void: opens Ember's settings at the companion's switch. */
   openCompanionSettings: "code:open-companion-settings",
+  /** () => void: opens Ember's settings at Copilot's sign-in (a session's "sign in" remedy; Home owns the sign-in). */
+  openSignIn: "code:open-sign-in",
 } as const;
 
 /** The API the coding window's preload exposes as `window.emberCode`. */
@@ -382,4 +384,6 @@ export interface EmberCodeApi {
   companionState?(): Promise<{ on: boolean }>;
   /** Opens Ember's settings at the companion's switch (the one place it changes). */
   openCompanionSettings?(): void;
+  /** Opens Ember's settings at Copilot's sign-in, where a session's error names signing in as its remedy. */
+  openSignIn?(): void;
 }

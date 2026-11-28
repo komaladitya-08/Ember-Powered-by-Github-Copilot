@@ -176,6 +176,13 @@ details.disclose > summary:focus-visible { outline: none; box-shadow: var(--focu
 .tool-address, .card-address { margin: 0; font: var(--type-footnote); font-family: var(--ember-mono); overflow-wrap: anywhere; color: var(--label-2); }
 .tool-end { margin: 0; color: var(--label-2); font: var(--type-footnote); }
 .remedy { margin: 0; font: var(--type-footnote); font-weight: 600; }
+/* A remedy the window can do, a session's pictures and a reply's sources (docs/CODING-APP.md §8). */
+.remedy-actions { display: flex; gap: 8px; margin-top: 6px; }
+.pictures { display: flex; flex-wrap: wrap; gap: 8px; }
+.picture { margin: 0; min-width: 0; }
+.picture-img { display: block; max-width: min(100%, 480px); max-height: 360px; height: auto; border-radius: var(--r-xs); box-shadow: inset 0 0 0 1px var(--separator); background: var(--surface-0); }
+.sources { margin-top: 6px; }
+.source-list { margin: 4px 0 0; padding-left: 18px; font: var(--type-footnote); color: var(--label-2); overflow-wrap: anywhere; }
 .work > summary { margin-top: 2px; }
 .items.nested { margin: 8px 0 0; padding: 0 0 0 12px; gap: 8px; box-shadow: inset 2px 0 0 var(--separator); }
 .note { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--label-2); font: var(--type-footnote); overflow-wrap: anywhere; }
@@ -410,4 +417,5 @@ details.disclose > summary:focus-visible { outline: none; box-shadow: var(--focu
   .tab-mark { background: CanvasText; }
   .d-add, .d-del { background: Canvas; }
   .md-link { color: LinkText; }
+  .picture-img { outline: 1px solid CanvasText; }
 }

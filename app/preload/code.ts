@@ -45,6 +45,7 @@ const api: EmberCodeApi = {
   },
   companionState: () => ipcRenderer.invoke(CODE_IPC.companionState),
   openCompanionSettings: () => { ipcRenderer.send(CODE_IPC.openCompanionSettings); },
+  openSignIn: () => { ipcRenderer.send(CODE_IPC.openSignIn); },
   onShow: listener => listen<unknown>(CODE_IPC.show, v => { if (typeof v === "string" && v.length <= 200) listener(v); }),
 };
 

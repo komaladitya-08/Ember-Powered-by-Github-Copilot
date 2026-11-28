@@ -597,6 +597,7 @@
     },
     markRead(id) { calls.push(`markRead:${id}`); const r = sessions.get(id); if (r?.unread) { sessions.set(id, { ...r, unread: 0 }); for (const fn of listeners.row) fn(sessions.get(id)); } },
     onMicHeld(fn) { listeners.mic.add(fn); fn(micHeld); return () => listeners.mic.delete(fn); },
+    openSignIn() { calls.push("openSignIn"); },
   };
   window.emberCode = api;
   window.__fake = {

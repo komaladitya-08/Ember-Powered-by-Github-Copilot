@@ -29,10 +29,10 @@ function setUp() {
 describe("the coding window's channels", () => {
   it("has a handler for every command channel, invoke or fire-and-forget", () => {
     const { handlers, listeners } = setUp();
-    const commandChannels = Object.entries(CODE_IPC).filter(([k]) => !["event", "row", "request", "micHeld", "show", "companionState", "openCompanionSettings"].includes(k)).map(([, v]) => v);
+    const commandChannels = Object.entries(CODE_IPC).filter(([k]) => !["event", "row", "request", "micHeld", "show", "companionState", "openCompanionSettings", "openSignIn"].includes(k)).map(([, v]) => v);
     expect([...handlers.keys(), ...listeners.keys()].sort()).toEqual([...commandChannels].sort());
     expect([...listeners.keys()].sort()).toEqual([CODE_IPC.detach, CODE_IPC.stopAll, CODE_IPC.markRead].sort());
-    expect(Object.keys(CODE_ARGS).sort()).toEqual(Object.keys(CODE_IPC).filter(k => !["event", "row", "request", "micHeld", "show", "companionState", "openCompanionSettings"].includes(k)).sort());
+    expect(Object.keys(CODE_ARGS).sort()).toEqual(Object.keys(CODE_IPC).filter(k => !["event", "row", "request", "micHeld", "show", "companionState", "openCompanionSettings", "openSignIn"].includes(k)).sort());
   });
 
   it("refuses every sender until a coding window is registered, then only that window's own page", async () => {

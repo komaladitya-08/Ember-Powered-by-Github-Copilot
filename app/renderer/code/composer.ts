@@ -16,6 +16,7 @@ import {
   SUGGESTIONS, WORKING, agentModeName, blobTooBig, effortName, intentLine, lastCallWords, permissionModeName, queueItemLabel, queueTitle, removeAttachment,
   sessionTitle, steeringLine, stopLabel, tooLong, tooManyAttachments, usageShort, usageWords,
 } from "./copy";
+import { retryingLine } from "./copy-events";
 import { byId, el, idPart, setText } from "./dom";
 import { setDraft, setNote, type CodeState } from "./store";
 
@@ -278,7 +279,7 @@ export function mountComposer(app: CodeApp): Composer {
     steer.hidden = stop.hidden = !isBusy;
     stop.setAttribute("aria-label", stopLabel(sessionTitle(row ?? { name: "" })));
     setText(hint, isBusy ? BUSY_HINT : SEND_HINT);
-    setText(working, isBusy ? (t?.intent ? intentLine(t.intent) : WORKING) : "");
+    setText(working, isBusy ? (t?.retrying ? retryingLine(t.retrying.attempt) : t?.intent ? intentLine(t.intent) : WORKING) : "");
     if (s.catalog.models !== lastModels || prev?.transcripts[id]?.model !== t?.model) {
       lastModels = s.catalog.models;
       const current = t?.model ?? row?.model ?? "";

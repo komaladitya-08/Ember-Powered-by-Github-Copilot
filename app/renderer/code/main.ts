@@ -15,6 +15,7 @@ import { CodeApp } from "./app";
 import { requestTitle } from "./cards";
 import { mountComposer } from "./composer";
 import { CUSTOMISE, GO_TO_REQUEST, NEW_SESSION, PALETTE_ACTIONS, PALETTE_TITLE, SIDEBAR_RESIZE, TAB_NAMES, needsYouBar, paletteHint, paletteTab, pathTail, removeSessionAction, sandboxWords, sessionTitle } from "./copy";
+import { branchWords } from "./copy-events";
 import { mountCustomise, sectionId } from "./customise";
 import "./customise-sections";
 import { byId, setText } from "./dom";
@@ -87,7 +88,9 @@ function start(api: EmberCodeApi): void {
         setText(title, sessionTitle(row));
         const project = s.projects.byId[row.projectId];
         const box = sandboxWords(row.sandbox);
-        setText(where, [project?.name, row.isolation === "worktree" ? `worktree ${row.branch ?? ""}`.trim() : pathTail(row.folder), box].filter(Boolean).join(" · "));
+        // The branch the runtime says the session is on (`session.context_changed`), where it isn't a worktree's own.
+        const branch = row.isolation === "worktree" ? undefined : s.transcripts[row.id]?.context?.branch;
+        setText(where, [project?.name, row.isolation === "worktree" ? `worktree ${row.branch ?? ""}`.trim() : pathTail(row.folder), branch ? branchWords(branch) : "", box].filter(Boolean).join(" · "));
       }
       if (s.view.kind === "session" && s.view.id !== shownId) {
         shownId = s.view.id;

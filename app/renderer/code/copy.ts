@@ -4,6 +4,7 @@
  * The SDK's own names for its modes are kept beside Ember's words for them, as the Copilot app shows them. Pinned in
  * test/unit/code-copy.test.ts.
  */
+import { eventNoteWords } from "./copy-events";
 
 export const UNREACHABLE = "That didn't reach Ember. Try again.";
 
@@ -267,7 +268,7 @@ export function noteWords(note: string, f: Readonly<Record<string, string | numb
     case "abort": return "Stopped.";
     case "notification": return String(f.text ?? "");
     case "info": return `${f.message ?? ""}${f.tip ? ` ${f.tip}` : ""}`;
-    default: return "";
+    default: return eventNoteWords(note, f);
   }
 }
 export function hookWords(h: { hookType: string; state: string; error?: string }): string {

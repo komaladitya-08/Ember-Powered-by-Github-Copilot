@@ -16,13 +16,15 @@ import {
   agentState, agentWork, asksSaid, attachedNames, earlierItems, eventSummary, hookWords, noteWords, notSent, outputLabel, pathTail, problemLead, remedy,
   replySaid, sessionTitle, toolEnd, toolShape, toolTitle, transcriptEmpty,
 } from "./copy";
+import { SOURCES, pictureLabel, picturesWithheld, remedyAction, remedyButton, sourcesSummary } from "./copy-events";
 import { diffView } from "./diff-view";
 import { copyText, el } from "./dom";
+import { linkKind } from "./markdown";
 import { copyTarget, linkTarget, markdownNodes } from "./markdown-dom";
 import { permissionCard } from "./requests";
 import { shown as shownValue, str, sub } from "./sdk";
 import type { CodeState } from "./store";
-import type { Item, RequestItem, ToolItem, Transcript } from "./transcript";
+import type { Item, RequestItem, Source, ToolItem, Transcript } from "./transcript";
 
 /** Top-level items in the page at first, and how many more "Show earlier" adds. */
 export const WINDOW = 150;
@@ -162,24 +164,26 @@ export function mountTranscript(app: CodeApp, root: HTMLElement): { render(s: Co
       case "assistant": {
         const body = el("div", { className: "md" }, ...markdownNodes(item.text));
         if (item.streaming) body.append(el("span", { className: "caret", attrs: { "aria-hidden": "true" } }));
-        return el("div", { className: `msg copilot${item.streaming ? " streaming" : ""}` }, el("p", { className: "who", textContent: COPILOT }), body);
+        return el("div", { className: `msg copilot${item.streaming ? " streaming" : ""}` }, el("p", { className: "who", textContent: COPILOT }), body, item.sources?.length ? sourcesView(item.sources) : null);
       }
+      case "image": return el("figure", { className: "picture" }, ...pictureView(item.picture, 1, 1));
       case "reasoning": {
         const d = el("details", { className: "disclose reasoning" }, el("summary", { textContent: item.streaming ? THINKING : REASONING }), el("p", { className: "reasoning-text", textContent: item.text }));
         return d;
       }
       case "tool": return drawTool(item, s, sessionId, children, diffs);
-      case "note": return el("p", { className: `note n-${item.note}`, textContent: noteWords(item.note, item.fields), data: { status: item.note === "compaction" ? (item.fields.state === "running" ? "running" : item.fields.state === "failed" ? "failed" : "done") : item.note === "abort" ? "stopped" : "done" } });
+      case "note": return el("p", { className: `note n-${item.note}`, textContent: noteWords(item.note, item.fields), data: { status: noteStatus(item.note, item.fields) } });
       case "hook": return el("p", { className: "note n-hook", textContent: hookWords(item), data: { status: item.state === "running" ? "running" : item.state === "failed" ? "failed" : "done" } });
       case "problem": {
         const fix = remedy(item.remediation);
         const lead = problemLead(item.level, item.type);
+        const act = remedyControl(item.remediation);
         if (item.level === "warning") {
-          return el("div", { className: "problem warning", attrs: { role: "note" } }, el("p", { className: "problem-lead", textContent: `${lead}: ${item.message}` }), fix ? el("p", { className: "remedy", textContent: fix }) : null);
+          return el("div", { className: "problem warning", attrs: { role: "note" } }, el("p", { className: "problem-lead", textContent: `${lead}: ${item.message}` }), fix ? el("p", { className: "remedy", textContent: fix }) : null, act);
         }
         return el("div", { className: "problem error" },
           el("p", { className: "problem-lead", textContent: lead, data: { status: "failed" } }),
-          fix ? el("p", { className: "remedy", textContent: fix }) : null,
+          fix ? el("p", { className: "remedy", textContent: fix }) : null, act,
           item.message ? el("details", { className: "disclose" }, el("summary", { textContent: PROBLEM_DETAILS }), el("pre", { className: "detail", textContent: item.message })) : null);
       }
       case "request": return requestCard(item, { app, sessionId, arming, pending: s.pending[item.requestId], answering: s.answering[item.requestId] });
@@ -215,6 +219,11 @@ export function mountTranscript(app: CodeApp, root: HTMLElement): { render(s: Co
     const diff = diffs.get(item.toolCallId) ?? editDiff(item);
     if (shape === "edit" && diff) box.append(diffView(diff, title, { numbered: diffs.has(item.toolCallId) }));
     else if (shape === "edit" && item.fileEdits.length > 1) box.append(el("p", { className: "hint", textContent: item.fileEdits.map(f => pathTail(f.path)).join(", ") }));
+    if (item.pictures?.length) {
+      const of = item.pictures.length;
+      box.append(el("div", { className: "pictures" }, ...item.pictures.map((p, i) => el("figure", { className: "picture" }, ...pictureView(p, i + 1, of)))));
+    }
+    if (item.picturesWithheld) box.append(el("p", { className: "hint", textContent: picturesWithheld(item.picturesWithheld) }));
     const out = item.output || item.partial || "";
     if (out && (shape === "shell" || item.state !== "done")) {
       if (item.outputCut) box.append(el("p", { className: "hint", textContent: OUTPUT_CUT }));
@@ -237,10 +246,58 @@ export function mountTranscript(app: CodeApp, root: HTMLElement): { render(s: Co
     return box;
   }
 
+  /**
+   * The button under a problem for the remedy the SDK names, where the window can do it: sign-in opens Ember's settings
+   * at Copilot's sign-in (main: CODE_IPC.openSignIn), the sandbox's opens Customise › Sandbox, a rewind the Changes
+   * tab's rewind points. None where the stand-in or main has no way (the words above still say what to do).
+   */
+  function remedyControl(remediation: string | undefined): HTMLElement | null {
+    const a = remedyAction(remediation);
+    if (!a || (a === "sign-in" && !app.api.openSignIn)) return null;
+    const b = el("button", { type: "button", className: "btn quiet small remedy-act", textContent: remedyButton(a), data: { focus: `remedy-${a}` } });
+    b.addEventListener("click", () => {
+      if (a === "sign-in") app.api.openSignIn?.();
+      else if (a === "sandbox") app.showView({ kind: "customise", section: "sandbox" });
+      else app.setUi({ panelOpen: true, panelTab: "changes" });
+    });
+    return el("div", { className: "remedy-actions" }, b);
+  }
+
   return {
     render,
     firstOpenRequest: () => list.querySelector<HTMLElement>(".card:not(.resolved)"),
   };
+}
+
+/** The state symbol a note carries: under way, failed, stopped or done. */
+function noteStatus(note: string, f: Readonly<Record<string, string | number | boolean | undefined>>): string {
+  if (note === "compaction" || note === "workflow") return f.state === "running" ? "running" : f.state === "failed" || f.state === "errored" ? "failed" : f.state === "cancelled" ? "stopped" : "done";
+  if (note === "task") return f.outcome === "blocked" ? "failed" : "done";
+  if (note === "reconnect" || note === "deselected" || note === "tier") return "failed";
+  return note === "abort" ? "stopped" : "done";
+}
+
+/**
+ * A picture: an <img> of the data URL images.ts built and checked (never a URL from the payload), with its words as its
+ * text alternative; it neither navigates nor loads anything (the page's CSP allows data: images only).
+ */
+function pictureView(p: { src: string; description?: string }, n: number, of: number): Node[] {
+  const label = pictureLabel(p.description, n, of);
+  const img = el("img", { className: "picture-img", attrs: { alt: label, src: p.src, draggable: "false", decoding: "async", loading: "lazy" } });
+  return [img, p.description ? el("figcaption", { className: "hint", textContent: p.description }) : null].filter((x): x is HTMLElement => !!x);
+}
+
+/** A reply's cited sources, folded: each a web link (opened by main) or a file named, never a navigation of the window. */
+function sourcesView(sources: readonly Source[]): HTMLElement {
+  const items = sources.map(s => {
+    if (s.url && linkKind(s.url) === "web") {
+      const a = el("a", { className: "md-link", textContent: s.title, attrs: { href: s.url, title: s.url } });
+      a.dataset.href = s.url;
+      return el("li", {}, a);
+    }
+    return el("li", {}, el("span", { textContent: s.title }), s.path && s.path !== s.title ? el("span", { className: "md-href", textContent: ` (${pathTail(s.path)})` }) : null);
+  });
+  return el("details", { className: "disclose sources" }, el("summary", { textContent: `${SOURCES}: ${sourcesSummary(sources.length)}` }), el("ul", { className: "source-list" }, ...items));
 }
 
 /** Focus that was in a redrawn item goes to the same control in its new drawing, or to the item itself. */
