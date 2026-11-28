@@ -451,7 +451,9 @@
         if (panels.fail[c.method]) return { ok: false, reason: panels.fail[c.method] };
         return { ok: true, value: panelRpc[c.method](c, l) };
       }
-      const cz = customise(c);
+      // Customise's journey scripted some of the methods the panel tabs' journey scripted below (schedules, agents):
+      // the panel tabs' journey (window.__fakeFilesDiff) gets its own answers.
+      const cz = window.__fakeFilesDiff ? null : customise(c);
       if (cz) return cz;
       switch (c.method) {
         case "models.list": return { ok: true, value: { models: [
