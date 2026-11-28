@@ -12,10 +12,27 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { CODE_LIMITS, type CodeActor, type CodeIsolation, type CodeProject } from "../../shared/code";
+import { CODE_EFFORTS, CODE_LIMITS, type CodeActor, type CodeDefaults, type CodeIsolation, type CodeProject } from "../../shared/code";
 
 const Text = (max: number) => z.string().max(max);
 const Folder = z.string().min(1).max(4096);
+
+/** The person's defaults for a new session (CodeDefaults): everyone's, or a project's. */
+export const DefaultsSchema = z.object({
+  permissionMode: z.enum(["manual", "assisted", "allow-all"]).optional(),
+  agentMode: z.enum(["interactive", "plan", "autopilot"]).optional(),
+  model: Text(200).min(1).optional(),
+  reasoningEffort: z.enum(CODE_EFFORTS).optional(),
+  isolation: z.enum(["folder", "worktree"]).optional(),
+}).strict();
+
+/** A session's options kept to apply again as it opens (CodeSessionOptions). */
+export const SessionOptionsSchema = z.object({
+  reasoningSummary: z.enum(["none", "concise", "detailed"]).optional(),
+  contextTier: z.enum(["default", "long_context"]).optional(),
+  excludedTools: z.array(Text(200).regex(/^[A-Za-z0-9_.:*/-]+$/)).max(CODE_LIMITS.excludedTools).optional(),
+  coauthor: z.boolean().optional(),
+}).strict();
 
 const ProjectSchema = z.object({
   id: Text(64).min(1),
@@ -25,6 +42,11 @@ const ProjectSchema = z.object({
   repository: Text(400).optional(),
   branch: Text(400).optional(),
   addedAt: z.number().int().nonnegative(),
+  defaults: DefaultsSchema.optional(),
+  /** The person's own instructions for Copilot in this project (appended to the system message). */
+  instructions: Text(CODE_LIMITS.instructions).optional(),
+  /** Extra folders from main's picker (`additionalDirectories`). */
+  folders: z.array(Folder).max(CODE_LIMITS.folders).optional(),
 }).strict();
 
 const SessionSchema = z.object({
@@ -49,12 +71,15 @@ const SessionSchema = z.object({
   permissionMode: z.enum(["manual", "assisted", "allow-all"]).optional(),
   agentMode: z.enum(["interactive", "plan", "autopilot"]).optional(),
   model: Text(200).optional(),
+  options: SessionOptionsSchema.optional(),
 }).strict();
 
 const IndexSchema = z.object({
   version: z.literal(1),
   projects: z.array(ProjectSchema).max(10_000),
   sessions: z.record(Text(200).min(1), SessionSchema),
+  /** Everyone's defaults for a new session (a project's own win over them). */
+  defaults: DefaultsSchema.optional(),
 }).strict();
 
 export type IndexProject = z.infer<typeof ProjectSchema>;
@@ -133,6 +158,31 @@ export class SessionIndex {
     this.data.projects.push(added);
     this.save();
     return added;
+  }
+
+  /** Everyone's defaults for a new session. */
+  defaults(): CodeDefaults { return { ...(this.data.defaults ?? {}) }; }
+
+  /** Replaces everyone's defaults (checked; an empty object clears them). False when they aren't valid. */
+  setDefaults(d: CodeDefaults): boolean {
+    const checked = DefaultsSchema.safeParse(d);
+    if (!checked.success) return false;
+    if (Object.keys(checked.data).length) this.data.defaults = checked.data; else delete this.data.defaults;
+    this.save();
+    return true;
+  }
+
+  /** Changes a project's own settings (defaults, instructions, folders); undefined clears one. False for none or invalid. */
+  updateProject(id: string, change: Partial<Pick<IndexProject, "defaults" | "instructions" | "folders">>): boolean {
+    const at = this.data.projects.findIndex(p => p.id === id);
+    if (at < 0) return false;
+    const next: Record<string, unknown> = { ...this.data.projects[at], ...change };
+    for (const k of Object.keys(next)) if (next[k] === undefined || (k === "defaults" && !Object.keys(next[k] as object).length) || (k === "instructions" && next[k] === "") || (k === "folders" && !(next[k] as unknown[]).length)) delete next[k];
+    const checked = ProjectSchema.safeParse(next);
+    if (!checked.success) return false;
+    this.data.projects[at] = checked.data;
+    this.save();
+    return true;
   }
 
   removeProject(id: string): boolean {

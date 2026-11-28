@@ -8,7 +8,7 @@
  */
 
 import { z } from "zod";
-import { CODE_IPC, CODE_LIMITS, type CodeActor } from "../../shared/code";
+import { CODE_EFFORTS, CODE_IPC, CODE_LIMITS, type CodeActor } from "../../shared/code";
 import { CODE_REFUSALS, refuse } from "./guards";
 import type { CodeCommand, CodeHub } from "./hub";
 
@@ -103,6 +103,21 @@ const Rpc = z.object({
   params: Json.optional(),
 }).strict();
 
+const Defaults = z.object({
+  permissionMode: Mode.optional(), agentMode: Agent.optional(), model: z.string().min(1).max(200).optional(),
+  reasoningEffort: z.enum(CODE_EFFORTS).optional(), isolation: z.enum(["folder", "worktree"]).optional(),
+}).strict();
+const SettingsChange = z.object({
+  projectId: Id.optional(), defaults: Defaults.optional(), instructions: z.string().max(CODE_LIMITS.instructions).optional(),
+}).strict();
+const Options = z.object({
+  reasoningSummary: z.enum(["none", "concise", "detailed"]).optional(),
+  contextTier: z.enum(["default", "long_context"]).optional(),
+  excludedTools: z.array(z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:*/-]+$/)).max(CODE_LIMITS.excludedTools).optional(),
+  coauthor: z.boolean().optional(),
+}).strict();
+const FolderChange = z.union([z.object({ add: z.literal(true) }).strict(), z.object({ remove: PathText }).strict()]);
+
 /** Each channel's arguments, exactly, and the command they become. */
 export const CODE_ARGS = {
   list: { args: z.tuple([]), command: (): CodeCommand => ({ type: "list" }) },
@@ -130,6 +145,11 @@ export const CODE_ARGS = {
   markRead: { args: z.tuple([Id]), command: ([sessionId]: [string]): CodeCommand => ({ type: "markRead", sessionId }) },
   listFolder: { args: z.tuple([Id, RelPath]), command: ([sessionId, relDir]: [string, string]): CodeCommand => ({ type: "listFolder", sessionId, relDir }) },
   readFile: { args: z.tuple([Id, RelPath.min(1)]), command: ([sessionId, relPath]: [string, string]): CodeCommand => ({ type: "readFile", sessionId, relPath }) },
+  settings: { args: z.union([z.tuple([]), z.tuple([Id])]), command: ([projectId]: [string?]): CodeCommand => ({ type: "settings", ...(projectId ? { projectId } : {}) }) },
+  setSettings: { args: z.tuple([SettingsChange]), command: ([change]: [z.infer<typeof SettingsChange>]): CodeCommand => ({ type: "setSettings", change }) },
+  projectFolders: { args: z.tuple([Id, FolderChange]), command: ([projectId, change]: [string, z.infer<typeof FolderChange>]): CodeCommand => ({ type: "projectFolders", projectId, change }) },
+  sessionOptions: { args: z.tuple([Id]), command: ([sessionId]: [string]): CodeCommand => ({ type: "sessionOptions", sessionId }) },
+  configure: { args: z.tuple([Id, Options]), command: ([sessionId, options]: [string, z.infer<typeof Options>]): CodeCommand => ({ type: "configure", sessionId, options }) },
 } as const;
 
 type Channel = keyof typeof CODE_ARGS;

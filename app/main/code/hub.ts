@@ -20,8 +20,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { CopilotClient, SessionEvent } from "@github/copilot-sdk";
 import type {
-  CodeActor, CodeAgentMode, CodeAttached, CodeAttachment, CodeCreate, CodeDone, CodeEventEnvelope, CodeFileRead, CodeFolderListing,
-  CodePendingRequest, CodePermissionMode, CodeProject, CodeRequestAnswer, CodeRpcCall, CodeSdkEvent, CodeSend, CodeSessionRow,
+  CodeActor, CodeAgentMode, CodeAttached, CodeAttachment, CodeCreate, CodeDefaults, CodeDone, CodeEventEnvelope, CodeFileRead, CodeFolderListing,
+  CodePendingRequest, CodePermissionMode, CodeProject, CodeRequestAnswer, CodeRpcCall, CodeSdkEvent, CodeSend, CodeSessionOptions, CodeSessionRow,
+  CodeSettings, CodeSettingsChange,
 } from "../../shared/code";
 import { CODE_IPC, CODE_LIMITS, linkRefusal } from "../../shared/code";
 import type { AuditEntry } from "../policy/audit";
@@ -65,7 +66,12 @@ export type CodeCommand =
   | { type: "openLink"; url: string }
   | { type: "markRead"; sessionId: string }
   | { type: "listFolder"; sessionId: string; relDir: string }
-  | { type: "readFile"; sessionId: string; relPath: string };
+  | { type: "readFile"; sessionId: string; relPath: string }
+  | { type: "settings"; projectId?: string }
+  | { type: "setSettings"; change: CodeSettingsChange }
+  | { type: "projectFolders"; projectId: string; change: { add: true } | { remove: string } }
+  | { type: "sessionOptions"; sessionId: string }
+  | { type: "configure"; sessionId: string; options: CodeSessionOptions };
 
 /** What each command answers. */
 export interface CodeAnswers {
@@ -90,6 +96,11 @@ export interface CodeAnswers {
   markRead: void;
   listFolder: CodeDone<CodeFolderListing>;
   readFile: CodeDone<CodeFileRead>;
+  settings: CodeDone<CodeSettings>;
+  setSettings: CodeDone<CodeSettings>;
+  projectFolders: CodeDone<string[]>;
+  sessionOptions: CodeDone<CodeSessionOptions>;
+  configure: CodeDone<CodeSessionOptions>;
 }
 
 /** Where a change goes: one window's events, or every window's rows and requests. */
@@ -98,7 +109,8 @@ export type CodeEmit = (channel: (typeof CODE_IPC)["event" | "row" | "request"],
 /** What a session is to the hub (SessionRuntime, or a fake in tests). */
 export type CodeSessionLike = Pick<SessionRuntime,
   "id" | "folder" | "name" | "model" | "permissionMode" | "agentMode" | "busy" | "sandbox" | "closed" | "waiting" |
-  "requests" | "respond" | "send" | "interrupt" | "setPermissionMode" | "setAgentMode" | "rename" | "rpc" | "history" | "bounded" | "trustChanged" | "restrict" | "stop" | "close">;
+  "requests" | "respond" | "send" | "interrupt" | "setPermissionMode" | "setAgentMode" | "rename" | "rpc" | "history" | "bounded" | "trustChanged" | "restrict" | "stop" | "close">
+  & Partial<Pick<SessionRuntime, "configure">>;
 
 export interface CodeHubDeps {
   /** "Before Ember starts" agreed to. */
@@ -228,6 +240,11 @@ export class CodeHub {
       case "markRead": this.markRead(c.sessionId, from); return undefined;
       case "listFolder": return this.listFolder(c.sessionId, c.relDir);
       case "readFile": return this.readFile(c.sessionId, c.relPath);
+      case "settings": return this.settings(c.projectId);
+      case "setSettings": return this.setSettings(c.change, actor);
+      case "projectFolders": return this.projectFolders(c.projectId, c.change, actor);
+      case "sessionOptions": return this.sessionOptions(c.sessionId);
+      case "configure": return this.configure(c.sessionId, c.options, actor);
     }
   }
 
@@ -297,7 +314,8 @@ export class CodeHub {
 
   // ── Sessions ─────────────────────────────────────────────────────────────────────────────────────────────────
 
-  private async create(o: CodeCreate, actor: CodeActor): Promise<CodeDone<CodeSessionRow>> {
+  private async create(asked: CodeCreate, actor: CodeActor): Promise<CodeDone<CodeSessionRow>> {
+    let o = asked;
     const policy = this.gate();
     const access = this.d.access();
     if (!access) throw new CodeUnavailable(CODE_REFUSALS.offline);
@@ -313,6 +331,16 @@ export class CodeHub {
       if (!picked) return refuse(CODE_REFUSALS.picked);
       project = await this.projectFor(picked);
     }
+    // What the start named wins; what it left out is the person's defaults (the project's over everyone's).
+    const d = this.userDefaults(project.id);
+    o = {
+      ...o,
+      ...(o.isolation === undefined && d.isolation === "worktree" && project.gitRoot ? { isolation: "worktree" } : {}),
+      ...(o.model === undefined && d.model ? { model: d.model } : {}),
+      ...(o.reasoningEffort === undefined && o.model === undefined && d.reasoningEffort ? { reasoningEffort: d.reasoningEffort } : {}),
+      ...(o.permissionMode === undefined && d.permissionMode ? { permissionMode: d.permissionMode } : {}),
+      ...(o.agentMode === undefined && d.agentMode ? { agentMode: d.agentMode } : {}),
+    };
     const id = crypto.randomUUID();
     const isolation = o.isolation ?? "folder";
     let folder = project.folder;
@@ -375,7 +403,9 @@ export class CodeHub {
     const denied = await this.denied(id);
     const log = this.logs.get(id) ?? new EventLog(id);
     this.logs.set(id, log);
+    const setup = await this.setupFor(record);
     const making = (this.d.open ?? SessionRuntime.open)({
+      ...(setup ? { setup } : {}),
       client, id, resume, folder, denied, place: { ...this.d.place(), ember: protectedPaths }, stateDir: sessionStateDir(this.d.runtimeHome(), id),
       policy, access: { ...(access.model ? { model: access.model } : {}), ...(access.provider ? { provider: access.provider } : !access.provider && access.gitHubToken ? { gitHubToken: access.gitHubToken } : {}) },
       log, start: start ?? { ...(record.permissionMode ? { permissionMode: record.permissionMode } : {}), ...(record.agentMode ? { agentMode: record.agentMode } : {}) },
@@ -772,6 +802,119 @@ export class CodeHub {
     const n = (this.unread.get(id) ?? this.index.session(id)?.unread ?? 0) + 1;
     this.unread.set(id, n);
     this.index.updateSession(id, { unread: n }, false);
+  }
+
+  // ── Defaults, a project's settings and a session's options ──────────────────────────────────────────────────
+
+  /**
+   * The person's defaults for a new session in project `projectId` (or anywhere, without one): the project's own over
+   * everyone's, field by field, with a permission mode the organisation's policy doesn't leave open dropped (the
+   * session then starts as manual). What a start or the companion leaves unnamed comes from here; other code in main
+   * (the companion's tools, Home) reads "the user's defaults" through this. Reads only Ember's own index.
+   */
+  userDefaults(projectId?: string): CodeDefaults {
+    const project = projectId ? this.index.project(projectId)?.defaults ?? {} : {};
+    const merged: CodeDefaults = { ...this.index.defaults(), ...project };
+    const modes = this.d.policy()?.permissionModes ?? [];
+    if (merged.permissionMode && !modes.includes(merged.permissionMode)) delete merged.permissionMode;
+    return merged;
+  }
+
+  private settingsView(projectId?: string): CodeSettings {
+    const p = projectId ? this.index.project(projectId) : undefined;
+    return {
+      defaults: this.index.defaults(),
+      ...(p ? { project: { ...(p.defaults ? { defaults: { ...p.defaults } } : {}), ...(p.instructions ? { instructions: p.instructions } : {}), ...(p.folders?.length ? { folders: [...p.folders] } : {}) } } : {}),
+      effective: this.userDefaults(p?.id),
+      permissionModes: [...(this.d.policy()?.permissionModes ?? [])],
+    };
+  }
+
+  /** Reads only Ember's own index: needs the feature on and consent, not the runtime. */
+  private settings(projectId?: string): CodeDone<CodeSettings> {
+    if (!this.d.enabled()) return refuse(CODE_REFUSALS.off);
+    if (!this.d.hasConsent()) return refuse(CODE_REFUSALS.consent);
+    if (projectId && !this.index.project(projectId)) return refuse(CODE_REFUSALS.project);
+    return { ok: true, value: this.settingsView(projectId) };
+  }
+
+  /**
+   * Everyone's or a project's defaults, and a project's instructions: the person's own choice, audited by what changed
+   * (keys and the instructions' length, never their words). A default mode the organisation forbids is refused.
+   */
+  private setSettings(c: CodeSettingsChange, actor: CodeActor): CodeDone<CodeSettings> {
+    const policy = this.gate();
+    if (c.projectId && !this.index.project(c.projectId)) return refuse(CODE_REFUSALS.project);
+    if (c.defaults?.permissionMode && !policy.permissionModes.includes(c.defaults.permissionMode)) return refuse(CODE_REFUSALS.modeRefused);
+    if (c.instructions !== undefined && !c.projectId) return refuse(CODE_REFUSALS.project);
+    if (c.instructions !== undefined && c.instructions.length > CODE_LIMITS.instructions) return refuse(CODE_REFUSALS.instructions);
+    if (c.defaults) {
+      const ok = c.projectId ? this.index.updateProject(c.projectId, { defaults: c.defaults }) : this.index.setDefaults(c.defaults);
+      if (!ok) return refuse(CODE_REFUSALS.badArgs);
+    }
+    if (c.instructions !== undefined && c.projectId && !this.index.updateProject(c.projectId, { instructions: c.instructions })) return refuse(CODE_REFUSALS.badArgs);
+    this.record(null, { phase: "settings", by: actor, scope: c.projectId ? "project" : "everyone", ...(c.defaults ? { defaults: Object.keys(c.defaults).sort() } : {}), ...(c.instructions !== undefined ? { instructionsChars: c.instructions.length } : {}) });
+    return { ok: true, value: this.settingsView(c.projectId) };
+  }
+
+  /**
+   * A project's extra folders: one added only from main's own folder picker, refused for Ember's own data (and for
+   * the project's own folder, which every session has already); one removed only if it is on the list.
+   */
+  private async projectFolders(projectId: string, change: { add: true } | { remove: string }, actor: CodeActor): Promise<CodeDone<string[]>> {
+    this.gate();
+    const p = this.index.project(projectId);
+    if (!p) return refuse(CODE_REFUSALS.project);
+    const now = p.folders ?? [];
+    let next: string[];
+    if ("remove" in change) {
+      if (!now.includes(change.remove)) return refuse(CODE_REFUSALS.folderPath);
+      next = now.filter(f => f !== change.remove);
+    } else {
+      if (now.length >= CODE_LIMITS.folders) return refuse(CODE_REFUSALS.tooManyFolders);
+      const picked = await this.d.pickFolder();
+      if (!picked) return refuse(CODE_REFUSALS.picked);
+      const folder = await usableFolder(picked, this.emberPaths());
+      if (folder === p.folder || now.includes(folder)) return { ok: true, value: [...now] };
+      next = [...now, folder];
+    }
+    if (!this.index.updateProject(projectId, { folders: next })) return refuse(CODE_REFUSALS.badArgs);
+    this.record(null, { phase: "settings", by: actor, scope: "project", folders: next.length });
+    return { ok: true, value: next };
+  }
+
+  private sessionOptions(id: string): CodeDone<CodeSessionOptions> {
+    if (!this.d.enabled()) return refuse(CODE_REFUSALS.off);
+    if (!this.d.hasConsent()) return refuse(CODE_REFUSALS.consent);
+    const r = this.index.session(id);
+    if (!r) return refuse(CODE_REFUSALS.unknown);
+    return { ok: true, value: { ...(r.options ?? {}), ...(r.options?.excludedTools ? { excludedTools: [...r.options.excludedTools] } : {}) } };
+  }
+
+  /** A session's options: changed now where it is open (`options.update`), and kept for every time it opens again. */
+  private async configure(id: string, options: CodeSessionOptions, actor: CodeActor): Promise<CodeDone<CodeSessionOptions>> {
+    this.gate();
+    const r = this.index.session(id);
+    if (!r) return refuse(CODE_REFUSALS.unknown);
+    const next: CodeSessionOptions = { ...(r.options ?? {}), ...options };
+    const s = await this.ensureOpen(id);
+    if (!s.configure) return refuse(CODE_REFUSALS.rpcUnsupported);
+    await this.rpcCall(() => s.configure!(next));
+    if (!this.index.updateSession(id, { options: next }, false)) return refuse(CODE_REFUSALS.badArgs);
+    this.record(id, { phase: "configure", by: actor, keys: Object.keys(options).sort(), ...(next.excludedTools ? { excludedTools: next.excludedTools.length } : {}) });
+    return { ok: true, value: next };
+  }
+
+  /** What session `record` opens with: its project's instructions and extra folders (each still usable), its options. */
+  private async setupFor(record: IndexSession): Promise<SessionRuntimeOptions["setup"] | undefined> {
+    const p = this.index.project(record.projectId);
+    const folders: string[] = [];
+    for (const f of p?.folders ?? []) {
+      // A folder gone, or now Ember's own data, is left out (never handed to the tools).
+      try { folders.push(await usableFolder(f, this.emberPaths())); } catch (err) { if (!(err instanceof FolderRefused)) this.d.log?.warn("code.folder_unusable", { err: err instanceof Error ? err.name : "unknown" }); }
+    }
+    const setup = { ...(p?.instructions ? { instructions: p.instructions } : {}), ...(folders.length ? { folders } : {}), ...(record.options ? { options: record.options } : {}) };
+    return Object.keys(setup).length ? setup : undefined;
   }
 
   /** An RPC result as a window gets it: redacted and bounded as events are. */

@@ -573,6 +573,11 @@
         ] } };
         case "schedule.list": return { ok: true, value: { entries: schedules.slice() } };
         case "schedule.stop": { const e = schedules.find(x => x.id === c.params.id); schedules = schedules.filter(x => x.id !== c.params.id); return { ok: true, value: e ? { entry: e } : {} }; }
+        // The real runtime's list (1.0.97, the mock model), titles as it gave them; web_fetch left out by the session.
+        case "tools.getCurrentMetadata": return { ok: true, value: { tools: [
+          { name: "bash", title: "Running command" }, { name: "view", title: "Viewing file" }, { name: "create", title: "Creating file" },
+          { name: "edit", title: "Editing file" }, { name: "grep" }, { name: "glob" }, { name: "task" }, { name: "docs-search", mcpServerName: "docs" },
+        ].filter(t => !(kept.options[c.sessionId]?.excludedTools ?? []).includes(t.name)) } };
         default: return { ok: false, reason: "Not in this test." };
       }
     },
@@ -598,7 +603,32 @@
     markRead(id) { calls.push(`markRead:${id}`); const r = sessions.get(id); if (r?.unread) { sessions.set(id, { ...r, unread: 0 }); for (const fn of listeners.row) fn(sessions.get(id)); } },
     onMicHeld(fn) { listeners.mic.add(fn); fn(micHeld); return () => listeners.mic.delete(fn); },
     openSignIn() { calls.push("openSignIn"); },
+    // The person's defaults, a project's settings and a session's options, as main keeps them in its index.
+    async settings(projectId) {
+      calls.push(`settings:${projectId ?? ""}`);
+      const p = projectId ? (kept.projects[projectId] ??= {}) : undefined;
+      return { ok: true, value: { defaults: { ...kept.defaults }, ...(p ? { project: JSON.parse(JSON.stringify(p)) } : {}), effective: { ...kept.defaults, ...(p?.defaults ?? {}) }, permissionModes: ["manual", "assisted"] } };
+    },
+    async setSettings(change) {
+      calls.push(`setSettings:${JSON.stringify(change)}`);
+      if (change.defaults?.permissionMode === "allow-all") return { ok: false, reason: "Your organisation doesn't allow that mode here." };
+      if (change.projectId) {
+        const p = (kept.projects[change.projectId] ??= {});
+        if (change.defaults) p.defaults = change.defaults;
+        if (change.instructions !== undefined) p.instructions = change.instructions;
+      } else if (change.defaults) kept.defaults = change.defaults;
+      return api.settings(change.projectId);
+    },
+    async projectFolders(projectId, change) {
+      calls.push(`projectFolders:${projectId}:${JSON.stringify(change)}`);
+      const p = (kept.projects[projectId] ??= {});
+      p.folders = "add" in change ? [...(p.folders ?? []), "/home/me/work/shared-lib"] : (p.folders ?? []).filter(f => f !== change.remove);
+      return { ok: true, value: p.folders.slice() };
+    },
+    async sessionOptions(id) { calls.push(`sessionOptions:${id}`); return { ok: true, value: { ...(kept.options[id] ?? {}) } }; },
+    async configure(id, options) { calls.push(`configure:${id}:${JSON.stringify(options)}`); kept.options[id] = { ...(kept.options[id] ?? {}), ...options }; return { ok: true, value: { ...kept.options[id] } }; },
   };
+  const kept = { defaults: {}, projects: {}, options: {} };
   window.emberCode = api;
   window.__fake = {
     calls, emit, sessions, pending, panels, request: openRequest, setRow,

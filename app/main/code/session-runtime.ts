@@ -23,7 +23,7 @@
 
 import path from "node:path";
 import type { CopilotClient, CopilotSession, PermissionRequestedData, ProviderConfig, SessionConfig, SessionEvent } from "@github/copilot-sdk";
-import type { CodeActor, CodeAgentMode, CodeAttachment, CodeEventEnvelope, CodePendingRequest, CodePermissionMode, CodeRequestKind, CodeSdkEvent } from "../../shared/code";
+import type { CodeActor, CodeAgentMode, CodeAttachment, CodeEventEnvelope, CodePendingRequest, CodePermissionMode, CodeRequestKind, CodeSdkEvent, CodeSessionOptions } from "../../shared/code";
 import { CODE_LIMITS } from "../../shared/code";
 import { JUDGE_CONTEXT, STOPPED_DECISION, judgeApproves, wireApproval } from "../agent/chat-permission";
 import type { ChatPolicy } from "../agent/chat-policy";
@@ -64,6 +64,12 @@ export interface SessionRuntimeOptions {
   log: EventLog;
   /** Model, effort, agent and modes to start with (create; on resume the kept modes). */
   start?: { model?: string; reasoningEffort?: string; agent?: string; name?: string; permissionMode?: CodePermissionMode; agentMode?: CodeAgentMode };
+  /**
+   * What the session is set up with each time it opens (the SDK doesn't keep these across a resume): the project's
+   * instructions appended to the system message, its extra folders (each already checked by the hub, never Ember's
+   * data) and the session's kept options.
+   */
+  setup?: { instructions?: string; folders?: readonly string[]; options?: CodeSessionOptions };
   redact?: ModelRedactor;
   onEnvelope(envelope: CodeEventEnvelope): void;
   onRequest(change: RequestChange): void;
@@ -217,6 +223,7 @@ export class SessionRuntime {
       enableHostGitOperations: true, enableSessionStore: true, infiniteSessions: { enabled: true },
       // A repository's own hooks run commands: off until the sandbox is on and the user trusts the folder (trustChanged).
       enableFileHooks: false,
+      ...setupConfig(o.setup),
       ...(o.policy.managedSettings.permissions ? { managedSettings: o.policy.managedSettings } : {}),
       onEvent: e => this.ingest(e, true),
       // Answered by id from the event (respond): the handler has none to give, so the request stays pending.
@@ -462,6 +469,17 @@ export class SessionRuntime {
     this.o.onFacts();
   }
 
+  /**
+   * Changes the session's options now (`options.update`: probed on runtime 1.0.97, each takes effect from the next
+   * model call); throws CodeUnavailable when the runtime turns it down. Only these keys: never the sandbox, a mode or a
+   * tool allow-list that could widen what the session reaches.
+   */
+  async configure(o: CodeSessionOptions): Promise<void> {
+    if (this.closed) throw new CodeUnavailable(CODE_REFUSALS.closed);
+    const applied = await this.session.rpc.options.update(optionsUpdate(o));
+    if (!applied.success) throw new CodeUnavailable("Copilot couldn't change that for this session.");
+  }
+
   /** A session RPC method by its dotted name (the hub has checked it against the allow-list and the guards). */
   async rpc(method: string, params: unknown): Promise<unknown> {
     if (this.closed) throw new CodeUnavailable(CODE_REFUSALS.closed);
@@ -528,6 +546,34 @@ export class SessionRuntime {
     this.o.onFacts();
     if (failure) throw failure;
   }
+}
+
+/** A session's kept options as `options.update` takes them (the same keys as SessionConfig's, but co-author's name). */
+export function optionsUpdate(o: CodeSessionOptions): { reasoningSummary?: "none" | "concise" | "detailed"; contextTier?: "default" | "long_context"; excludedTools?: string[]; coauthorEnabled?: boolean } {
+  return {
+    ...(o.reasoningSummary ? { reasoningSummary: o.reasoningSummary } : {}),
+    ...(o.contextTier ? { contextTier: o.contextTier } : {}),
+    ...(o.excludedTools ? { excludedTools: [...o.excludedTools] } : {}),
+    ...(o.coauthor !== undefined ? { coauthorEnabled: o.coauthor } : {}),
+  };
+}
+
+/**
+ * The part of a session's config its setup gives (probed on runtime 1.0.97 with the mock model: an appended system
+ * message reaches the model, on create and again on resume, where the earlier one is gone unless given again; an extra
+ * folder's files are read with a permission request like any path outside the folder; an excluded tool isn't offered).
+ */
+export function setupConfig(setup: SessionRuntimeOptions["setup"]): Partial<SessionConfig> {
+  if (!setup) return {};
+  const o = setup.options ? optionsUpdate(setup.options) : {};
+  return {
+    ...(setup.instructions?.trim() ? { systemMessage: { mode: "append" as const, content: setup.instructions } } : {}),
+    ...(setup.folders?.length ? { additionalDirectories: [...setup.folders] } : {}),
+    ...(o.reasoningSummary ? { reasoningSummary: o.reasoningSummary } : {}),
+    ...(o.contextTier ? { contextTier: o.contextTier } : {}),
+    ...(o.excludedTools?.length ? { excludedTools: o.excludedTools } : {}),
+    ...(o.coauthorEnabled !== undefined ? { coauthorEnabled: o.coauthorEnabled } : {}),
+  };
 }
 
 /** Whether an answer only refuses (what Stop still lets through). */

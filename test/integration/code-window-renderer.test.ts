@@ -215,7 +215,7 @@ describe.skipIf(gate)("the coding window", () => {
     await page.keyboard.type("customise");
     await page.keyboard.press("Enter");
     await expect.poll(() => page.locator("#customise-view").isVisible()).toBe(true);
-    expect(await page.locator(".c-nav .c-link").allTextContents()).toEqual(["Models", "MCP servers", "Skills", "Plugins", "Agents", "Instructions", "Hooks", "Permissions", "Sandbox", "Schedules", "Usage", "Companion"]);
+    expect(await page.locator(".c-nav .c-link").allTextContents()).toEqual(["Models", "MCP servers", "Skills", "Plugins", "Agents", "Instructions", "Hooks", "Permissions", "Sandbox", "Schedules", "Usage", "Defaults", "Session settings", "Companion"]);
     // The panel's tabs, with their empty states, moved between with the arrow keys.
     await page.getByRole("button", { name: "Show panel" }).click();
     await expect.poll(() => page.getByRole("tab").allTextContents()).toEqual(["Changes", "Plan", "Files", "Terminal", "Agents and tasks"]);

@@ -145,6 +145,65 @@ export interface CodeCreate {
   name?: string;
 }
 
+/** The SDK's reasoning efforts, as they are. */
+export const CODE_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+/**
+ * What a new session starts with when the start flow (or the companion) names nothing: the person's own choice, kept in
+ * Ember's index for every project and per project (a project's wins). The organisation's policy still wins over both.
+ */
+export interface CodeDefaults {
+  permissionMode?: CodePermissionMode;
+  agentMode?: CodeAgentMode;
+  model?: string;
+  reasoningEffort?: (typeof CODE_EFFORTS)[number];
+  isolation?: CodeIsolation;
+}
+
+/**
+ * A session's options that the SDK takes when it starts and changes later (`options.update`), kept in Ember's index
+ * and applied again each time the session opens: how much of the model's reasoning it summarises, the long context
+ * tier, the built-in tools it leaves out, and whether its commits name Copilot as co-author.
+ */
+export interface CodeSessionOptions {
+  reasoningSummary?: "none" | "concise" | "detailed";
+  contextTier?: "default" | "long_context";
+  /** Built-in tools left out, by the names `tools.getCurrentMetadata` lists. */
+  excludedTools?: string[];
+  coauthor?: boolean;
+}
+
+/** A project's own settings: its defaults, its instructions for Copilot, and folders its sessions may also use. */
+export interface CodeProjectSettings {
+  defaults?: CodeDefaults;
+  /**
+   * The person's own instructions for Copilot in this project, appended to every session's system message (the SDK's
+   * `systemMessage` in "append" mode) as it starts or opens again. Typed by the person in Customise, never by a model.
+   */
+  instructions?: string;
+  /** Extra folders the project's sessions work in too (`additionalDirectories`), each from main's own picker. */
+  folders?: string[];
+}
+
+/** What `settings` answers: the defaults for every project, the project's own, and what a new session would get. */
+export interface CodeSettings {
+  defaults: CodeDefaults;
+  project?: CodeProjectSettings;
+  /** The defaults in force for a new session there: the project's over everyone's, within the organisation's modes. */
+  effective: CodeDefaults;
+  /** The permission modes the organisation leaves open (a default it forbids is dropped). */
+  permissionModes: CodePermissionMode[];
+}
+
+/** A change to the settings: everyone's defaults (no projectId) or one project's, and that project's instructions. */
+export interface CodeSettingsChange {
+  projectId?: string;
+  /** Replaces the defaults at that scope (an empty object clears them). */
+  defaults?: CodeDefaults;
+  /** A project's instructions ("" clears them). */
+  instructions?: string;
+}
+
 /** A message to a session. */
 export interface CodeSend {
   sessionId: string;
@@ -245,6 +304,12 @@ export const CODE_LIMITS = {
   fileBytes: 1024 * 1024,
   /** Characters of a path relative to the session's folder that the window passes to `listFolder` or `readFile`. */
   relPath: 4096,
+  /** Characters of a project's instructions for Copilot. */
+  instructions: 20_000,
+  /** Extra folders one project's sessions may use. */
+  folders: 20,
+  /** Built-in tools one session may leave out. */
+  excludedTools: 200,
 } as const;
 
 /**
@@ -344,6 +409,16 @@ export const CODE_IPC = {
   openCompanionSettings: "code:open-companion-settings",
   /** () => void: opens Ember's settings at Copilot's sign-in (a session's "sign in" remedy; Home owns the sign-in). */
   openSignIn: "code:open-sign-in",
+  /** (projectId?) => CodeDone<CodeSettings>: the person's defaults, and a project's own settings. */
+  settings: "code:settings",
+  /** (CodeSettingsChange) => CodeDone<CodeSettings> */
+  setSettings: "code:set-settings",
+  /** (projectId, { add: true } | { remove: folder }) => CodeDone<string[]>: a project's extra folders (add: main's picker). */
+  projectFolders: "code:project-folders",
+  /** (sessionId) => CodeDone<CodeSessionOptions>: the options kept for a session. */
+  sessionOptions: "code:session-options",
+  /** (sessionId, CodeSessionOptions) => CodeDone<CodeSessionOptions>: changed now (`options.update`) and kept. */
+  configure: "code:configure",
 } as const;
 
 /** The API the coding window's preload exposes as `window.emberCode`. */
@@ -386,4 +461,12 @@ export interface EmberCodeApi {
   openCompanionSettings?(): void;
   /** Opens Ember's settings at Copilot's sign-in, where a session's error names signing in as its remedy. */
   openSignIn?(): void;
+  /** The person's defaults for new sessions, and a project's own settings. */
+  settings?(projectId?: string): Promise<CodeDone<CodeSettings>>;
+  setSettings?(change: CodeSettingsChange): Promise<CodeDone<CodeSettings>>;
+  /** Adds a folder (main's picker) to a project's extra folders, or removes one of them. */
+  projectFolders?(projectId: string, change: { add: true } | { remove: string }): Promise<CodeDone<string[]>>;
+  /** A session's kept options, and a change to them (applied now where the SDK allows it, and kept). */
+  sessionOptions?(sessionId: string): Promise<CodeDone<CodeSessionOptions>>;
+  configure?(sessionId: string, options: CodeSessionOptions): Promise<CodeDone<CodeSessionOptions>>;
 }

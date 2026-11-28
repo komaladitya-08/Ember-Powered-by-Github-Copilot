@@ -42,13 +42,13 @@ afterAll(async () => { if (gate) return; await browser.close(); server.close(); 
 afterEach(async () => { if (!gate) await Promise.all(browser.contexts().map(context => context.close())); });
 
 /** The window with "Fix the login redirect" shown. */
-async function open(opts: { viewport?: { width: number; height: number }; colorScheme?: "dark" | "light"; forced?: boolean } = {}): Promise<Page & { errors: string[]; requests: string[] }> {
+async function open(opts: { viewport?: { width: number; height: number }; colorScheme?: "dark" | "light"; forced?: boolean } = {}): Promise<Page & { errors: string[]; loaded: string[] }> {
   const context = await browser.newContext({ viewport: opts.viewport ?? { width: 1280, height: 900 }, deviceScaleFactor: 2, colorScheme: opts.colorScheme ?? "dark", ...(opts.forced ? { forcedColors: "active" as const } : {}) });
-  const page = await context.newPage() as Page & { errors: string[]; requests: string[] };
+  const page = await context.newPage() as Page & { errors: string[]; loaded: string[] };
   page.errors = [];
-  page.requests = [];
+  page.loaded = [];
   page.on("pageerror", e => page.errors.push(e.message));
-  page.on("request", r => page.requests.push(r.url()));
+  page.on("request", r => page.loaded.push(r.url()));
   await page.addInitScript({ path: FAKE });
   await page.goto(`http://127.0.0.1:${port}/app/renderer/code/index.html`);
   await page.locator(".s-open").first().click();
@@ -99,7 +99,7 @@ describe.skipIf(gate)("the coding window's rarer SDK events", () => {
     await page.locator("#transcript .remedy-act", { hasText: "Show the sandbox" }).click();
     await expect.poll(() => page.locator(".c-h").textContent()).toBe("Sandbox");
     // Nothing loaded from anywhere but the page's own origin (the pictures are data URLs).
-    expect(page.requests.filter(u => !u.startsWith(`http://127.0.0.1:${port}/`) && !u.startsWith("data:"))).toEqual([]);
+    expect(page.loaded.filter(u => !u.startsWith(`http://127.0.0.1:${port}/`) && !u.startsWith("data:"))).toEqual([]);
     expect(page.errors).toEqual([]);
   });
 
@@ -115,5 +115,72 @@ describe.skipIf(gate)("the coding window's rarer SDK events", () => {
       await shot(page, name);
       expect(page.errors).toEqual([]);
     }
+  });
+});
+
+/** Customise on `section` from the shown session. */
+async function customise(page: Page, section: string): Promise<void> {
+  await page.locator("#side-customise").click();
+  await page.locator(`.c-link[data-section="${section}"]`).click();
+  await expect.poll(() => page.locator(".c-body .cz-loading").count()).toBe(0);
+}
+
+describe.skipIf(gate)("the person's defaults, a project's settings and a session's options", () => {
+  it("saves defaults for every project and one project's own, with its instructions and an extra folder, and the start flow takes them", async () => {
+    const page = await open();
+    await customise(page, "defaults");
+    const all = page.locator(".cz-part").filter({ has: page.locator("h3", { hasText: "For every project" }) });
+    await expect.poll(() => all.locator("select").count()).toBe(5);
+    // A mode the organisation forbids is shown as such and can't be chosen.
+    expect(await all.locator("#cz-def-all-perm option[value='allow-all']").textContent()).toBe("Approve all (not allowed by your organisation)");
+    expect(await all.locator("#cz-def-all-perm option[value='allow-all']").isDisabled()).toBe(true);
+    await all.locator("#cz-def-all-perm").selectOption("assisted");
+    await all.locator("#cz-def-all-agent").selectOption("plan");
+    await all.getByRole("button", { name: "Save defaults" }).click();
+    await expect.poll(() => page.locator(".cz-said").textContent()).toBe("Saved. New sessions start with these.");
+    const project = page.locator(".cz-part").filter({ has: page.locator("h3", { hasText: "For this project" }) });
+    await expect.poll(() => project.locator("textarea").count()).toBe(1);
+    await project.locator("select[id^='cz-def-p-'][id$='-model']").selectOption("claude-sonnet-5");
+    await project.getByRole("button", { name: "Save defaults" }).click();
+    await project.locator("textarea").fill("Use British spelling in comments.");
+    await page.getByRole("button", { name: "Save instructions" }).click();
+    await expect.poll(() => page.locator(".cz-said").textContent()).toBe("Saved. Sessions read them as they start or open again.");
+    await page.getByRole("button", { name: "Add folder…" }).click();
+    await expect.poll(() => page.locator(".cz-row").filter({ hasText: "shared-lib" }).count()).toBe(1);
+    await shot(page, "defaults");
+    const c = await calls(page);
+    expect(c).toContain('setSettings:{"defaults":{"permissionMode":"assisted","agentMode":"plan"}}');
+    expect(c).toContain('setSettings:{"projectId":"p-app","defaults":{"model":"claude-sonnet-5"}}');
+    expect(c).toContain('setSettings:{"projectId":"p-app","instructions":"Use British spelling in comments."}');
+    expect(c).toContain('projectFolders:p-app:{"add":true}');
+    // The start flow preselects them for that project.
+    await page.locator(".c-head .btn").click();
+    await page.locator("#side-new").click();
+    await expect.poll(() => page.locator("#start-agent-mode").inputValue()).toBe("plan");
+    expect(await page.locator("#start-permissions").inputValue()).toBe("assisted");
+    await expect.poll(() => page.locator("#start-model").inputValue()).toBe("claude-sonnet-5");
+    await shot(page, "start-with-defaults");
+    expect(page.errors).toEqual([]);
+  });
+
+  it("changes a session's summaries, long context, co-author and built-in tools, and keeps them", async () => {
+    const page = await open();
+    await customise(page, "session-settings");
+    await expect.poll(() => page.locator(".cz-check input").count()).toBe(7);
+    await page.locator("select[id^='cz-summary-']").selectOption("detailed");
+    await page.locator("[id^='cz-long-']").check();
+    await page.locator("[id^='cz-coauthor-']").uncheck();
+    await page.getByLabel("bash (Running command)").uncheck();
+    await page.getByRole("button", { name: "Save session settings" }).click();
+    await expect.poll(() => page.locator(".cz-said").textContent()).toBe("Saved. Copilot uses them from its next step.");
+    expect(await calls(page)).toContain('configure:s-login:{"reasoningSummary":"detailed","contextTier":"long_context","coauthor":false,"excludedTools":["bash"]}');
+    await shot(page, "session-settings");
+    // Drawn again: the tool left out is still listed, off, so it can be turned back on.
+    await page.locator(".c-link[data-section='usage']").click();
+    await page.locator(".c-link[data-section='session-settings']").click();
+    await expect.poll(() => page.locator(".cz-check input").count()).toBe(7);
+    expect(await page.getByLabel("bash", { exact: true }).isChecked()).toBe(false);
+    expect(await page.locator("select[id^='cz-summary-']").inputValue()).toBe("detailed");
+    expect(page.errors).toEqual([]);
   });
 });

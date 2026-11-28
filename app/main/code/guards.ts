@@ -59,6 +59,8 @@ export const CODE_REFUSALS = {
   rpcKept: "Ember couldn't keep a value it doesn't hold. Type the value again.",
   folderPath: "That isn't a file or folder in this session's folder.",
   folderRead: "Ember couldn't read that.",
+  instructions: "Those instructions are too long. Shorten them.",
+  tooManyFolders: "That's as many extra folders as a project takes.",
 } as const;
 
 /**

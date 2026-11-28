@@ -46,6 +46,11 @@ const api: EmberCodeApi = {
   companionState: () => ipcRenderer.invoke(CODE_IPC.companionState),
   openCompanionSettings: () => { ipcRenderer.send(CODE_IPC.openCompanionSettings); },
   openSignIn: () => { ipcRenderer.send(CODE_IPC.openSignIn); },
+  settings: projectId => (projectId === undefined ? ipcRenderer.invoke(CODE_IPC.settings) : ipcRenderer.invoke(CODE_IPC.settings, projectId)),
+  setSettings: change => ipcRenderer.invoke(CODE_IPC.setSettings, change),
+  projectFolders: (projectId, change) => ipcRenderer.invoke(CODE_IPC.projectFolders, projectId, change),
+  sessionOptions: sessionId => ipcRenderer.invoke(CODE_IPC.sessionOptions, sessionId),
+  configure: (sessionId, options) => ipcRenderer.invoke(CODE_IPC.configure, sessionId, options),
   onShow: listener => listen<unknown>(CODE_IPC.show, v => { if (typeof v === "string" && v.length <= 200) listener(v); }),
 };
 

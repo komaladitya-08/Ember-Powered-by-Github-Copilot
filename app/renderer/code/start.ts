@@ -101,10 +101,30 @@ export function mountStart(app: CodeApp): StartView {
     setText(agentHint, agentModeHint(agentMode.value));
     setText(permissionHint, permissionModeHint(permission.value));
   };
+  /** The person's defaults for the project (main's `settings`: the project's over everyone's, within the organisation's modes). */
+  let wantedModel = "";
+  const has = (s: HTMLSelectElement, v: string) => [...s.options].some(o => o.value === v && !o.disabled);
+  const applyDefaults = (id: string) => {
+    if (!app.api.settings || !id || id === CHOOSE) return;
+    void app.api.settings(id).then(r => {
+      if (!r.ok || project.value !== id) return;
+      const d = r.value.effective;
+      if (d.isolation === "worktree" && !isolationTree.disabled) isolationTree.checked = true;
+      else isolationFolder.checked = true;
+      if (d.permissionMode && has(permission, d.permissionMode)) permission.value = d.permissionMode;
+      if (d.agentMode) agentMode.value = d.agentMode;
+      wantedModel = d.model ?? "";
+      if (has(model, wantedModel)) model.value = wantedModel;
+      drawEfforts(app.state);
+      if (d.reasoningEffort && has(effort, d.reasoningEffort)) effort.value = d.reasoningEffort;
+      drawWhere(app.state);
+      drawHints();
+    }, () => undefined);
+  };
 
   project.addEventListener("change", () => {
-    if (project.value !== CHOOSE) { drawWhere(app.state); return; }
-    void app.addProject().then(id => { project.value = id ?? project.options[0]?.value ?? ""; if (id) render(app.state, null); drawWhere(app.state); });
+    if (project.value !== CHOOSE) { drawWhere(app.state); applyDefaults(project.value); return; }
+    void app.addProject().then(id => { project.value = id ?? project.options[0]?.value ?? ""; if (id) render(app.state, null); drawWhere(app.state); applyDefaults(project.value); });
   });
   isolationFolder.addEventListener("change", () => drawWhere(app.state));
   isolationTree.addEventListener("change", () => drawWhere(app.state));
@@ -144,7 +164,7 @@ export function mountStart(app: CodeApp): StartView {
     }
     if (s.catalog.models !== lastModels) {
       lastModels = s.catalog.models;
-      const want = model.value;
+      const want = model.value || wantedModel;
       model.replaceChildren(el("option", { value: "", textContent: DEFAULT_MODEL }), ...(s.catalog.models ?? []).filter(m => m.enabled).map(m => el("option", { value: m.id, textContent: m.name })));
       model.value = s.catalog.models?.some(m => m.id === want) ? want : "";
       setText(modelsNote, s.catalog.modelsFailed ? MODELS_UNAVAILABLE : "");
@@ -165,6 +185,7 @@ export function mountStart(app: CodeApp): StartView {
     focus() {
       const v = app.state.view;
       if (v.kind === "start" && v.projectId && app.state.projects.byId[v.projectId]) { project.value = v.projectId; drawWhere(app.state); }
+      applyDefaults(project.value);
       app.set(s => setNote(s, "", "start", ""));
       void app.loadCatalog();
       title.focus();
