@@ -56,7 +56,7 @@ export interface SessionRuntimeOptions {
   denied: readonly string[];
   /** Where paths are judged (the OS, the home and Ember's paths) for the pre-tool hook. */
   place: SessionPlace["place"];
-  /** The SDK's own state for this session (`<COPILOT_HOME>/session-state/<id>`), its own even inside Ember's data. */
+  /** The SDK's own state for this session (`<COPILOT_HOME>/session-state/<id>`): its own, though the rest of COPILOT_HOME is Ember's. */
   stateDir: string;
   policy: ChatPolicy;
   access: CodeAccess;
@@ -121,6 +121,8 @@ export class SessionRuntime {
   private readonly redact: TextRedact;
   private locationKey?: string;
   private hooksOn = false;
+  /** Whether the sandbox gives the tools outbound network (the host's `network` capability). */
+  private network = false;
   private session!: CopilotSession;
 
   private constructor(private readonly o: SessionRuntimeOptions) {
@@ -154,10 +156,8 @@ export class SessionRuntime {
     try {
       if (sandboxable) {
         const network = has("network");
-        const applied = await owner.session.rpc.options.update({ sandboxConfig: {
-          enabled: true, allowBypass: false,
-          userPolicy: { filesystem: { deniedPaths: [...o.denied] }, network: { allowOutbound: network } },
-        } });
+        owner.network = network;
+        const applied = await owner.session.rpc.options.update({ sandboxConfig: owner.sandboxConfig(o.denied) });
         if (!applied.success) throw new CodeUnavailable("Copilot couldn't turn on the sandbox that keeps Ember's data safe.");
         const status = await owner.session.rpc.sandbox.getEnforcementStatus();
         if (status.blocked) throw new CodeUnavailable("Copilot's sandbox is blocked for this session, so it won't run.");
@@ -183,6 +183,22 @@ export class SessionRuntime {
       await owner.close().catch(() => undefined);
       throw err;
     }
+  }
+
+  /** The sandbox Ember sets: on, no bypass, `denied` denied to the tools, outbound network where the host gives it. */
+  private sandboxConfig(denied: readonly string[]) {
+    return { enabled: true, allowBypass: false, userPolicy: { filesystem: { deniedPaths: [...denied] }, network: { allowOutbound: this.network } } };
+  }
+
+  /**
+   * Sets the paths the sandbox denies again (another session's state folder appeared beside this one's: state.ts),
+   * for the commands the tools start from now on; false when the sandbox didn't take it (the hub then closes the
+   * session: fail closed). A session without a sandbox has nothing to set (its pre-tool hook judges every path).
+   */
+  async restrict(denied: readonly string[]): Promise<boolean> {
+    if (this.closed || this.sandbox === "off") return true;
+    const applied = await this.session.rpc.options.update({ sandboxConfig: this.sandboxConfig(denied) }).catch(() => ({ success: false }));
+    return applied.success;
   }
 
   /** The SDK session's config: full Copilot mode, the session's folder, Ember's policy, hooks and handlers. */

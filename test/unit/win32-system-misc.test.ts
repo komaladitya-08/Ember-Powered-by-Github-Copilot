@@ -31,6 +31,13 @@ describe("Windows paths", () => {
     expect(p.dataDirLabel("D:\\Throwaway", "settings.json")).toBe("D:\\Throwaway\\settings.json");
   });
 
+  it("keeps the coding runtime's state in %LOCALAPPDATA%\\ember-code, beside the data folder and never in it", () => {
+    const p = win32Paths({ env: ENV });
+    expect(p.codeState("C:\\Users\\Ana\\AppData\\Local\\ember", "C:\\Users\\Ana\\AppData\\Roaming", "C:\\Users\\Ana")).toBe("C:\\Users\\Ana\\AppData\\Local\\ember-code");
+    expect(p.codeState("c:\\users\\ana\\appdata\\local\\EMBER", "C:\\Users\\Ana\\AppData\\Roaming", "C:\\Users\\Ana")).toBe("C:\\Users\\Ana\\AppData\\Local\\ember-code");
+    expect(p.codeState("D:\\Throwaway", "C:\\Users\\Ana\\AppData\\Roaming", "C:\\Users\\Ana")).toBe("D:\\Throwaway-code");
+  });
+
   it("uses the Windows runtime and retries renames refused by antivirus or sync locks", () => {
     const p = win32Paths({ env: ENV, arch: "arm64" });
     expect([p.runtimeId, p.runtimeExe, p.renameRetries]).toEqual(["win32-arm64", "copilot-runtime.exe", 5]);

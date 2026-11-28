@@ -3,8 +3,11 @@
  * after a session ran a command and edited a file, Changes shows the real diff and a line comment goes back to Copilot;
  * a rewind of conversation and files puts the file back and the transcript is drawn again without what it took away;
  * Files lists the working folder through main and reads a file; Terminal runs the person's own command and shows its
- * output; Agents and tasks lists a background shell and starts a built-in agent; Plan answers Copilot's request to
- * leave plan mode from its own card; Customise › Models switches the model, Sandbox says what this computer has,
+ * output; Agents and tasks lists a background shell and starts a built-in agent; in plan mode Copilot writes its plan
+ * file in its own state folder under the sandbox, the Plan tab shows that file and saves an edit the model's next read
+ * sees, and Plan answers Copilot's request to leave plan mode from its own card; at the end a session's tools reach
+ * neither another session's state nor Ember's settings (the pre-tool hook for a named path, the sandbox for one named
+ * only as the command runs); Customise › Models switches the model, Sandbox says what this computer has,
  * Permissions adds a rule that lets a matching command run unasked, and MCP servers adds a local stdio server (written
  * into the test's temporary folder) whose tool a new session lists and the model is offered. Real Electron, renderer,
  * preload, IPC, session layer and Copilot runtime; only the model is a mock server. Runs with EMBER_CODE_LIVE=1 under
@@ -141,7 +144,7 @@ async function customise(page: Page, section: string): Promise<void> {
 }
 
 describe.skipIf(gate)("the coding window's panels and Customise on the real runtime", () => {
-  it("shows the real diff, sends a review, rewinds files and conversation, lists and reads the folder, runs the person's command, lists tasks, answers leaving plan mode, and changes models, rules and MCP servers", async () => {
+  it("shows the real diff, sends a review, rewinds files and conversation, lists and reads the folder, runs the person's command, lists tasks, writes and edits a plan under the sandbox, answers leaving plan mode, changes models, rules and MCP servers, and keeps sessions apart", async () => {
     const app = await launch();
     try {
       await expect.poll(() => !!pageOf(app, "code"), { timeout: 30_000 }).toBe(true);
@@ -228,8 +231,27 @@ describe.skipIf(gate)("the coding window's panels and Customise on the real runt
       await expect.poll(() => page.locator(".pk-note").textContent(), { timeout: 30_000 }).toBe("“Looker” started.");
       await expect.poll(() => rows.allTextContents(), { timeout: 30_000 }).toContain("Looker");
 
-      step("Plan: leaving plan mode from the tab");
+      step("Plan: Copilot writes its plan file in its own state (beside Ember's data, sandboxed), the tab shows and edits it");
       await page.evaluate(sid => window.emberCode!.setAgentMode(sid, "plan"), id);
+      const planFile = path.join(`${userData}-code`, "session-state", id, "plan.md");
+      const planMark = mock.requests.length;
+      await say(page, `Write the plan. ${call("create", { path: planFile, file_text: "# Plan\n\nWrite the plan file, then test." })}`);
+      // Polled: the background shell above ending starts a turn of its own, whose reply may end `say` first.
+      await expect.poll(() => fs.existsSync(planFile) && fs.readFileSync(planFile, "utf8"), { timeout: 60_000 }).toBe("# Plan\n\nWrite the plan file, then test.");
+      await expect.poll(() => mock.requests.slice(planMark).some(r => r.messages.some(m => m.role === "tool" && /Created file .*plan\.md/.test(text(m.content)))), { timeout: 30_000 }).toBe(true);
+      await expect.poll(() => page.locator("#composer-send").textContent(), { timeout: 30_000 }).toBe("Send");
+      await tab(page, "Plan");
+      const planSection = page.locator("section[aria-labelledby='pl-plan-h']");
+      await expect.poll(() => planSection.locator(".pl-doc").innerText(), { timeout: 30_000 }).toContain("Write the plan file, then test.");
+      await planSection.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator("#pl-editor").fill("# Plan\n\nEdited by hand: review first.");
+      await page.getByRole("button", { name: "Save plan" }).click();
+      await expect.poll(() => fs.readFileSync(planFile, "utf8"), { timeout: 30_000 }).toBe("# Plan\n\nEdited by hand: review first.");
+      await expect.poll(() => planSection.locator(".pl-doc").innerText(), { timeout: 30_000 }).toContain("Edited by hand: review first.");
+      await say(page, `Read the plan again. ${call("view", { path: planFile })}`);
+      await expect.poll(() => mock.requests.some(r => r.messages.some(m => m.role === "tool" && text(m.content).includes("Edited by hand: review first."))), { timeout: 30_000 }).toBe(true);
+
+      step("Plan: leaving plan mode from the tab");
       await page.locator("#composer-text").fill(`Plan it. ${call("exit_plan_mode", { summary: "Change the notes, then test." })}`);
       await page.locator("#composer-text").press("Enter");
       await expect.poll(() => page.getByRole("tab", { name: "Plan, needs you" }).count(), { timeout: 60_000 }).toBe(1);
@@ -313,6 +335,30 @@ describe.skipIf(gate)("the coding window's panels and Customise on the real runt
       expect(mock.requests.some(r => r.messages.some(m => m.role === "tool" && text(m.content).includes("PANELS")))).toBe(true);
       expect(await page.locator("#transcript").innerText()).toContain("Used “shout” from “shout”");
       expect(await page.locator("#transcript").innerText()).not.toMatch(/Event: (system\.message|session\.mcp_server_removed)/);
+
+      step("Isolation: a session's tools reach neither another session's state nor Ember's settings");
+      const stateRoot = `${userData}-code`;
+      const otherPlan = path.join(stateRoot, "session-state", id, "plan.md");
+      // Named outright, the pre-tool hook refuses it, sandbox or none.
+      await say(page, call("view", { path: otherPlan }), "Done. I used my tool.");
+      expect(mock.requests.some(r => r.messages.some(m => m.role === "tool" && text(m.content).includes("Ember's own data")))).toBe(true);
+      const sandbox = await page.evaluate(sid => window.__emberCode!.app.state.sessions.byId[sid]?.sandbox, second);
+      step(`sandbox: ${sandbox}`);
+      if (sandbox === "on" || sandbox === "no-network") {
+        // Named only once the command runs (so the hook can't see it): the sandbox itself refuses. The session's own
+        // event log, which the runtime grants it, is the control that the way of naming works.
+        const b64 = (p: string) => Buffer.from(p).toString("base64");
+        const cat = (p: string, out: string) => `cat "$(echo ${b64(p)} | base64 -d)" > ${out} 2>&1`;
+        const own = path.join(stateRoot, "session-state", second, "events.jsonl");
+        await say(page, call("bash", { command: `${cat(otherPlan, "iso-other.txt")}; ${cat(path.join(userData, "settings.json"), "iso-settings.txt")}; ${cat(own, "iso-own.txt")}; echo checked`, description: "isolation" }));
+        const other = fs.readFileSync(path.join(work, "iso-other.txt"), "utf8");
+        const settingsRead = fs.readFileSync(path.join(work, "iso-settings.txt"), "utf8");
+        expect(other).not.toContain("Edited by hand");
+        expect(other).toMatch(/No such file|Permission denied/);
+        expect(settingsRead).not.toContain("onboarded");
+        expect(settingsRead).toMatch(/No such file|Permission denied/);
+        expect(fs.readFileSync(path.join(work, "iso-own.txt"), "utf8")).toContain("session.start");
+      }
       expect(errors).toEqual([]);
     } finally {
       await quit(app);

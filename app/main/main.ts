@@ -240,8 +240,10 @@ app.setPath("userData", process.env.EMBER_USER_DATA ?? sys.paths.userData(app.ge
 // Windows toasts need the app's AppUserModelId, set before ready.
 if (sys.lifecycle.appUserModelId) app.setAppUserModelId(sys.lifecycle.appUserModelId);
 const userData = app.getPath("userData");
+// The coding runtime's state, beside the data folder so a session's sandbox can reach its own (docs/CODING-APP.md §3).
+const codeState = sys.paths.codeState(userData, app.getPath("appData"), app.getPath("home"));
 // One immutable logical/canonical selection feeds allocation and all local desktop self-protection gates.
-const codingStorage = selectCodingStorageBase();
+const codingStorage = selectCodingStorageBase([codeState]);
 // Private: settings, logs and the audit trail mention the user's apps and windows.
 try { fs.mkdirSync(userData, { recursive: true, mode: 0o700 }); fs.chmodSync(userData, 0o700); } catch { /* reported when used */ }
 
@@ -3975,11 +3977,11 @@ function start(): void {
     // Coding sessions (app/main/code/, docs/CODING-APP.md): dormant until settings.code.enabled is on, in a tokenless
     // runtime of their own in the SDK's full Copilot mode, behind consent, the organisation's policy and the kill
     // switch's "code" part. Folders and files come only from main's own pickers, owned by the coding window.
-    const codeRuntime = new CodeRuntime({ userData, runtimePath: runtime.path, env: process.env, redact: vaultRedactor });
+    const codeRuntime = new CodeRuntime({ userData, stateRoot: codeState, runtimePath: runtime.path, env: process.env, redact: vaultRedactor, log: log.child("code") });
     const codeOwner = () => BrowserWindow.getFocusedWindow() ?? undefined;
     const code = codeRef = new CodeHub({
       hasConsent: () => consented(), enabled: () => settings.get().code.enabled, policy: () => chatPolicy(admin),
-      vaultFilled: () => vaultRedactor.active, access: () => agent?.chatAccess() ?? null, client: () => codeRuntime.client(), userData,
+      vaultFilled: () => vaultRedactor.active, access: () => agent?.chatAccess() ?? null, client: () => codeRuntime.client(), userData, runtimeHome: () => codeRuntime.home,
       protectedPaths: () => emberPathsOf({ os: platform.os, userData, resourcesPath: process.resourcesPath, packaged: app.isPackaged, env: process.env, emberPaths: codingStorage.protectedPaths }),
       place: () => ({ os: platform.os, home: app.getPath("home") }),
       audit: () => audit, emit: (channel, payload, to) => { codeWindows.send(channel, payload, to); if (channel === CODE_IPC.request) announceCodingRequest(payload); }, log: log.child("code"), redact: vaultRedactor,

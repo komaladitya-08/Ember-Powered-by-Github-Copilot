@@ -373,6 +373,14 @@ export interface SystemPaths {
    * today's fixed text; win32/darwin: the real folder with the home folder shown as "~" (darwin) or "%LOCALAPPDATA%" (win32).
    */
   dataDirLabel(userData: string, file?: string): string;
+  /**
+   * Where the coding runtime keeps its sessions (COPILOT_HOME, docs/CODING-APP.md §3 "Ember's data"): a folder of its
+   * own beside Ember's data folder, never inside it, so a session's sandbox can deny the whole data folder and still
+   * let the runtime's tools write the session's own state (its plan). For a data folder EMBER_USER_DATA moved, the
+   * sibling `<userData>-code`. linux: `$XDG_STATE_HOME/ember-code` (an absolute one), else `~/.local/state/ember-code`;
+   * win32: `%LOCALAPPDATA%\ember-code`; darwin: `~/Library/Application Support/ember-code`.
+   */
+  codeState(userData: string, appData: string, home: string): string;
   /** How many times SettingsStore retries a rename refused with EPERM/EBUSY/EACCES (antivirus and sync locks). linux/darwin 0 (today); win32 5. */
   readonly renameRetries: number;
 }

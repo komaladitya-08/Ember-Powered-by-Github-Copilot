@@ -30,6 +30,9 @@ describe("darwinSystem", () => {
     expect(s.paths.dataDirLabel("/Volumes/Work/ember")).toBe("/Volumes/Work/ember");
     expect(s.paths.dataDirLabel("/Users/adam/ember")).toBe("/Users/adam/ember");
     expect(s.paths.renameRetries).toBe(0);
+    // The coding runtime's state: beside the data folder, never inside it.
+    expect(s.paths.codeState("/Users/ada/Library/Application Support/ember", "/Users/ada/Library/Application Support", "/Users/ada")).toBe("/Users/ada/Library/Application Support/ember-code");
+    expect(s.paths.codeState("/Volumes/Work/ember", "/Users/ada/Library/Application Support", "/Users/ada")).toBe("/Volumes/Work/ember-code");
   });
 
   it("names the Copilot runtime for this Mac's architecture", () => {

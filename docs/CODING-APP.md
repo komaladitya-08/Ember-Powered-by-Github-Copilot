@@ -71,6 +71,14 @@ What Ember keeps whatever the SDK allows. Each fails closed.
   told which mode stays. LOCKDOWN and `features.actions: false` keep coding sessions off.
 - **Ember's data:** its data folder, the audit log and the organisation's policy are denied paths in the SDK's
   sandbox, and a pre-tool hook refuses the SDK's file tools on them where there is no sandbox.
+- **A session's own state, and no other's:** the coding runtime keeps its state (COPILOT_HOME) in a folder of its
+  own beside the data folder (`SystemPaths.codeState`, app/main/code/state.ts), not inside it: a path the sandbox
+  grants doesn't open anything under a denied one (probed), so inside the data folder plan mode couldn't write its
+  `plan.md`. Each session's sandbox denies Ember's paths and, of that folder, every entry beside `session-state` (the
+  session store, logs, personal skills and instructions, MCP configuration, plugins) and every other session's folder
+  (`siblingDenials`: the folder itself can't be denied without its own state); when a session opens, every open
+  session's sandbox is set again to deny it too, and one that won't take it is closed. The pre-tool hook counts the
+  whole folder as Ember's data but for the session's own state. A folder that can't be read whole is denied whole.
 - **Sandbox:** on by default where the host supports it, with outbound network allowed (a coding agent installs
   packages); the user can switch it per session as in the Copilot app. Where the host has no sandbox the session
   runs without one and the start flow says so. A window's RPC call can never turn it off: only the setting can.
@@ -207,10 +215,19 @@ repository, a subfolder of it and a worktree) and test/integration/code-panels-l
   tokenless, so main gives those two the sign-in. Failed methods were said in the model service's words ("Check its
   API key"); they are said in Ember's now.
 - **The sandbox's remedy** is a long sentence ending in a docs address; the window quotes it without that.
-- **Plan mode can't write its plan under the sandbox.** Copilot writes `plan.md` in its session state, which lies in
+- **Plan mode couldn't write its plan under the sandbox.** Copilot writes `plan.md` in its session state, which lay in
   Ember's data folder, which the sandbox denies (a `readwritePaths` entry doesn't open a denied path, probed), so in
-  plan mode only `exit_plan_mode`'s summary reaches the Plan tab. Not changed here: it needs a decision on where the
-  coding runtime keeps its state.
+  plan mode only `exit_plan_mode`'s summary reached the Plan tab. A probe (bubblewrap, the mock model) found what the
+  runtime writes itself, unsandboxed: `events.jsonl`, `workspace.yaml`, `checkpoints/`, `rewind-file-snapshots/`,
+  `session.db` (the `sql` tool's to-dos) and the session store, so `sql` and `session_store_sql` worked all along; and
+  what its tools write through the sandbox: `plan.md` (the `create` and `edit` tools) and `files/` (granted read and
+  write; under a denied folder a write there went to a scratch copy and was lost). The sandbox's policy is a list of
+  grants: it gives a session its own `events.jsonl` (read), the runtime's `logs/` (read), its `files/` and in plan
+  mode its plan, and the temporary folder whole (large tool output is saved there). So the state moved beside the
+  data folder, other sessions' folders are denied by name, and test/integration/code-panels-live.test.ts writes a
+  plan, shows and edits it in the tab, has the model read the edit, and finds another session's state and Ember's
+  settings refused by the sandbox. Not changed here: large tool output in the temporary folder is readable by every
+  session's tools, and `session_store_sql` (in the runtime, unsandboxed) reads every session's history, as before.
 - **Not confirmed here** (they need a Copilot account or the network): `models.list`'s and `account.getQuota`'s answers,
   `mcp.oauth.login`'s address and status, `quota.*` with a plan, plugin installs and marketplaces, `history.compact`'s
   summary from a real model, `completions.request` (it answered no items and no trigger characters with the mock model).

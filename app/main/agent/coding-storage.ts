@@ -10,11 +10,12 @@ export interface CodingStorageBase {
   readonly protectedPaths: readonly string[];
 }
 
-export function selectCodingStorageBase(): CodingStorageBase {
+/** `also`: more of Ember's own folders the gates protect as its data (the coding runtime's state, outside the data folder). */
+export function selectCodingStorageBase(also: readonly string[] = []): CodingStorageBase {
   const name = `ember-coding-${process.getuid?.() ?? "unsupported"}`;
   const temporary = path.resolve(os.tmpdir());
   const logical = path.join(temporary, name);
   let common: string | null = null;
   try { common = path.join(fs.realpathSync.native(temporary), name); } catch { /* No canonical location: no allocation. */ }
-  return Object.freeze({ common, protectedPaths: Object.freeze([...new Set([logical, ...(common ? [common] : [])])]) });
+  return Object.freeze({ common, protectedPaths: Object.freeze([...new Set([logical, ...(common ? [common] : []), ...also.filter(p => path.isAbsolute(p))])]) });
 }

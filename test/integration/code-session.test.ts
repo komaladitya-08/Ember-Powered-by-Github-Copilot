@@ -15,7 +15,9 @@ import { locateRuntime, runtimeFor } from "../../app/main/agent/runtime";
 import { KillSwitch } from "../../app/main/agent/killswitch";
 import type { ChatPolicy } from "../../app/main/agent/chat-policy";
 import { AuditLog } from "../../app/main/policy/audit";
-import { CodeRuntime, codeClientOptions, codeRuntimeHome } from "../../app/main/code/runtime";
+import { CopilotClient } from "@github/copilot-sdk";
+import { CodeRuntime, codeClientOptions, legacyCodeHome } from "../../app/main/code/runtime";
+import { readPersistedHistory } from "../../app/main/code/session-runtime";
 import { CodeHub } from "../../app/main/code/hub";
 import { CODE_REFUSALS } from "../../app/main/code/guards";
 import type { CodeAttached, CodeEventEnvelope, CodePendingRequest, CodeSessionRow } from "../../app/shared/code";
@@ -48,7 +50,7 @@ async function until(test: () => boolean, ms = 20_000, step = 20): Promise<void>
 
 /** A hub over its own coding runtime in `userData`, with everything it sends collected by window. */
 function harness() {
-  const runtime = new CodeRuntime({ userData, runtimePath, env });
+  const runtime = new CodeRuntime({ userData, stateRoot: `${userData}-code`, runtimePath, env });
   runtimes.push(runtime);
   const events: CodeEventEnvelope[] = [];
   const rows: (CodeSessionRow | { removed: string })[] = [];
@@ -57,7 +59,7 @@ function harness() {
   const hub = new CodeHub({
     hasConsent: () => true, enabled: () => true, policy: () => OPEN, vaultFilled: () => false,
     access: () => ({ provider: { type: "openai", baseUrl: mock.baseUrl, apiKey: "test" }, model: "mock-model", service: "user" }),
-    client: () => runtime.client(), userData, protectedPaths: () => [userData], place: () => ({ os: "linux", home: os.homedir() }),
+    client: () => runtime.client(), userData, runtimeHome: () => runtime.home, protectedPaths: () => [userData], place: () => ({ os: "linux", home: os.homedir() }),
     audit: () => audit, log: quiet,
     emit: (channel, payload, to) => {
       if (channel === "code:event" && to === "w1") events.push(payload as CodeEventEnvelope);
@@ -268,10 +270,10 @@ describe.runIf(process.platform === "linux")("a coding session on the bundled ru
     const local: Mock = await startMockLlm({ delayMs: 0, respond: () => ++calls === 1 ? { tool: { name: "bash", args: { command: `node -e ${JSON.stringify(script)}` } } } : { text: "done" } });
     const home = path.join(dir, "token-home");
     fs.mkdirSync(home, { mode: 0o700 });
-    const options = codeClientOptions({ userData: home, runtimePath, env }, codeRuntimeHome(home));
+    const options = codeClientOptions({ userData: home, runtimePath, env }, `${home}-code`);
     expect(options.mode).toBe("copilot-cli");
     expect(options).not.toHaveProperty("gitHubToken");
-    const runtime = new CodeRuntime({ userData: home, runtimePath, env });
+    const runtime = new CodeRuntime({ userData: home, stateRoot: `${home}-code`, runtimePath, env });
     runtimes.push(runtime);
     const client = await runtime.client();
     const folder = path.join(dir, "token-work");
@@ -287,4 +289,30 @@ describe.runIf(process.platform === "linux")("a coding session on the bundled ru
       expect(fs.readFileSync(path.join(folder, "found.txt"), "utf8")).toBe("false");
     } finally { await session.disconnect(); await local.close(); }
   }, 60_000);
+
+  it("moves an earlier build's sessions out of Ember's data folder once, and opens them again there with their history", async () => {
+    const earlierData = path.join(dir, "earlier-data");
+    fs.mkdirSync(earlierData, { mode: 0o700 });
+    // An earlier build: the runtime's state inside the data folder.
+    const old = new CopilotClient(codeClientOptions({ userData: earlierData, runtimePath, env }, legacyCodeHome(earlierData)));
+    await old.start();
+    const made = await old.createSession({ model: "mock-model", provider: { type: "openai", baseUrl: mock.baseUrl, apiKey: "test" }, workingDirectory: work, onPermissionRequest: () => ({ kind: "approve-once" } as never) });
+    await made.sendAndWait({ prompt: "remember-the-pelican" }, 20_000);
+    const id = made.sessionId;
+    await made.disconnect();
+    await old.stop();
+    const stateRoot = `${earlierData}-code`;
+    const runtime = new CodeRuntime({ userData: earlierData, stateRoot, runtimePath, env });
+    runtimes.push(runtime);
+    const client = await runtime.client();
+    expect(runtime.home).toBe(stateRoot);
+    expect(fs.existsSync(legacyCodeHome(earlierData))).toBe(false);
+    expect(fs.existsSync(path.join(stateRoot, "session-state", id))).toBe(true);
+    expect((await client.listSessions()).map(s => s.sessionId)).toContain(id);
+    const history = await readPersistedHistory(client, id);
+    expect(JSON.stringify(history)).toContain("remember-the-pelican");
+    const again = await client.resumeSession(id, { onPermissionRequest: () => ({ kind: "approve-once" } as never), provider: { type: "openai", baseUrl: mock.baseUrl, apiKey: "test" } });
+    await again.sendAndWait({ prompt: "and again" }, 20_000);
+    await again.disconnect();
+  }, 90_000);
 });

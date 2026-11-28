@@ -79,6 +79,13 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
         const shown = home && userData === home ? "~" : home && userData.startsWith(`${home}/`) ? `~${userData.slice(home.length)}` : userData;
         return file ? `${shown}/${file}` : shown;
       },
+      // The XDG state folder (what an app keeps between runs that isn't configuration); a relative XDG_STATE_HOME is
+      // ignored, as the specification says.
+      codeState: (userData, appData, home) => {
+        if (userData !== path.join(appData, "ember")) return `${userData}-code`;
+        const xdg = deps.env.XDG_STATE_HOME;
+        return path.join(xdg && path.isAbsolute(xdg) ? xdg : path.join(home, ".local", "state"), "ember-code");
+      },
       renameRetries: 0,
     },
     apps: {

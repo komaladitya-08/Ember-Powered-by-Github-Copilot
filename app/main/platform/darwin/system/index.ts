@@ -81,6 +81,9 @@ export function darwinSystem(deps: PlatformDeps, seams: DarwinSystemSeams = {}):
         const shown = userData === h ? "~" : userData.startsWith(h + "/") ? `~${userData.slice(h.length)}` : userData;
         return file ? `${shown}/${file}` : shown;
       },
+      codeState(userData: string, appData: string): string {
+        return userData === mac.join(appData, "ember") ? mac.join(appData, "ember-code") : `${userData}-code`;
+      },
       renameRetries: 0,
     },
     apps: darwinApps({

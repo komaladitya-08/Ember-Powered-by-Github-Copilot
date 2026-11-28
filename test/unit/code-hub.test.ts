@@ -99,7 +99,7 @@ function harness(over: Partial<CodeHubDeps> = {}, fake = fakeClient()) {
   const deps: CodeHubDeps = {
     hasConsent: () => true, enabled: () => true, policy: () => OPEN, vaultFilled: () => false,
     access: () => ({ provider: { type: "openai", baseUrl: "http://127.0.0.1:1/v1", apiKey: "test" }, model: "mock-model", service: "user" }),
-    client: async () => fake.client, userData, protectedPaths: () => [userData], place: () => ({ os: "linux", home: dir }),
+    client: async () => fake.client, userData, runtimeHome: () => path.join(dir, "userdata-code"), protectedPaths: () => [userData], place: () => ({ os: "linux", home: dir }),
     audit: () => ({ write: e => audit.push(e) }), emit: (channel, payload, to) => sent.push({ channel, payload, ...(to ? { to } : {}) }),
     pickFolder: async () => work, pickFiles: async () => [path.join(work, "a.txt")], log: quiet,
     git: async args => { if (args[0] === "rev-parse" && args[1] === "--show-toplevel") return `${work}\n`; if (args[1] === "--abbrev-ref") return "main\n"; throw new Error("no"); },
@@ -168,6 +168,50 @@ describe("a coding session's options", () => {
     expect(await ask({ path: path.join(work, "a.txt") })).toBeUndefined();
     await h.hub.stopAll();
     expect(await ask({ path: path.join(work, "a.txt") })).toMatchObject({ permissionDecision: "deny" });
+  });
+
+  it("let a session's tools reach its own state (its plan) but no other session's, nor the runtime's shared files (docs/CODING-APP.md §3)", async () => {
+    const home = path.join(dir, "userdata-code");
+    for (const p of ["session-state/kept-1", "logs"]) fs.mkdirSync(path.join(home, p), { recursive: true });
+    fs.writeFileSync(path.join(home, "session-store.db"), "");
+    const h = harness();
+    const id = await started(h);
+    const update = h.fake.called("options.update")[0].params as { sandboxConfig: { userPolicy: { filesystem: { deniedPaths: string[] } } } };
+    const denied = update.sandboxConfig.userPolicy.filesystem.deniedPaths;
+    expect(denied).toEqual(expect.arrayContaining([userData, path.join(home, "session-state", "kept-1"), path.join(home, "logs"), path.join(home, "session-store.db")]));
+    // Never the state folder itself or the session's own: the runtime's grant of its plan would be shut out with them.
+    expect(denied).not.toContain(home);
+    expect(denied).not.toContain(path.join(home, "session-state"));
+    expect(denied).not.toContain(path.join(home, "session-state", id));
+    const pre = h.fake.configs[0].hooks!.onPreToolUse!;
+    const ask = (toolArgs: unknown) => pre({ toolName: "create", toolArgs, sessionId: "s", timestamp: 0, workingDirectory: work } as never, { sessionId: "s" } as never);
+    expect(await ask({ path: path.join(home, "session-state", id, "plan.md"), file_text: "plan" })).toBeUndefined();
+    for (const p of [path.join(home, "session-state", "kept-1", "plan.md"), path.join(home, "session-store.db"), path.join(home, "session-state")])
+      expect(await ask({ path: p }), p).toMatchObject({ permissionDecision: "deny", permissionDecisionReason: CODE_REFUSALS.emberToolPath });
+    // A window's call can't name another session's state either.
+    expect(await h.hub.dispatch({ type: "rpc", call: { scope: "session", sessionId: id, method: "permissions.paths.list", params: { where: path.join(home, "session-state", "kept-1") } } }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.rpcPath });
+  });
+
+  it("deny a session opened later to every open session's sandbox, and close one whose sandbox won't take it (fail closed)", async () => {
+    const home = path.join(dir, "userdata-code");
+    const h = harness();
+    const first = await started(h);
+    // The runtime makes the next session's folder as it creates it.
+    fs.mkdirSync(path.join(home, "session-state", "later-1"), { recursive: true });
+    const second = await started(h);
+    const updates = h.fake.called("options.update").map(c => (c.params as { sandboxConfig?: { userPolicy: { filesystem: { deniedPaths: string[] } } } }).sandboxConfig?.userPolicy.filesystem.deniedPaths).filter((d): d is string[] => !!d);
+    expect(updates.at(-1)).toContain(path.join(home, "session-state", "later-1"));
+    expect(updates.at(-1)).not.toContain(path.join(home, "session-state", first));
+    // A third opens (its own sandbox taken), and the others' sandboxes won't take its folder: they are let go.
+    const take = h.fake.rpc.options.update;
+    let sandboxes = 0;
+    h.fake.rpc.options.update = async (p?: unknown) => (p as { sandboxConfig?: unknown }).sandboxConfig && ++sandboxes > 1 ? { success: false } : take(p);
+    const third = await started(h);
+    const listed = await h.hub.dispatch({ type: "list" }, "user");
+    expect(listed.sessions.find(r => r.id === third)?.open).toBe(true);
+    expect(listed.sessions.find(r => r.id === first)?.open).toBe(false);
+    expect(listed.sessions.find(r => r.id === second)?.open).toBe(false);
+    expect(h.audit.filter(e => (e as { phase?: string }).phase === "close")).toHaveLength(2);
   });
 });
 

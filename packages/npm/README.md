@@ -154,7 +154,9 @@ the cache also holds another version, if it is older.
    (Accessibility, Screen Recording, Input Monitoring, Microphone).
 5. To remove what Ember keeps as well (its settings, logs, audit log, speech models, Voice Match voiceprint and
    sign-in), delete its data folder: `~/.config/ember` on Linux, `%LOCALAPPDATA%\ember` on Windows, or
-   `~/Library/Application Support/ember` on macOS, and on Linux also `~/Ember` (what Ember made on its desk).
+   `~/Library/Application Support/ember` on macOS, and on Linux also `~/Ember` (what Ember made on its desk); and
+   the coding sessions' own state beside it: `~/.local/state/ember-code` on Linux, `%LOCALAPPDATA%\ember-code` on
+   Windows, or `~/Library/Application Support/ember-code` on macOS.
 
 ## License
 

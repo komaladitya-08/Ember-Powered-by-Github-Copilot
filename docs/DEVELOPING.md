@@ -974,7 +974,11 @@ default: no coding runtime starts and every coding channel refuses). Its contrac
 `app/shared/code.ts`; the window's preload is `app/preload/code.ts` (`window.emberCode`).
 
 - **CodeRuntime** (runtime.ts): one tokenless runtime for the run in the SDK's full Copilot mode (`mode: "copilot-cli"`),
-  its state in `<userData>/code/copilot`. Each session turns on file change tracking, skills, memory, custom
+  its state in a folder of its own beside the data folder (`SystemPaths.codeState`: `~/.local/state/ember-code` on
+  Linux, `%LOCALAPPDATA%\ember-code`, `~/Library/Application Support/ember-code`; `<userData>-code` with
+  `EMBER_USER_DATA`), 0700, where state.ts moves an earlier build's `<userData>/code/copilot` once at start (a rename,
+  else a copy of the original put aside, removed once the copy is in place; where the move fails the old folder stays
+  in use). Each session turns on file change tracking, skills, memory, custom
   instructions, on-demand instruction discovery, host git, the session store and infinite sessions; the GitHub sign-in
   goes with each session, never in the runtime's environment.
 - **SessionRuntime** (session-runtime.ts): one per open session. Every SDK event goes to the windows attached to it
@@ -982,7 +986,9 @@ default: no coding runtime starts and every coding channel refuses). Its contrac
   (`CODE_LIMITS.eventData`, `truncated` when cut); the last `CODE_LIMITS.replay` are kept for `attach(id, sinceSeq)`,
   and older history comes from the SDK's own log (`sessions.readPersistedEvents`). Every request kind has one pending
   table, answered once through `respond` and cleared for every window with who answered.
-- **Sandbox**: on where `sandbox.getHostSupport` says so (Ember's data, install and policy denied; outbound network
+- **Sandbox**: on where `sandbox.getHostSupport` says so (Ember's data, install and policy denied, and of the coding
+  state folder everything but the session's own state: `siblingDenials`, set again on every open session's sandbox
+  when another session opens, a session whose sandbox won't take it closed; outbound network
   where the host's sandbox has it, else the row says `no-network`); where there is none the session runs without one
   and its row says `sandbox: "off"`. A pre-tool hook refuses any tool whose arguments name Ember's data, sandbox or
   none. A repository's own hooks (`.github/hooks`) run only inside the sandbox and in a folder the user trusts.
@@ -1883,7 +1889,8 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | The Copilot runtime's temporary files (large tool output it saves; 0700, emptied at each connect and at sign-out) | `~/.config/ember/copilot-tmp/` |
 | Marketplaces the user added, and the runtime's copy of their catalogues | `~/.config/ember/copilot/settings.json`, `~/.config/ember/copilot/.cache/copilot/marketplaces/` |
 | Chats with Copilot (only once “Chat with Copilot in a folder” is on): the chat runtime's own sessions, kept between runs so a chat opens again from Home's Chats (0700) | `~/.config/ember/chat/` |
-| Coding sessions (only once `settings.code.enabled` is on): the coding runtime's own sessions (`copilot/`), Ember's index of projects and sessions (`index.json`, 0600) and the worktrees it made (`worktrees/`) (0700) | `~/.config/ember/code/` |
+| Coding sessions (only once `settings.code.enabled` is on): Ember's index of projects and sessions (`index.json`, 0600) and the worktrees it made (`worktrees/`) (0700) | `~/.config/ember/code/` |
+| Coding sessions' own state: the coding runtime's sessions (each one's plan, files, checkpoints and history), its session store, logs, personal skills and instructions and MCP configuration (0700; beside the data folder, not in it, so a session's sandbox can let it write its own plan: docs/CODING-APP.md §3). An earlier build's `~/.config/ember/code/copilot/` is moved here once at start, and stays in use where it can't be moved (the log says `code.state_not_moved`). With `EMBER_USER_DATA`, `<that folder>-code` | `$XDG_STATE_HOME/ember-code/`, else `~/.local/state/ember-code/` |
 
 A hand edit of `settings.json` that Ember can't use is copied aside as `settings.json.bad-<time>` (the three newest
 are kept); one it can repair is tidied once it has stayed the same for 2 s. When Ember starts on one that isn't JSON
@@ -2798,6 +2805,8 @@ sets its AppUserModelId, `io.github.komaladitya08.ember`.
 | A marker that the marks' font cache was built for this version of Ember | `%LOCALAPPDATA%\ember\text-warmed` |
 | Start menu shortcut (packaged Ember) | `Ember.lnk` in the user's Start menu programs folder |
 | **Start Ember when I log in** | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `io.github.komaladitya08.ember` |
+| Coding sessions (once `settings.code.enabled` is on): Ember's index of them and the worktrees it made | `%LOCALAPPDATA%\ember\code\` |
+| Coding sessions' own state (the coding runtime's sessions, plans, history and session store), beside the data folder as on Linux (§ "Where Ember keeps things"); an earlier build's `code\copilot\` is moved here once | `%LOCALAPPDATA%\ember-code\` |
 
 Ember keeps its data out of the roaming profile: Chromium's caches, Copilot's session state and speech
 models would bloat it. Windows ignores the 0700 and 0600 modes Ember sets on Linux, so privacy rests on
@@ -3128,6 +3137,8 @@ Gatekeeper does on first start.
 | SSH's password helper, and Node.js downloaded for other computers | `~/Library/Application Support/ember/ssh/`, `~/Library/Application Support/ember/remote/runtime/` |
 | A marker that the marks' font cache was built for this version of Ember | `~/Library/Application Support/ember/text-warmed` |
 | **Start Ember when I log in** | A login item for Ember.app (**System Settings › General › Login Items**) |
+| Coding sessions (once `settings.code.enabled` is on): Ember's index of them and the worktrees it made | `~/Library/Application Support/ember/code/` |
+| Coding sessions' own state (the coding runtime's sessions, plans, history and session store), beside the data folder as on Linux (§ "Where Ember keeps things"); an earlier build's `code/copilot/` is moved here once | `~/Library/Application Support/ember-code/` |
 
 A copy run from the dmg or from Downloads is moved by macOS to a temporary place before it starts (App Translocation),
 so its permissions and its login item don't stick: the setup check's **Applications folder** row offers **Move to

@@ -37,7 +37,8 @@ import { FolderPathRefused, listFolder, readFolderFile } from "./folder";
 import { KeptMissing, hideMcpSecrets, holdsKept, keptMerged } from "./mcp-secrets";
 import { COMPANION_REFUSALS, CompanionPace, companionRefusal } from "./companion";
 import type { RequestChange } from "./pending";
-import { codeDir, codeRuntimeHome } from "./runtime";
+import { codeDir } from "./runtime";
+import { siblingDenials } from "./state";
 import { SessionIndex, indexFile, type IndexSession } from "./session-index";
 import { CodeUnavailable, SessionRuntime, rpcFn, sessionStateDir, type CodeAccess, type CodeSandbox, type SessionRuntimeOptions } from "./session-runtime";
 import { FolderRefused, createWorktree, forkWorktree, gitFacts, gitRunner, removeWorktree, usableFolder, type GitRunner } from "./workspaces";
@@ -97,7 +98,7 @@ export type CodeEmit = (channel: (typeof CODE_IPC)["event" | "row" | "request"],
 /** What a session is to the hub (SessionRuntime, or a fake in tests). */
 export type CodeSessionLike = Pick<SessionRuntime,
   "id" | "folder" | "name" | "model" | "permissionMode" | "agentMode" | "busy" | "sandbox" | "closed" | "waiting" |
-  "requests" | "respond" | "send" | "interrupt" | "setPermissionMode" | "setAgentMode" | "rename" | "rpc" | "history" | "bounded" | "trustChanged" | "stop" | "close">;
+  "requests" | "respond" | "send" | "interrupt" | "setPermissionMode" | "setAgentMode" | "rename" | "rpc" | "history" | "bounded" | "trustChanged" | "restrict" | "stop" | "close">;
 
 export interface CodeHubDeps {
   /** "Before Ember starts" agreed to. */
@@ -114,6 +115,8 @@ export interface CodeHubDeps {
   client(): Promise<CopilotClient>;
   /** Ember's data folder (the coding folder is inside it). */
   userData: string;
+  /** Where the coding runtime keeps its sessions in this run (CodeRuntime.home): beside the data folder, not in it. */
+  runtimeHome(): string;
   /** Ember's own data, install and policy paths. */
   protectedPaths(): readonly string[];
   /** Where paths are judged: this computer's OS, the user's home, Ember's paths. */
@@ -260,7 +263,7 @@ export class CodeHub {
    */
   private async adopt(id: string, folder: string): Promise<void> {
     try {
-      const usable = await usableFolder(folder, this.d.protectedPaths());
+      const usable = await usableFolder(folder, this.emberPaths());
       const project = this.index.projectAt(usable) ?? this.index.addProject({ folder: usable, name: path.basename(usable) || usable, ...(await gitFacts(usable, this.git)) });
       if (!this.index.session(id)) this.index.addSession(id, { projectId: project.id, folder: usable, isolation: "folder", createdBy: "system" });
     } catch (err) {
@@ -278,7 +281,7 @@ export class CodeHub {
 
   /** The project of a folder main's picker chose: refused for Ember's own data; git's facts read. */
   private async projectFor(picked: string): Promise<CodeProject> {
-    const folder = await usableFolder(picked, this.d.protectedPaths());
+    const folder = await usableFolder(picked, this.emberPaths());
     const facts = await gitFacts(folder, this.git);
     const p = this.index.addProject({ folder, name: path.basename(folder) || folder, ...facts });
     return this.index.projects().find(x => x.id === p.id)!;
@@ -361,19 +364,19 @@ export class CodeHub {
       const meta = await (await this.d.client()).getSessionMetadata(id).catch(() => undefined);
       const folder = meta?.context?.workingDirectory;
       if (!folder) throw new CodeUnavailable(CODE_REFUSALS.unknown);
-      const usable = await usableFolder(folder, this.d.protectedPaths());
+      const usable = await usableFolder(folder, this.emberPaths());
       const project = this.index.projectAt(usable) ?? this.index.addProject({ folder: usable, name: path.basename(usable) || usable, ...(await gitFacts(usable, this.git)) });
       record = this.index.addSession(id, { projectId: project.id, folder: usable, isolation: "folder", createdBy: "system" });
     }
     if (!record) throw new CodeUnavailable(CODE_REFUSALS.unknown);
-    const folder = record.worktree ? record.folder : await usableFolder(record.folder, this.d.protectedPaths());
+    const folder = record.worktree ? record.folder : await usableFolder(record.folder, this.emberPaths());
     const client = await this.d.client();
-    const protectedPaths = this.d.protectedPaths();
-    const denied = [...new Set((await Promise.all(protectedPaths.map(protectedPath))).flat())];
+    const protectedPaths = this.emberPaths();
+    const denied = await this.denied(id);
     const log = this.logs.get(id) ?? new EventLog(id);
     this.logs.set(id, log);
     const making = (this.d.open ?? SessionRuntime.open)({
-      client, id, resume, folder, denied, place: { ...this.d.place(), ember: protectedPaths }, stateDir: sessionStateDir(codeRuntimeHome(this.d.userData), id),
+      client, id, resume, folder, denied, place: { ...this.d.place(), ember: protectedPaths }, stateDir: sessionStateDir(this.d.runtimeHome(), id),
       policy, access: { ...(access.model ? { model: access.model } : {}), ...(access.provider ? { provider: access.provider } : !access.provider && access.gitHubToken ? { gitHubToken: access.gitHubToken } : {}) },
       log, start: start ?? { ...(record.permissionMode ? { permissionMode: record.permissionMode } : {}), ...(record.agentMode ? { agentMode: record.agentMode } : {}) },
       ...(this.d.redact ? { redact: this.d.redact } : {}),
@@ -389,7 +392,43 @@ export class CodeHub {
     if (this.refusal()) { await session.close().catch(() => undefined); this.gate(); }
     this.sessions.set(id, session);
     if (resume) this.record(id, { phase: "open", permissionMode: session.permissionMode, agentMode: session.agentMode, sandbox: session.sandbox });
+    await this.restrictOthers(id);
     return session;
+  }
+
+  /** Ember's own paths and the coding runtime's state folder, which no tool reaches but for a session's own state. */
+  private emberPaths(): string[] {
+    return [...new Set([...this.d.protectedPaths(), this.d.runtimeHome()])];
+  }
+
+  /**
+   * What session `id`'s sandbox denies: Ember's own paths (each as named and as resolved), and of the runtime's state
+   * folder everything but this session's own state (state.ts `siblingDenials`; the folder itself can't be denied, or
+   * its own state would be too). Where the state folder lies inside one of Ember's paths (an earlier build's that
+   * couldn't be moved) that path denies it whole, as before.
+   */
+  private async denied(id: string): Promise<string[]> {
+    const root = path.resolve(this.d.runtimeHome());
+    const ember = this.d.protectedPaths().filter(p => path.resolve(p) !== root);
+    const spellings = await protectedPath(root);
+    return [...new Set([...(await Promise.all(ember.map(protectedPath))).flat(), ...await siblingDenials(spellings, id)])];
+  }
+
+  /**
+   * After a session opened (its state folder may be new), every other open session's sandbox denies that folder too,
+   * for the commands it starts from then on; a session whose sandbox won't take it is closed (fail closed).
+   */
+  private async restrictOthers(opened: string): Promise<void> {
+    for (const [id, s] of [...this.sessions.entries()]) {
+      if (id === opened || s.closed || s.sandbox === "off") continue;
+      const ok = await s.restrict(await this.denied(id)).catch(() => false);
+      if (ok || s.closed) continue;
+      this.d.log?.warn("code.restrict_failed", {});
+      this.sessions.delete(id);
+      await s.close().catch(() => undefined);
+      this.record(id, { phase: "close" });
+      this.onFacts(id);
+    }
   }
 
   private async attach(id: string, sinceSeq: number | undefined, from: string): Promise<CodeDone<CodeAttached>> {
@@ -436,7 +475,7 @@ export class CodeHub {
   /** An attachment as it is sent: a path main offered or one in the session's folder, never Ember's data; an image within the limit. */
   private checkedAttachment(id: string, folder: string, a: CodeAttachment): CodeAttachment {
     const offered = this.offered.get(id) ?? new Set<string>();
-    const pathOk = (p: string) => path.isAbsolute(p) && (offered.has(p) || isInside(p, folder)) && reachesEmberData([p], { place: { ...this.d.place(), ember: this.d.protectedPaths() }, cwd: folder }) === false;
+    const pathOk = (p: string) => path.isAbsolute(p) && (offered.has(p) || isInside(p, folder)) && reachesEmberData([p], { place: { ...this.d.place(), ember: this.emberPaths() }, cwd: folder }) === false;
     switch (a.type) {
       case "file": case "directory":
         if (!pathOk(a.path)) throw new CodeUnavailable(CODE_REFUSALS.attachment);
@@ -579,7 +618,7 @@ export class CodeHub {
     const picked = await this.d.pickFiles(folder);
     if (!picked?.length) return refuse(CODE_REFUSALS.picked);
     if (picked.length > PICK_MAX) return refuse(CODE_REFUSALS.tooMany);
-    const where = { place: { ...this.d.place(), ember: this.d.protectedPaths() }, cwd: folder };
+    const where = { place: { ...this.d.place(), ember: this.emberPaths() }, cwd: folder };
     const out: CodeAttachment[] = [];
     let set = this.offered.get(id);
     if (!set) this.offered.set(id, set = new Set());
@@ -600,7 +639,7 @@ export class CodeHub {
 
   private async rpc(call: CodeRpcCall): Promise<CodeDone<unknown>> {
     this.gate();
-    const place = { ...this.d.place(), ember: this.d.protectedPaths() };
+    const place = { ...this.d.place(), ember: this.emberPaths() };
     if (call.scope === "client") {
       // The worktrees Ember made for its sessions are theirs: a discovery call may name one (skills, agents,
       // instructions and hooks of the files that session works in), though it lies in Ember's data folder.
@@ -629,7 +668,7 @@ export class CodeHub {
     if (!call.sessionId) return refuse(CODE_REFUSALS.unknown);
     const s = this.sessions.get(call.sessionId);
     if (!s || s.closed) return refuse(CODE_REFUSALS.closed);
-    const why = rpcRefusal(call, { place, cwd: s.folder, own: [sessionStateDir(codeRuntimeHome(this.d.userData), s.id)] });
+    const why = rpcRefusal(call, { place, cwd: s.folder, own: [sessionStateDir(this.d.runtimeHome(), s.id)] });
     if (why) return refuse(why);
     const value = await this.rpcCall(() => s.rpc(call.method, call.params ?? {}));
     // The folder trusted now: its own hooks may run (in the sandbox only: SessionRuntime.trustChanged).
@@ -660,7 +699,7 @@ export class CodeHub {
     this.gate();
     const folder = this.sessionFolder(id);
     if (!folder) return refuse(CODE_REFUSALS.unknown);
-    const where = { place: { ...this.d.place(), ember: this.d.protectedPaths() }, cwd: folder, own: [folder] };
+    const where = { place: { ...this.d.place(), ember: this.emberPaths() }, cwd: folder, own: [folder] };
     let listing: CodeFolderListing;
     try { listing = await listFolder(folder, relDir, this.git); } catch (err) {
       if (err instanceof FolderPathRefused) return refuse(CODE_REFUSALS.folderPath);
@@ -686,7 +725,7 @@ export class CodeHub {
       return refuse(CODE_REFUSALS.folderRead);
     }
     const { real, ...value } = read;
-    if (reachesEmberData([real], { place: { ...this.d.place(), ember: this.d.protectedPaths() }, cwd: folder, own: [folder] }) !== false) return refuse(CODE_REFUSALS.rpcPath);
+    if (reachesEmberData([real], { place: { ...this.d.place(), ember: this.emberPaths() }, cwd: folder, own: [folder] }) !== false) return refuse(CODE_REFUSALS.rpcPath);
     // Redacted as events are (the vault's values, GitHub's tokens), but not cut: CODE_LIMITS.fileBytes bounds it.
     return { ok: true, value: "text" in value ? { text: eventRedactor(this.d.redact)(value.text), size: value.size } : value };
   }

@@ -5,7 +5,9 @@
  * mode, which has its own command, and none passes a path that is Ember's own data), and what a tool's arguments
  * reach of Ember's data (`reachesEmberData`), which the pre-tool hook refuses where there is no sandbox (and, as
  * defence in depth, where there is one). A session's own folder (a worktree Ember made lives inside its data folder)
- * and the SDK's own state for that session are the session's, never refused. Each check fails closed: arguments too
+ * and the SDK's own state for that session are the session's, never refused; the rest of the coding runtime's state
+ * folder, beside the data folder, is Ember's (the hub counts it so: other sessions' state, the session store, the
+ * runtime's logs and configuration). Each check fails closed: arguments too
  * many or too deep to read whole are refused.
  */
 
