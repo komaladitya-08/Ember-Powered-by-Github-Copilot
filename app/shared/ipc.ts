@@ -317,6 +317,15 @@ export interface VoiceStatus {
 }
 
 /**
+ * Whether the microphone is open, or opening, for a request (or Voice Match is being taught): live regions say nothing
+ * meanwhile, since a screen reader would say it into what Ember hears (voice-listening-c3-1). Home's and the coding
+ * window's held lines both follow this.
+ */
+export function voiceHoldsLive(v: Pick<VoiceStatus, "state" | "listenOnce" | "match">): boolean {
+  return v.state === "active" || v.state === "starting" || v.listenOnce?.phase === "starting" || v.listenOnce?.phase === "listening" || !!v.match?.enrolling;
+}
+
+/**
  * The effective local voice as Home shows it (VoiceService.naturalStatus): `off` (service stopped); `later` (selected at start:
  * decided the next time it speaks); `checking` (Ember's voice is loading to time this computer); `needs-voice` (Ember's own voice isn't downloaded yet, so nothing can be timed);
  * `downloading` (`percent` of it so far); `ready` (fetched: it speaks from the next reply); `on` (it speaks now, also while
@@ -733,6 +742,30 @@ export interface EmberAskApi {
   /** Where the page shows something (window-local CSS px): the box takes clicks there only, on Linux (companion-4). */
   shape?(rects: { x: number; y: number; width: number; height: number }[]): void;
 }
+
+/**
+ * The native chat session's channels (app/shared/chat.ts, app/main/chat-ipc.ts); main takes every one only from the
+ * settings window.
+ */
+export const CHAT_IPC = {
+  /** The sessions of this run and the ones kept from earlier runs (ChatSessionRow[]). */
+  list: "chat:list",
+  /** Main opens a folder picker of its own and, on a choice, a new session there (an optional friendly name). */
+  create: "chat:create",
+  /** Opens a kept session again by its id, with its history. */
+  resume: "chat:resume",
+  send: "chat:send",
+  /** A person's decision on a pending permission request (session id, request id, ChatDecision). */
+  decide: "chat:decide",
+  /** A person's answer to the model's question (session id, request id, answer text, whether it was typed). */
+  answer: "chat:answer",
+  setPermissionMode: "chat:set-permission-mode",
+  setAgentMode: "chat:set-agent-mode",
+  /** Stops a session's turn (its background agents too, and rejects what waits). */
+  stop: "chat:stop",
+  /** Main's push of each ChatEvent to the settings window. */
+  event: "chat:event",
+} as const;
 
 /**
  * Home's Extensions section (app/main/extensions-ipc.ts, app/renderer/home/extensions.ts): main takes these only from

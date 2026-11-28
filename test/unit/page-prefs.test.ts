@@ -4,6 +4,7 @@
  * (review #248, #57).
  */
 import { describe, expect, it } from "vitest";
+import { pageSheets } from "../page-sheets";
 import { readFileSync } from "node:fs";
 import { applyPagePrefs, pageOf, pagePrefs, prefsScript, rescaledBounds, scaledSize, textScale, type PrefsPage } from "../../app/main/page-prefs";
 
@@ -30,7 +31,7 @@ function fakePage(u: string, opts: { destroyed?: boolean; fails?: boolean } = {}
 
 describe("Ember's display settings in every window", () => {
   it("puts Calm mode on the ask box, the command and prompt windows and the desk view too (review #248)", async () => {
-    for (const p of ["ask", "command", "prompt", "vault", "desk", "overlay", "handle", "home"]) {
+    for (const p of ["ask", "command", "prompt", "vault", "desk", "overlay", "handle", "home", "code"]) {
       const f = fakePage(url(p));
       expect(await applyPagePrefs(f.page, pagePrefs({ reduceMotion: true, textSize: "default" })), p).toBe(true);
       expect(f.classes.has("calm"), p).toBe(true);
@@ -40,7 +41,7 @@ describe("Ember's display settings in every window", () => {
   });
 
   it("sets the text size in every page with words, the ask box and the desk's bar included (review #57)", async () => {
-    for (const p of ["home", "command", "prompt", "vault", "overlay", "handle", "ask", "desk"]) {
+    for (const p of ["home", "command", "prompt", "vault", "overlay", "handle", "ask", "desk", "code"]) {
       const f = fakePage(url(p));
       await applyPagePrefs(f.page, pagePrefs({ reduceMotion: false, textSize: "larger" }));
       expect(f.dataset.textSize, p).toBe("larger");
@@ -66,7 +67,7 @@ describe("Ember's display settings in every window", () => {
       expect(f.dataset.glass, p).toBeUndefined();
     }
     // The windows are opaque: the setting leaves them as they are.
-    for (const p of ["home", "command", "prompt", "vault", "desk", "mic"]) {
+    for (const p of ["home", "command", "prompt", "vault", "desk", "mic", "code"]) {
       const f = fakePage(url(p));
       await applyPagePrefs(f.page, pagePrefs({ reduceMotion: false, textSize: "default", glass: "clear" }));
       expect(f.dataset.glass, p).toBeUndefined();
@@ -184,7 +185,7 @@ describe("the text size", () => {
     const { BUBBLE_CSS } = await import("@ember/bubble");
     const sheets: [string, string][] = [
       ["shared", shared], ["bubble", BUBBLE_CSS], ["view", read("app/renderer/shared/view.css")],
-      ...["home", "command", "prompt", "vault", "overlay", "handle", "ask", "desk"].map(p => [p, read(`app/renderer/${p}/styles.css`)] as [string, string]),
+      ...["home", "command", "prompt", "vault", "overlay", "handle", "ask", "desk", "code"].map(p => [p, pageSheets(p)] as [string, string]),
     ];
     for (const [name, css] of sheets) expect(unscaled(css), name).toEqual([]);
   });
@@ -193,7 +194,7 @@ describe("the text size", () => {
     const { BUBBLE_CSS } = await import("@ember/bubble");
     const sheets: [string, string, string[]][] = [
       ["shared", shared, []], ["bubble", BUBBLE_CSS, []],
-      ...["home", "command", "prompt", "vault", "overlay", "handle", "ask", "desk"].map(p => [p, read(`app/renderer/${p}/styles.css`), controlIds(read(`app/renderer/${p}/index.html`))] as [string, string, string[]]),
+      ...["home", "command", "prompt", "vault", "overlay", "handle", "ask", "desk", "code"].map(p => [p, pageSheets(p), controlIds(read(`app/renderer/${p}/index.html`))] as [string, string, string[]]),
     ];
     for (const [name, css, ids] of sheets) expect(fixedControlHeights(css, ids), name).toEqual([]);
     // The usual heights are kept at the default size (--text-scale 1): 28 px buttons, 24 px small ones, a 36 px Start,
@@ -225,7 +226,7 @@ describe("the text size", () => {
     const { BUBBLE_CSS } = await import("@ember/bubble");
     const sheets: [string, string][] = [
       ["shared", shared], ["bubble", BUBBLE_CSS],
-      ...["home", "command", "prompt", "vault", "overlay", "handle", "ask", "desk"].map(p => [p, read(`app/renderer/${p}/styles.css`)] as [string, string]),
+      ...["home", "command", "prompt", "vault", "overlay", "handle", "ask", "desk", "code"].map(p => [p, pageSheets(p)] as [string, string]),
     ];
     for (const [name, css] of sheets) expect(fixedClearances(css), name).toEqual([]);
     // The guard sees a fixed length wherever it is, and leaves a focus ring's few px, a scaled length and a measured one.

@@ -943,8 +943,11 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     chord("ask", "w-ask-keys");
     mark("w-try-stop", tried.stop, tried.stop ? TRY_TEXT.stop.done : stopHeld ? TRY_TEXT.stop.ask : TRY_TEXT.stop.fallback);
     const vs = voiceState();
-    $("w-try-voice").hidden = vs !== "listening" && vs !== "waiting";
-    $("w-voice-later").hidden = !$("w-try-voice").hidden;
+    // With the companion off (docs/CODING-APP.md §5) there is no listening and no ask box to try: Stop is the one try.
+    const companionOff = settings?.companion?.enabled === false;
+    $("w-try-ask").hidden = companionOff;
+    $("w-try-voice").hidden = companionOff || (vs !== "listening" && vs !== "waiting");
+    $("w-voice-later").hidden = companionOff || !$("w-try-voice").hidden;
     $("w-voice-later").textContent = vs === "no-models" ? TRY_TEXT.voiceNoModels : vs === "no-mic" ? TRY_TEXT.voiceNoMic : vs === "cant-listen" ? TRY_TEXT.voiceCantListen : vs === "mic-off" ? TRY_TEXT.voiceMicOff : TRY_TEXT.voiceLater;
     mark("w-try-voice", tried.voice, tried.voice ? TRY_TEXT.voice.done : vs === "listening" ? TRY_TEXT.voice.ask : TRY_TEXT.voiceWaiting);
     $("w-meter").classList.toggle("off", vs !== "listening");

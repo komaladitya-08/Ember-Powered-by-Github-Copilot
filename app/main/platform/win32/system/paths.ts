@@ -32,6 +32,11 @@ export function win32Paths(o: { env: NodeJS.ProcessEnv; arch?: string }): System
       const dir = isDefault ? "%LOCALAPPDATA%\\ember" : userData;
       return file ? `${dir}\\${file}` : dir;
     },
+    // Beside the data folder, in the local (never the roaming) profile, as the data folder is (D7).
+    codeState(userData, _appData, home) {
+      const own = defaultUserData(o.env, home);
+      return wpath.normalize(userData).toLowerCase() === own.toLowerCase() ? wpath.join(wpath.dirname(own), "ember-code") : `${userData}-code`;
+    },
     renameRetries: 5,
   };
 }

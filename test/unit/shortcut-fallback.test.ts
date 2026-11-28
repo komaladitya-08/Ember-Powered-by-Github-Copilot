@@ -257,7 +257,8 @@ const MAIN = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8")
 describe("main.ts holds each shortcut by its default or its fallback, and names the one it holds (D-45b)", () => {
   it("registers Ember's shortcuts and the question keys through holdShortcuts with this OS's fallbacks", () => {
     expect(MAIN).toContain("const fb = FALLBACK_SHORTCUTS[platform.os];");
-    expect(MAIN).toContain("holdShortcuts(ALWAYS_HELD, sc, fb, {");
+    // With the companion off, only Stop and Settings are held (companion.ts companionParts().shortcuts).
+    expect(MAIN).toContain("holdShortcuts(ALWAYS_HELD.filter(id => heldIds.includes(id)), sc, fb, {");
     expect(MAIN).toContain("holdShortcuts(QUESTION_KEYS.map(k => k.id), sc, fb, {");
     // No accelerator is registered past it, but the menu's (never registered) and nothing else.
     expect(MAIN.match(/globalShortcut\.register\(/g)).toHaveLength(2);
@@ -411,12 +412,13 @@ describe("Ask Ember in the OS's launcher (D-45b)", () => {
     expect(second({ onboarded: true, sessionProblem: false })).toBe("ask");
     expect(second({ onboarded: false, sessionProblem: false })).toBe("settings");
     expect(second({ onboarded: true, sessionProblem: true })).toBe("settings");
-    // Else settings from the keyboard (at Ask Ember… or Stop everything while the keyboard needs them), not plain settings.
-    expect(MAIN).toMatch(/if \(view === "ask"\) openAsk\(\{ source: "launcher" \}\); else showHomeFromKeys\(\); \}\);/);
+    // Else settings from the keyboard (at Ask Ember… or Stop everything while the keyboard needs them), not plain settings;
+    // a plain second start opens the coding window instead while coding sessions are on (docs/CODING-APP.md).
+    expect(MAIN).toMatch(/if \(view === "ask"\) openAsk\(\{ source: "launcher" \}\); else if \(ask \|\| !showCode\(\)\) showHomeFromKeys\(\); \}\);/);
   });
 
   it("main.ts opens the ask box for --ask, sets up the jump list and the Dock menu", () => {
-    expect(MAIN).toContain('app.on("second-instance", (_e, argv) => { const ask = wantsAsk(argv); log.info("instance.second", ask ? { ask } : {}); const view = ask ? startView({ onboarded: settings.get().onboarded, showSettings: false, atLogin: false, sessionProblem: !!sessionGreeting(readEnvironment()), ask }) : "settings"; if (view === "ask") openAsk({ source: "launcher" }); else showHomeFromKeys(); });');
+    expect(MAIN).toContain('app.on("second-instance", (_e, argv) => { const ask = wantsAsk(argv); log.info("instance.second", ask ? { ask } : {}); const view = ask ? startView({ onboarded: settings.get().onboarded, showSettings: false, atLogin: false, sessionProblem: !!sessionGreeting(readEnvironment()), ask }) : "settings"; if (view === "ask") openAsk({ source: "launcher" }); else if (ask || !showCode()) showHomeFromKeys(); });');
     expect(MAIN).toContain("ask: wantsAsk(process.argv)");
     expect(MAIN).toContain('if (view === "ask") openAsk({ source: "launcher" });');
     expect(MAIN).toContain('log.info("launcher.tasks", { ok: app.setUserTasks(jumpListTasks({ execPath: process.execPath, appPath: app.getAppPath(), packaged: app.isPackaged })) });');

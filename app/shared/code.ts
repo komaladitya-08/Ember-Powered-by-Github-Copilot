@@ -1,0 +1,489 @@
+/**
+ * The contract between main and the coding window (docs/CODING-APP.md): Ember as a coding agent on the GitHub
+ * Copilot SDK. Main owns every SDK session; the window sees ids and plain data only.
+ *
+ * The constraint behind its shape: the SDK has about 145 event types and 500 RPC methods, and it changes faster
+ * than Ember. So main does not translate them into types of its own, which is how features get lost. It passes
+ * each SDK event through as it is (redacted and bounded), numbered per session so a window can catch up, and it
+ * lets the window call the SDK's RPC methods by name through one allow-list (`CODE_RPC`). What a transcript, a
+ * plan or a diff looks like is decided by pure reducers in the renderer, from those events.
+ *
+ * Nothing here imports the SDK: its payloads are `unknown` and are narrowed where they are read.
+ */
+
+/** Who asked for a command: the person at the window, the optional companion acting for them, or Ember itself. */
+export type CodeActor = "user" | "companion" | "system";
+
+/** The SDK's permission modes, as they are. */
+export type CodePermissionMode = "manual" | "assisted" | "allow-all";
+/** The SDK's agent modes, as they are. */
+export type CodeAgentMode = "interactive" | "plan" | "autopilot";
+
+/** Where a session's files are: the folder itself, or a git worktree Ember made for the session. */
+export type CodeIsolation = "folder" | "worktree";
+
+/** One SDK event, as the runtime sent it. `data` is the SDK's own payload for `type`. */
+export interface CodeSdkEvent {
+  id: string;
+  parentId?: string | null;
+  timestamp: string;
+  type: string;
+  data: unknown;
+  /** The sub-agent this event belongs to, when not the main agent. */
+  agentId?: string;
+  /** True for events the SDK does not keep: they are never replayed. */
+  ephemeral?: boolean;
+  /** Set by main when it cut long strings in `data` to fit CODE_LIMITS.eventData (each cut string ends "…"). */
+  truncated?: boolean;
+}
+
+/** An event on its way to a window. `seq` counts up by one per session; a gap means: attach again. */
+export interface CodeEventEnvelope {
+  sessionId: string;
+  seq: number;
+  event: CodeSdkEvent;
+}
+
+/** What blocks a session until somebody answers it. The names follow the SDK's `*.requested` events. */
+export type CodeRequestKind =
+  | "permission"
+  | "user-input"
+  | "elicitation"
+  | "exit-plan-mode"
+  | "auto-mode-switch"
+  | "session-limits"
+  | "mcp-oauth"
+  | "sampling";
+
+/** A request still waiting for its answer. Replayed to a window that attaches. */
+export interface CodePendingRequest {
+  sessionId: string;
+  requestId: string;
+  kind: CodeRequestKind;
+  /** The SDK's `data` of the `*.requested` event, redacted and bounded. */
+  data: unknown;
+  /** For a permission request: the decisions the SDK accepts for it, in the order to show them. */
+  choices?: readonly string[];
+  openedAt: number;
+}
+
+/** An answer to a pending request. `payload` is the SDK's own result shape for that kind. */
+export interface CodeRequestAnswer {
+  sessionId: string;
+  requestId: string;
+  kind: CodeRequestKind;
+  payload: unknown;
+}
+
+/** A project: a folder (usually a repository) that sessions are grouped under. */
+export interface CodeProject {
+  id: string;
+  /** The folder, as main resolved it. Shown, never used by the window as a path to act on. */
+  folder: string;
+  name: string;
+  gitRoot?: string;
+  repository?: string;
+  branch?: string;
+}
+
+/** A session's row in the list: what Ember's index and the SDK's metadata say about it. */
+export interface CodeSessionRow {
+  id: string;
+  projectId: string;
+  name: string;
+  folder: string;
+  isolation: CodeIsolation;
+  /** The worktree's branch, when `isolation` is "worktree". */
+  branch?: string;
+  permissionMode: CodePermissionMode;
+  agentMode: CodeAgentMode;
+  model?: string;
+  /** Open in the runtime now (false: kept on disk, opens when attached). */
+  open: boolean;
+  busy: boolean;
+  /** Requests waiting for an answer. */
+  pending: number;
+  /** Events since the window last looked. */
+  unread: number;
+  pinned: boolean;
+  archived: boolean;
+  /** The session this one was forked from or started by, if any. */
+  parentId?: string;
+  /**
+   * The SDK's sandbox for this session's tools: "on" (with outbound network), "no-network" (on, but this computer's
+   * sandbox has no network for commands) or "off" (this computer has no sandbox: the tools run without one). Absent
+   * until the session has been opened in this run.
+   */
+  sandbox?: "on" | "no-network" | "off";
+  /** Who started it. */
+  createdBy: CodeActor;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** A file, folder, selection or image sent with a message. Paths come only from main's own pickers and lists. */
+export type CodeAttachment =
+  | { type: "file"; path: string; displayName?: string }
+  | { type: "directory"; path: string; displayName?: string }
+  | { type: "selection"; filePath: string; displayName: string; text?: string;
+      selection?: { start: { line: number; character: number }; end: { line: number; character: number } } }
+  | { type: "blob"; data: string; mimeType: string; displayName?: string };
+
+/** What starting a session takes. The folder is chosen in main's picker or is a known project's. */
+export interface CodeCreate {
+  /** A known project, or omit it to pick a folder. */
+  projectId?: string;
+  isolation?: CodeIsolation;
+  /** For a worktree: the branch to start from (default: the folder's current branch). */
+  baseBranch?: string;
+  model?: string;
+  reasoningEffort?: string;
+  permissionMode?: CodePermissionMode;
+  agentMode?: CodeAgentMode;
+  /** A custom or built-in agent to start as. */
+  agent?: string;
+  name?: string;
+}
+
+/** The SDK's reasoning efforts, as they are. */
+export const CODE_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+/**
+ * What a new session starts with when the start flow (or the companion) names nothing: the person's own choice, kept in
+ * Ember's index for every project and per project (a project's wins). The organisation's policy still wins over both.
+ */
+export interface CodeDefaults {
+  permissionMode?: CodePermissionMode;
+  agentMode?: CodeAgentMode;
+  model?: string;
+  reasoningEffort?: (typeof CODE_EFFORTS)[number];
+  isolation?: CodeIsolation;
+}
+
+/**
+ * A session's options that the SDK takes when it starts and changes later (`options.update`), kept in Ember's index
+ * and applied again each time the session opens: how much of the model's reasoning it summarises, the long context
+ * tier, the built-in tools it leaves out, and whether its commits name Copilot as co-author.
+ */
+export interface CodeSessionOptions {
+  reasoningSummary?: "none" | "concise" | "detailed";
+  contextTier?: "default" | "long_context";
+  /** Built-in tools left out, by the names `tools.getCurrentMetadata` lists. */
+  excludedTools?: string[];
+  coauthor?: boolean;
+  /** The most AI credits the session may use before it asks (`sessionLimits.maxAiCredits`); null: no limit. */
+  maxAiCredits?: number | null;
+}
+
+/** A project's own settings: its defaults, its instructions for Copilot, and folders its sessions may also use. */
+export interface CodeProjectSettings {
+  defaults?: CodeDefaults;
+  /**
+   * The person's own instructions for Copilot in this project, appended to every session's system message (the SDK's
+   * `systemMessage` in "append" mode) as it starts or opens again. Typed by the person in Customise, never by a model.
+   */
+  instructions?: string;
+  /** Extra folders the project's sessions work in too (`additionalDirectories`), each from main's own picker. */
+  folders?: string[];
+}
+
+/** What `settings` answers: the defaults for every project, the project's own, and what a new session would get. */
+export interface CodeSettings {
+  defaults: CodeDefaults;
+  project?: CodeProjectSettings;
+  /** The defaults in force for a new session there: the project's over everyone's, within the organisation's modes. */
+  effective: CodeDefaults;
+  /** The permission modes the organisation leaves open (a default it forbids is dropped). */
+  permissionModes: CodePermissionMode[];
+}
+
+/** A change to the settings: everyone's defaults (no projectId) or one project's, and that project's instructions. */
+export interface CodeSettingsChange {
+  projectId?: string;
+  /** Replaces the defaults at that scope (an empty object clears them). */
+  defaults?: CodeDefaults;
+  /** A project's instructions ("" clears them). */
+  instructions?: string;
+}
+
+/** Sessions not used for a while, as the runtime's dry run found them (`prune`), and whether they were deleted. */
+export interface CodePrune {
+  sessions: { id: string; name: string; bytes: number }[];
+  bytes: number;
+  deleted: boolean;
+}
+
+/** A message to a session. */
+export interface CodeSend {
+  sessionId: string;
+  prompt: string;
+  attachments?: CodeAttachment[];
+  /** While a turn runs: wait in the queue, or steer the turn now. */
+  mode?: "enqueue" | "immediate";
+  agentMode?: CodeAgentMode | "shell";
+}
+
+/** What a window gets when it attaches: everything since `sinceSeq`, or the whole kept history. */
+export interface CodeAttached {
+  row: CodeSessionRow;
+  /** The events after `sinceSeq`, in order. With no `sinceSeq`, the session's kept history. */
+  events: CodeEventEnvelope[];
+  pending: CodePendingRequest[];
+  /** The last `seq` sent for this session. */
+  seq: number;
+  /**
+   * True when `events` is the session's whole kept history rather than what followed `sinceSeq` (no `sinceSeq`, or
+   * one this run no longer holds): drop what was shown and draw it again. Its seqs may skip numbers, since ephemeral
+   * events (deltas, request events) aren't kept by the SDK.
+   */
+  reset?: boolean;
+}
+
+/** Why a command did nothing, as a sentence a person can read (never raw SDK text). */
+export interface CodeRefusal { ok: false; reason: string; code?: string }
+export type CodeDone<T = void> = ([T] extends [void] ? { ok: true } : { ok: true; value: T }) | CodeRefusal;
+
+/** A call to one of the SDK's RPC methods, by its dotted name (`CODE_RPC` lists the ones a window may call). */
+export interface CodeRpcCall {
+  /** "client": `client.rpc.*`; "session": `session.rpc.*` of `sessionId`. */
+  scope: "client" | "session";
+  sessionId?: string;
+  method: string;
+  params?: unknown;
+}
+
+/**
+ * The SDK RPC methods a window may call, by scope. A prefix ending in ".*" allows the namespace. Main checks
+ * every call against this list, bounds its params, and applies its own guards on top (docs/CODING-APP.md
+ * "Guards"): a mode the organisation forbids, turning the sandbox off, or a path outside what main offered are
+ * refused whatever this list says. Turn control, requests and session lifecycle are not here: they have their own
+ * commands, so Stop, the audit log and the pending table always see them.
+ */
+export const CODE_RPC = {
+  client: [
+    "models.*", "tools.list", "commands.list", "account.getQuota", "account.getCurrentAuth",
+    "mcp.config.*", "mcp.discover", "mcp.planInstall", "mcp.prepareInstall", "mcp.applyInstall",
+    "mcp.planUninstall", "mcp.applyUninstall", "mcp.installations.*",
+    "skills.*", "plugins.*", "agents.*", "instructions.*", "extensions.discover", "hooks.discover",
+    "catalog.*", "connectors.*", "sandbox.getHostSupport", "managedSettings.read", "managedSettings.schema",
+    "sessions.getSizes", "user.settings.get",
+  ],
+  session: [
+    "model.*", "mode.get", "name.*", "plan.*", "workspaces.*", "autopilotObjective.getState",
+    "completions.*", "instructions.*", "customizations.reload", "agent.*", "tasks.*", "fleet.start",
+    "skills.*", "mcp.*", "connectors.*", "plugins.*", "extensions.*", "tools.getBuiltinDescriptors",
+    "tools.getCurrentMetadata", "tools.updateSubagentSettings", "commands.*", "ui.ephemeralQuery",
+    "permissions.getMode", "permissions.pendingRequests", "permissions.modifyRules",
+    "permissions.resetSessionApprovals", "permissions.paths.*", "permissions.locations.*",
+    "permissions.folderTrust.*", "managedSettings.get", "metadata.*", "contentExclusion.checkPaths",
+    "shell.*", "history.*", "queue.*", "usage.getMetrics", "quota.*", "limitPrediction.predict",
+    "schedule.*", "sandbox.getEnforcementStatus", "sandbox.getCredentialSuggestions",
+    "providers.*", "workflow.*", "canvas.*", "visibility.get",
+  ],
+} as const;
+
+/** Whether `method` is on the allow-list for `scope`. Pure, so the window and main agree. */
+export function codeRpcAllowed(scope: "client" | "session", method: string): boolean {
+  if (!/^[A-Za-z][A-Za-z0-9]*(\.[A-Za-z][A-Za-z0-9]*){0,3}$/.test(method)) return false;
+  return CODE_RPC[scope].some((entry) =>
+    entry.endsWith(".*") ? method.startsWith(entry.slice(0, -1)) : method === entry);
+}
+
+/** Sizes main enforces on what a window sends and on what it passes through. */
+export const CODE_LIMITS = {
+  /** Characters of one prompt. */
+  prompt: 200_000,
+  /** Attachments on one message. */
+  attachments: 50,
+  /** Bytes of one image attachment, before base64. */
+  blob: 10 * 1024 * 1024,
+  /** Bytes of the JSON of one RPC call's params, or of one answer's payload. */
+  params: 256 * 1024,
+  /** Bytes of the JSON of one event's data sent to a window; longer strings in it are cut, and marked cut. */
+  eventData: 512 * 1024,
+  /** Events kept in memory per open session for a window to catch up; older ones come from the SDK's log. */
+  replay: 5_000,
+  /** Characters of a session's name. */
+  name: 120,
+  /** Characters of an address the window asks main to open. */
+  link: 2048,
+  /** Entries one `listFolder` answer lists at most (folders first, then files, each by name). */
+  folderEntries: 2_000,
+  /** Bytes of a working-folder file `readFile` gives the window; a larger one is `tooLarge`. */
+  fileBytes: 1024 * 1024,
+  /** Characters of a path relative to the session's folder that the window passes to `listFolder` or `readFile`. */
+  relPath: 4096,
+  /** Characters of a project's instructions for Copilot. */
+  instructions: 20_000,
+  /** Extra folders one project's sessions may use. */
+  folders: 20,
+  /** Built-in tools one session may leave out. */
+  excludedTools: 200,
+} as const;
+
+/**
+ * What main puts in place of each MCP server's variable and header value (and any other secret-named value) in
+ * `mcp.config.list`'s answer, so no value reaches the window. Sent back unchanged in `mcp.config.update`, it stands for
+ * the value Copilot already holds, which main puts back before the call.
+ */
+export const CODE_KEPT = "\u2022\u2022\u2022 kept by Ember \u2022\u2022\u2022";
+
+/** One entry of a folder in the session's working folder (`listFolder`). `path` is absolute, for an attachment. */
+export interface CodeFolderEntry { name: string; kind: "file" | "folder"; size?: number; path: string }
+/** A folder of the session's working folder, as main lists it. */
+export interface CodeFolderListing {
+  /** The entries, folders first, `.git` and what git (or, outside a repository, a short built-in list) ignores left out. */
+  entries: CodeFolderEntry[];
+  /** More entries than CODE_LIMITS.folderEntries: the rest aren't listed. */
+  truncated?: boolean;
+  /** The session's folder relative to its repository's top ("" at the top, "sub/" below it): `workspaces.diff`'s paths are the top's. Absent outside a repository. */
+  gitPrefix?: string;
+}
+/** A working-folder file as main reads it: its text, or why it isn't shown. */
+export type CodeFileRead = { text: string; size: number } | { binary: true; size: number } | { tooLarge: true; size: number };
+
+/**
+ * Why main won't open `url` in the person's browser, or null when it will: only an http or https address within
+ * CODE_LIMITS.link characters, with a host and no user name or password in it (an address that signs in as someone
+ * is not one a transcript should open by a click). Pure, so the window and main agree.
+ */
+export function linkRefusal(url: unknown): "not-web" | "too-long" | "credentials" | null {
+  if (typeof url !== "string" || !url) return "not-web";
+  if (url.length > CODE_LIMITS.link) return "too-long";
+  let u: URL;
+  try { u = new URL(url); } catch { return "not-web"; }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return "not-web";
+  if (!u.hostname) return "not-web";
+  if (u.username || u.password) return "credentials";
+  return null;
+}
+
+/** IPC channels of the coding window. Every handler checks its sender and validates its arguments. */
+export const CODE_IPC = {
+  /** () => { projects: CodeProject[]; sessions: CodeSessionRow[] } */
+  list: "code:list",
+  /** () => CodeDone<CodeProject>: main's folder picker, then the project it is. */
+  addProject: "code:add-project",
+  /** (projectId) => CodeDone */
+  removeProject: "code:remove-project",
+  /** (CodeCreate) => CodeDone<CodeSessionRow> */
+  create: "code:create",
+  /** (sessionId, sinceSeq?) => CodeDone<CodeAttached> */
+  attach: "code:attach",
+  /** (sessionId) => void: this window stops getting the session's events (the session keeps running). */
+  detach: "code:detach",
+  /** (CodeSend) => CodeDone<{ messageId: string }> */
+  send: "code:send",
+  /** (sessionId, { keepBackground?: boolean }) => CodeDone: stop the turn. */
+  interrupt: "code:interrupt",
+  /** () => void: Stop everything. Always accepted. */
+  stopAll: "code:stop-all",
+  /** (CodeRequestAnswer) => CodeDone */
+  respond: "code:respond",
+  /** (sessionId, CodePermissionMode) => CodeDone<{ mode: CodePermissionMode }>: the mode in force after. */
+  setPermissionMode: "code:set-permission-mode",
+  /** (sessionId, CodeAgentMode) => CodeDone<{ mode: CodeAgentMode }> */
+  setAgentMode: "code:set-agent-mode",
+  /** (sessionId, { name?, pinned?, archived? }) => CodeDone<CodeSessionRow> */
+  update: "code:update",
+  /** (sessionId, { toEventId?, name? }) => CodeDone<CodeSessionRow> */
+  fork: "code:fork",
+  /** (sessionId) => CodeDone: delete the session, its history and, if Ember made one, its worktree. */
+  remove: "code:remove",
+  /** (sessionId) => CodeDone<CodeAttachment[]>: main's file picker, rooted at the session's folder. */
+  pickAttachments: "code:pick-attachments",
+  /** (CodeRpcCall) => CodeDone<unknown> */
+  rpc: "code:rpc",
+  /** main → window: CodeEventEnvelope */
+  event: "code:event",
+  /** main → window: CodeSessionRow (a row changed) or { removed: sessionId } */
+  row: "code:row",
+  /** main → window: CodePendingRequest opened, or { resolved: requestId, sessionId, by: CodeActor | "sdk" } */
+  request: "code:request",
+  /** (url) => CodeDone: main opens an http or https address in the person's browser (`linkRefusal`). */
+  openLink: "code:open-link",
+  /** (sessionId) => void: the window shows this session and has the focus; its unread count goes to 0. */
+  markRead: "code:mark-read",
+  /** main → window: boolean, whether the microphone is open for a request (live regions hold meanwhile). */
+  micHeld: "code:mic-held",
+  /** (sessionId, relDir) => CodeDone<CodeFolderListing>: a folder of the session's working folder ("" for its top). */
+  listFolder: "code:list-folder",
+  /** (sessionId, relPath) => CodeDone<CodeFileRead>: a file of the session's working folder, within CODE_LIMITS.fileBytes. */
+  readFile: "code:read-file",
+  /** main → window: sessionId, the session to show (the companion's show_coding_session, or Ember's own "Open it"). */
+  show: "code:show",
+  /** () => { on: boolean }: whether the companion is on (Customise › Companion shows it; Home owns the switch). */
+  companionState: "code:companion-state",
+  /** () => void: opens Ember's settings at the companion's switch. */
+  openCompanionSettings: "code:open-companion-settings",
+  /** () => void: opens Ember's settings at Copilot's sign-in (a session's "sign in" remedy; Home owns the sign-in). */
+  openSignIn: "code:open-sign-in",
+  /** (projectId?) => CodeDone<CodeSettings>: the person's defaults, and a project's own settings. */
+  settings: "code:settings",
+  /** (CodeSettingsChange) => CodeDone<CodeSettings> */
+  setSettings: "code:set-settings",
+  /** (projectId, { add: true } | { remove: folder }) => CodeDone<string[]>: a project's extra folders (add: main's picker). */
+  projectFolders: "code:project-folders",
+  /** (sessionId) => CodeDone<CodeSessionOptions>: the options kept for a session. */
+  sessionOptions: "code:session-options",
+  /** (sessionId, CodeSessionOptions) => CodeDone<CodeSessionOptions>: changed now (`options.update`) and kept. */
+  configure: "code:configure",
+  /** ({ olderThanDays, dryRun }) => CodeDone<CodePrune>: sessions not used for that long (never open or pinned ones). */
+  prune: "code:prune",
+  /** (sessionId) => CodeDone: the transcript as Markdown, in a file main's save dialog chose. */
+  exportSession: "code:export-session",
+} as const;
+
+/** The API the coding window's preload exposes as `window.emberCode`. */
+export interface EmberCodeApi {
+  list(): Promise<{ projects: CodeProject[]; sessions: CodeSessionRow[] }>;
+  addProject(): Promise<CodeDone<CodeProject>>;
+  removeProject(projectId: string): Promise<CodeDone>;
+  create(options: CodeCreate): Promise<CodeDone<CodeSessionRow>>;
+  attach(sessionId: string, sinceSeq?: number): Promise<CodeDone<CodeAttached>>;
+  detach(sessionId: string): void;
+  send(message: CodeSend): Promise<CodeDone<{ messageId: string }>>;
+  interrupt(sessionId: string, options?: { keepBackground?: boolean }): Promise<CodeDone>;
+  stopAll(): void;
+  respond(answer: CodeRequestAnswer): Promise<CodeDone>;
+  setPermissionMode(sessionId: string, mode: CodePermissionMode): Promise<CodeDone<{ mode: CodePermissionMode }>>;
+  setAgentMode(sessionId: string, mode: CodeAgentMode): Promise<CodeDone<{ mode: CodeAgentMode }>>;
+  update(sessionId: string, change: { name?: string; pinned?: boolean; archived?: boolean }): Promise<CodeDone<CodeSessionRow>>;
+  fork(sessionId: string, options?: { toEventId?: string; name?: string }): Promise<CodeDone<CodeSessionRow>>;
+  remove(sessionId: string): Promise<CodeDone>;
+  pickAttachments(sessionId: string): Promise<CodeDone<CodeAttachment[]>>;
+  rpc(call: CodeRpcCall): Promise<CodeDone<unknown>>;
+  onEvent(listener: (envelope: CodeEventEnvelope) => void): () => void;
+  onRow(listener: (change: CodeSessionRow | { removed: string }) => void): () => void;
+  onRequest(listener: (change: CodePendingRequest | { resolved: string; sessionId: string; by: CodeActor | "sdk" }) => void): () => void;
+  /** Opens an http or https address in the person's browser, through main (never in the window). */
+  openLink(url: string): Promise<CodeDone>;
+  /** The session shown and focused: main clears its unread count, and counts none while this window shows it. */
+  markRead(sessionId: string): void;
+  /** Whether the microphone is open for a request; called at once with the latest value, then on each change. */
+  onMicHeld(listener: (held: boolean) => void): () => void;
+  /** A folder of the session's working folder, by its path relative to that folder ("" for the top): main lists it. */
+  listFolder(sessionId: string, relDir: string): Promise<CodeDone<CodeFolderListing>>;
+  /** A file of the session's working folder, by its path relative to that folder: main reads it, bounded. */
+  readFile(sessionId: string, relPath: string): Promise<CodeDone<CodeFileRead>>;
+  /** Main asks the window to show a session (a session id); optional, so a stand-in without it still loads. */
+  onShow?(listener: (sessionId: string) => void): () => void;
+  /** Whether the companion is on; optional, as onShow. */
+  companionState?(): Promise<{ on: boolean }>;
+  /** Opens Ember's settings at the companion's switch (the one place it changes). */
+  openCompanionSettings?(): void;
+  /** Opens Ember's settings at Copilot's sign-in, where a session's error names signing in as its remedy. */
+  openSignIn?(): void;
+  /** The person's defaults for new sessions, and a project's own settings. */
+  settings?(projectId?: string): Promise<CodeDone<CodeSettings>>;
+  setSettings?(change: CodeSettingsChange): Promise<CodeDone<CodeSettings>>;
+  /** Adds a folder (main's picker) to a project's extra folders, or removes one of them. */
+  projectFolders?(projectId: string, change: { add: true } | { remove: string }): Promise<CodeDone<string[]>>;
+  /** A session's kept options, and a change to them (applied now where the SDK allows it, and kept). */
+  sessionOptions?(sessionId: string): Promise<CodeDone<CodeSessionOptions>>;
+  configure?(sessionId: string, options: CodeSessionOptions): Promise<CodeDone<CodeSessionOptions>>;
+  /** Sessions not used for `olderThanDays` days: a dry run lists them, then the same call with dryRun false deletes them. */
+  prune?(o: { olderThanDays: number; dryRun: boolean }): Promise<CodeDone<CodePrune>>;
+  /** Saves a session's transcript as Markdown where the person chooses (main's save dialog). */
+  exportSession?(sessionId: string): Promise<CodeDone>;
+}

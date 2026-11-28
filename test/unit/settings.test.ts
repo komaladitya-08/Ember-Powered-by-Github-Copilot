@@ -335,3 +335,27 @@ describe("sending screenshots for tasks (safety-privacy-7)", () => {
     expect(applyAdminPolicy(DEFAULT_SETTINGS, parseAdminPolicy("{ nope", "/etc/ember/policy.json").policy).screenImages).toBe(false);
   });
 });
+
+describe("native chat sessions' setting", () => {
+  it("is off by default, kept on once turned on, and a bad value is repaired to off", () => {
+    expect(DEFAULT_SETTINGS.chat).toEqual({ native: false });
+    const s = new SettingsStore(file);
+    s.load();
+    s.update({ chat: { native: true } });
+    expect(new SettingsStore(file).load().settings.chat.native).toBe(true);
+    fs.writeFileSync(file, JSON.stringify({ chat: { native: "yes" }, speak: false }));
+    expect(new SettingsStore(file).load().settings).toMatchObject({ chat: { native: false }, speak: false });
+  });
+});
+
+describe("coding sessions' setting", () => {
+  it("is off by default, kept on once turned on, and a bad value is repaired to off", () => {
+    expect(DEFAULT_SETTINGS.code).toEqual({ enabled: false });
+    const s = new SettingsStore(file);
+    s.load();
+    s.update({ code: { enabled: true } });
+    expect(new SettingsStore(file).load().settings.code.enabled).toBe(true);
+    fs.writeFileSync(file, JSON.stringify({ code: { enabled: 1 }, speak: false }));
+    expect(new SettingsStore(file).load().settings).toMatchObject({ code: { enabled: false }, speak: false });
+  });
+});

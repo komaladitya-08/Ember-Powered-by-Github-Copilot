@@ -82,6 +82,19 @@ describe("paths", () => {
     expect(p.dataDirLabel("/tmp/anything", "settings.json")).toBe("/tmp/anything/settings.json");
     expect(p.renameRetries).toBe(0);
   });
+
+  it("keep the coding runtime's state beside the data folder, in the XDG state folder, never inside the data folder (docs/CODING-APP.md §3)", () => {
+    const p = linuxSystem(deps({ env: { PATH: "/usr/bin:/bin", HOME: "/home/u" } })).paths;
+    const own = path.join("/home/u/.config", "ember");
+    expect(p.codeState(own, "/home/u/.config", "/home/u")).toBe(path.join("/home/u", ".local", "state", "ember-code"));
+    const xdg = linuxSystem(deps({ env: { PATH: "/usr/bin:/bin", HOME: "/home/u", XDG_STATE_HOME: "/srv/state" } })).paths;
+    expect(xdg.codeState(own, "/home/u/.config", "/home/u")).toBe(path.join("/srv/state", "ember-code"));
+    // A relative XDG_STATE_HOME is ignored, as the specification says.
+    const relative = linuxSystem(deps({ env: { PATH: "/usr/bin:/bin", HOME: "/home/u", XDG_STATE_HOME: "state" } })).paths;
+    expect(relative.codeState(own, "/home/u/.config", "/home/u")).toBe(path.join("/home/u", ".local", "state", "ember-code"));
+    // A data folder EMBER_USER_DATA moved keeps its coding state beside it.
+    expect(p.codeState("/tmp/x/profile", "/home/u/.config", "/home/u")).toBe("/tmp/x/profile-code");
+  });
 });
 
 describe("apps", () => {

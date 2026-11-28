@@ -348,7 +348,7 @@ describe("the Secure Form", () => {
     expect(factory).toContain('if (os === "win32" || os === "darwin") win.setContentProtection(true);');
     expect(factory).toContain("closeWhenGone(win);");
     expect(factory).toContain('pageUrl(path.join(appDir, "renderer", "vault", "index.html"))');
-    expect(read("scripts/build-app.mjs")).toContain('const pages = ["home", "overlay", "handle", "ask", "mic", "desk", "command", "prompt", "vault"];');
+    expect(read("scripts/build-app.mjs")).toContain('const pages = ["home", "overlay", "handle", "ask", "mic", "desk", "command", "prompt", "vault", "code"];');
   });
 
   it("types secret parts into password boxes and builds every word as text (vault-2)", () => {

@@ -416,7 +416,7 @@ describe("Home's panes and its Task activity channel", () => {
     const links = [...page.matchAll(/<a href="#([\w-]+)-h"/g)].map(m => m[1]);
     for (const l of links) expect(page, l).toMatch(new RegExp(`<section[^>]*data-pane="\\w+"[^>]*>\\s*(?:<[^>]+>\\s*)*?<h[12] id="${l}-h"`));
     expect(links[0]).toBe("home");
-    expect(panes).toEqual(new Set(["home", "projects", "pick", "copilot", "voice", "memory", "privacy", "computers", "commands", "extensions", "access", "checks"]));
+    expect(panes).toEqual(new Set(["home", "chats", "projects", "pick", "copilot", "voice", "memory", "privacy", "computers", "commands", "extensions", "access", "checks"]));
     expect(page).toContain('<a href="#project-h">Projects</a>');
     expect(page).toContain('<a href="#copilot-h">Models &amp; connections</a>');
     // The status panel, the conversation, Task activity and What Ember did are Home's.

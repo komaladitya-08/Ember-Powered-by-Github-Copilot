@@ -635,19 +635,23 @@ describe("the Azure Key Vault passes on output with no value in it (stop-yield-x
   const fold = (passes: readonly ((t: string) => string)[], text: string) => passes.reduce((t, pass) => pass(t), text);
 
   it("takes one pass well under Stop's 300 ms over 4 MiB of secret ids with no value", () => {
-    // The best of three runs of each pass, so another program's load on the machine isn't counted (here: about 170 ms,
-    // the vault pass's 1,500 to 2,200 ms before).
-    let worst = 0;
-    for (const pass of REDACT_PASSES) {
-      let best = Infinity;
-      for (let k = 0; k < 3; k++) {
+    // What Stop waits for is the longest step of the redactor as output.ts runs it (redactSteps): a whole pass, or a
+    // slice of a pass that runs in slices. The best of three runs, so another program's load on the machine isn't
+    // counted (here: about 40 ms; the vault pass's 1,500 to 2,200 ms before). Timing each pass whole instead, the
+    // sliced ones too, read 335 and 361 ms on a Windows runner in the middle of the suite: time no Stop waits for.
+    let best = Infinity;
+    for (let run = 0; run < 3; run++) {
+      const steps = redactSteps(big);
+      let longest = 0;
+      for (;;) {
         const t0 = performance.now();
-        pass(big);
-        best = Math.min(best, performance.now() - t0);
+        const r = steps.next();
+        longest = Math.max(longest, performance.now() - t0);
+        if (r.done) break;
       }
-      worst = Math.max(worst, best);
+      best = Math.min(best, longest);
     }
-    expect(worst).toBeLessThan(300);
+    expect(best).toBeLessThan(300);
   }, 60_000);
 
   it("gives the same bytes as the passes without the check, with a value or without one", () => {
@@ -845,8 +849,14 @@ describe("the key-value pass in slices (integ-x-3)", () => {
     const MiB = 4 * 1024 * 1024;
     const fill = (unit: string): string => unit.repeat(Math.ceil(MiB / unit.length)).slice(0, MiB);
     for (const text of [fill("token"), fill(`${"token".repeat(60)}: `), fill("token=1 "), fill("password: x\n"), fill(`${"token".repeat(40)}:'v'`)]) {
-      const { ms, out } = longestStep(text);
-      expect(out).toBe(atOnce(text));
+      // The best of three runs, so another program's load isn't counted as a slow step: one run's longest step read
+      // 161 to 197 ms on hosted macOS and Windows runners, three times in a week, with this code unchanged.
+      let ms = Infinity;
+      for (let run = 0; run < 3; run++) {
+        const r = longestStep(text);
+        expect(r.out).toBe(atOnce(text));
+        ms = Math.min(ms, r.ms);
+      }
       // One whole-text pass took 330 to 358 ms on `token` repeated; a slice is a sixteenth of it.
       expect(ms, text.slice(0, 40)).toBeLessThan(150);
     }

@@ -30,7 +30,7 @@ paths:
 Ember's windows follow Apple's current Human Interface Guidelines (the macOS 26 Liquid Glass generation) on Linux, Windows and macOS. RHEL 8.4 (no GPU, software compositing, GNOME 3.32) sets the performance budget. Where to find each part:
 - `app/renderer/shared/ember.css` holds the tokens and shared controls.
 - The bubble's CSS is `BUBBLE_CSS` in `packages/bubble/src/bubble.ts`.
-- Page styles are in `app/renderer/{home,overlay,handle,ask,desk,command,prompt,vault}/styles.css` (the mic page has none).
+- Page styles are in `app/renderer/{home,overlay,handle,ask,desk,command,prompt,vault,code}/styles.css` (the mic page has none).
 - docs/DESIGN.md "Design system" describes the result; update it when the system changes.
 
 When a case isn't covered here, follow the HIG page for that control.
@@ -177,6 +177,7 @@ Name these patterns when you design something new. Vague direction such as "make
   - the desk bar is 30px;
   - the handle pill is 200×56, and the hidden-Ember tab 56×56;
   - the no-compositor corner card is 360 wide, 120–360 tall to fit its content, and up to 640 (inside the work area, less 12 above and below) while a question or anything else that needs you shows, so its sentence shows whole at every text size (`cardMax()` in handle.ts);
+  - the coding window is 1200×800, down to 720×480 (`CODE_SIZE` in windows.ts; its page lays out from 720 px, with a drawer below 640 px), like Home sized once and not grown with the text;
   - the command window is 760×480, the vault's Secure Form `VAULT_FORM_SIZE` by kind (app/main/vault/form.ts; 440 wide, its words and boxes scroll when they don't fit), and the prompt window `PROMPT_SIZE` (app/main/remote/prompt-window.ts): an SSH question longer than the small card shows (a two-factor menu) is 18px taller a quoted line, up to the consent card's height (`promptSizeOf`).
 
   All but the corner card grow with the text size (`scaledSize` and `forText` in main, kept inside the work area); the card grows with what it holds instead.

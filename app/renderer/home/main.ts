@@ -9,7 +9,7 @@
 import { Rig, FACTORIES, frameSeconds, restingGap, type Character } from "@ember/characters";
 import type { TargetSummary } from "../../shared/targets";
 import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RetryResult, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
-import { MEMORY_UNDO_MS } from "../../shared/ipc";
+import { MEMORY_UNDO_MS, voiceHoldsLive } from "../../shared/ipc";
 import { CONVERSATION_REQUEST_LIMIT, conversationTurnChangeOf, type ConversationTurn, type ConversationTurnEnd, type HistoryProblemKind } from "../../shared/conversation";
 import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, HEAR_WAITING, LISTEN_ONCE_READY, SPEAK_NO_VOICE, SPEAK_RATES, clearHearingLine, hearEmberLine, nearestRate, closedUnexpectedlyText, heardThrough, showLogLabel, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
@@ -61,7 +61,7 @@ import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, t
 import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
 import { conversationAdded, conversationChange, conversationShown, earlierLabel, givenBackAbove, givenBackFollow, givenBackKept, givenBackOver, stillUnsent, type GivenBack } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
-import { problemInHome, PROBLEM_SETTINGS, composerCount, composerDraftBack, composerGivenBack, composerLineBase, composerLineYields, COMPOSER_HELD, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, LISTEN_CONSENT_NOT_SAVED, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
+import { problemInHome, PROBLEM_SETTINGS, composerCount, composerDraftBack, composerGivenBack, composerLineBase, composerLineYields, COMPOSER_HELD, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, LISTEN_CONSENT_NOT_SAVED, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount, COMPANION_HINT, CODE_HINT, partsNote } from "./copy";
 import { composerEditAgain, composerEditCancelled, composerLineConnected, composerLineDisconnected, composerLineFits, STATUS_FAILED } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
@@ -71,6 +71,7 @@ import { MEMORY_PAGE_SIZE, MEMORY_SOURCES, memoryPage } from "./memory-view";
 import { homeFrameGap } from "./frame-gap";
 import type { TaskEntry } from "../../shared/activity";
 import { STATUS_RETRIES, STATUS_RETRY_MS, statusFence } from "./status-fence";
+import { mountChats } from "./chat";
 
 declare global {
   interface Window { ember: EmberHomeApi }
@@ -190,6 +191,11 @@ function applySettings(s: Settings): void {
   providerSettings(s);
   ($("login") as HTMLInputElement).checked = s.startAtLogin;
   ($("keep-conversation") as HTMLInputElement).checked = s.keepConversation;
+  ($("companion-on") as HTMLInputElement).checked = s.companion.enabled;
+  ($("code-on") as HTMLInputElement).checked = s.code.enabled;
+  const parts = partsNote(s.companion.enabled, s.code.enabled);
+  if ($("parts-note").textContent !== parts) $("parts-note").textContent = parts;
+  chats.settings(s);
   $("conversation-retention").textContent = conversationRetention(s.keepConversation);
   ($("reduce-motion") as HTMLInputElement).checked = s.reduceMotion;
   ($("more-time") as HTMLInputElement).checked = s.moreTime;
@@ -257,6 +263,8 @@ function save(patch: SettingsPatch): Promise<boolean> {
   // Only the Settings main returns after a save counts: anything else (a literal false) is not a saved choice.
   return window.ember.updateSettings(patch).then(r => (r !== null && typeof r === "object" ? true : failed(undefined)), failed);
 }
+// Chats (chat.ts): native Copilot sessions in a folder, dormant until their switch in Projects is on.
+const chats = mountChats({ api: window.emberChat, save });
 
 // ───── The line under the title: recomputed whenever anything it depends on changes ─────
 /** Signed out while the user's own provider's card waits: the host it names, the way on instead of Copilot (integrations-r3-1). */
@@ -663,6 +671,7 @@ function renderAdmin(a: Status["admin"]): void {
     if (to && before && after && words) { before.textContent = words[0]; after.textContent = words[1]; to.remove(); }
   }
   lastAdmin = a;
+  chats.admin(a);
   if (agent) renderAgent(agent);
   renderRecipient();
   renderTagline();
@@ -1340,6 +1349,10 @@ $("keep-conversation-hint").textContent = CONVERSATION_KEEP_HINT;
   window.ember.onHistoryProblem(showProblem);
 }
 $("keep-conversation").addEventListener("change", e => { void save({ keepConversation: (e.target as HTMLInputElement).checked }); });
+$("companion-hint").textContent = COMPANION_HINT;
+$("code-hint").textContent = CODE_HINT;
+$("companion-on").addEventListener("change", e => { void save({ companion: { enabled: (e.target as HTMLInputElement).checked } }); });
+$("code-on").addEventListener("change", e => { void save({ code: { enabled: (e.target as HTMLInputElement).checked } }); });
 function conversationRow(e: Entry): HTMLLIElement {
   const li = document.createElement("li");
   li.className = e.who;
@@ -2811,7 +2824,7 @@ const VOICE_LINE_SETTLE_MS = 1000;
  * then: anything else read aloud was taken for one of the owner's phrases, voice-listening-r4-1). Status lines besides
  * the voice line's are held then (held-live.ts).
  */
-const micHeld = (v: VoiceStatus): boolean => v.state === "active" || v.state === "starting" || v.listenOnce?.phase === "starting" || v.listenOnce?.phase === "listening" || !!v.match?.enrolling;
+const micHeld = (v: VoiceStatus): boolean => voiceHoldsLive(v);
 let voiceLineSoon: ReturnType<typeof setTimeout> | undefined;
 /** The microphone's fix beside a voice error (Windows' privacy switch, macOS's permission), when the setup check has it. */
 function renderVoiceFix(): void {
@@ -2839,6 +2852,7 @@ function renderVoice(v: VoiceStatus): void {
   speakLive.hold(micHeld(v));
   naturalLive.hold(micHeld(v));
   holdTaskNews(micHeld(v));
+  chats.hold(micHeld(v));
   renderVoiceFix();
   const text = heardThrough(v.detail && v.state === "error" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state, v.state, v.detail, v.micLabel);
   $("voice-text").textContent = text;

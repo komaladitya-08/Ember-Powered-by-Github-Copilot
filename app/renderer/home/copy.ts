@@ -28,7 +28,22 @@ export function sessionReviewWords(title: string): { button: string; label: stri
 export function sessionReviewChanged(): string { return "This coding review changed. Open it again from the current session."; }
 
 export const CONVERSATION_RETENTION = `Keeps the latest ${CONVERSATION_LIMIT} messages while Ember runs. Older messages are forgotten as new ones arrive. Closing Ember or signing out forgets this conversation.`;
-export const CONVERSATION_KEEP_LABEL = "Keep my recent conversation after Ember closes";
+/** The companion's switch (docs/CODING-APP.md §5): what it is, said whole under the switch. */
+export const COMPANION_HINT = "A character beside your cursor that you can talk to, by voice or by typing, and that answers you the same way. It can work in your apps and in your coding sessions when you ask. Off, there is no character, no Ask box and no listening; Stop still works.";
+/** The coding sessions' switch. */
+export const CODE_HINT = "GitHub Copilot coding sessions in your own folders, in a window of their own.";
+
+/**
+ * The line under Home's companion and coding switches: what is on, and what to turn on when neither is, said once the
+ * welcome is done. A companion turned off while it worked has stopped its tasks; one turned on opens its conversation.
+ */
+export function partsNote(companion: boolean, code: boolean): string {
+  if (!companion && !code) return "Neither is on, so Ember does nothing yet. Turn on the companion, coding sessions or both.";
+  if (!companion) return "Coding sessions open in their own window. Turn the companion on to talk to Ember beside your cursor.";
+  return "";
+}
+
+export const CONVERSATION_KEEP_LABEL ="Keep my recent conversation after Ember closes";
 export const CONVERSATION_KEEP_HINT = "Off by default. When on, Ember saves these messages on this computer, in a file only you can read, and shows them again after it restarts. They are for you to read: Ember itself starts a fresh conversation and doesn't remember them, and nothing in them is run again.";
 export const CONVERSATION_RETENTION_KEPT = `Keeps the latest ${CONVERSATION_LIMIT} messages on this computer, also after Ember closes. Older messages are forgotten as new ones arrive. Turning this off, New conversation, signing out and Forget everything delete the saved copy.`;
 /** The retention note for the setting as it is now. */
@@ -2192,3 +2207,262 @@ export const VAULT_WORDS = {
   failed: "Ember couldn't delete that from the vault. Try Forget again.",
   failedAll: "Ember couldn't delete the vault's file. Try Forget all again.",
 } as const;
+
+// ───── Chats: native Copilot sessions in a folder (app/renderer/home/chat.ts, app/shared/chat.ts) ─────
+// The SDK's own modes and decisions in plain words, each keeping the SDK's term recognisable. These are the chat's
+// modes, never Ember's approval modes (Interactive, Assisted, Autopilot in Apps & privacy), which they don't touch.
+
+/** The switch in Projects that wakes the chats (`settings.chat.native`), and its footnote. */
+export const CHAT_NATIVE_LABEL = "Chat with Copilot in a folder";
+export const CHAT_NATIVE_HINT = "Off by default. When on, Chats in the sidebar lets you start a Copilot chat in a folder you choose. Copilot can read and change files there and run commands, asking first as each chat's permission mode says, and what it reads goes to your model service. Chats stay on this computer so you can open them again.";
+/** The same switch where the organisation's policy allows no chat (acting off, or a lockdown). */
+export const CHAT_NATIVE_LOCKED = "Your organisation doesn't allow chats with Copilot here.";
+
+export const CHATS_LEAD = "Each chat works in one folder with Copilot's own tools. What it may do without asking is the chat's permission mode.";
+export const CHAT_LIST_TITLE = "Your chats";
+export const CHAT_NEW = "New chat…";
+export const CHAT_LIST_EMPTY = "No chats yet. New chat… asks you for a folder to work in.";
+/** The page couldn't reach main at all (main's own refusals come as their sentence). */
+export const CHAT_UNREACHABLE = "That didn't reach the chat. Try again.";
+
+/** A folder as a list shows it: its last one or two parts. */
+export function folderTail(folder: string): string {
+  const parts = folder.split(/[\\/]+/).filter(Boolean);
+  if (!parts.length) return folder;
+  return parts.slice(-2).join("/");
+}
+
+/** A chat's name: its own, or the folder it works in. */
+export function chatTitle(row: { name: string; folder: string }): string {
+  return row.name.trim() || (row.folder ? `Chat in ${folderTail(row.folder)}` : "New chat");
+}
+
+/** A list row's state words: shown beside its mark, and said with its name. */
+export function chatRowState(row: { busy: boolean; pending: number; open: boolean }): string {
+  if (row.pending > 0) return row.pending === 1 ? "Needs you" : `Needs you: ${row.pending} requests`;
+  if (row.busy) return "Working";
+  return row.open ? "" : "Kept from before";
+}
+
+/** A list row's name for a screen reader: the chat, its folder and how it stands. */
+export function chatRowLabel(row: { name: string; folder: string; busy: boolean; pending: number; open: boolean }): string {
+  const state = chatRowState(row);
+  return `${chatTitle(row)}, in ${folderTail(row.folder) || "a folder"}${state ? `. ${state}` : ""}`;
+}
+
+/** Under the shown chat's name: the folder it works in. */
+export function chatFolderLine(folder: string): string {
+  return `Works in ${folder}`;
+}
+export const CHAT_RESUMED = "Opened again. Copilot has this chat's earlier messages; they aren't shown here.";
+
+export const CHAT_PERMISSION_LABEL = "Permission mode";
+export const CHAT_AGENT_LABEL = "Agent mode";
+
+/** The SDK's permission modes (manual, assisted, allow-all), named for people. */
+export function chatPermissionName(mode: string): string {
+  if (mode === "manual") return "Ask every time (manual)";
+  if (mode === "assisted") return "Let a second model check (assisted)";
+  if (mode === "allow-all") return "Allow everything (allow-all)";
+  return mode;
+}
+
+/** What a permission mode means, in a line beneath its picker. */
+export function chatPermissionHint(mode: string): string {
+  if (mode === "manual") return "Copilot asks you before it runs a command, changes a file or fetches a web address, unless you allowed that kind of step for this chat.";
+  if (mode === "assisted") return "A second model checks each request against what you asked. What it approves goes ahead, marked as approved by the check; anything else asks you.";
+  if (mode === "allow-all") return "Copilot runs commands, changes files and fetches web addresses without asking you. Ember's own data stays out of its reach, and Stop ends it.";
+  return "";
+}
+
+/** The SDK's agent modes (interactive, plan, autopilot), named for people. */
+export function chatAgentName(mode: string): string {
+  if (mode === "interactive") return "Step by step (interactive)";
+  if (mode === "plan") return "Plan first (plan)";
+  if (mode === "autopilot") return "Keep going (autopilot)";
+  return mode;
+}
+
+/** What an agent mode means, in a line beneath its picker. */
+export function chatAgentHint(mode: string): string {
+  if (mode === "interactive") return "Copilot works on what you ask, then waits for your next message.";
+  if (mode === "plan") return "Copilot works out a plan with you first, and starts on it when you say so.";
+  if (mode === "autopilot") return "Copilot keeps working on its own until the task is done. The permission mode still decides what asks you.";
+  return "";
+}
+
+/** A mode change that wasn't applied: which mode is in force, and why, in one sentence. */
+export function chatModeRefused(picker: "permission" | "agent", requested: string, inForce: string): string {
+  const name = picker === "permission" ? chatPermissionName : chatAgentName;
+  return `“${name(requested)}” isn't available for this chat, so “${name(inForce)}” is still in force: your organisation's policy or the model service doesn't allow it.`;
+}
+
+/** A decision's button, by the SDK's kind of decision and of request. */
+export function chatDecisionLabel(kind: string, request: string): string {
+  if (kind === "approve-once") return "Allow once";
+  if (kind === "approve-for-session") return request === "url" ? "Allow this site for this chat" : "Allow for this chat";
+  if (kind === "approve-read-only-for-session") return "Allow reading here for this chat";
+  if (kind === "approve-for-location") return "Allow in this folder";
+  if (kind === "approve-permanently") return "Always allow this site";
+  if (kind === "reject") return "Don't allow";
+  return kind;
+}
+
+/** A permission card's question, by the SDK's kind of request. */
+export function chatCardTitle(request: { kind: string; tool?: string; server?: string }): string {
+  switch (request.kind) {
+    case "shell": return "Run a command?";
+    case "write": return "Change a file?";
+    case "read": return "Read a file?";
+    case "url": return "Fetch a web address?";
+    case "mcp": return `Use “${request.tool}” from “${request.server}”?`;
+    case "memory": return "Remember something?";
+    case "custom-tool": return `Use “${request.tool}”?`;
+    case "hook": return `Let “${request.tool}” go ahead?`;
+    default: return "Allow this step?";
+  }
+}
+export const CHAT_CARD_LEAD = "Copilot asks";
+
+/** The labels of what a card shows (the SDK's own words for each part follow them, as it sent them). */
+export const CHAT_CARD_FIELDS = {
+  command: "Command",
+  reason: "Copilot's reason",
+  file: "File",
+  changes: "Changes",
+  path: "Path",
+  address: "Address",
+  server: "Server",
+  tool: "Tool",
+  args: "Given",
+  fact: "To remember",
+  message: "Its message",
+  paths: "Files it may touch",
+  urls: "Addresses it may reach",
+} as const;
+
+/** What “Allow for this chat” covers for a command: the commands the SDK names. */
+export function chatCovers(identifiers: readonly string[]): string {
+  return `“Allow for this chat” covers these commands: ${identifiers.join(", ")}.`;
+}
+export const CHAT_WRITES_FILES = "This command writes to a file.";
+export const CHAT_READ_ONLY = "This tool says it only reads.";
+export const CHAT_MANAGED = "Your organisation requires a decision on this one, so only Allow once and Don't allow are offered.";
+export const CHAT_TRUNCATED = "Some of this request was too long to show whole.";
+/** The tool asked to run outside the SDK's sandbox, which Ember never allows. */
+export const CHAT_SANDBOX_BYPASS = "Copilot asked to run this outside its sandbox. Ember doesn't allow that, whatever you choose.";
+/** Copilot's own warning about a command. */
+export function chatWarning(text: string): string { return `Copilot's warning: ${text}`; }
+
+/** In assisted mode, what the second model's check said of a request it left to you. */
+export function chatAssistedNote(a: { recommendation: string; reason?: string }): string {
+  const lead = a.recommendation === "excluded" ? "The second model doesn't check this kind of request, so it's yours to decide."
+    : a.recommendation === "error" ? "The second model's check couldn't decide, so it's yours to decide."
+      : "The second model's check left this to you.";
+  return a.reason ? `${lead} Its reason: ${a.reason}` : lead;
+}
+
+/** Reject's reason field. */
+export const CHAT_REASON_SUMMARY = "Tell Copilot why, if you don't allow it";
+export const CHAT_REASON_LABEL = "Reason for Copilot (optional)";
+
+/** Who decided, as the record says it. */
+function chatBy(by: string): string {
+  if (by === "user") return "by you";
+  if (by === "judge") return "by the second model's check";
+  if (by === "allow-all") return "because Allow everything is on";
+  if (by === "stop") return "because the chat was stopped";
+  return "by Copilot's own rules";
+}
+
+/**
+ * The one-line record a card becomes: what was decided (the SDK's result, and the person's own choice where it was
+ * theirs) and by whom. `chosen`: the decision pressed here; `request`: the SDK's kind of request.
+ */
+export function chatRecord(decision: string, by: string, chosen?: string, request = ""): string {
+  if (decision.startsWith("approved")) {
+    const what = by === "user" && chosen && chosen !== "reject" ? chatDecisionLabel(chosen, request).replace(/^Always allow/, "Always allowed").replace(/^Allow\b/, "Allowed")
+      : decision === "approved-for-session" ? "Allowed for this chat"
+        : decision === "approved-permanently" ? "Always allowed"
+          : decision === "approved-for-location" ? "Allowed in this folder" : "Allowed";
+    return `${what}, ${chatBy(by)}.`;
+  }
+  if (decision === "cancelled") return by === "stop" ? "Cancelled because the chat was stopped." : "Cancelled: the request ended before a decision.";
+  if (decision === "denied-by-rules") return "Not allowed, by Copilot's own rules.";
+  if (decision === "denied-by-content-exclusion-policy") return "Not allowed: your organisation's content exclusion covers it.";
+  if (decision === "denied-by-permission-request-hook") return "Not allowed, by a hook.";
+  if (decision === "denied-no-approval-rule-and-could-not-request-from-user") return "Not allowed: nobody could be asked.";
+  return `Not allowed, ${chatBy(by)}.`;
+}
+
+/** The model's own question to the person. */
+export const CHAT_QUESTION_LEAD = "Copilot asks you";
+export const CHAT_ANSWER_LABEL = "Your answer";
+export const CHAT_ANSWER_SEND = "Send answer";
+export function chatAnswered(answer: string): string { return `You answered: ${answer}`; }
+export const CHAT_QUESTION_WITHDRAWN = "No longer waiting: the chat was stopped.";
+
+/** A tool row's title, by how it is drawn and how far it got. */
+export function chatToolTitle(r: { shape: string; tool: string; path?: string; url?: string; state: string }): string {
+  const running = r.state === "running", failed = r.state === "failed";
+  if (r.shape === "shell") return running ? "Running a command…" : failed ? "Command failed" : "Ran a command";
+  if (r.shape === "edit") {
+    const what = r.path ? folderTail(r.path) : "a file";
+    return running ? `Changing ${what}…` : failed ? `Couldn't change ${what}` : `Changed ${what}`;
+  }
+  if (r.shape === "fetch") {
+    const what = r.url ?? "a web address";
+    return running ? `Fetching ${what}…` : failed ? `Couldn't fetch ${what}` : `Fetched ${what}`;
+  }
+  return running ? `Using ${r.tool}…` : failed ? `${r.tool} failed` : `Used ${r.tool}`;
+}
+
+/** How a tool ended, with its exit code where it has one, and who let it run. */
+export function chatToolEnd(r: { state: string; exitCode?: number; approvedBy?: string }): string {
+  if (r.state === "running") return "";
+  const end = r.state === "failed" ? "Failed" : "Finished";
+  const code = r.exitCode !== undefined ? `, exit code ${r.exitCode}` : "";
+  const who = r.approvedBy === "user" ? " You allowed it."
+    : r.approvedBy === "judge" ? " The second model's check allowed it."
+      : r.approvedBy === "allow-all" ? " Allow everything is on, so nothing asked."
+        : r.approvedBy === "sdk" ? " Copilot's own rules allowed it." : "";
+  return `${end}${code}.${who}`;
+}
+export const CHAT_OUTPUT_CUT = "Earlier output isn't shown.";
+/** A diff's lines for a screen reader, before each line's words. */
+export const CHAT_DIFF_WORDS = { add: "Added: ", del: "Removed: " } as const;
+/** A diff's summary: how many lines it adds and removes. */
+export function chatDiffSummary(added: number, removed: number): string {
+  const n = (k: number) => `${k} ${k === 1 ? "line" : "lines"}`;
+  return `${n(added)} added, ${n(removed)} removed`;
+}
+export function chatDiffMore(n: number): string { return `${n.toLocaleString("en-GB")} more ${n === 1 ? "line" : "lines"} not shown.`; }
+
+export const CHAT_YOU = "You";
+export const CHAT_COPILOT = "Copilot";
+export const CHAT_REASONING = "Reasoning";
+export const CHAT_STOPPED = "Stopped.";
+export function chatNotSent(why: string): string { return `Not sent: ${why}`; }
+
+/** The composer. */
+export const CHAT_MESSAGE_LABEL = "Message Copilot";
+export const CHAT_MESSAGE_PLACEHOLDER = "What should Copilot do in this folder?";
+export const CHAT_SEND_HINT = "Enter sends. Shift+Enter adds a new line.";
+export const CHAT_SEND = "Send";
+export const CHAT_STOP = "Stop";
+export function chatStopLabel(title: string): string { return `Stop: ${title}`; }
+/** Over the limit: nothing is sent until it fits. */
+export function chatTooLong(n: number, limit: number): string {
+  return `${(n - limit).toLocaleString("en-GB")} characters over the limit of ${limit.toLocaleString("en-GB")}. Shorten it to send.`;
+}
+/** Requests waiting in the shown chat: a way to them from the composer. */
+export function chatPendingJump(n: number): string {
+  return n === 1 ? "Copilot is waiting for you: go to its request" : `Copilot is waiting for you: go to its ${n} requests`;
+}
+
+/** Said once a card appears (assertive), and once Copilot's reply is whole (polite). */
+export function chatAsksSaid(title: string, chat: string): string { return `Copilot asks in “${chat}”: ${title} The request is in the chat.`; }
+export function chatReplySaid(text: string): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  return `Copilot replied: ${t.length > 400 ? `${t.slice(0, 400)}…` : t}`;
+}

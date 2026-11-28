@@ -26,7 +26,7 @@ import { ANSWER_CLOSED_STATUS, TaskVoiceTrust, VoiceRefusals, answerStatusOnQues
 import { ModeRecord, modeIntents } from "./policy/mode-record";
 import { ModeSeal } from "./policy/mode-seal";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
-import { createCommandWindow, createHomeWindow, createPromptWindow, createVaultWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
+import { createCommandWindow, createHomeWindow, createPromptWindow, createVaultWindow, isTrustedSender, keepClearOf, openCodeWindow, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
 import { IPC, TASKS_PUSH_MS, type CodingWorkspaceState, type Status, type SignInProgress, type AskContext, type ListenOnceStatus, type VoiceMatchStatus, type ProjectSelection, type ProjectResult, type ProjectWorkspaceReply, type HearResult, type RetryResult } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, answerEndShown, askSuggestions, askSuggestionsComing, bubbleBoxOf, suggestOf, suggestionsShown, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
@@ -148,14 +148,24 @@ import { VaultService, registerVaultHomeIpc } from "./vault/service";
 import { VaultRedactor } from "./vault/redact";
 import { VAULT_IPC } from "../shared/vault";
 import { registerApprovalsIpc } from "./approvals-ipc";
+import { registerChatIpc } from "./chat-ipc";
+import { ChatSessions } from "./agent/chat-sessions";
+import { ChatUnavailable } from "./agent/chat-session";
+import { ChatRuntime } from "./agent/chat-runtime";
+import { chatPolicy } from "./agent/chat-policy";
+import { CodeRuntime } from "./code/runtime";
+import { CodeHub } from "./code/hub";
+import { CodeWindows, registerCodeIpc } from "./code/ipc";
+import { emberPathsOf } from "./targets/runtime";
 import { registerFirstRunIpc } from "./first-run";
 import { firstRunAllowsVoice } from "../shared/first-run";
 import { EXTENSIONS_SEAL_FILE, ExtensionSeal } from "./extensions/seal";
 import { PROVIDER_SEAL_FILE, ProviderRecord, ProviderSeal, type ProviderRecordDeps } from "./provider-record";
 import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, userProviderInForce, checkAgain, createProviderService, ownProviderAuth, providerSummary, providerWaitingHost, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
-import { PROVIDER_IPC } from "../shared/ipc";
+import { CHAT_IPC, PROVIDER_IPC } from "../shared/ipc";
 import { APPROVALS_IPC, modeCardVersion, modeRank } from "../shared/approvals";
-import { recentLimit } from "../shared/ipc";
+import { recentLimit, voiceHoldsLive, type VoiceStatus } from "../shared/ipc";
+import { CODE_IPC } from "../shared/code";
 import { endpointHost } from "../shared/provider";
 import { demoExtensionsApi, demoVariant } from "./extensions-demo";
 import type { ExtensionsApi } from "../shared/extensions";
@@ -163,6 +173,9 @@ import { RoutineBook, countStoredRoutines, routinesFile } from "./agent/routines
 import { reminderNotification, type Reminder } from "./agent/reminders";
 import { ReminderChangeSchema } from "../shared/reminders";
 import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "./launcher";
+import { companionParts, startOpens } from "./companion";
+import { companionCode } from "./agent/coding-tools";
+import { announcementLine } from "./code/companion";
 import { pushLater } from "./push-later";
 import { askpassInEmber, isAskpassRun } from "../askpass/in-ember";
 
@@ -227,8 +240,10 @@ app.setPath("userData", process.env.EMBER_USER_DATA ?? sys.paths.userData(app.ge
 // Windows toasts need the app's AppUserModelId, set before ready.
 if (sys.lifecycle.appUserModelId) app.setAppUserModelId(sys.lifecycle.appUserModelId);
 const userData = app.getPath("userData");
+// The coding runtime's state, beside the data folder so a session's sandbox can reach its own (docs/CODING-APP.md §3).
+const codeState = sys.paths.codeState(userData, app.getPath("appData"), app.getPath("home"));
 // One immutable logical/canonical selection feeds allocation and all local desktop self-protection gates.
-const codingStorage = selectCodingStorageBase();
+const codingStorage = selectCodingStorageBase([codeState]);
 // Private: settings, logs and the audit trail mention the user's apps and windows.
 try { fs.mkdirSync(userData, { recursive: true, mode: 0o700 }); fs.chmodSync(userData, 0o700); } catch { /* reported when used */ }
 
@@ -637,7 +652,7 @@ function start(): void {
     const ask = wantsAsk(argv);
     log.info("instance.second", ask ? { ask } : {});
     const view = ask ? startView({ onboarded: settings.get().onboarded, showSettings: false, atLogin: false, sessionProblem: !!sessionGreeting(readEnvironment()), ask }) : "settings";
-    if (view === "ask") openAsk({ source: "launcher" }); else showHomeFromKeys();
+    if (view === "ask") openAsk({ source: "launcher" }); else if (ask || !showCode()) showHomeFromKeys();
   });
 
   // No page may open windows or navigate away from our bundled files.
@@ -847,6 +862,8 @@ function start(): void {
     if (at) sendToHome(IPC.focusSection, at);
   };
   const greet = () => {
+    // No companion, no hello (docs/CODING-APP.md §5): the coding window or settings is what opened.
+    if (!companionParts(settings.get()).greeting) return;
     const phase = agent?.getStatus().phase;
     const connected = phase !== "signed-out" && phase !== "error";
     // Offline at start (a retry waits for the network): Ember connects by itself, there is nothing to set up.
@@ -1489,6 +1506,8 @@ function start(): void {
   /** `how.overEmber`: heard over Ember's own voice (never the user's own words for Assisted's check: host.ts UserRequest.overEmber). */
   const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; manual?: true; verified?: boolean; short?: boolean; suggested?: boolean; heardId?: number; replaces?: boolean; overEmber?: boolean } = {}, read = callContext, stillCurrent?: () => boolean) => {
     if (!consented()) { showHome(); return; }
+    // With the companion off there is no conversation to ask (companion.ts): nothing is sent, settings opens.
+    if (!companionParts(settings.get()).conversation) { log.info("ask.refused", { reason: "companion_off" }); showHome(); return; }
     recentAsks = [...recentAsks, { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}) }].slice(-4);
     // What the user might say next is worked out again once this is answered (app/main/personal/predict.ts).
     personalRef?.asked(text, { unchecked: how.voiceUnchecked, suggested: how.suggested });
@@ -1519,6 +1538,8 @@ function start(): void {
     // Every opening says where it came from (an ask box that opened by itself would show up here), once the box is up
     // where it opens: a line written first would hold up the keyboard (review #78).
     if (!consented()) { log.info("ask.open", { source }); showHome(); return; }
+    // With the companion off there is no ask box (companion.ts): settings opens, which says how to turn it on.
+    if (!companionParts(settings.get()).ask) { log.info("ask.open", { source, companion: false }); showHome(); return; }
     // Already open: the user is typing in it. Looking again would only find the ask box itself.
     if (askWindow.visible) { log.info("ask.open", { source }); askWindow.focus(); return; }
     // From the hotkey, letters typed before the box has the keyboard would go to the user's app: Ember holds the
@@ -1575,6 +1596,55 @@ function start(): void {
   let learningRef: MemoryLearning | null = null;
   let betterRecallRef: BetterRecall | null = null;
   let vaultRef: VaultService | null = null;
+  let chatRef: ChatSessions | null = null;
+  let codeRef: CodeHub | null = null;
+  /** The coding windows (app/main/code/ipc.ts): the window's creator registers its webContents; until then every sender is refused. */
+  const codeWindows = new CodeWindows(isTrustedSender);
+  // The coding window (docs/CODING-APP.md §4): opened only while coding sessions are on, and registered with the hub's
+  // channels for as long as it is open. False when they are off or the window couldn't open: the caller shows Home.
+  const showCode = (): boolean => settings.get().code.enabled && !!openCodeWindow(platform.os, { register: registerCode });
+  /**
+   * A coding session's request opened (CodeHub's `request` emit): with the companion on, Ember says so in the bubble
+   * and, where replies are spoken, aloud, in its own words from the request's kind and the project's name
+   * (code/companion.ts announcementLine: never a command, a path or a file's words), with "Open it" showing the session.
+   * It is no question of Ember's: nothing here answers the request, and a spoken yes can't, since spoken answers go only
+   * to a question the Confirmer put up (voice-answer.ts) and the session's request is answered only in the coding
+   * window, by click or key. Never over a question of Ember's own.
+   */
+  const announceCodingRequest = (payload: unknown) => {
+    if (!payload || typeof payload !== "object" || "resolved" in payload) return;
+    const r = payload as { sessionId?: unknown; kind?: unknown; data?: unknown };
+    if (typeof r.sessionId !== "string" || typeof r.kind !== "string") return;
+    if (!companionParts(settings.get()).codingAnnouncements || !consented() || confirmer?.waiting) return;
+    const line = announcementLine({ kind: r.kind as Parameters<typeof announcementLine>[0]["kind"], data: r.data }, codeRef?.projectNameOf(r.sessionId) ?? "");
+    const bubble = { ...IDLE_BUBBLE, visible: true, mood: "attention" as const, title: "A coding session needs you", thought: line, actions: [{ id: `ui:code-show:${r.sessionId}`, label: "Open it" }] };
+    setState({ emotion: "neutral", talking: false, bubble });
+    hideIfStill(bubble, 15_000);
+    if (maySpeak()) voice?.speak(line);
+    log.info("code.request_announced", { kind: r.kind });
+  };
+  /** The coding window brought forward on session `id` (the companion's show_coding_session, an announcement's Open). */
+  const showCodeSession = (id: string): boolean => {
+    const win = settings.get().code.enabled ? openCodeWindow(platform.os, { register: registerCode }) : null;
+    if (!win) return false;
+    const tell = () => { if (!win.isDestroyed()) win.webContents.send(CODE_IPC.show, id); };
+    if (win.webContents.isLoading()) win.webContents.once("did-finish-load", tell); else tell();
+    return true;
+  };
+  /** Whether the microphone is open for a request, as Home's live regions hold for it (codeMicHeld), last sent. */
+  let codeMic = false;
+  // A coding window's webContents: registered with the hub's channels, told where the microphone stands as it loads,
+  // and on closing let go of everything it watched.
+  const registerCode = (contents: BrowserWindow["webContents"]): (() => void) => {
+    const off = codeWindows.register(contents);
+    contents.on("did-finish-load", () => { if (!contents.isDestroyed()) contents.send(CODE_IPC.micHeld, codeMic); });
+    return () => { off(); codeRef?.windowGone(String(contents.id)); };
+  };
+  /** Tells the coding windows whether the microphone is open for a request, from a voice status, when that changes. */
+  const tellCodeMic = (v: Pick<VoiceStatus, "state" | "listenOnce" | "match">): void => {
+    const held = voiceHoldsLive(v);
+    if (held !== codeMic) { codeMic = held; codeWindows.send(CODE_IPC.micHeld, held); }
+  };
   const killSwitch = new KillSwitch(() => [
     { name: "borrow", stop: () => borrowRef?.stop() },
     { name: "speech", stop: () => voice?.hush() },
@@ -1589,6 +1659,10 @@ function start(): void {
     { name: "extensions", stop: () => extensionsRef?.stopPart().stop() },
     // The vault's Secure Form closes, and nothing more is asked in it.
     { name: "vault", stop: () => vaultRef?.stopPart().stop() },
+    // Every native chat's turn ends, its background agents are cancelled and its waiting requests rejected.
+    { name: "chat", stop: () => chatRef?.stopAll() },
+    // Every coding session's turn ends, its background agents are cancelled and its waiting requests refused.
+    { name: "code", stop: () => codeRef?.stopAll() },
     // The user's take-over of the desk ends too (its keys are released).
     { name: "desk", stop: () => deskViewRef?.handBack() },
     { name: "motion", stop: () => { overlay?.setBorrowing(false); deskViewRef?.setDriving(false); showState({ focus: null, gesture: null }); } },
@@ -1728,6 +1802,7 @@ function start(): void {
     askWindow.setListenOnce(ask);
     // A reloaded Home reads the current status when it starts.
     if (home && !home.isDestroyed() && !home.webContents.isCrashed()) sendToHome(IPC.voiceStatus, voiceStatus(voiceDetail));
+    tellCodeMic(voiceStatus(voiceDetail));
   };
   const requestListenOnce = (source: "ask" | "home", on: boolean): ListenOnceStatus => {
     if (!on) {
@@ -2366,6 +2441,8 @@ function start(): void {
   let signInAbort: AbortController | null = null;
   const broadcast = (channel: string, value: unknown) => {
     for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(channel, value);
+    // The coding window holds its live regions as Home does, told only whether the microphone is open, as it changes.
+    if (channel === IPC.voiceStatus && value && typeof value === "object") tellCodeMic(value as VoiceStatus);
   };
   // Coding gets a separate, explicitly agreed workspace: the older selected-files project grant is not one.
   const codingStore = new CodingWorkspaceStore(userData, safeStorage, platform.os === "darwin");
@@ -2622,6 +2699,10 @@ function start(): void {
     // The vault goes whole with the account, at once and whatever fails below: its open form closes, a Save still
     // being sealed keeps nothing, and its file is removed.
     const vaultGone = vault.forgetAll();
+    // Every native chat stops and is let go: each was opened under the sign-in that ends here.
+    void chatRef?.accountEnded();
+    // Every coding session stops and is let go too.
+    void codeRef?.accountEnded();
     // While still connected: delete this account's conversation so the next sign-in starts fresh.
     try {
       await agent?.forgetConversation();
@@ -3512,6 +3593,9 @@ function start(): void {
     if (id === "ui:close") { closeExpanded(); return; }
     // The administrator's policy changed while Ember ran: a restart reads it whole (run from an AppImage, the AppImage).
     if (id === "ui:restart" && admin.held) { restartForPolicy(); return; }
+    // "Open it" on Ember's word of a coding session's request: the coding window on that session, where only the user
+    // answers it (never here, never by voice).
+    if (id.startsWith("ui:code-show:")) { showCodeSession(id.slice("ui:code-show:".length)); hideIfStill(lastState.bubble, 0); return; }
     // The targets runtime's own: a target picked, an offer, a connection, a panel to show, an announced command's Stop.
     if (targets?.bubbleAction(id)) return;
     if (task) {
@@ -3690,8 +3774,10 @@ function start(): void {
     askWindow.setOpaque(!compositing);
     // Made now (hidden), so the ask shortcut opens it at once: a box still loading took the first letters typed. Agreed
     // to later (the first run), it is made then (review #78).
-    if (consented()) askWindow.prepare();
-    settings.onChange(() => { if (consented()) askWindow.prepare(); askOffersChanged(); });
+    // Only with the companion on (companion.ts): off, there is no ask box to open.
+    const askable = () => consented() && companionParts(settings.get()).ask;
+    if (askable()) askWindow.prepare();
+    settings.onChange(() => { if (askable()) askWindow.prepare(); else askWindow.hide(); askOffersChanged(); });
     // Where the pointer is, in global DIP, and the buttons held: from the window system (X11's XQueryPointer reports
     // physical pixels; Electron's position can be stale there), else Electron's.
     const cursor = () => {
@@ -3734,9 +3820,30 @@ function start(): void {
       old?.destroy();
       deskViewRef?.handleMoved();
     };
-    if (compositing) makeOverlay();
-    else log.warn("overlay.fallback", { reason: "no compositing manager; using the handle card" });
-    makeHandle();
+    // The character and its handle only with the companion on (companion.ts companionParts); turned on or off while
+    // Ember runs, they come or go at once (windows only: they hold no microphone, screen or input of their own).
+    const companionWindows = companionParts(settings.get()).handle;
+    if (companionWindows && compositing) makeOverlay();
+    else if (companionWindows) log.warn("overlay.fallback", { reason: "no compositing manager; using the handle card" });
+    if (companionWindows) makeHandle();
+    let windowsShown = companionWindows;
+    settings.onChange(next => {
+      const want = companionParts(next).handle;
+      if (want === windowsShown) return;
+      windowsShown = want;
+      log.info("companion.windows", { on: want });
+      if (want) {
+        if (compositing) makeOverlay(keptHidden);
+        makeHandle();
+        askWindow.keepClear();
+        stepAside();
+        showBorrowing?.();
+      } else {
+        overlay?.stop(); overlay = null;
+        handle?.destroy(); handle = null;
+      }
+      presenceChanged();
+    });
     // The compositor can go and come back (GNOME Shell restarting, another window manager): Ember follows,
     // so its full-screen overlay never turns the desktop black. (Windows and macOS always composite.)
     if (ws?.compositorMayChange) {
@@ -3749,8 +3856,8 @@ function start(): void {
         // "Hide Ember" outlives the switch (the overlay that knew it is gone while there is no compositor).
         // Shown only for an answer still counts as hidden: it hides again when the answer goes.
         if (overlay) keptHidden = overlay.isHidden() || shownForAnswer;
-        if (now) makeOverlay(keptHidden && !shownForAnswer); else { overlay?.stop(); overlay = null; }
-        makeHandle();
+        if (now && windowsShown) makeOverlay(keptHidden && !shownForAnswer); else { overlay?.stop(); overlay = null; }
+        if (windowsShown) makeHandle();
         askWindow.keepClear();
         // What the new windows don't know yet: the settings window to keep off, a borrow under way.
         stepAside();
@@ -3780,8 +3887,11 @@ function start(): void {
       },
       stop: () => stopEverything("hotkey"), mute: () => toggleMute(),
     };
+    // Stop and Settings always; the ask box's and mute's only with the companion on (companion.ts), so with it off
+    // another app may have them.
+    let heldIds = companionParts(settings.get()).shortcuts;
     const registerShortcuts = () => {
-      const { taken, missing } = holdShortcuts(ALWAYS_HELD, sc, fb, {
+      const { taken, missing } = holdShortcuts(ALWAYS_HELD.filter(id => heldIds.includes(id)), sc, fb, {
         isRegistered: accel => globalShortcut.isRegistered(accel),
         register: (id, accel) => globalShortcut.register(accel, shortcuts[id as keyof typeof shortcuts]),
       });
@@ -3795,6 +3905,14 @@ function start(): void {
       const retry = setInterval(() => { if (!registerShortcuts().length) clearInterval(retry); }, 60_000);
       retry.unref?.();
     }
+    settings.onChange(next => {
+      const want = companionParts(next).shortcuts;
+      if (want.join() === heldIds.join()) return;
+      // Let go of the companion's own chords (Electron unregisters only what Ember registered), then hold what is wanted.
+      for (const id of heldIds) if (!want.includes(id)) for (const accel of [sc[id].accel, fb[id].accel]) if (globalShortcut.isRegistered(accel)) globalShortcut.unregister(accel);
+      heldIds = want;
+      registerShortcuts();
+    });
     // Ask Ember in the OS's launcher, whatever another app holds (D-45b): the jump list (Windows) starts Ember with --ask,
     // the Dock menu (macOS) opens the box here; Linux's is its desktop entry's action (packaging/ember.desktop). Each is
     // logged once set (the smoke test requires it on its OS).
@@ -3821,6 +3939,81 @@ function start(): void {
     const provider = fixedProvider;
     const runtime = locateRuntime({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, env: app.isPackaged ? {} : process.env, runtimeId: sys.paths.runtimeId, exe: sys.paths.runtimeExe });
     if (!runtime.exists) log.error("agent.runtime_missing", { path: runtime.path });
+    // Native chat sessions (app/main/agent/chat-sessions.ts): dormant until settings.chat.native is on, in a tokenless
+    // runtime of their own, behind consent, the organisation's policy and the kill switch's "chat" part.
+    const chatRuntime = new ChatRuntime({ userData, runtimePath: runtime.path, env: process.env, redact: vaultRedactor });
+    const chat = chatRef = new ChatSessions({
+      hasConsent: () => consented(), enabled: () => settings.get().chat.native, policy: () => chatPolicy(admin),
+      vaultFilled: () => vaultRedactor.active, access: () => agent?.chatAccess() ?? null, client: () => chatRuntime.client(),
+      protectedPaths: () => emberPathsOf({ os: platform.os, userData, resourcesPath: process.resourcesPath, packaged: app.isPackaged, env: process.env, emberPaths: codingStorage.protectedPaths }),
+      audit: () => audit, emit: event => sendToHome(CHAT_IPC.event, event), log: log.child("chat"), redact: vaultRedactor,
+    });
+    settings.onChange(() => { void chat.changed(); });
+    app.on("will-quit", () => { void chat.dispose().finally(() => chatRuntime.stop()); });
+    // Home's chat channels: the settings window's own page only, as guard. A new chat's folder comes from main's own
+    // picker, never from the page.
+    registerChatIpc(ipcMain, event => {
+      const url = event.senderFrame?.url ?? "";
+      return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
+    }, {
+      list: () => chat.list(),
+      create: async name => {
+        const why = chat.refusal();
+        if (why) throw new ChatUnavailable(why);
+        const owner = home;
+        if (!owner || owner.isDestroyed()) return null;
+        const selected = await dialog.showOpenDialog(owner, { properties: ["openDirectory"] });
+        if (selected.canceled || selected.filePaths.length !== 1) return null;
+        return chat.create(selected.filePaths[0], name);
+      },
+      resume: id => chat.resume(id),
+      send: (id, text) => chat.send(id, text),
+      decide: (id, requestId, decision) => chat.decide(id, requestId, decision),
+      answer: (id, requestId, answer, wasFreeform) => chat.answer(id, requestId, answer, wasFreeform),
+      setPermissionMode: (id, mode) => chat.setPermissionMode(id, mode),
+      setAgentMode: (id, mode) => chat.setAgentMode(id, mode),
+      stop: id => chat.stop(id),
+    }, { log: log.child("chat") });
+    // Coding sessions (app/main/code/, docs/CODING-APP.md): dormant until settings.code.enabled is on, in a tokenless
+    // runtime of their own in the SDK's full Copilot mode, behind consent, the organisation's policy and the kill
+    // switch's "code" part. Folders and files come only from main's own pickers, owned by the coding window.
+    const codeRuntime = new CodeRuntime({ userData, stateRoot: codeState, runtimePath: runtime.path, env: process.env, redact: vaultRedactor, log: log.child("code") });
+    const codeOwner = () => BrowserWindow.getFocusedWindow() ?? undefined;
+    const code = codeRef = new CodeHub({
+      hasConsent: () => consented(), enabled: () => settings.get().code.enabled, policy: () => chatPolicy(admin),
+      vaultFilled: () => vaultRedactor.active, access: () => agent?.chatAccess() ?? null, client: () => codeRuntime.client(), userData, runtimeHome: () => codeRuntime.home,
+      protectedPaths: () => emberPathsOf({ os: platform.os, userData, resourcesPath: process.resourcesPath, packaged: app.isPackaged, env: process.env, emberPaths: codingStorage.protectedPaths }),
+      place: () => ({ os: platform.os, home: app.getPath("home") }),
+      audit: () => audit, emit: (channel, payload, to) => { codeWindows.send(channel, payload, to); if (channel === CODE_IPC.request) announceCodingRequest(payload); }, log: log.child("code"), redact: vaultRedactor,
+      pickFolder: async () => {
+        const owner = codeOwner();
+        const picked = owner ? await dialog.showOpenDialog(owner, { properties: ["openDirectory"] }) : await dialog.showOpenDialog({ properties: ["openDirectory"] });
+        return picked.canceled || picked.filePaths.length !== 1 ? null : picked.filePaths[0];
+      },
+      pickFiles: async root => {
+        const owner = codeOwner();
+        const o = { defaultPath: root, properties: ["openFile", "multiSelections"] as ("openFile" | "multiSelections")[] };
+        const picked = owner ? await dialog.showOpenDialog(owner, o) : await dialog.showOpenDialog(o);
+        return picked.canceled ? null : picked.filePaths;
+      },
+      // An address the hub has checked (http or https, no credentials: linkRefusal), in the person's own browser.
+      openExternal: url => shell.openExternal(url),
+      // A session's exported transcript: main's own save dialog (the hub refuses a place in Ember's data).
+      pickSaveFile: async name => { const o = { defaultPath: path.join(app.getPath("documents"), name), filters: [{ name: "Markdown", extensions: ["md"] }] }; const owner = codeOwner(); const r = owner ? await dialog.showSaveDialog(owner, o) : await dialog.showSaveDialog(o); return r.canceled || !r.filePath ? null : r.filePath; },
+    });
+    settings.onChange(() => { void code.changed(); });
+    app.on("will-quit", () => { void code.dispose().finally(() => codeRuntime.stop()); });
+    registerCodeIpc(ipcMain, code, codeWindows, { log: log.child("code") });
+    // Customise › Companion: the companion's state, and settings opened at its switch (Home owns it; the window only
+    // links). A coding window's own page only, as every coding channel.
+    ipcMain.handle(CODE_IPC.companionState, event => (codeWindows.isCodeWindow(event) ? { on: companionParts(settings.get()).conversation } : { on: false }));
+    ipcMain.on(CODE_IPC.openCompanionSettings, event => {
+      if (!codeWindows.isCodeWindow(event)) return;
+      showHome();
+      sendToHome(IPC.focusSection, "parts");
+    });
+    // A session's "sign in" remedy: Home's Copilot section, where the sign-in is (the window only links).
+    ipcMain.on(CODE_IPC.openSignIn, event => { if (codeWindows.isCodeWindow(event)) { showHome(); sendToHome(IPC.focusSection, "copilot"); } });
     // Perception: the accessibility sidecar (text) and the window system's capture (images). Linux starts the Python
     // AT-SPI sidecar (no launch); Windows and macOS the shared host (Windows: Ember's own binary in node mode; macOS: a
     // utility process, review #177).
@@ -4175,6 +4368,10 @@ function start(): void {
     });
     agent = new AgentHost({
       history,
+      // The companion's conversation only while it is on (companion.ts); its tools over the coding sessions only while
+      // coding sessions are on too, each a dispatch as "companion" (agent/coding-tools.ts).
+      companion: () => companionParts(settings.get()).conversation,
+      codeSessions: () => (companionParts(settings.get()).codingTools && codeRef ? own => companionCode(codeRef!, own, showCodeSession) : null),
       scopedCoding: codingBackend.host({
         available: projectId => consented() && screenLock?.locked === false && policy.features.actions !== false &&
           scopedCodingAvailability(projectId).available,
@@ -4315,6 +4512,9 @@ function start(): void {
         askHistory = []; forgetSessionWords(); forgetProject("all");
         void forgetCoding().catch(err => log.warn("coding.workspace_not_forgotten", { err }));
         void resetProjectCoding().catch(() => log.warn("coding.private_cleanup_incomplete"));
+        // Native chats were opened under the account before: they stop and are let go (as at sign-out).
+        void chatRef?.accountEnded();
+        void codeRef?.accountEnded();
       },
       // A reminder the user set is due (reminders.ts): said too when replies are spoken, and a notification while away.
       onReminder: r => {
@@ -4432,6 +4632,15 @@ function start(): void {
       const m = JSON.stringify(next.models);
       if (m !== models) { models = m; void agent?.setModels(next.models); }
     });
+    // The companion turned on or off while Ember runs (companion.ts): off, its tasks stop as Stop stops them and its
+    // conversation's session is let go; on, the conversation opens again. Coding sessions go on either way.
+    let companionWas = companionParts(settings.get()).conversation;
+    settings.onChange(next => {
+      const on = companionParts(next).conversation;
+      if (on === companionWas) return;
+      companionWas = on;
+      void agent?.companionChanged(on);
+    });
 
     // ───── Voice ─────
     const speechModels = voiceModelsRoot();
@@ -4544,7 +4753,8 @@ function start(): void {
     // Before anything starts listening, so the voice process loads the clearer recognizer the first time.
     voice.setClearHearing(settings.get().voice.clearHearing);
     if (settings.get().voice.muted) voice.setMuted(true);
-    const wantVoice = () => policy.features.voice !== false && settings.get().wakeWord && settings.get().voice.consent && consented();
+    // Listening is the companion's: with it off the microphone stays closed whatever the other switches say (companion.ts).
+    const wantVoice = () => companionParts(settings.get()).voice && policy.features.voice !== false && settings.get().wakeWord && settings.get().voice.consent && consented();
     void voice.setWanted(wantVoice());
     let wanted = wantVoice();
     let micConsent = settings.get().voice.consent;
@@ -4645,10 +4855,14 @@ function start(): void {
     // unless the desktop session is one Ember can't use (a Wayland login after an Xorg one): then the check is shown.
     const view = startView({ onboarded: settings.get().onboarded, showSettings: process.argv.includes("--show-settings"), atLogin, sessionProblem: !!sessionGreeting(env), ask: wantsAsk(process.argv),
       setupNeeded: env.checks.some(needsUser) });
-    if (view === "ask") openAsk({ source: "launcher" });
-    else if (view === "settings") showHome();
+    // What opens (companion.ts startOpens): with the companion on, as before, and the coding window beside it for a start
+    // by hand while coding sessions are on; with it off, the coding window is the app, or settings with both off.
+    const opens = startOpens({ ...settings.get(), atLogin, view });
+    if (opens.ask) openAsk({ source: "launcher" });
+    else if (opens.home) showHome();
+    if (opens.code && !showCode() && !opens.home) showHome();
     // The hello waits for Copilot to connect (at most a few seconds), so it doesn't say "not connected" too early.
-    else setTimeout(() => void Promise.race([brainStart, new Promise(r => setTimeout(r, 5000))]).then(() => greet()), 800);
+    if (opens.greet) setTimeout(() => void Promise.race([brainStart, new Promise(r => setTimeout(r, 5000))]).then(() => greet()), 800);
     // macOS: opening Ember.app again (Dock, Finder) reactivates this one instead of starting a second, so settings
     // opens. Listened for only from here: Electron documents "activate" for a first launch too, and at login that would
     // open settings over the decision just made.

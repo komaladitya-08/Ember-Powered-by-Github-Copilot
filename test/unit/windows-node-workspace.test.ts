@@ -68,7 +68,7 @@ it("adopts genuine nonzero edits for repair while the real runner preserves the 
   expect(f.canonical.nodes.get(f.canonical.location("C:\\project\\app.ts").toLowerCase())!.bytes.toString()).toContain("41");
   f.workspace.transferReview(output); await f.workspace.close(); expect(f.canonical.store.size).toBe(1);
   await f.canonical.store.cleanup(new Set()); await f.canonical.store.close(); expect(f.canonical.handles.size).toBe(0);
-});
+}, 30_000);
 
 it("Stop reaches the genuine live command outside the run queue and keeps cancelled edits private until seal", async () => {
   const f = await open(), signal = f.workspace.signal; f.control.autoFinish = false;

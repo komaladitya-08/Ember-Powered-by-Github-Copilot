@@ -74,6 +74,8 @@ afterEach(async () => { if (!gate) await Promise.all(browser.contexts().map(cont
 
 async function open(seed: Seed = {}): Promise<Page> {
   const settings = structuredClone(DEFAULT_SETTINGS);
+  // These journeys try the companion's ask box, so the companion is on (a new install's is off: its tries are Stop's alone).
+  settings.companion = { enabled: true };
   settings.onboarded = !!seed.home;
   if (seed.provider) settings.provider = { ...settings.provider, ...seed.provider } as typeof settings.provider;
   settings.consent = { version: seed.consent ?? 99, at: "2026-11-04T12:00:00Z" };
@@ -1944,7 +1946,7 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(await p.locator("#w-count").innerText()).toBe("Step 2 of 6");
     expect(await p.locator("#w-changes").isVisible()).toBe(true);
     const changed = await p.locator("#w-changes-list li").allInnerTexts();
-    expect(changed).toHaveLength(9);
+    expect(changed).toHaveLength(10);
     expect(changed[0]).toContain("“Keep my recent conversation”");
     // Version 8 (owner decision of 2026-11-12): anyone near the computer can answer Ember's questions by voice.
     expect(changed[1]).toContain("anyone near the computer can answer it by voice");
@@ -1962,6 +1964,8 @@ describe.skipIf(gate)("first run: connection, own provider and models (FE #2–#
     expect(changed[7]).toBe("When you ask for coding work, I copy the project folder you chose and may send requested files and command output to your model, leaving the original unchanged. Exports keep all captured files, including unchanged files, until you remove them. Private copies I can't verify as removed may remain and block new coding work.");
     // Version 15: explicit encrypted drafts, historical context and separately enabled exact public dependency sets.
     expect(changed[8]).toBe("If you choose Save coding draft, I encrypt complete captured files, the last request and summary, and historical check outcomes on this computer until you forget the draft or choose Forget everything. Opening a saved draft never resumes work. Using its edits requires a newly chosen folder, a new import review and a new request. When you start a new request from an imported draft, its saved request and summary may go to your connected model as historical context. If you separately enable public dependencies for a WSL coding project, I may send its locked public npm package names and versions to registry.npmjs.org after the normal approval decision for that exact set. I send no project files or private registry credentials there, and commands remain offline.");
+    // Version 16: native chats in a folder, only once their switch is on, and the chats kept between runs.
+    expect(changed[9]).toBe("If you turn on “Chat with Copilot in a folder” in Projects, a chat can read and change files in the folder you choose and run commands there, asking first as its permission mode says, and what it reads goes to your model service. I keep those chats on this computer so you can open them again after I restart.");
     expect(await p.locator(".w-row").evaluateAll(rows => rows.map(r => (r as HTMLElement).dataset.row))).toEqual(["interactive"]);
     expect(await p.locator("#w-row-interactive").isChecked()).toBe(true);
     // The usual points and the full text are still there; nothing goes on until Agree is saved.

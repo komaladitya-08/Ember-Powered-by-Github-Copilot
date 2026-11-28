@@ -948,6 +948,109 @@ Match verified it.
 The first time it starts, Ember explains what it reads, what it sends and what it keeps, and does nothing until you
 agree.
 
+### Chats with Copilot in a folder
+
+Off by default. **Chat with Copilot in a folder** (Settings › Projects, `settings.chat.native`) wakes Home's **Chats**
+pane (app/renderer/home/chat.ts over the preload's `window.emberChat`): native Copilot SDK sessions in a folder you
+choose in main's own folder picker, with the SDK's own tools and its own permission system shown as it is. Each chat
+has two pickers: the SDK's permission mode (“Ask every time (manual)”, “Let a second model check (assisted)”, “Allow
+everything (allow-all)”) and its agent mode (“Step by step (interactive)”, “Plan first (plan)”, “Keep going
+(autopilot)”); Home shows the mode the SDK says is in force, and says why when a change wasn't applied (the
+organisation's policy or the model service). A permission request is a card in the transcript with exactly the
+decisions the SDK offers for it (“Allow once”, “Allow for this chat”, “Allow reading here for this chat”, “Always allow
+this site”, “Don't allow” with an optional reason); its approvals take a press only once the card has been in view for
+half a second, never a held key, and it becomes a record of what was decided and by whom (you, the second model's
+check, Copilot's own rules, allow-all or Stop). Stop ends the shown chat's turn; Stop everything ends every chat's,
+and so do signing out and another account signing in, which also let every open chat go. The switch is locked off
+while the organisation's policy turns acting off (`features.actions: false`) or Ember is locked down. Turning it on
+needs “Before Ember starts” at `CONSENT_VERSION` 16, which says what a chat reads, runs, sends and keeps. The live
+journey (`EMBER_CHAT_LIVE=1`, test/integration/home-chat-live.test.ts) fakes the folder picker by replacing
+`dialog.showOpenDialog` in main through Playwright, as the coding journeys do: there is no switch for it.
+
+### Coding sessions (the session layer)
+
+Ember as a coding agent (docs/CODING-APP.md) is built in `app/main/code/`, behind `settings.code.enabled` (off by
+default: no coding runtime starts and every coding channel refuses). Its contract with the coding window is
+`app/shared/code.ts`; the window's preload is `app/preload/code.ts` (`window.emberCode`).
+
+- **CodeRuntime** (runtime.ts): one tokenless runtime for the run in the SDK's full Copilot mode (`mode: "copilot-cli"`),
+  its state in a folder of its own beside the data folder (`SystemPaths.codeState`: `~/.local/state/ember-code` on
+  Linux, `%LOCALAPPDATA%\ember-code`, `~/Library/Application Support/ember-code`; `<userData>-code` with
+  `EMBER_USER_DATA`), 0700, where state.ts moves an earlier build's `<userData>/code/copilot` once at start (a rename,
+  else a copy of the original put aside, removed once the copy is in place; where the move fails the old folder stays
+  in use). Each session turns on file change tracking, skills, memory, custom
+  instructions, on-demand instruction discovery, host git, the session store and infinite sessions; the GitHub sign-in
+  goes with each session, never in the runtime's environment.
+- **SessionRuntime** (session-runtime.ts): one per open session. Every SDK event goes to the windows attached to it
+  as a `CodeEventEnvelope` with a per-session `seq`, redacted (vault values, GitHub tokens) and bounded
+  (`CODE_LIMITS.eventData`, `truncated` when cut); the last `CODE_LIMITS.replay` are kept for `attach(id, sinceSeq)`,
+  and older history comes from the SDK's own log (`sessions.readPersistedEvents`). Every request kind has one pending
+  table, answered once through `respond` and cleared for every window with who answered.
+- **Sandbox**: on where `sandbox.getHostSupport` says so (Ember's data, install and policy denied, and of the coding
+  state folder everything but the session's own state: `siblingDenials`, set again on every open session's sandbox
+  when another session opens, a session whose sandbox won't take it closed; outbound network
+  where the host's sandbox has it, else the row says `no-network`); where there is none the session runs without one
+  and its row says `sandbox: "off"`. A pre-tool hook refuses any tool whose arguments name Ember's data, sandbox or
+  none. A repository's own hooks (`.github/hooks`) run only inside the sandbox and in a folder the user trusts.
+- **Worktrees**: a session with isolation "worktree" works in `<userData>/code/worktrees/<session>` on a new branch
+  `ember/<short id>` from the base branch, removed with the session (its branch is kept).
+- **Guards** (hub.ts, guards.ts): consent, the setting, the organisation's policy (none under LOCKDOWN or with
+  `features.actions: false`; a permission mode it forbids is refused with the mode that stays), a vault fill, the
+  kill switch's `code` part, sign-out, and the window's RPC calls (`CODE_RPC`, then no sandbox switch, no permission
+  mode, no path of Ember's data). The audit log's `code` entries record each session's start, open, close and end,
+  each decision with who made it (`by`: user, companion, system or sdk), each mode change and each message's length.
+- **The window**: its creator registers its webContents with main's `codeWindows` (app/main/code/ipc.ts
+  `CodeWindows.register`); until then every sender is refused. With coding sessions on, a start by hand (not at login,
+  not for Ask Ember, not before first run) opens it beside whatever else the start shows (launcher.ts
+  `opensCodeAtStart`); closing it lets go of every session it watched (`CodeHub.windowGone`).
+- **Unread**: what happens in a session no window shows with the focus is counted unread and kept in the index as it
+  changes; the window calls `markRead` when it shows a session and has the focus.
+- **Links**: `openLink` opens an http or https address with no user name or password in it (`linkRefusal`) in the
+  person's browser through `shell.openExternal`, audited as a `code` entry with the host alone.
+- **Projects**: removing a project (the sidebar's Remove, asked again in place) is refused while any session is under
+  it, and the sidebar says so. A session the runtime keeps and the index doesn't is listed under the project of its
+  folder (added as the picker would add it), or under none ("Other sessions") where Ember won't work in that folder.
+- **The working folder** (folder.ts): the SDK lists and reads only a session's own state folder, so main lists the
+  session's folder a folder at a time (`listFolder`: folders first, at most `CODE_LIMITS.folderEntries`, `.git` and
+  what git ignores left out, through `git ls-files --ignored --directory` within 3 s, or outside a repository a short
+  list of build and dependency folders; `gitPrefix` says where the folder sits in its repository, as
+  `workspaces.diff`'s paths are the repository top's) and reads a file (`readFile`: its text within
+  `CODE_LIMITS.fileBytes`, else that it is binary or too large). A path is relative to the session's folder and must
+  stay inside it after every link; Ember's own data is refused (a worktree Ember made is the session's own). The files
+  it lists may be attached.
+- **The runtime's answers**: a failed RPC method is said in Ember's words (`rpcFailure`: sign in, not in this version,
+  not there, a request Copilot couldn't take), never the runtime's message and never the model service's sentences.
+  `mcp.config.list` reaches the window with every variable's and header's value (and any secret-named value) replaced
+  by `CODE_KEPT`; `mcp.config.update` sent back with it gets the stored value put in its place, and one with no stored
+  value is refused. `models.list` and `account.getQuota` get the sign-in from main (the runtime is tokenless). A client
+  discovery call may name a worktree Ember made for a session.
+- **Forks**: a fork of a worktree session gets a worktree of its own, from the commit its parent's stands at with the
+  parent's uncommitted and untracked (not ignored) files; where that can't be made whole there is no fork.
+
+The integration suite is test/integration/code-session.test.ts (the bundled runtime and the mock model, Linux: git,
+and bubblewrap for the sandbox). The window against a scripted fake of `window.emberCode`
+(test/fixtures/code-window/fake-api.js, in the runtime's own shapes) is
+`EMBER_UIUX_TEST=1 EMBER_CHROMIUM_PATH=/usr/bin/google-chrome npm run test:integration -- test/integration/code-*-renderer.test.ts`
+(after `npm run build`). What the runtime really answered for each method the panels and Customise call is kept,
+trimmed, in test/fixtures/code-window/real-shapes.ts, which test/unit/code-real-shapes.test.ts reads the window's
+readers against. The whole thing end to end, the real window in real Electron on the real runtime with the
+mock model, is `EMBER_CODE_LIVE=1 dbus-run-session -- xvfb-run -a npm run test:integration -- test/integration/code-window-live.test.ts`
+(after `npm run build`; Linux with git). The companion as an option (docs/CODING-APP.md §5: `settings.companion.enabled`,
+off for a new install and on for an existing user's onboarded settings file; Home's "Companion and coding" group) is
+unit-tested in test/unit/companion.test.ts and code-hub.test.ts, and live in
+`EMBER_CODE_LIVE=1 dbus-run-session -- xvfb-run -a npm run test:integration -- test/integration/companion-live.test.ts`:
+with the companion off no overlay or handle opens and Stop works, and with both on the mock model's
+`start_coding_session` and `list_coding_sessions` start and list a session as `companion`, as the audit log records.
+The code-window-live suite: it adds a project, allows a command by keyboard, turns down a change with a
+reason, restarts Ember, starts a worktree session, stops a turn, opens a link, deletes the worktree session from the
+command palette, and checks that Home's page can't reach the coding channels and that with coding sessions off the
+window doesn't open. It replaces main's folder picker and `shell.openExternal` through Playwright, not a switch. Its
+companion, `EMBER_CODE_LIVE=1 … test/integration/code-panels-live.test.ts`, goes through the panel and Customise on the
+real runtime: the real diff and a review sent back, a rewind of conversation and files, the working folder listed and
+read, the person's own command, a background shell and a built-in agent, leaving plan mode from the Plan tab, a model
+switch, the sandbox's capabilities, a rule that lets a command run unasked, and a local MCP server whose tool a new
+session is offered.
+
 ### Extensions: the runtime and the gate
 
 The runtime is `app/main/extensions/` (ExtensionsService, the `ExtensionsApi` Home calls); the contract is
@@ -1785,6 +1888,9 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | Extensions: what is installed and the tools the user agreed to (0600), Ember's copy of each plugin, and the process ids of the servers running (folders 0700) | `~/.config/ember/extensions/` (`extensions.json`, `plugins/<id>/`, `run/`, and `off/` while a change couldn't be saved) |
 | The Copilot runtime's temporary files (large tool output it saves; 0700, emptied at each connect and at sign-out) | `~/.config/ember/copilot-tmp/` |
 | Marketplaces the user added, and the runtime's copy of their catalogues | `~/.config/ember/copilot/settings.json`, `~/.config/ember/copilot/.cache/copilot/marketplaces/` |
+| Chats with Copilot (only once “Chat with Copilot in a folder” is on): the chat runtime's own sessions, kept between runs so a chat opens again from Home's Chats (0700) | `~/.config/ember/chat/` |
+| Coding sessions (only once `settings.code.enabled` is on): Ember's index of projects and sessions (`index.json`, 0600) and the worktrees it made (`worktrees/`) (0700) | `~/.config/ember/code/` |
+| Coding sessions' own state: the coding runtime's sessions (each one's plan, files, checkpoints and history), its session store, logs, personal skills and instructions and MCP configuration (0700; beside the data folder, not in it, so a session's sandbox can let it write its own plan: docs/CODING-APP.md §3). An earlier build's `~/.config/ember/code/copilot/` is moved here once at start, and stays in use where it can't be moved (the log says `code.state_not_moved`). With `EMBER_USER_DATA`, `<that folder>-code` | `$XDG_STATE_HOME/ember-code/`, else `~/.local/state/ember-code/` |
 
 A hand edit of `settings.json` that Ember can't use is copied aside as `settings.json.bad-<time>` (the three newest
 are kept); one it can repair is tidied once it has stayed the same for 2 s. When Ember starts on one that isn't JSON
@@ -2699,6 +2805,8 @@ sets its AppUserModelId, `io.github.komaladitya08.ember`.
 | A marker that the marks' font cache was built for this version of Ember | `%LOCALAPPDATA%\ember\text-warmed` |
 | Start menu shortcut (packaged Ember) | `Ember.lnk` in the user's Start menu programs folder |
 | **Start Ember when I log in** | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `io.github.komaladitya08.ember` |
+| Coding sessions (once `settings.code.enabled` is on): Ember's index of them and the worktrees it made | `%LOCALAPPDATA%\ember\code\` |
+| Coding sessions' own state (the coding runtime's sessions, plans, history and session store), beside the data folder as on Linux (§ "Where Ember keeps things"); an earlier build's `code\copilot\` is moved here once | `%LOCALAPPDATA%\ember-code\` |
 
 Ember keeps its data out of the roaming profile: Chromium's caches, Copilot's session state and speech
 models would bloat it. Windows ignores the 0700 and 0600 modes Ember sets on Linux, so privacy rests on
@@ -3029,6 +3137,8 @@ Gatekeeper does on first start.
 | SSH's password helper, and Node.js downloaded for other computers | `~/Library/Application Support/ember/ssh/`, `~/Library/Application Support/ember/remote/runtime/` |
 | A marker that the marks' font cache was built for this version of Ember | `~/Library/Application Support/ember/text-warmed` |
 | **Start Ember when I log in** | A login item for Ember.app (**System Settings › General › Login Items**) |
+| Coding sessions (once `settings.code.enabled` is on): Ember's index of them and the worktrees it made | `~/Library/Application Support/ember/code/` |
+| Coding sessions' own state (the coding runtime's sessions, plans, history and session store), beside the data folder as on Linux (§ "Where Ember keeps things"); an earlier build's `code/copilot/` is moved here once | `~/Library/Application Support/ember-code/` |
 
 A copy run from the dmg or from Downloads is moved by macOS to a temporary place before it starts (App Translocation),
 so its permissions and its login item don't stick: the setup check's **Applications folder** row offers **Move to

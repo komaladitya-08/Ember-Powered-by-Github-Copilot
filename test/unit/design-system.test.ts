@@ -1,5 +1,6 @@
 /** The shared design system (app/renderer/shared/ember.css): what every window keeps to. */
 import { describe, expect, it } from "vitest";
+import { pageSheets } from "../page-sheets";
 import { existsSync, readFileSync } from "node:fs";
 import { BUBBLE_CSS } from "@ember/bubble";
 
@@ -7,7 +8,7 @@ const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url),
 const shared = read("app/renderer/shared/ember.css");
 /** Views' own sheet (app/renderer/shared/view.css), linked by every page that shows views. */
 const viewCss = read("app/renderer/shared/view.css");
-const PAGES = ["home", "overlay", "handle", "ask", "desk", "command", "prompt", "vault"];
+const PAGES = ["home", "overlay", "handle", "ask", "desk", "command", "prompt", "vault", "code"];
 
 /** A token's value in the shared stylesheet's :root (the first one: the dark appearance). */
 const token = (name: string) => {
@@ -146,7 +147,7 @@ describe("the keyboard focus ring", () => {
 
 describe("shape", () => {
   it("rounds corners only from the radius tokens (or a circle, a capsule's half, or what a parent passes on)", () => {
-    const sources = [shared, viewCss, BUBBLE_CSS, ...PAGES.map(p => read(`app/renderer/${p}/styles.css`))];
+    const sources = [shared, viewCss, BUBBLE_CSS, ...PAGES.map(pageSheets)];
     // A capsule's half grows with the text size too, as the field it rounds does (the ask box's: review #57).
     const ok = /^(var\(--r-[a-z]+(, \d+px)?\)( var\(--r-[a-z]+\))*|calc\(var\(--r-[a-z]+\) \+ \d+px\)|calc\(\(var\(--r-[a-z]+\) \+ \d+px\) \* var\(--text-scale\)\)|50%|0|inherit|1px)$/;
     for (const css of sources) for (const [, v] of css.matchAll(/border-radius: ([^;]+);/g)) expect(v, v).toMatch(ok);
@@ -180,7 +181,7 @@ describe("every window", () => {
 
   it("animates only opacity and transforms, and the bubble's glow breathes a few times, not forever", () => {
     // Under software compositing anything else animated repaints its layer every frame.
-    for (const css of [BUBBLE_CSS, shared, viewCss, ...PAGES.map(p => read(`app/renderer/${p}/styles.css`))]) {
+    for (const css of [BUBBLE_CSS, shared, viewCss, ...PAGES.map(pageSheets)]) {
       for (const [, body] of css.matchAll(/@keyframes [\w-]+ \{((?:[^{}]*\{[^}]*\})*)[^}]*\}/g)) {
         for (const [, prop] of body.matchAll(/([\w-]+):/g)) expect(["opacity", "transform", "translate", "scale"], body).toContain(prop);
       }
@@ -190,7 +191,7 @@ describe("every window", () => {
 
   it("stops every endless animation in Calm mode", () => {
     for (const p of ["overlay", "handle"]) {
-      const css = read(`app/renderer/${p}/styles.css`);
+      const css = pageSheets(p);
       const endless = [...css.matchAll(/([^{}]+)\{[^}]*animation: [\w-]+ [\d.]+s [\w-]+ infinite/g)].map(m => m[1].trim());
       // The overlay has endless pulses (the handle's steady microphone halo has none left).
       if (p === "overlay") expect(endless.length, p).toBeGreaterThan(0);
@@ -203,7 +204,7 @@ describe("every window", () => {
   });
 
   it("lists every keyframe, and lets only small opacity pulses run forever (the HUD's lock-on, ring glow and done are finite)", () => {
-    const sheets = [BUBBLE_CSS, shared, viewCss, ...PAGES.map(p => read(`app/renderer/${p}/styles.css`))];
+    const sheets = [BUBBLE_CSS, shared, viewCss, ...PAGES.map(pageSheets)];
     const names = sheets.flatMap(css => [...css.matchAll(/@keyframes ([\w-]+)/g)].map(m => m[1])).sort();
     expect(names).toEqual(["dot-fill", "eb-blink", "eb-glow", "eb-lock", "eb-pulse", "focus-glow", "pulse", "ring-done", "ring-glow", "ring-pulse", "tick-pop"]);
     const endless = sheets.flatMap(css => [...css.matchAll(/animation: ([\w-]+) [^;]*infinite/g)].map(m => m[1])).sort();
@@ -236,7 +237,7 @@ describe("Home at its narrowest", () => {
 });
 
 describe("Windows contrast themes (forced colours)", () => {
-  const css = (page: string) => page === "shared" ? shared : page === "bubble" ? BUBBLE_CSS : read(`app/renderer/${page}/styles.css`);
+  const css = (page: string) => page === "shared" ? shared : page === "bubble" ? BUBBLE_CSS : pageSheets(page);
 
   it("gives every window's controls and groups a real edge, as the system drops the shadows that draw them (WCAG 1.4.11; review #44, #151, #242, #267, #129)", () => {
     const edged: [string, string][] = [
@@ -593,7 +594,7 @@ describe("views (app/renderer/shared/view.css)", () => {
 });
 
 describe("HIG pass (Apple's Human Interface Guidelines, checked surface by surface)", () => {
-  const page = (p: string) => read(`app/renderer/${p}/styles.css`);
+  const page = (p: string) => pageSheets(p);
 
   it("gives every floating glass surface the window's colour in contrast themes, as the bubble has (its gradients are dropped)", () => {
     expect(forced(page("overlay"), ".task")).toContain("background: Canvas;");
@@ -606,7 +607,7 @@ describe("HIG pass (Apple's Human Interface Guidelines, checked surface by surfa
   });
 
   it("keeps line heights on whole pixels at every text size, in every window but the Ask box (which main sizes exactly)", () => {
-    for (const p of ["home", "overlay", "handle", "desk", "command", "prompt", "vault"]) expect(page(p), p).not.toMatch(/line-height: calc\(/);
+    for (const p of ["home", "overlay", "handle", "desk", "command", "prompt", "vault", "code"]) expect(page(p), p).not.toMatch(/line-height: calc\(/);
   });
 
   it("puts a tone's words in the label on Clear glass, where no state colour is both a colour and 4.5:1, and its mark in the colour", () => {
