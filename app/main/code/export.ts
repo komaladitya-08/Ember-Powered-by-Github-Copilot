@@ -43,7 +43,7 @@ export function transcriptMarkdown(events: readonly Ev[], o: { title: string; fo
         const args = rec(d.arguments);
         const shell = rec(d.shellToolInfo);
         const command = text(shell.displayCommand, 4_000) || text(args.command, 4_000);
-        const name = text(d.toolTitle, 200) || text(d.toolName, 200) || "tool";
+        const name = text(d.toolName, 200) || text(d.toolTitle, 200) || "tool";
         const line = e.type === "tool.user_requested" ? "You ran a command:" : command ? `Copilot ran a command (${name}):` : `Copilot used ${name}${typeof args.path === "string" ? ` on ${text(args.path, 4_000)}` : ""}.`;
         out.push(`> ${line}`, ...(command ? ["", fenced(command, "sh")] : []), "");
         if (typeof d.toolCallId === "string") tools.set(d.toolCallId, name);
