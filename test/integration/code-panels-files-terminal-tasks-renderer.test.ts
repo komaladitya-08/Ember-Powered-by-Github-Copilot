@@ -65,11 +65,13 @@ const emit = (p: Page, type: string, data: unknown, extra: Record<string, unknow
 const focused = (p: Page) => p.evaluate(() => (document.activeElement as HTMLElement | null)?.getAttribute("aria-label") ?? document.activeElement?.textContent ?? "");
 
 describe.skipIf(gate)("the coding window's panel tabs", () => {
-  it("Files: walks the tree by keyboard, marks changes, shows text with line numbers, names a binary file, filters and attaches", async () => {
+  it("Files: lists the working folder through main a folder at a time, walks it by keyboard, marks changes, shows text with line numbers, names a binary file, filters and attaches", async () => {
     const page = await open("Files");
     const tree = page.getByRole("tree", { name: "Files" });
-    await expect.poll(() => tree.getByRole("treeitem").allTextContents()).toEqual(["work/app", "assets", "logo.png", "docs", "old.md", "src", "login.ts", "Copilot's session files", "paste-1.txt", "plan.md", "shot.png"]);
-    expect(await calls(page)).toEqual(expect.arrayContaining(["rpc:session:workspaces.diff", "rpc:session:workspaces.listFiles"]));
+    // The top, and the folders that hold changes, opened and listed; test/ is listed only once it is opened.
+    await expect.poll(() => tree.getByRole("treeitem").allTextContents()).toEqual(["work/app", "assets", "logo.png", "docs", "old.md", "src", "login.ts", "oauth.ts", "session.ts", "test", "package.json", "README.md", "Copilot's session files", "paste-1.txt", "plan.md", "shot.png"]);
+    expect(await calls(page)).toEqual(expect.arrayContaining(["listFolder:s-login:", "listFolder:s-login:src", "listFolder:s-login:assets", "listFolder:s-login:docs", "rpc:session:workspaces.diff", "rpc:session:workspaces.listFiles"]));
+    expect(await calls(page)).not.toContain("listFolder:s-login:test");
     // Marks: in words for a screen reader, a symbol on screen; a file outside the folder is never listed.
     expect(await tree.getByRole("treeitem", { name: "login.ts, changed" }).getAttribute("data-change")).toBe("modified");
     expect(await tree.getByRole("treeitem", { name: "logo.png, added" }).count()).toBe(1);
@@ -93,8 +95,14 @@ describe.skipIf(gate)("the coding window's panel tabs", () => {
     expect(await tree.getByRole("treeitem", { name: "login.ts, changed" }).getAttribute("aria-selected")).toBe("true");
     expect((await page.locator(".pf-nos").textContent())!.split("\n")).toEqual(["1", "2", "3", "4", "5", "6", "7", "8", "9"]);
     expect(await page.locator(".pf-nos").getAttribute("aria-hidden")).toBe("true");
-    expect(await page.locator(".pf-vfacts").textContent()).toBe("9 lines.");
-    expect(await calls(page)).toContain("rpc:session:workspaces.diff");
+    expect(await page.locator(".pf-vfacts").textContent()).toMatch(/^9 lines, \d+ bytes\.$/);
+    expect(await calls(page)).toContain("readFile:s-login:src/login.ts");
+
+    // A folder opened for the first time is listed then.
+    await tree.getByRole("treeitem", { name: "test", exact: true }).click();
+    await expect.poll(() => tree.getByRole("treeitem", { name: "login.test.ts" }).count()).toBe(1);
+    expect(await calls(page)).toContain("listFolder:s-login:test");
+    await tree.getByRole("treeitem", { name: "test", exact: true }).click();
 
     // A binary file is named and never shown; a deleted one says so; Copilot's own file is read through readFile.
     await tree.getByRole("treeitem", { name: "logo.png, added" }).click();
@@ -104,20 +112,21 @@ describe.skipIf(gate)("the coding window's panel tabs", () => {
     await expect.poll(() => page.locator(".pf-vwords").textContent()).toBe("Copilot deleted this file in this session.");
     await tree.getByRole("treeitem", { name: "plan.md" }).click();
     await expect.poll(() => page.locator(".pf-text").textContent()).toBe("# Plan\n\n1. Read next\n2. Test it");
-    expect(await calls(page)).toEqual(expect.arrayContaining(["rpc:session:workspaces.statFile", "rpc:session:workspaces.readFile"]));
+    // Copilot's own file is read through workspaces.readFile alone (its statFile is off in the runtime).
+    expect(await calls(page)).toContain("rpc:session:workspaces.readFile");
+    expect(await calls(page)).not.toContain("rpc:session:workspaces.statFile");
     expect(await page.getByRole("button", { name: "Attach “plan.md” to the message" }).isDisabled()).toBe(true);
     await tree.getByRole("treeitem", { name: "shot.png" }).click();
     await expect.poll(() => page.locator(".pf-vwords").textContent()).toBe("This file isn't text, so it isn't shown.");
 
-    // The filter narrows the tree and asks the composer's completions for more of the working folder.
+    // The filter narrows the tree to what is listed; a file the session didn't change is read through main too.
     await page.getByLabel("Filter files").fill("oauth");
-    await expect.poll(() => calls(page)).toContain("rpc:session:completions.request");
     await expect.poll(() => tree.getByRole("treeitem").allTextContents()).toEqual(["work/app", "src", "oauth.ts", "Copilot's session files"]);
     expect(await page.locator(".pf-none").textContent()).toBe("Nothing here matches “oauth”.");
     await page.getByLabel("Filter files").press("ArrowDown");
     expect(await focused(page)).toBe("oauth.ts");
     await page.keyboard.press("Enter");
-    await expect.poll(() => page.locator(".pf-vwords").textContent()).toBe("Ember can show a working-folder file only once this session has changed it. You can still attach it to a message.");
+    await expect.poll(() => page.locator(".pf-text").textContent()).toContain("export function back(next: unknown): string {");
 
     // Attach to message: the composer gets it as its picker's results, and the message carries it.
     await page.evaluate(() => {
@@ -242,7 +251,9 @@ describe.skipIf(gate)("the coding window's panel tabs", () => {
 
     // Start an agent: its types from agent.list (one a person can't choose is left out), a prompt and a name.
     await page.locator(".pk-start > summary").click();
-    await expect.poll(() => page.locator("#pk-type option").allTextContents()).toEqual(["Explore", "Task"]);
+    // The runtime lists custom agents only: Copilot's built-in types follow them, in Ember's words.
+    await expect.poll(() => page.locator("#pk-type option").allTextContents()).toEqual(["Code reviewer", "General purpose", "Explore", "Task", "Code review", "Research", "Security review"]);
+    await page.locator("#pk-type").selectOption("explore");
     await page.getByLabel("What should it do?").fill("Write tests for the redirect");
     await page.getByRole("button", { name: "Start agent" }).click();
     await expect.poll(() => page.locator(".pk-note").textContent()).toBe("Give it a name first.");

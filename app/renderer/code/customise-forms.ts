@@ -113,7 +113,17 @@ export function mergedConfig(old: Readonly<Record<string, unknown>>, next: Recor
 /** A rule as the SDK takes it (`PermissionRule`): a kind, and what it may be given (null for kinds that take nothing). */
 export interface Rule { kind: string; argument: string | null }
 
-/** "Shell(npm test)" or "write" as a rule; an error in Ember's words for anything else. */
+/**
+ * Copilot's own rule kinds, which the runtime matches only as it writes them, in lower case (probed on runtime 1.0.97:
+ * `{ kind: "shell", argument: "npm test" }` lets `npm test` run unasked, `{ kind: "Shell", … }` does nothing); a kind
+ * written another way is taken as one of these. Any other kind (an MCP server's name) is kept as written.
+ */
+export const RULE_KINDS: readonly string[] = ["shell", "write", "read", "url", "memory"];
+
+/**
+ * "shell(npm test)", "shell(git:*)" (every git command) or "write" as a rule; an error in Ember's words for anything
+ * else. A shell rule's argument is the whole command, or a command's first words and ":*" for every command they start.
+ */
 export function parseRule(text: string): { rule: Rule } | { error: string } {
   const t = text.trim();
   if (!t) return { error: E_RULE_EMPTY };
@@ -121,7 +131,8 @@ export function parseRule(text: string): { rule: Rule } | { error: string } {
   if (!m || /[\r\n\0]/.test(t)) return { error: E_RULE_SHAPE };
   const arg = m[2];
   if (arg !== undefined && (!arg.trim() || arg.length > 1_000)) return { error: E_RULE_SHAPE };
-  return { rule: { kind: m[1], argument: arg === undefined ? null : arg.trim() } };
+  const known = RULE_KINDS.find(k => k === m[1].toLowerCase());
+  return { rule: { kind: known ?? m[1], argument: arg === undefined ? null : arg.trim() } };
 }
 /** A rule written back as the person writes it. */
 export function ruleText(r: Rule): string { return r.argument === null ? r.kind : `${r.kind}(${r.argument})`; }

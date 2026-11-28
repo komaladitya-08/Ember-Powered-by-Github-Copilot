@@ -16,7 +16,10 @@ export const READING_FILE = "Opening…";
 export const FILES_LIST_FAILED = "The session's files couldn't be listed. Try again.";
 
 /** What the tab says about what it can list, under the tree. */
-export const FOLDER_SCOPE = "The working folder shows the files this session changed or opened. Copilot's own files are listed whole.";
+export const FOLDER_SCOPE = "The working folder is listed as it is, without what git ignores. Copilot's own files for this session are listed under it.";
+
+/** A folder with more entries than are listed. */
+export const folderCut = (n: number): string => `Only the first ${n.toLocaleString("en-GB")} entries of this folder are listed.`;
 
 /** The working folder's root, by its name. */
 export const folderRoot = (name: string): string => name || "Working folder";
@@ -24,7 +27,7 @@ export const folderRoot = (name: string): string => name || "Working folder";
 /** Nothing in a root, or nothing matching the filter. */
 export function rootEmpty(root: "folder" | "session", query: string): string {
   if (query.trim()) return `Nothing here matches “${query.trim()}”.`;
-  return root === "folder" ? "No files from this folder yet." : "Copilot hasn't kept any files for this session.";
+  return root === "folder" ? "This folder is empty." : "Copilot hasn't kept any files for this session.";
 }
 
 /** A change's words beside a file (its mark is a symbol; these are what a screen reader hears). */
@@ -66,8 +69,6 @@ export const EMPTY_FILE = "This file is empty.";
 export const TOO_BIG = (size: number): string => `This file is ${sizeWords(size)}, too large to show here.`;
 export const DELETED_FILE = "Copilot deleted this file in this session.";
 export const CANT_READ = "This file couldn't be read. Try again.";
-/** A working-folder file the SDK gives no text for (only the files the session changed have theirs). */
-export const NOT_READABLE = "Ember can show a working-folder file only once this session has changed it. You can still attach it to a message.";
 export const NO_SELECTION = "Choose a file to see it here.";
 export const SESSION_NOT_ATTACHABLE = "Only files in the session's folder can be attached to a message.";
 

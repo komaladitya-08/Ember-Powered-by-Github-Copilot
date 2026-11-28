@@ -188,7 +188,10 @@ describe("Customise's MCP server form", () => {
 
 describe("Customise's rules and sources", () => {
   it("reads a rule in the SDK's syntax and writes it back the same way", () => {
-    expect(parseRule("Shell(npm test)")).toEqual({ rule: { kind: "Shell", argument: "npm test" } });
+    // Copilot's own kinds go in lower case, as the runtime matches them (probed on runtime 1.0.97: "Shell" matched nothing).
+    expect(parseRule("Shell(npm test)")).toEqual({ rule: { kind: "shell", argument: "npm test" } });
+    expect(parseRule("shell(git:*)")).toEqual({ rule: { kind: "shell", argument: "git:*" } });
+    expect(parseRule("WRITE")).toEqual({ rule: { kind: "write", argument: null } });
     expect(parseRule(" write ")).toEqual({ rule: { kind: "write", argument: null } });
     expect(parseRule("github-mcp(create_issue)")).toEqual({ rule: { kind: "github-mcp", argument: "create_issue" } });
     expect(parseRule("")).toEqual({ error: "Write a rule first." });

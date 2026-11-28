@@ -209,13 +209,28 @@ const MCP_STATUSES = new Set(["connected", "failed", "needs-auth", "pending", "d
 export interface McpLive { name: string; status: McpStatus; source?: string; url?: string; displayName?: string; failed: boolean; plugin?: string }
 const statusOf = (s: unknown): McpStatus => (typeof s === "string" && MCP_STATUSES.has(s) ? (s as McpStatus) : "unknown");
 
-/** Session `mcp.list`: each server's status (its error text is kept out: a failure is said in Ember's words). */
+/**
+ * Session `mcp.list`: each server's status (its error text is kept out: a failure is said in Ember's words). The
+ * runtime lists only the servers it has a client for in `servers`, and the rest in `host` (probed on runtime 1.0.97:
+ * a server that failed to connect is only in `host.failedServers`, one waiting to sign in only in `needsAuthServers`),
+ * so those are listed too, with their status from where they are.
+ */
 export function mcpLive(v: unknown): McpLive[] {
-  return arr(v, "servers").flatMap(s => {
+  const out: McpLive[] = arr(v, "servers").flatMap(s => {
     const name = str(s, "name");
     if (!name) return [];
     return [{ name, status: statusOf(rec(s)?.status), failed: !!str(s, "error"), ...(str(s, "source") ? { source: str(s, "source") } : {}), ...(str(s, "url") ? { url: str(s, "url") } : {}), ...(str(s, "displayName") ? { displayName: str(s, "displayName") } : {}), ...(str(s, "sourcePlugin") ? { plugin: str(s, "sourcePlugin") } : {}) }];
   });
+  const host = sub(v, "host");
+  const add = (name: string, status: McpStatus, failed = false) => {
+    if (!name || out.some(s => s.name === name)) return;
+    out.push({ name, status, failed });
+  };
+  for (const name of Object.keys(sub(host, "needsAuthServers") ?? {})) add(name, "needs-auth");
+  for (const name of Object.keys(sub(host, "failedServers") ?? {})) add(name, "failed", true);
+  for (const name of strs(host, "pendingConnections")) add(name, "pending");
+  for (const name of strs(host, "disabledServers")) add(name, "disabled");
+  return out;
 }
 
 /** `session.mcp_server_status_changed` applied to the list: the server's new status (a new server is added). */
@@ -383,13 +398,26 @@ export function managedDevice(v: unknown): { present: boolean; unreadable: boole
   return { present: s !== undefined && s !== null, unreadable: !!str(v, "errorMessage") };
 }
 
+/**
+ * A sandbox capability's remedy as the window quotes it: the runtime's own sentence, without its pointer to the docs
+ * ("See https://…") and cut to its first 300 characters (probed on runtime 1.0.97: "Bubblewrap cannot start … Install
+ * slirp4netns.) Resolve the reported host requirement before retrying. See https://docs.github.com/…").
+ */
+export function remedyWords(reason: string | undefined): string | undefined {
+  if (!reason) return undefined;
+  const r = reason.replace(/\s*See https?:\/\/\S+\s*$/i, "").replace(/\s*Resolve the reported host requirement before retrying\.?/i, "").replace(/\s+/g, " ").trim();
+  if (!r) return undefined;
+  return r.length > 300 ? `${r.slice(0, 299).trimEnd()}…` : r;
+}
+
 /** `sandbox.getHostSupport`: whether this computer has a sandbox, and each capability that varies between hosts. */
 export function hostSupport(v: unknown): { supported: boolean; reason?: string; capabilities: { name: string; supported: boolean; reason?: string }[] } {
   return {
-    supported: bool(v, "supported") === true, ...(str(v, "reason") ? { reason: str(v, "reason") } : {}),
+    supported: bool(v, "supported") === true, ...(remedyWords(str(v, "reason")) ? { reason: remedyWords(str(v, "reason")) } : {}),
     capabilities: arr(v, "capabilities").flatMap(c => {
       const name = str(c, "name");
-      return name ? [{ name, supported: bool(c, "supported") === true, ...(str(c, "reason") ? { reason: str(c, "reason") } : {}) }] : [];
+      const why = remedyWords(str(c, "reason"));
+      return name ? [{ name, supported: bool(c, "supported") === true, ...(why ? { reason: why } : {}) }] : [];
     }),
   };
 }

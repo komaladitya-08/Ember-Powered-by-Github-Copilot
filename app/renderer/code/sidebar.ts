@@ -1,13 +1,15 @@
 /**
  * The sidebar: projects with their sessions (status marks in a symbol and words, pinned first), search, an archived
- * view, New session…, Add project… and Customise…. Rows are drawn again only when what they show changes, and focus
- * stays on the control it was on across a redraw.
+ * view, New session…, Add project…, Remove (a project, asked again in place: main refuses while it has sessions and
+ * the sidebar's note says so) and Customise…. Rows are drawn again only when what they show changes, and focus stays
+ * on the control it was on across a redraw.
  */
 import type { CodeSessionRow } from "../../shared/code";
 import type { CodeApp, View } from "./app";
 import {
-  ADD_PROJECT, ARCHIVED_TITLE, BACK_TO_SESSIONS, CUSTOMISE, LOADING, NEW_SESSION, OTHER_SESSIONS, PROJECT_EMPTY, SEARCH_LABEL, SEARCH_PLACEHOLDER,
-  archiveLabel, archivedLink, foldProject, newSessionIn, pinLabel, sessionLabel, sessionTitle, sidebarEmpty, statusWords, updatedWords,
+  ADD_PROJECT, ARCHIVED_TITLE, BACK_TO_SESSIONS, CUSTOMISE, KEEP_PROJECT, LOADING, NEW_SESSION, OTHER_SESSIONS, PROJECT_EMPTY, REMOVE_PROJECT, SEARCH_LABEL,
+  SEARCH_PLACEHOLDER, archiveLabel, archivedLink, foldProject, newSessionIn, pinLabel, removeProjectLabel, removeProjectQuestion, sessionLabel, sessionTitle,
+  sidebarEmpty, statusWords, updatedWords,
 } from "./copy";
 import { byId, el, setText } from "./dom";
 import { archivedCount, setArchivedView, setQuery, sidebarGroups, statusOf, type CodeState } from "./store";
@@ -115,7 +117,28 @@ export function mountSidebar(app: CodeApp, opts: { onNewSession(projectId?: stri
       fold.addEventListener("click", () => app.setUi({ folded: folded ? s.ui.folded.filter(x => x !== g.projectId) : [...s.ui.folded, g.projectId] }));
       const add = g.project && !s.archivedView ? el("button", { type: "button", className: "s-act p-new", attrs: { "aria-label": newSessionIn(name), title: newSessionIn(name) }, data: { focus: `new:${g.projectId}` } }) : null;
       add?.addEventListener("click", () => opts.onNewSession(g.projectId));
-      const head = el("div", { className: "p-head" }, fold, add);
+      const remove = g.project && !s.archivedView ? el("button", { type: "button", className: "s-act p-remove", attrs: { "aria-label": removeProjectLabel(name), title: removeProjectLabel(name) }, data: { focus: `remove:${g.projectId}` } }) : null;
+      const head = el("div", { className: "p-head" }, fold, add, remove);
+      if (remove && g.project) {
+        const project = g.project;
+        remove.addEventListener("click", () => {
+          // Asked again in place: the question, Remove (in red words, never filled) and Cancel, which has the focus.
+          const go = el("button", { type: "button", className: "btn quiet small p-danger", textContent: REMOVE_PROJECT });
+          const no = el("button", { type: "button", className: "btn quiet small", textContent: KEEP_PROJECT });
+          const ask = el("div", { className: "p-ask", attrs: { role: "group", "aria-label": removeProjectQuestion(name) } },
+            el("p", { className: "p-ask-words", textContent: removeProjectQuestion(name) }), el("div", { className: "p-ask-actions" }, go, no));
+          const back = () => { ask.replaceWith(head); remove.focus(); };
+          no.addEventListener("click", back);
+          ask.addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); back(); } });
+          go.addEventListener("click", async () => {
+            go.disabled = no.disabled = true;
+            const done = await app.removeProject(project.id);
+            if (!done && ask.isConnected) back();
+          });
+          head.replaceWith(ask);
+          no.focus();
+        });
+      }
       const ul = el("ul", { className: "s-list", attrs: { "aria-labelledby": headId } });
       if (!folded) {
         for (const r of g.rows) { ul.append(rowItem(s, r)); seen.add(r.id); }

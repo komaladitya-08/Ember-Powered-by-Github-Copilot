@@ -3,34 +3,35 @@
  * keys, type-ahead), a filter, a read-only viewer for a text file (bounded, monospace, with line numbers, a binary file
  * named and never shown) and "Attach to message", which hands the file to the composer as its picker's results are.
  *
- * What it lists is what main and the SDK list (files-model.ts says why there are two roots): `workspaces.diff` for the
- * working folder's changes and `workspaces.listFiles` for Copilot's own session files, the paths the session's tools
- * touched, and `completions.request`'s paths as the filter is typed where the host offers them. It reads a session file
- * through `workspaces.statFile` and `readFile`, and a working-folder file only from the text `workspaces.diff` gives for
- * a file the session changed: the window reads no folder itself. Every string goes in as text, never markup.
+ * What it lists is what main and the SDK list (files-model.ts says why there are two roots): the working folder as
+ * main lists it (`listFolder`, a folder at a time as it opens: the top at once, and the folders that hold changes), with
+ * `workspaces.diff`'s changes and the paths the session's tools touched marked; and `workspaces.listFiles` for
+ * Copilot's own session files. It reads a working-folder file through main (`readFile`: its text, or that it is binary
+ * or too large) and a session file through `workspaces.readFile` (`statFile` needs the runtime's "session memory v2",
+ * which is off: probed on runtime 1.0.97). The window reads no folder itself. Every string goes in as text, never markup.
  */
-import type { CodeAttachment, CodeSessionRow } from "../../shared/code";
+import { CODE_LIMITS, type CodeAttachment, type CodeFolderEntry, type CodeSessionRow } from "../../shared/code";
 import type { CodeApp } from "./app";
 import { PANEL_NO_SESSION, pathTail } from "./copy";
 import {
   ATTACH_FILE, BINARY_FILE, CANT_READ, DELETED_FILE, EMPTY_FILE, FILES_LIST_FAILED, FILES_TREE_LABEL, FILTER_LABEL, FILTER_PLACEHOLDER,
-  FOLDER_SCOPE, LOADING_FILES, NOT_READABLE, NO_SELECTION, READING_FILE, REFRESH_FILES, SESSION_FILES, SESSION_NOT_ATTACHABLE, TOO_BIG, VIEWER_LABEL,
-  attachLabel, attached, changeWords, fileFacts, folderRoot, rootEmpty, rowLabel, sizeWords,
+  FOLDER_SCOPE, LOADING_FILES, NO_SELECTION, READING_FILE, REFRESH_FILES, SESSION_FILES, SESSION_NOT_ATTACHABLE, TOO_BIG, VIEWER_LABEL,
+  attachLabel, attached, changeWords, fileFacts, folderCut, folderRoot, rootEmpty, rowLabel, sizeWords,
 } from "./copy-files";
 import { button, el, idPart, setText } from "./dom";
 import {
-  buildTree, completionPaths, diffFiles, fileView, filterTree, joinPath, mergeFiles, rootId, seenFiles, treeKey, typeAhead, visibleRows,
+  buildTree, diffFiles, fileView, filterTree, fromGitRoot, mergeFiles, rootId, seenFiles, treeKey, typeAhead, visibleRows,
   workspaceFiles, type DiffFile, type FileRoot, type KnownFile, type TreeNode, type TreeRow,
 } from "./files-model";
 import { registerPanelTab, type PanelContext } from "./panel";
 import { ATTACH_EVENT } from "./attach-event";
-import { num, str } from "./sdk";
+import { str } from "./sdk";
 import type { CodeState } from "./store";
 
-/** The largest session file the viewer reads (bytes, as `statFile` says). */
-const READ_MAX = 2 * 1024 * 1024;
-/** Waits before listing again after the session's tools changed files, and before asking completions for the filter. */
-const RELIST_MS = 600, FILTER_MS = 200;
+/** Waits before listing again after the session's tools changed files. */
+const RELIST_MS = 600;
+/** A folder main listed: its entries, and whether it had more than it lists. */
+interface Listed { entries: CodeFolderEntry[]; truncated: boolean }
 
 
 registerPanelTab({ id: "files", label: "Files", mount });
@@ -57,7 +58,11 @@ function mount(host: HTMLElement, ctx: PanelContext) {
     note, tree, scope, viewer), none);
 
   let sessionId: string | null = null;
-  let listed: { folder: DiffFile[]; session: string[]; extra: KnownFile[] } = { folder: [], session: [], extra: [] };
+  let listed: { folder: DiffFile[]; session: string[] } = { folder: [], session: [] };
+  /** The working folder's folders main listed, by their path ("" for the top). */
+  let dirs = new Map<string, Listed>();
+  /** The session's folder below its repository's top (main's `gitPrefix`), for `workspaces.diff`'s paths. */
+  let gitPrefix: string | undefined;
   let loading = false, failed = false, opened = false;
   const open = new Set<string>([rootId("folder"), rootId("session")]);
   let focused = rootId("folder");
@@ -65,11 +70,21 @@ function mount(host: HTMLElement, ctx: PanelContext) {
   let rows: TreeRow[] = [];
   let sig = "";
   let gen = 0;
-  let relist = 0, filterTimer = 0;
+  let relist = 0;
 
   const row = (): CodeSessionRow | null => (sessionId ? app.state.sessions.byId[sessionId] ?? null : null);
   /** The working folder the SDK's paths are relative to: the session's own, as the SDK last said it, else main's. */
   const folderOf = (s: CodeState): string => (sessionId ? s.transcripts[sessionId]?.context?.cwd ?? s.sessions.byId[sessionId]?.folder ?? "" : "");
+
+  /** Lists folder `rel` of the working folder through main; false where it couldn't. */
+  async function listDir(id: string, rel: string): Promise<boolean> {
+    const r = await app.listFolder(id, rel);
+    if (id !== sessionId) return false;
+    if (!r.ok) { dirs.delete(rel); return false; }
+    dirs.set(rel, { entries: r.value.entries, truncated: r.value.truncated === true });
+    if (r.value.gitPrefix !== undefined) gitPrefix = r.value.gitPrefix;
+    return true;
+  }
 
   async function list(): Promise<void> {
     const id = sessionId;
@@ -77,46 +92,51 @@ function mount(host: HTMLElement, ctx: PanelContext) {
     const mine = ++gen;
     loading = true;
     draw(app.state);
-    const [diff, ws] = await Promise.all([
+    // The top first: its answer says where the session's folder is in its repository, which the diff's paths need.
+    const again = [...dirs.keys()].filter(d => d);
+    const [top, diff, ws] = await Promise.all([
+      listDir(id, ""),
       app.rpc({ scope: "session", sessionId: id, method: "workspaces.diff", params: { mode: "unstaged" } }),
       app.rpc({ scope: "session", sessionId: id, method: "workspaces.listFiles" }),
     ]);
+    await Promise.all(again.map(d => listDir(id, d)));
     if (mine !== gen || id !== sessionId) return;
     loading = false;
-    failed = !diff.ok && !ws.ok;
-    listed = { ...listed, folder: diff.ok ? diffFiles(diff.value) : [], session: ws.ok ? workspaceFiles(ws.value) : [] };
-    // The first listing opens the folders that hold changes, so what the session changed shows at once.
+    failed = !top && !diff.ok && !ws.ok;
+    listed = {
+      folder: diff.ok ? diffFiles(diff.value).flatMap(f => { const path = fromGitRoot(f.path, gitPrefix); return path ? [{ ...f, path }] : []; }) : [],
+      session: ws.ok ? workspaceFiles(ws.value) : [],
+    };
+    // The first listing opens (and lists) the folders that hold changes, so what the session changed shows at once.
     if (!opened) {
       opened = true;
-      const walk = (n: TreeNode) => { if (n.dir && n.change) open.add(n.id); n.children.forEach(walk); };
-      buildTree(files(app.state), { folder: "", session: "" }).forEach(walk);
+      const holding = new Set<string>();
+      for (const f of listed.folder) { const parts = f.path.split("/"); for (let i = 1; i < parts.length; i++) holding.add(parts.slice(0, i).join("/")); }
+      for (const d of holding) open.add(`folder:${d}/`);
+      await Promise.all([...holding].filter(d => !dirs.has(d)).map(d => listDir(id, d)));
+      if (mine !== gen || id !== sessionId) return;
     }
-    draw(app.state);
-  }
-
-  async function suggest(q: string): Promise<void> {
-    const id = sessionId;
-    if (!id || !q.trim()) return;
-    const words = `@${q.trim()}`;
-    const r = await app.rpc({ scope: "session", sessionId: id, method: "completions.request", params: { text: words, offset: words.length } });
-    if (id !== sessionId || !r.ok) return;
-    const have = new Set(listed.extra.map(f => f.path));
-    const more = completionPaths(r.value).filter(p => !p.dir && !have.has(p.path)).map(p => ({ root: "folder" as const, path: p.path }));
-    if (!more.length) return;
-    listed = { ...listed, extra: [...listed.extra, ...more].slice(-500) };
     draw(app.state);
   }
 
   function files(s: CodeState): KnownFile[] {
     const t = sessionId ? s.transcripts[sessionId] : undefined;
     const changedHere = Object.keys(t?.workspaceFiles ?? {}).map(path => ({ root: "session" as const, path, change: "edited" as const }));
+    const inFolders: KnownFile[] = [];
+    for (const [rel, d] of dirs) for (const e of d.entries) inFolders.push({ root: "folder", path: rel ? `${rel}/${e.name}` : e.name, ...(e.kind === "folder" ? { dir: true } : {}) });
     return mergeFiles(
-      listed.extra,
+      inFolders,
       seenFiles(t, folderOf(s)),
       listed.folder.map(f => ({ root: "folder" as const, path: f.path, change: f.change })),
       listed.session.map(path => ({ root: "session" as const, path })),
       changedHere,
     );
+  }
+
+  /** The entry main listed for a working-folder file, with its absolute path (for an attachment). */
+  function entryOf(rel: string): CodeFolderEntry | undefined {
+    const at = rel.lastIndexOf("/");
+    return dirs.get(at < 0 ? "" : rel.slice(0, at))?.entries.find(e => e.name === (at < 0 ? rel : rel.slice(at + 1)));
   }
 
   function draw(s: CodeState): void {
@@ -133,6 +153,9 @@ function mount(host: HTMLElement, ctx: PanelContext) {
       items.push(treeItem(x));
       // An open root with nothing under it says so (as a row of its own, not a tree item).
       if (x.level === 1 && x.expanded && !x.node.children.length) items.push(el("li", { className: "pf-none", attrs: { role: "none" }, textContent: rootEmpty(x.node.root, q) }));
+      // A folder with more entries than main lists says so after them.
+      const rel = x.node.root === "folder" && x.node.dir ? x.node.path : null;
+      if (rel !== null && x.expanded && dirs.get(rel)?.truncated) items.push(el("li", { className: "pf-none", attrs: { role: "none" }, textContent: folderCut(CODE_LIMITS.folderEntries) }));
     }
     const hadFocus = tree.contains(document.activeElement);
     tree.replaceChildren(...items);
@@ -164,10 +187,21 @@ function mount(host: HTMLElement, ctx: PanelContext) {
     const n = nodeOf(id);
     if (!n) return;
     focused = id;
-    if (n.dir) { if (open.has(id)) open.delete(id); else open.add(id); draw(app.state); return; }
+    if (n.dir) {
+      if (open.has(id)) open.delete(id); else { open.add(id); listOpened(n); }
+      draw(app.state);
+      return;
+    }
     selected = { root: n.root, path: n.path, name: n.name };
     draw(app.state);
     void read(n);
+  }
+
+  /** A working-folder folder opened for the first time: main lists it, and the tree draws again. */
+  function listOpened(n: TreeNode): void {
+    const id = sessionId;
+    if (!id || n.root !== "folder" || !n.dir || n.path === "" || dirs.has(n.path)) return;
+    void listDir(id, n.path).then(ok => { if (id === sessionId) { if (!ok) setText(note, FILES_LIST_FAILED); draw(app.state); } });
   }
 
   tree.addEventListener("click", e => {
@@ -182,17 +216,15 @@ function mount(host: HTMLElement, ctx: PanelContext) {
     if (!move) return;
     e.preventDefault();
     focused = move.focus;
-    if (move.toggle) { if (move.toggle.open) open.add(move.toggle.id); else open.delete(move.toggle.id); }
+    if (move.toggle) {
+      if (move.toggle.open) { open.add(move.toggle.id); const n = nodeOf(move.toggle.id); if (n) listOpened(n); } else open.delete(move.toggle.id);
+    }
     draw(app.state);
     tree.querySelector<HTMLElement>("[tabindex='0']")?.focus();
     tree.querySelector<HTMLElement>("[tabindex='0']")?.scrollIntoView({ block: "nearest" });
   });
 
-  filter.addEventListener("input", () => {
-    draw(app.state);
-    clearTimeout(filterTimer);
-    filterTimer = window.setTimeout(() => { void suggest(filter.value); }, FILTER_MS);
-  });
+  filter.addEventListener("input", () => { draw(app.state); });
   filter.addEventListener("keydown", e => {
     if (e.key === "ArrowDown") { e.preventDefault(); const first = rows.find(r => !r.node.dir) ?? rows[0]; if (first) { focused = first.node.id; draw(app.state); tree.querySelector<HTMLElement>("[tabindex='0']")?.focus(); } }
     if (e.key === "Escape" && filter.value) { e.preventDefault(); e.stopPropagation(); filter.value = ""; draw(app.state); }
@@ -237,32 +269,30 @@ function mount(host: HTMLElement, ctx: PanelContext) {
     drawViewerHead();
     showWords(READING_FILE);
     if (n.root === "session") {
-      const st = await app.rpc({ scope: "session", sessionId: id, method: "workspaces.statFile", params: { path: n.path } });
-      if (mine !== reading) return;
-      const size = st.ok ? num(st.value, "size") : undefined;
-      if (size !== undefined && size > READ_MAX) return showWords(TOO_BIG(size));
       const r = await app.rpc({ scope: "session", sessionId: id, method: "workspaces.readFile", params: { path: n.path } });
       if (mine !== reading) return;
       const body = r.ok ? str(r.value, "content", true) : undefined;
       if (body === undefined) return showWords(CANT_READ);
-      return showText(n.path, body, false, size);
+      return showText(n.path, body, false);
     }
     const known = listed.folder.find(f => f.path === n.path);
     if (known?.change === "deleted") return showWords(DELETED_FILE);
-    // The working folder's text: only what `workspaces.diff` gives for a file the session changed.
-    const r = await app.rpc({ scope: "session", sessionId: id, method: "workspaces.diff", params: { mode: "session", includeContents: true } });
+    const r = await app.readFile(id, n.path);
     if (mine !== reading) return;
-    const hit = r.ok ? diffFiles(r.value).find(f => f.path === n.path) : undefined;
-    if (hit?.change === "deleted") return showWords(DELETED_FILE);
-    if (hit?.after === undefined) return showWords(r.ok ? NOT_READABLE : CANT_READ);
-    showText(n.path, hit.after, hit.cut);
+    if (!r.ok) return showWords(r.reason || CANT_READ);
+    const v = r.value;
+    if ("tooLarge" in v) return showWords(TOO_BIG(v.size));
+    if ("binary" in v) return showWords(BINARY_FILE, sizeWords(v.size));
+    showText(n.path, v.text, false, v.size);
   }
 
   attach.addEventListener("click", () => {
     const r = row();
     if (!selected || selected.root !== "folder" || !r || !sessionId) return;
-    const folder = folderOf(app.state) || r.folder;
-    const a: CodeAttachment = { type: "file", path: joinPath(folder, selected.path), displayName: selected.name };
+    // The path main listed (attachments pass main's check only for paths it offered or in the session's folder).
+    const listedEntry = entryOf(selected.path);
+    if (!listedEntry) { setText(note, CANT_READ); return; }
+    const a: CodeAttachment = { type: "file", path: listedEntry.path, displayName: selected.name };
     document.dispatchEvent(new CustomEvent(ATTACH_EVENT, { detail: { sessionId, attachments: [a] } }));
     setText(note, attached(selected.name));
   });
@@ -281,7 +311,8 @@ function mount(host: HTMLElement, ctx: PanelContext) {
       if (id === sessionId) return;
       sessionId = id;
       gen++; reading++;
-      listed = { folder: [], session: [], extra: [] };
+      listed = { folder: [], session: [] };
+      dirs = new Map(); gitPrefix = undefined;
       selected = null; failed = false; opened = false;
       filter.value = "";
       focused = rootId("folder");
@@ -304,7 +335,7 @@ function mount(host: HTMLElement, ctx: PanelContext) {
         draw(s);
       } else if (prev && prev.sessions.byId[sessionId] !== s.sessions.byId[sessionId]) draw(s);
     },
-    dispose() { clearTimeout(relist); clearTimeout(filterTimer); gen++; reading++; },
+    dispose() { clearTimeout(relist); gen++; reading++; },
   };
 }
 

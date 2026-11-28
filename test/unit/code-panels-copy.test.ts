@@ -24,7 +24,8 @@ describe("the Files tab's words", () => {
     expect(files.TOO_BIG(3 * 1024 * 1024)).toBe("This file is 3.0 MB, too large to show here.");
   });
   it("says what a root holds when it is empty or nothing matches", () => {
-    expect(files.rootEmpty("folder", "")).toBe("No files from this folder yet.");
+    expect(files.rootEmpty("folder", "")).toBe("This folder is empty.");
+    expect(files.folderCut(2000)).toBe("Only the first 2,000 entries of this folder are listed.");
     expect(files.rootEmpty("session", " zz ")).toBe("Nothing here matches “zz”.");
     expect(files.attached("a.ts")).toBe("“a.ts” will go with your next message.");
     expect(files.attachLabel("a.ts")).toBe("Attach “a.ts” to the message");

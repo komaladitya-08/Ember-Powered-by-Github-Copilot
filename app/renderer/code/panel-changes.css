@@ -78,6 +78,6 @@
   .ch-file-head::before { background: CanvasText; }
   .ch-review, .rw-confirm, .ch-comment, .ch-quote { border: 1px solid CanvasText; }
   .ch-lines > .chosen { forced-color-adjust: none; background: Highlight; color: HighlightText; box-shadow: none; }
-  .ch-lines > .chosen .d-sign, .ch-lines > .chosen .d-no { color: HighlightText; }
+  .ch-lines > .chosen .d-sign, .ch-lines > .chosen .d-no { color: HighlightText; forced-color-adjust: none; }
   .ch-lines:focus-visible > .active { outline: 2px solid CanvasText; outline-offset: -2px; }
 }

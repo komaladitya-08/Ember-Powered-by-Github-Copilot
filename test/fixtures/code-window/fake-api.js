@@ -1,7 +1,8 @@
 // A scripted window.emberCode for the coding window's renderer journeys and render checks (test/integration/
 // code-window-renderer.test.ts; loaded with page.addInitScript({ path })). It plays a realistic Copilot SDK session:
-// SDK events as the runtime sends them, numbered per session, with main's pending table and its RPC answers. Nothing
-// is read, sent or kept. window.__fake drives and inspects it: `calls` (every command in order), `emit` (an event now),
+// SDK events as the runtime sends them, numbered per session, with main's pending table and its RPC answers, in the
+// shapes probed on the bundled runtime 1.0.97 (docs/CODING-APP.md §7) and as main passes them on (an MCP server's
+// secret values replaced by CODE_KEPT, a failed method answered with main's sentence). Nothing is read, sent or kept. window.__fake drives and inspects it: `calls` (every command in order), `emit` (an event now),
 // `gap()` (the next envelope skips a number), `wait(name)` (a promise for a named step of the script).
 (() => {
   const now = Date.parse("2026-11-27T10:00:00Z");
@@ -58,6 +59,8 @@
     setRow(sid, { pending: [...pending.values()].filter(x => x.sessionId === sid).length });
   }
   const eph = { ephemeral: true };
+  /** What main puts in place of an MCP server's secret values (app/shared/code.ts CODE_KEPT). */
+  const KEPT = "\u2022\u2022\u2022 kept by Ember \u2022\u2022\u2022";
 
   // ── History of the pinned session, as the SDK's log keeps it ──
   (() => {
@@ -206,10 +209,10 @@
       l.kept = l.kept.slice(0, at);
       const files = c.params.mode === "conversation-and-files";
       if (files) panels.rewound.add(c.sessionId);
-      later(10, () => emit(c.sessionId, "session.snapshot_rewind", { eventId: c.params.eventId, eventsRemoved: removed }, eph));
+      later(10, () => emit(c.sessionId, "session.snapshot_rewind", { upToEventId: c.params.eventId, eventsRemoved: removed }));
       return { outcome: "success", eventsRemoved: removed, restoredFiles: files ? [app("src/login.ts"), app("src/oauth.ts")] : [], skippedFiles: files ? [{ path: app("README.md"), reason: "user-modified" }] : [] };
     },
-    "plan.read": (c) => { const p = panels.plans.get(c.sessionId); return { exists: p !== undefined, content: p ?? null, path: p !== undefined ? `/home/me/.copilot/session-state/${c.sessionId}/plan.md` : null }; },
+    "plan.read": (c) => { const p = panels.plans.get(c.sessionId); return { exists: p !== undefined, content: p ?? null, path: `/home/me/.copilot/session-state/${c.sessionId}/plan.md` }; },
     "plan.update": (c) => { panels.plans.set(c.sessionId, c.params.content); later(5, () => emit(c.sessionId, "session.plan_changed", { operation: "update" })); return null; },
     "plan.delete": (c) => { panels.plans.delete(c.sessionId); later(5, () => emit(c.sessionId, "session.plan_changed", { operation: "delete" })); return null; },
     "plan.readSqlTodosWithDependencies": (c) => (c.sessionId === "s-login" ? TODOS : { rows: [], dependencies: [] }),
@@ -223,7 +226,7 @@
       const was = panels.objectives.get(c.sessionId);
       panels.objectives.set(c.sessionId, { content: c.params.content, status: "active", turnCount: was?.turnCount ?? 0 });
       later(5, () => emit(c.sessionId, "session.autopilot_objective_changed", { id: 1, operation: was ? "update" : "create", status: "active" }));
-      return { operation: was ? "updated" : "created" };
+      return { operation: was ? "update" : "create" };
     },
     "workspaces.deleteAutopilotObjective": (c) => {
       const had = panels.objectives.delete(c.sessionId);
@@ -243,14 +246,32 @@
   const taskLog = [{ type: "agent", id: "bg-0", toolCallId: "bg-call-0", displayName: "Read the docs", description: "Read the auth docs", status: "completed", startedAt: iso(now - 900_000), completedAt: iso(now - 840_000), agentType: "explore", prompt: "Read", result: "Done." }];
   let schedules = [{ id: 1, intervalMs: 600_000, prompt: "Check CI", displayPrompt: "Check CI", recurring: true, nextRunAt: iso(now + 600_000) }];
   const userRuns = new Map();
+  // The working folder of /home/me/work/app as main lists it (folders first, then files, each by name; what git
+  // ignores and .git left out) and reads it (text, or binary, or too large).
+  const workTree = {
+    "": [{ name: "assets", kind: "folder" }, { name: "docs", kind: "folder" }, { name: "src", kind: "folder" }, { name: "test", kind: "folder" }, { name: "package.json", kind: "file", size: 212 }, { name: "README.md", kind: "file", size: 64 }],
+    assets: [{ name: "logo.png", kind: "file", size: 9 }],
+    docs: [],
+    src: [{ name: "login.ts", kind: "file", size: 330 }, { name: "oauth.ts", kind: "file", size: 160 }, { name: "session.ts", kind: "file", size: 40 }],
+    test: [{ name: "login.test.ts", kind: "file", size: 180 }],
+  };
+  const workFiles = {
+    "src/login.ts": LOGIN,
+    "src/oauth.ts": "export function back(next: unknown): string {\n  if (typeof next !== \"string\") return \"/\";\n  return next.startsWith(\"/\") && !next.startsWith(\"//\") ? next : \"/\";\n}\n",
+    "src/session.ts": "export const session = { start() {} };\n",
+    "test/login.test.ts": "describe(\"sign-in\", () => {\n  it(\"signs in\", ok);\n});\n",
+    "package.json": "{\n  \"name\": \"app\",\n  \"private\": true\n}\n",
+    "README.md": "# app\n\nThe sign-in app.\n",
+    "assets/logo.png": { binary: true, size: 9 },
+  };
   // ── Customise's methods (test/integration/code-customise-renderer.test.ts): this computer's settings and the
   // session's, as the SDK's generated types shape them. `refuse` holds methods that answer with a refusal. ──
   const refuse = new Set();
   const params = [];
   const mcp = {
     servers: {
-      "issues": { type: "stdio", command: "npx", args: ["-y", "@acme/issues-mcp"], env: { ISSUES_TOKEN: "fake-secret-value-123" }, timeout: 30_000 },
-      "docs": { type: "http", url: "https://mcp.example.com/docs", headers: { Authorization: "Bearer fake-header-secret" } },
+      "issues": { tools: ["*"], command: "npx", args: ["-y", "@acme/issues-mcp"], env: { ISSUES_TOKEN: "fake-secret-value-123" }, timeout: 30_000 },
+      "docs": { tools: ["*"], type: "http", url: "https://mcp.example.com/docs", headers: { Authorization: "Bearer fake-header-secret" } },
     },
     disabled: new Set(),
     live: [{ name: "issues", status: "connected", source: "user" }, { name: "docs", status: "needs-auth", source: "user", url: "https://mcp.example.com/docs" }, { name: "browser", status: "connected", source: "plugin", sourcePlugin: "github-copilot-browser" }],
@@ -290,22 +311,39 @@
       case "session:providers.getStatus": return ok({ outcome: { code: "success" }, status: "healthy", version: "0.12.3" });
       case "session:providers.models.list": return ok({ outcome: { code: "success" }, models: [{ id: "qwen3-coder:30b", name: "qwen3-coder:30b", sizeBytes: 18_600_000_000, details: {}, capabilities: {}, warnings: [] }] });
       // MCP: this computer's configuration.
-      case "client:mcp.config.list": return ok({ servers: JSON.parse(JSON.stringify(mcp.servers)) });
+      // Main replaces every variable's and header's value with CODE_KEPT (app/main/code/mcp-secrets.ts).
+      case "client:mcp.config.list": return ok({ servers: Object.fromEntries(Object.entries(mcp.servers).map(([n, cfg]) => [n, {
+        ...cfg, ...(cfg.env ? { env: Object.fromEntries(Object.keys(cfg.env).map(k => [k, KEPT])) } : {}), ...(cfg.headers ? { headers: Object.fromEntries(Object.keys(cfg.headers).map(k => [k, KEPT])) } : {}),
+      }])) });
       case "client:mcp.discover": return ok({ servers: [...Object.keys(mcp.servers).map(name => ({ name, source: "user", enabled: !mcp.disabled.has(name) })), { name: "browser", source: "plugin", sourcePlugin: "github-copilot-browser", enabled: true }] });
       case "client:mcp.config.add": params.push({ method: c.method, params: p }); if (mcp.servers[p.name]) return { ok: false, reason: "There's a server with that name already." }; mcp.servers[p.name] = p.config; return ok(null);
-      case "client:mcp.config.update": params.push({ method: c.method, params: p }); mcp.servers[p.name] = p.config; return ok(null);
+      // Main puts the stored value back where the window sent CODE_KEPT (and refuses one it doesn't hold).
+      case "client:mcp.config.update": {
+        params.push({ method: c.method, params: p });
+        const was = mcp.servers[p.name] ?? {};
+        const back = (o, old) => (o ? Object.fromEntries(Object.entries(o).map(([k, v]) => [k, v === KEPT ? old?.[k] : v])) : o);
+        const cfg = { ...p.config, ...(p.config.env ? { env: back(p.config.env, was.env) } : {}), ...(p.config.headers ? { headers: back(p.config.headers, was.headers) } : {}) };
+        if (JSON.stringify(cfg).includes("undefined") || Object.values({ ...cfg.env, ...cfg.headers }).some(v => v === undefined)) return { ok: false, reason: "Ember couldn't keep a value it doesn't hold. Type the value again." };
+        mcp.servers[p.name] = cfg; return ok(null);
+      }
       case "client:mcp.config.remove": params.push({ method: c.method, params: p }); delete mcp.servers[p.name]; return ok(null);
       case "client:mcp.config.enable": for (const n of p.names) mcp.disabled.delete(n); return ok(null);
       case "client:mcp.config.disable": for (const n of p.names) mcp.disabled.add(n); return ok(null);
       case "client:mcp.config.reload": return ok(null);
       // MCP: the session's servers.
-      case "session:mcp.list": return ok({ servers: mcp.live.map(s => ({ ...s })) });
+      // The runtime lists the servers it has a client for, and those waiting to sign in or failed only in `host`.
+      case "session:mcp.list": return ok({
+        servers: mcp.live.filter(s => s.status !== "needs-auth" && s.status !== "failed").map(s => ({ name: s.name, status: s.status, ...(s.status === "connected" ? { serverMetadata: { instructions: null } } : {}) })),
+        host: { clients: mcp.live.filter(s => s.status === "connected").map(s => s.name), disabledServers: [], filteredServers: [], pendingConnections: [],
+          failedServers: Object.fromEntries(mcp.live.filter(s => s.status === "failed").map(s => [s.name, { message: "MCP server failed: internal detail", timestamp: now }])),
+          needsAuthServers: Object.fromEntries(mcp.live.filter(s => s.status === "needs-auth").map(s => [s.name, { timestamp: now }])), mcp3pEnabled: true },
+      });
       case "session:mcp.listTools": return ok({ tools: p.serverName === "issues" ? [{ name: "create_issue", description: "Opens an issue" }, { name: "search_issues", description: "Finds issues by words" }] : [] });
       case "session:mcp.resources.list": return ok({ resources: p.serverName === "issues" ? [{ uri: "issues://open", name: "open", title: "Open issues", mimeType: "application/json" }] : [] });
       case "session:mcp.prompts.list": return ok({ prompts: p.serverName === "issues" ? [{ name: "triage", description: "Sorts new issues", arguments: [{ name: "label" }] }] : [] });
-      case "session:mcp.startServer": liveStatus(c, p.serverName, "connected"); return ok(null);
-      case "session:mcp.restartServer": liveStatus(c, p.serverName, "pending"); later(40, () => liveStatus(c, p.serverName, "connected")); return ok(null);
-      case "session:mcp.stopServer": liveStatus(c, p.serverName, "stopped"); return ok(null);
+      case "session:mcp.startServer": liveStatus(c, p.serverName, "connected"); return ok({});
+      case "session:mcp.restartServer": liveStatus(c, p.serverName, "pending"); later(40, () => liveStatus(c, p.serverName, "connected")); return ok({});
+      case "session:mcp.stopServer": liveStatus(c, p.serverName, "stopped"); return ok({});
       case "session:mcp.oauth.login": return ok({ loginId: "login-1", status: "awaiting-browser", authorizationUrl: "https://mcp.example.com/oauth/authorize?client_id=ember&state=abc" });
       // Skills.
       case "session:skills.list": return ok({ skills: skills.map(s => ({ ...s })) });
@@ -355,7 +393,10 @@
       case "session:permissions.folderTrust.isTrusted": return ok({ trusted: trusted.has(p.path) });
       case "session:permissions.folderTrust.addTrusted": trusted.add(p.path); return ok({ success: true });
       // The sandbox.
-      case "client:sandbox.getHostSupport": return ok({ supported: true, capabilities: [{ name: "network", supported: false, reason: "Install slirp4netns to give sandboxed commands the network." }, { name: "seccomp", supported: true }] });
+      case "client:sandbox.getHostSupport": return ok({ supported: true, capabilities: [
+        { name: "network", supported: false, reason: "Bubblewrap cannot start sandboxed commands or services with this policy because its private network is unavailable. (Bubblewrap: sandbox networking requires 'slirp4netns' on PATH: No such file or directory (os error 2). Install slirp4netns.) Resolve the reported host requirement before retrying. See https://docs.github.com/en/copilot/concepts/about-cloud-and-local-sandboxes" },
+        { name: "denied_paths", supported: true }, { name: "shell", supported: true }, { name: "filesystem_enumeration", supported: true },
+      ] });
       case "session:sandbox.getEnforcementStatus": return ok({ required: false, blocked: false });
       // Schedules.
       case "session:schedule.list": return ok({ entries: customiseSchedules.map(s => ({ ...s })) });
@@ -376,7 +417,14 @@
   const api = {
     async list() { calls.push("list"); return { projects: projects.slice(), sessions: [...sessions.values()] }; },
     async addProject() { calls.push("addProject"); const p = { id: "p-site", folder: "/home/me/work/site", name: "site", gitRoot: "/home/me/work/site", branch: "main" }; projects.unshift(p); return { ok: true, value: p }; },
-    async removeProject(id) { calls.push(`removeProject:${id}`); return { ok: true }; },
+    // Main refuses while any session, an archived one too, is under the project, in its own sentence.
+    async removeProject(id) {
+      calls.push(`removeProject:${id}`);
+      if ([...sessions.values()].some(r => r.projectId === id)) return { ok: false, reason: "This project still has sessions. Delete them first, then remove the project.", code: "has-sessions" };
+      const i = projects.findIndex(p => p.id === id);
+      if (i >= 0) projects.splice(i, 1);
+      return { ok: true };
+    },
     async create(o) {
       calls.push(`create:${JSON.stringify(o)}`);
       const id = `s-new-${sessions.size}`;
@@ -491,19 +539,21 @@
             { path: "../outside.txt", diff: "", changeType: "modified" },
           ] } };
         case "workspaces.listFiles": return { ok: true, value: { files: Object.keys(sessionFiles) } };
-        case "workspaces.statFile": { const f = sessionFiles[c.params.path]; return f === undefined ? { ok: false, reason: "That file isn't there." } : { ok: true, value: { isFile: true, isDirectory: false, size: f.length, mtimeMs: now, birthtimeMs: now } }; }
+        // The runtime answers statFile only with its "session memory v2" on, which it isn't: main says so.
+        case "workspaces.statFile": return { ok: false, reason: "This version of Copilot can't do that here." };
         case "workspaces.readFile": { const f = sessionFiles[c.params.path]; return f === undefined ? { ok: false, reason: "That file isn't there." } : { ok: true, value: { content: f } }; }
         case "shell.executeUserRequested": {
           const sid = c.sessionId, id = c.params.requestId, command = c.params.command, call = `user-${id}`;
-          emit(sid, "tool.execution_start", { toolCallId: call, toolName: "bash", arguments: { command }, shellToolInfo: { displayCommand: command, hasWriteFileRedirection: false, possiblePaths: [] } });
+          emit(sid, "tool.user_requested", { toolCallId: call, toolName: "local_shell", arguments: { command, description: `Execute shell command: ${command}` } });
           if (command.startsWith("sleep")) {
             later(30, () => emit(sid, "tool.shell_output", { toolCallId: call, text: "waiting…\n", stream: "stdout", sequence: 0 }, eph));
-            return new Promise(res => userRuns.set(id, () => { emit(sid, "tool.execution_complete", { toolCallId: call, success: false, isUserRequested: true, shellExecution: { exitCode: 130 } }); res({ ok: true, value: { toolCallId: call, success: false, output: "waiting…\n", exitCode: 130 } }); }));
+            return new Promise(res => userRuns.set(id, () => { emit(sid, "tool.execution_complete", { toolCallId: call, isUserRequested: true, success: false, error: { message: "Shell command canceled." }, sandboxed: true }); res({ ok: true, value: { toolCallId: call, success: false, output: "", error: "Shell command canceled." } }); }));
           }
           const output = command === "git status" ? "On branch main\n\u001b[31mmodified:   src/login.ts\u001b[0m\n\u001b[32m\u001b[1mnew file:   assets/logo.png\u001b[0m\n\u001b]0;title\u0007" : `${command}: done\n`;
           await new Promise(r => later(40, r));
           emit(sid, "tool.shell_output", { toolCallId: call, text: output, stream: "stdout", sequence: 0 }, eph);
-          emit(sid, "tool.execution_complete", { toolCallId: call, success: true, isUserRequested: true, shellExecution: { exitCode: 0 }, sandboxed: true });
+          emit(sid, "tool.execution_partial_result", { toolCallId: call, partialOutput: output.trimEnd() }, eph);
+          emit(sid, "tool.execution_complete", { toolCallId: call, isUserRequested: true, success: true, shellExecution: { exitCode: 0 }, result: { content: output.trimEnd() }, sandboxed: true });
           return { ok: true, value: { toolCallId: call, success: true, output, exitCode: 0 } };
         }
         case "shell.cancelUserRequested": { const fn = userRuns.get(c.params.requestId); userRuns.delete(c.params.requestId); if (fn) fn(); return { ok: true, value: { cancelled: !!fn } }; }
@@ -518,8 +568,7 @@
         case "tasks.startAgent": taskLog.unshift({ type: "agent", id: `bg-${taskLog.length + 9}`, toolCallId: "", displayName: c.params.name, description: c.params.prompt, status: "running", startedAt: iso(Date.now()), agentType: c.params.agentType, prompt: c.params.prompt, executionMode: "background" }); later(5, () => emit(c.sessionId, "session.background_tasks_changed", {}, eph)); return { ok: true, value: { agentId: "agent-new" } };
         case "fleet.start": return { ok: true, value: { started: true } };
         case "agent.list": return { ok: true, value: { agents: [
-          { id: "explore", name: "explore", displayName: "Explore", description: "Looks through the code" },
-          { id: "task", name: "task", displayName: "Task", description: "Does one task" },
+          { id: "reviewer", name: "reviewer", displayName: "Code reviewer", description: "Reviews a change", source: "project" },
           { id: "hidden", name: "hidden", displayName: "Hidden", description: "Sub-agent only", userInvocable: false },
         ] } };
         case "schedule.list": return { ok: true, value: { entries: schedules.slice() } };
@@ -531,6 +580,21 @@
     onRow(fn) { listeners.row.add(fn); return () => listeners.row.delete(fn); },
     onRequest(fn) { listeners.request.add(fn); return () => listeners.request.delete(fn); },
     async openLink(url) { calls.push(`openLink:${url}`); return /^https?:\/\//.test(url) ? { ok: true } : { ok: false, reason: "Ember opens only web addresses (http or https) from here." }; },
+    async listFolder(id, rel) {
+      calls.push(`listFolder:${id}:${rel}`);
+      const r = sessions.get(id);
+      const tree = r?.folder === "/home/me/work/app" ? workTree : { "": [{ name: "package.json", kind: "file", size: 212 }] };
+      const entries = tree[rel];
+      if (!r || !entries) return { ok: false, reason: "That isn't a file or folder in this session's folder." };
+      return { ok: true, value: { entries: entries.map(e => ({ ...e, path: `${r.folder}/${rel ? `${rel}/` : ""}${e.name}` })), gitPrefix: "" } };
+    },
+    async readFile(id, rel) {
+      calls.push(`readFile:${id}:${rel}`);
+      const f = workFiles[rel];
+      if (f === undefined) return { ok: false, reason: "That isn't a file or folder in this session's folder." };
+      if (typeof f !== "string") return { ok: true, value: f };
+      return { ok: true, value: { text: f, size: new TextEncoder().encode(f).length } };
+    },
     markRead(id) { calls.push(`markRead:${id}`); const r = sessions.get(id); if (r?.unread) { sessions.set(id, { ...r, unread: 0 }); for (const fn of listeners.row) fn(sessions.get(id)); } },
     onMicHeld(fn) { listeners.mic.add(fn); fn(micHeld); return () => listeners.mic.delete(fn); },
   };

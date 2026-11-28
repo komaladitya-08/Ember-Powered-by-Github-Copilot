@@ -26,6 +26,11 @@ export function sidebarEmpty(query: string, archived: boolean): string {
 export const PROJECT_EMPTY = "No sessions yet.";
 export function newSessionIn(project: string): string { return `New session in “${project}”`; }
 export function foldProject(project: string, folded: boolean): string { return folded ? `Show sessions in “${project}”` : `Hide sessions in “${project}”`; }
+/** The project's Remove control, and its question (the folder itself stays as it is). */
+export function removeProjectLabel(project: string): string { return `Remove “${project}” from the list…`; }
+export function removeProjectQuestion(project: string): string { return `Remove “${project}” from the list? Its folder and files stay as they are.`; }
+export const REMOVE_PROJECT = "Remove";
+export const KEEP_PROJECT = "Cancel";
 
 /** A session's name: its own, else what it is for. */
 export function sessionTitle(row: { name: string }): string { return row.name.trim() || "New session"; }

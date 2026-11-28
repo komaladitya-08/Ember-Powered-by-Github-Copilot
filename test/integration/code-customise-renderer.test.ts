@@ -10,13 +10,15 @@ import http from "node:http";
 import path from "node:path";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { CODE_KEPT } from "../../app/shared/code";
 
 /** The fake's handles this suite reads (code-window-renderer.test.ts declares its own on Window, so these are cast). */
-type Fake = { calls: string[]; refuse: Set<string>; params: { method: string; params: Record<string, unknown> }[]; mcp: { disabled: Set<string> } };
+type Fake = { calls: string[]; refuse: Set<string>; params: { method: string; params: Record<string, unknown> }[]; mcp: { disabled: Set<string>; servers: Record<string, { env?: Record<string, string> }> } };
 
 const gate = process.env.EMBER_UIUX_TEST !== "1";
 const FAKE = path.resolve("test/fixtures/code-window/fake-api.js");
 const SECRET = "fake-secret-value-123";
+const KEPT = CODE_KEPT;
 
 let browser: Browser;
 let server: http.Server;
@@ -135,7 +137,9 @@ describe.skipIf(gate)("Customise in the coding window", () => {
     await page.locator("#cz-mcp-args").fill("-y\n@acme/issues-mcp\n--verbose");
     await page.getByRole("button", { name: "Save" }).click();
     await expect.poll(() => said(page)).toBe("“issues” was saved. Restart it in a session to use the change.");
-    expect(await sent(page, "mcp.config.update")).toEqual([{ name: "issues", config: { type: "stdio", command: "npx", args: ["-y", "@acme/issues-mcp", "--verbose"], env: { ISSUES_TOKEN: SECRET }, timeout: 30_000 } }]);
+    // The window was never sent the value: it sends back main's marker, and main puts the stored value in its place.
+    expect(await sent(page, "mcp.config.update")).toEqual([{ name: "issues", config: { tools: ["*"], type: "stdio", command: "npx", args: ["-y", "@acme/issues-mcp", "--verbose"], env: { ISSUES_TOKEN: KEPT }, timeout: 30_000 } }]);
+    expect(await page.evaluate(() => (window as unknown as { __fake: Fake }).__fake.mcp.servers.issues.env?.ISSUES_TOKEN)).toBe(SECRET);
 
     // On and off at once; removing asks first, and Cancel keeps it.
     const sw = page.getByRole("switch", { name: "docs" });
@@ -153,17 +157,25 @@ describe.skipIf(gate)("Customise in the coding window", () => {
     expect(page.errors).toEqual([]);
   });
 
-  it("shows the session's servers live: stop follows the status event, sign-in offers its address to copy, offers open", async () => {
+  it("shows the session's servers live: stop follows the status event, sign-in opens its address through main and follows the server's status, offers open", async () => {
     const page = await open("mcp-servers");
     const live = body(page).locator(".cz-part").last();
     await page.getByRole("button", { name: "Stop “issues”" }).click();
-    await expect.poll(() => live.locator(".cz-row").first().locator(".cz-line").first().textContent()).toBe("Stopped · Yours");
+    // The runtime's list names no source for a session's server.
+    await expect.poll(() => live.locator(".cz-row").first().locator(".cz-line").first().textContent()).toBe("Stopped");
     await page.getByRole("button", { name: "Sign in… “docs”" }).click();
     await expect.poll(() => live.locator(".cz-url").textContent()).toBe("https://mcp.example.com/oauth/authorize?client_id=ember&state=abc");
     expect(await calls(page)).toContain("rpc:session:mcp.oauth.login");
+    // Open in browser goes through main's openLink (https only); the server connecting after it says so.
+    await live.getByRole("button", { name: "Open in browser" }).click();
+    await expect.poll(() => calls(page)).toContain("openLink:https://mcp.example.com/oauth/authorize?client_id=ember&state=abc");
+    await expect.poll(() => live.locator(".cz-form-actions [role='status']").textContent()).toBe("Your browser has the sign-in page. Ember shows here when the server is connected.");
+    await page.evaluate(() => (window as unknown as { __fake: { emit(s: string, t: string, d: unknown): void } }).__fake.emit("s-login", "session.mcp_server_status_changed", { serverName: "docs", status: "connected", configSource: "user" }));
+    await expect.poll(() => said(page)).toBe("Signed in. The server is connecting again.");
+    expect(await live.locator(".cz-url").count()).toBe(0);
     await page.getByRole("button", { name: "Start “issues”" }).waitFor();
     await page.getByRole("button", { name: "Start “issues”" }).click();
-    await expect.poll(() => live.locator(".cz-row").first().locator(".cz-line").first().textContent()).toBe("Connected · Yours");
+    await expect.poll(() => live.locator(".cz-row").first().locator(".cz-line").first().textContent()).toBe("Connected");
     await live.getByText("What “issues” offers").click();
     await expect.poll(() => live.getByText("create_issue").count()).toBe(1);
     expect(await live.getByText("Open issues").count()).toBe(1);
@@ -213,7 +225,9 @@ describe.skipIf(gate)("Customise in the coding window", () => {
     expect(await body(page).getByText("1 couldn't be read.").count()).toBe(1);
     await go(page, "sandbox");
     expect(await body(page).getByText("Network inside the sandbox: no").count()).toBe(1);
-    expect(await body(page).getByText("Install slirp4netns to give sandboxed commands the network.").count()).toBe(1);
+    // The runtime's own remedy, quoted without its pointer to the docs.
+    expect(await body(page).getByText("Bubblewrap cannot start sandboxed commands or services with this policy because its private network is unavailable. (Bubblewrap: sandbox networking requires 'slirp4netns' on PATH: No such file or directory (os error 2). Install slirp4netns.)").count()).toBe(1);
+    expect(await body(page).getByText(/docs\.github\.com/).count()).toBe(0);
     expect(await body(page).locator("button, input, select").count()).toBe(0);
   });
 
@@ -229,14 +243,15 @@ describe.skipIf(gate)("Customise in the coding window", () => {
 
     await page.locator("#cz-rule").fill("Shell(npm test");
     await page.getByRole("button", { name: "Add rule" }).click();
-    expect(await page.locator("#cz-rule-err").textContent()).toBe("Write it as a kind, such as write, or a kind with brackets, such as Shell(npm test).");
+    expect(await page.locator("#cz-rule-err").textContent()).toBe("Write it as a kind, such as write, or a kind with brackets, such as shell(npm test).");
+    // Copilot matches its own kinds only in lower case: "Shell" goes as "shell".
     await page.locator("#cz-rule").fill("Shell(npm test)");
     await page.locator("#cz-rule-scope").selectOption("location");
     await page.getByRole("button", { name: "Add rule" }).click();
-    await expect.poll(() => said(page)).toBe("“Shell(npm test)” was added.");
-    expect(await sent(page, "permissions.modifyRules")).toEqual([{ scope: "location", add: [{ kind: "Shell", argument: "npm test" }] }]);
-    await page.getByRole("button", { name: "Remove “Shell(npm test)”" }).click();
-    await page.getByRole("group", { name: "Remove “Shell(npm test)”?" }).getByRole("button", { name: "Remove" }).click();
+    await expect.poll(() => said(page)).toBe("“shell(npm test)” was added.");
+    expect(await sent(page, "permissions.modifyRules")).toEqual([{ scope: "location", add: [{ kind: "shell", argument: "npm test" }] }]);
+    await page.getByRole("button", { name: "Remove “shell(npm test)”" }).click();
+    await page.getByRole("group", { name: "Remove “shell(npm test)”?" }).getByRole("button", { name: "Remove" }).click();
     await expect.poll(() => sent(page, "permissions.modifyRules")).toHaveLength(2);
 
     await page.getByRole("button", { name: "Forget this session's approvals" }).click();

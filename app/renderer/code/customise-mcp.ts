@@ -4,18 +4,20 @@
  * variables, or a remote address with its headers), removed (confirmed), turned on and off (`mcp.config.enable`/
  * `disable`) and read again (`mcp.config.reload`); and, for the open session, each server's status (`mcp.list`, kept
  * current by `session.mcp_server_status_changed`), its tools, resources and prompts, start, stop, restart, and sign-in
- * where a server needs it (`mcp.oauth.login`: the runtime runs the whole sign-in and gives an address for the browser,
- * which the page offers to copy, since the window can't open one).
+ * where a server needs it (`mcp.oauth.login`: the runtime runs the whole sign-in and gives an https address, which
+ * opens in the person's browser through main's `openLink` or can be copied; the server's status after it is followed
+ * from `session.mcp_server_status_changed` and `mcp.oauth_completed`).
  *
  * Secrets: a variable's or a header's value is never drawn. Its field is a masked, write-only box, empty on an edit (the
  * value Copilot holds is kept unless a new one is typed: customise-forms.ts), and the form's boxes are gone from the
  * page once it closes.
  */
-import { CANCEL, E_FORM, EDIT, F_ADDED, F_ADD_ENV, F_ADD_HEADER, F_ARGS, F_ARGS_HINT, F_COMMAND, F_COMMAND_HINT, F_CWD, F_ENV, F_ENV_HINT, F_HEADERS, F_HEADERS_HINT, F_KEPT, F_KIND, F_KIND_HTTP, F_KIND_SSE, F_KIND_STDIO, F_NAME, F_NAME_HINT, F_SAVE, F_SAVED, F_URL, F_URL_HINT, MCP_ADD, MCP_ALSO, MCP_ALSO_LEAD, MCP_CONFIGURED, MCP_EVENTS_NOTE, MCP_FIND, MCP_LIVE, MCP_LIVE_NONE, MCP_NONE, MCP_PROMPTS, MCP_RELOAD, MCP_RESOURCES, MCP_RESTART, MCP_SIGN_IN, MCP_START, MCP_STOP, MCP_TOOLS, REMOVE, RELOADED, SESSION_PART_NONE, SIGNED_IN, SIGN_IN_COPIED, SIGN_IN_COPY, SIGN_IN_LINK, SIGN_IN_UNUSABLE, SIGN_IN_WINDOW, envNamesLine, fieldLabel, fromPlugin, headerNamesLine, mcpDetails, mcpFormTitle, mcpItemsNone, mcpKind, mcpStartLabel, mcpStarted, mcpStatusWords, removeField, removeQuestion, removed, sourceWords, turnedOn } from "./copy-customise";
+import { CANCEL, E_FORM, EDIT, FAILED, F_ADDED, F_ADD_ENV, F_ADD_HEADER, F_ARGS, F_ARGS_HINT, F_COMMAND, F_COMMAND_HINT, F_CWD, F_ENV, F_ENV_HINT, F_HEADERS, F_HEADERS_HINT, F_KEPT, F_KIND, F_KIND_HTTP, F_KIND_SSE, F_KIND_STDIO, F_NAME, F_NAME_HINT, F_SAVE, F_SAVED, F_URL, F_URL_HINT, MCP_ADD, MCP_ALSO, MCP_ALSO_LEAD, MCP_CONFIGURED, MCP_EVENTS_NOTE, MCP_FIND, MCP_LIVE, MCP_LIVE_NONE, MCP_NONE, MCP_PROMPTS, MCP_RELOAD, MCP_RESOURCES, MCP_RESTART, MCP_SIGN_IN, MCP_START, MCP_STOP, MCP_TOOLS, REMOVE, RELOADED, SESSION_PART_NONE, SIGNED_IN, SIGN_IN_COPIED, SIGN_IN_COPY, SIGN_IN_LINK, SIGN_IN_OPEN, SIGN_IN_OPENED, SIGN_IN_UNUSABLE, SIGN_IN_WINDOW, envNamesLine, fieldLabel, fromPlugin, headerNamesLine, mcpDetails, mcpFormTitle, mcpItemsNone, mcpKind, mcpStartLabel, mcpStarted, mcpStatusWords, removeField, removeQuestion, removed, sourceWords, turnedOn } from "./copy-customise";
 import { action, confirmed, defineSection, disclosure, field, input, list, load, part, problem, row, toggle, workingDir } from "./customise-kit";
 import { EMPTY_MCP_FORM, checkMcpForm, formFromConfig, mergedConfig, type McpField, type McpForm, type Pair } from "./customise-forms";
 import { mcpConfigured, mcpDiscovered, mcpItems, mcpLive, mcpStatusChanged, oauthLogin, type McpConfigured, type McpLive } from "./customise-read";
 import { copyText, el, idPart, setText } from "./dom";
+import { str } from "./sdk";
 
 defineSection("MCP servers", "both", ctx => {
   let configured: McpConfigured[] = [];
@@ -26,9 +28,20 @@ defineSection("MCP servers", "both", ctx => {
   let addBtn: HTMLButtonElement | null = null;
   let confBody: HTMLElement | null = null;
 
+  /** The server whose sign-in this page started, and the line under it, until it connects. */
+  let signing: { server: string; out: HTMLElement } | null = null;
+
   ctx.onEvent(e => {
+    const signedIn = (name: string | undefined) => {
+      if (!signing || name !== signing.server) return;
+      signing.out.replaceChildren();
+      signing = null;
+      ctx.say(SIGNED_IN);
+    };
+    if (e.type === "mcp.oauth_completed") { signedIn(str(e.data, "serverName")); return; }
     if (e.type !== "session.mcp_server_status_changed" || !liveHost) return;
     live = mcpStatusChanged(live, e.data);
+    if (str(e.data, "status") === "connected") signedIn(str(e.data, "serverName"));
     drawLive(liveHost);
   });
 
@@ -263,11 +276,19 @@ defineSection("MCP servers", "both", ctx => {
       return;
     }
     const copied = el("span", { className: "cz-line", attrs: { role: "status" } });
+    const openIt = el("button", { type: "button", className: "btn small", textContent: SIGN_IN_OPEN });
     const copy = el("button", { type: "button", className: "btn quiet small", textContent: SIGN_IN_COPY });
     const url = login.url;
+    signing = { server, out };
+    openIt.addEventListener("click", async () => {
+      // Main opens it (https only, as `oauthLogin` kept it): the window never navigates.
+      let r: { ok: boolean; reason?: string };
+      try { r = await ctx.app.api.openLink(url); } catch { r = { ok: false, reason: FAILED }; }
+      setText(copied, r.ok ? SIGN_IN_OPENED : r.reason || FAILED);
+    });
     copy.addEventListener("click", async () => { if (await copyText(url)) setText(copied, SIGN_IN_COPIED); });
-    out.replaceChildren(el("p", { className: "cz-line", textContent: SIGN_IN_WINDOW }), el("p", { className: "cz-line", textContent: SIGN_IN_LINK }), el("p", { className: "cz-mono cz-url", textContent: url }), el("div", { className: "cz-form-actions" }, copy, copied));
-    copy.focus();
+    out.replaceChildren(el("p", { className: "cz-line", textContent: SIGN_IN_WINDOW }), el("p", { className: "cz-line", textContent: SIGN_IN_LINK }), el("p", { className: "cz-mono cz-url", textContent: url }), el("div", { className: "cz-form-actions" }, openIt, copy, copied));
+    openIt.focus();
   }
 });
 

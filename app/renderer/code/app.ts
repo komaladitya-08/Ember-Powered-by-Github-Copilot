@@ -4,12 +4,12 @@
  * `window.emberCode`. Each command it sends says nothing for itself: what main answers (a row, a refusal's sentence,
  * the mode in force) goes into the store, and the views draw that. Views get this object and never call main.
  */
-import { CODE_LIMITS, type CodeAttachment, type CodeCreate, type CodeDone, type CodeEventEnvelope, type CodeRequestAnswer, type CodeRpcCall, type EmberCodeApi } from "../../shared/code";
+import { CODE_LIMITS, type CodeAttachment, type CodeCreate, type CodeDone, type CodeEventEnvelope, type CodeFileRead, type CodeFolderListing, type CodeRequestAnswer, type CodeRpcCall, type EmberCodeApi } from "../../shared/code";
 import { agentsFrom, modelsFrom, queueFrom } from "./catalog";
 import { slashCommands, type SlashCommand } from "./completions";
 import { UNREACHABLE, modeRefused } from "./copy";
 import {
-  DEFAULT_UI, EMPTY_STATE, answering, attached, detached, envelope, listed, projectAdded, requestChanged, rowChanged, sendDone, sent,
+  DEFAULT_UI, EMPTY_STATE, answering, attached, detached, envelope, listed, projectAdded, projectRemoved, requestChanged, rowChanged, sendDone, sent,
   setCatalog, setNote, setQueue, setUi, show, type CodeState, type MainView, type UiPrefs,
 } from "./store";
 
@@ -276,6 +276,25 @@ export class CodeApp {
 
   async rpc(call: CodeRpcCall): Promise<CodeDone<unknown>> {
     try { return await this.api.rpc(call); } catch { return { ok: false, reason: UNREACHABLE }; }
+  }
+
+  /** A folder of a session's working folder, as main lists it ("" for its top). */
+  async listFolder(sessionId: string, relDir: string): Promise<CodeDone<CodeFolderListing>> {
+    try { return await this.api.listFolder(sessionId, relDir); } catch { return { ok: false, reason: UNREACHABLE }; }
+  }
+
+  /** A file of a session's working folder, as main reads it. */
+  async readFile(sessionId: string, relPath: string): Promise<CodeDone<CodeFileRead>> {
+    try { return await this.api.readFile(sessionId, relPath); } catch { return { ok: false, reason: UNREACHABLE }; }
+  }
+
+  /** Remove a project (main refuses while it has sessions, and says so in the sidebar's note). */
+  async removeProject(projectId: string): Promise<boolean> {
+    let r: CodeDone;
+    try { r = await this.api.removeProject(projectId); } catch { r = { ok: false, reason: UNREACHABLE }; }
+    if (r.ok) { this.set(s => projectRemoved(setNote(s, "", "sidebar", ""), projectId)); await this.refresh(); }
+    else this.set(s => setNote(s, "", "sidebar", reasonOf(r)));
+    return r.ok;
   }
 
   /** The models and agents the start flow and pickers list, read once. */

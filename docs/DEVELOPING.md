@@ -1001,21 +1001,43 @@ default: no coding runtime starts and every coding channel refuses). Its contrac
   changes; the window calls `markRead` when it shows a session and has the focus.
 - **Links**: `openLink` opens an http or https address with no user name or password in it (`linkRefusal`) in the
   person's browser through `shell.openExternal`, audited as a `code` entry with the host alone.
-- **Projects**: removing a project is refused while any session is under it. A session the runtime keeps and the index
-  doesn't is listed under the project of its folder (added as the picker would add it), or under none ("Other
-  sessions") where Ember won't work in that folder.
+- **Projects**: removing a project (the sidebar's Remove, asked again in place) is refused while any session is under
+  it, and the sidebar says so. A session the runtime keeps and the index doesn't is listed under the project of its
+  folder (added as the picker would add it), or under none ("Other sessions") where Ember won't work in that folder.
+- **The working folder** (folder.ts): the SDK lists and reads only a session's own state folder, so main lists the
+  session's folder a folder at a time (`listFolder`: folders first, at most `CODE_LIMITS.folderEntries`, `.git` and
+  what git ignores left out, through `git ls-files --ignored --directory` within 3 s, or outside a repository a short
+  list of build and dependency folders; `gitPrefix` says where the folder sits in its repository, as
+  `workspaces.diff`'s paths are the repository top's) and reads a file (`readFile`: its text within
+  `CODE_LIMITS.fileBytes`, else that it is binary or too large). A path is relative to the session's folder and must
+  stay inside it after every link; Ember's own data is refused (a worktree Ember made is the session's own). The files
+  it lists may be attached.
+- **The runtime's answers**: a failed RPC method is said in Ember's words (`rpcFailure`: sign in, not in this version,
+  not there, a request Copilot couldn't take), never the runtime's message and never the model service's sentences.
+  `mcp.config.list` reaches the window with every variable's and header's value (and any secret-named value) replaced
+  by `CODE_KEPT`; `mcp.config.update` sent back with it gets the stored value put in its place, and one with no stored
+  value is refused. `models.list` and `account.getQuota` get the sign-in from main (the runtime is tokenless). A client
+  discovery call may name a worktree Ember made for a session.
 - **Forks**: a fork of a worktree session gets a worktree of its own, from the commit its parent's stands at with the
   parent's uncommitted and untracked (not ignored) files; where that can't be made whole there is no fork.
 
 The integration suite is test/integration/code-session.test.ts (the bundled runtime and the mock model, Linux: git,
-and bubblewrap for the sandbox). The window against a scripted fake of `window.emberCode` is
-`EMBER_UIUX_TEST=1 EMBER_CHROMIUM_PATH=/usr/bin/google-chrome npm run test:integration -- test/integration/code-window-renderer.test.ts`
-(after `npm run build`). The whole thing end to end, the real window in real Electron on the real runtime with the
+and bubblewrap for the sandbox). The window against a scripted fake of `window.emberCode`
+(test/fixtures/code-window/fake-api.js, in the runtime's own shapes) is
+`EMBER_UIUX_TEST=1 EMBER_CHROMIUM_PATH=/usr/bin/google-chrome npm run test:integration -- test/integration/code-*-renderer.test.ts`
+(after `npm run build`). What the runtime really answered for each method the panels and Customise call is kept,
+trimmed, in test/fixtures/code-window/real-shapes.ts, which test/unit/code-real-shapes.test.ts reads the window's
+readers against. The whole thing end to end, the real window in real Electron on the real runtime with the
 mock model, is `EMBER_CODE_LIVE=1 dbus-run-session -- xvfb-run -a npm run test:integration -- test/integration/code-window-live.test.ts`
 (after `npm run build`; Linux with git): it adds a project, allows a command by keyboard, turns down a change with a
 reason, restarts Ember, starts a worktree session, stops a turn, opens a link, deletes the worktree session from the
 command palette, and checks that Home's page can't reach the coding channels and that with coding sessions off the
-window doesn't open. It replaces main's folder picker and `shell.openExternal` through Playwright, not a switch.
+window doesn't open. It replaces main's folder picker and `shell.openExternal` through Playwright, not a switch. Its
+companion, `EMBER_CODE_LIVE=1 … test/integration/code-panels-live.test.ts`, goes through the panel and Customise on the
+real runtime: the real diff and a review sent back, a rewind of conversation and files, the working folder listed and
+read, the person's own command, a background shell and a built-in agent, leaving plan mode from the Plan tab, a model
+switch, the sandbox's capabilities, a rule that lets a command run unasked, and a local MCP server whose tool a new
+session is offered.
 
 ### Extensions: the runtime and the gate
 

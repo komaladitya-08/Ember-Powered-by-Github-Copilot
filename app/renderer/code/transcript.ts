@@ -176,6 +176,9 @@ const QUIET = new Set([
   "session.context_changed", "session.usage_info", "assistant.usage", "assistant.intent", "assistant.turn_start", "assistant.turn_end",
   "pending_messages.modified", "session.background_tasks_changed", "session.idle", "command.queued", "command.completed",
   "session.fusion_route_started", "assistant.fusion_phase_started", "assistant.fusion_phase_activity", "sandbox.decision",
+  // Seen in every real session (runtime 1.0.97): the system prompt as it was sent, a server leaving the session as it
+  // starts again (its status says the rest) and the objective's changes (the Plan tab reads them).
+  "system.message", "session.mcp_server_removed", "session.autopilot_objective_changed",
 ]);
 /** Main's debug events (model.message, model.messages_snapshot, model.call_*): large, and never the transcript's. */
 const DEBUG_PREFIX = "model.";
@@ -360,8 +363,11 @@ export function reduceEvent(t: Transcript, e: CodeSdkEvent): Transcript {
       if (currentTokens === undefined || tokenLimit === undefined) return t;
       return { ...t, usage: { currentTokens, tokenLimit, messagesLength: num(d, "messagesLength") } };
     }
+    // A command the person ran themselves (`shell.executeUserRequested`) starts with `tool.user_requested`, never
+    // `tool.execution_start` (probed on runtime 1.0.97): its row is a shell row from the first.
+    case "tool.user_requested":
     case "tool.execution_start": {
-      const fresh = toolFrom(e, key, owner);
+      const fresh: ToolItem = e.type === "tool.user_requested" ? { ...toolFrom(e, key, owner), userRequested: true } : toolFrom(e, key, owner);
       const id = fresh.toolCallId;
       // A row made before its start (a sub-agent's started first) keeps its key, output and sub-agent.
       if (t.items.some(isTool(id))) return { ...t, items: update(t.items, isTool(id), r => ({ ...fresh, key: r.key, ...(r.owner ? { owner: r.owner } : {}), output: r.output, outputCut: r.outputCut, lastSequence: r.lastSequence, ...(r.agent ? { agent: r.agent } : {}), state: r.state === "running" ? fresh.state : r.state })) };
@@ -563,6 +569,24 @@ export function applyEnvelope(t: Transcript, env: CodeEventEnvelope): Transcript
 }
 
 /**
+ * A replayed history with what each rewind took away left out: `session.snapshot_rewind` names the user message it
+ * went back to (`upToEventId`, which goes too), and main's in-memory replay still holds what came after it, so the
+ * events from that message up to the rewind are dropped, and the rewind event with them (probed on runtime 1.0.97:
+ * a rewind's `eventsRemoved` events stay in the run's log). A rewind whose message isn't among them (the SDK's own
+ * history, already cut) is dropped alone.
+ */
+export function withoutRewound(events: readonly CodeEventEnvelope[]): CodeEventEnvelope[] {
+  const out: CodeEventEnvelope[] = [];
+  for (const env of events) {
+    if (env.event.type !== "session.snapshot_rewind") { out.push(env); continue; }
+    const to = str(env.event.data, "upToEventId");
+    const at = to ? out.findIndex(e => e.event.id === to) : -1;
+    if (at >= 0) out.splice(at);
+  }
+  return out;
+}
+
+/**
  * What an attach returned, applied: with `since` (the window's last seq) the events after it go on the transcript kept;
  * without, the transcript is built again from the kept history. Either way it is no longer stale, and its `lastSeq` is
  * main's.
@@ -571,7 +595,7 @@ export function attachedTranscript(t: Transcript | undefined, events: readonly C
   // A message sent but not yet confirmed survives a rebuild (its `user.message` may be among these events, or still come).
   let base: Transcript = since !== undefined && t ? { ...t, stale: false, lastSeq: since }
     : { ...EMPTY_TRANSCRIPT, items: t ? t.items.filter(i => i.kind === "user" && i.local) : [] };
-  for (const env of events) {
+  for (const env of since === undefined ? withoutRewound(events) : events) {
     if (env.seq <= base.lastSeq) continue;
     // Main's history may skip numbers (its ephemeral events aren't kept): that is no gap of the window's.
     base = applyEnvelope({ ...base, lastSeq: env.seq - 1 }, env);

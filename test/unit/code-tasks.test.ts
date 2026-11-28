@@ -4,9 +4,10 @@
  * started and the scheduled prompts.
  */
 import { describe, expect, it } from "vitest";
+import { REAL } from "../fixtures/code-window/real-shapes";
 import type { CodeSdkEvent } from "../../app/shared/code";
 import {
-  agentTypes, elapsedMs, progressLine, runningCount, said, scheduleRows, taskRow, taskRows, taskSignal, turnSubAgents, withProgress,
+  BUILTIN_AGENT_TYPES, agentTypes, elapsedMs, progressLine, runningCount, said, scheduleRows, taskRow, taskRows, taskSignal, turnSubAgents, withProgress,
 } from "../../app/renderer/code/tasks-model";
 import { EMPTY_TRANSCRIPT, reduceEvent, type Transcript } from "../../app/renderer/code/transcript";
 
@@ -91,12 +92,29 @@ describe("this turn's sub-agents", () => {
 });
 
 describe("starting agents and schedules", () => {
-  it("offers only the agents a person may start", () => {
+  it("offers only the agents a person may start, then Copilot's built-in types the list leaves out", () => {
+    const builtIns = BUILTIN_AGENT_TYPES.map(a => a.id);
+    expect(builtIns).toEqual(["general-purpose", "explore", "task", "code-review", "research", "security-review"]);
     expect(agentTypes({ agents: [
       { id: "explore", name: "explore", displayName: "Explore", description: "Looks" },
       { id: "hidden", name: "hidden", displayName: "Hidden", description: "", userInvocable: false },
       { name: "named", displayName: "Named", description: "" },
-    ] })).toEqual([{ id: "explore", name: "Explore", description: "Looks" }, { id: "named", name: "Named", description: "" }]);
+    ] })).toEqual([{ id: "explore", name: "Explore", description: "Looks" }, { id: "named", name: "Named", description: "" }, ...BUILTIN_AGENT_TYPES.filter(a => a.id !== "explore")]);
+  });
+
+  it("offers the built-in types where agent.list answers none, as the runtime does (probed: { agents: [] })", () => {
+    expect(agentTypes(REAL.agentList).map(a => a.id)).toEqual(["general-purpose", "explore", "task", "code-review", "research", "security-review"]);
+  });
+
+  it("reads the runtime's real tasks.list: an idle agent may be messaged and cancelled, a finished shell removed", () => {
+    const rows = taskRows(REAL.tasksList);
+    expect(rows.map(r => [r.kind, r.state, r.name, r.canMessage, r.canCancel, r.canRemove])).toEqual([
+      ["agent", "idle", "helper", true, true, false],
+      ["shell", "completed", "sleep 40", false, false, true],
+    ]);
+    expect(rows[1].command).toBe("sleep 40");
+    expect(progressLine(REAL.shellProgress)).toBe("(no output yet)");
+    expect(progressLine(REAL.agentProgress)).toBeUndefined();
   });
   it("reads schedule.list's entries by their number", () => {
     expect(scheduleRows({ entries: [{ id: 2, prompt: "/review", displayPrompt: "Review", recurring: true, intervalMs: 60_000, nextRunAt: "2026-11-27T10:00:00Z" }, { prompt: "no id" }] }))

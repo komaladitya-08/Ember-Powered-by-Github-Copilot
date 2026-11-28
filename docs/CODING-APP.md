@@ -90,12 +90,13 @@ from it.
 | Start flow | Folder or known project; work in the folder or a new worktree and its base branch; model, reasoning effort, agent, modes |
 | Transcript | Messages with markdown and code; reasoning; tool rows (shell with live output, edits with diffs, reads, searches, fetches, MCP); sub-agent rows that open; plan and to-do updates; compaction and model changes; errors with their remedy; request cards |
 | Composer | Text; attachments (files, folders, images, pasted text); @-files and slash commands from the SDK's completions; pickers for model, reasoning effort, agent mode and permission mode; queue and steer while running; the queue itself; Stop; context and usage meter; dictation when the companion's voice is on |
-| Changes | The session's diff (session, unstaged, branch), by file, with line comments sent back to the agent; rewind points with preview; commit, push and pull request through the agent |
+| Changes | The session's diff (session, unstaged, branch: `workspaces.diff`, its paths the repository top's), by file, with line comments sent back to the agent; rewind points with preview; commit, push and pull request through the agent. Read again after a tool that edited a file or ran a command, and again on its own while the runtime still says it is busy after a turn |
 | Plan | The plan file, to-dos with dependencies, the Autopilot objective, approve or revise when leaving plan mode |
-| Files | The workspace tree and a read-only viewer; attach to the composer |
-| Terminal | The user's own shell in the session's folder (`shell.*`), and the output of the agent's commands |
-| Agents and tasks | Background agents and shells: progress, message, cancel, promote; fleet |
-| Customise | Models and providers; MCP servers (add, sign in, tools, resources, prompts); skills; plugins and marketplaces; custom agents; instructions; hooks; permission rules, trusted folders and locations; sandbox; schedules; usage and quota |
+| Files | The working folder as main lists it (`listFolder`, a folder at a time; `.git` and what git ignores left out) with the session's changes marked, read through main (`readFile`); Copilot's own session files (`workspaces.listFiles`/`readFile`); a read-only viewer; attach to the composer |
+| Terminal | The user's own shell in the session's folder (`shell.executeUserRequested`, which waits for the command and streams `tool.user_requested`, `tool.shell_output`), and the output of the agent's commands |
+| Agents and tasks | Background agents and shells: progress, message, cancel, promote; start an agent (custom ones from `agent.list`, then Copilot's built-in types, which it doesn't list); fleet |
+| Customise | Models and providers; MCP servers (add, sign in in the browser through `openLink`, tools, resources, prompts; values never sent to the window); skills; plugins and marketplaces; custom agents; instructions; hooks; permission rules (`shell(npm test)`, `shell(git:*)`), trusted folders and locations; sandbox; schedules; usage and quota |
+| Sidebar's projects | Add, and Remove (asked again in place; refused while it has sessions, with main's sentence) |
 | Command palette | Every action and slash command by name |
 
 ## 5. The companion
@@ -149,6 +150,48 @@ found where the design and the parts built against it were wrong:
 - **Links opened nothing.** The contract has `openLink` now, through main.
 - **The microphone's hold** reaches the window over its own channel (`code:mic-held`, from Home's rule
   `voiceHoldsLive`), not a hook left for later.
+
+### The panels and Customise on the real runtime
+
+The panel tabs and Customise were built against the SDK's generated types and a scripted stand-in. A probe through the
+hub on the bundled runtime (SDK 1.0.21, runtime 1.0.97, the mock model, 28 November 2026: every method they call, in a
+repository, a subfolder of it and a worktree) and test/integration/code-panels-live.test.ts found:
+
+- **The SDK can't list the working folder.** `workspaces.listFiles`, `readFile` and `statFile` are the session's own
+  state folder (its plan, pasted files), and `statFile` needs "session memory v2", which is off. Main now lists and
+  reads the session's folder itself (`listFolder`, `readFile`).
+- **A repository file a tool wrote sends no event.** `session.workspace_file_changed` is the state folder only, so the
+  Changes tab read the diff only at a turn's end; it reads it after a tool with `fileEdits` or a command now.
+- **"Busy" outlasts the turn.** For a while after `session.idle`, `workspaces.diff` and `history.listRewindPoints`
+  answer `session-busy`, and nothing tells the window when that ends: the tab tries again on its own.
+- **`includeContents` is for the session diff only**; the others refuse it.
+- **Paths:** `workspaces.diff`'s are relative to the repository's top, also for a session in a subfolder of it;
+  `history.previewRewind`'s and `rewind`'s are absolute.
+- **A rewind's history isn't cut in the run's log.** `session.snapshot_rewind` (`upToEventId`, not ephemeral) names
+  the message it went back to; the window's replay now drops that message and what followed it.
+- **The person's own command starts with `tool.user_requested`**, never `tool.execution_start`, and
+  `shell.executeUserRequested` answers only once it ends (a command was cut at about 10 s, exit code -1). It is
+  sandboxed and raises no permission request in any mode; main's guard refuses one that names Ember's data.
+- **`agent.list` lists no built-in agent**, even with `includeBuiltInAgents`, while `tasks.startAgent` takes
+  `explore`, `task`, `general-purpose` and `code-review`. An idle background agent is `status: "idle"`.
+- **Rules match only Copilot's own lower-case kinds:** `{ kind: "shell", argument: "npm test" }` lets `npm test` run
+  unasked, `"Shell"` does nothing, and `"git:*"` covers every command starting `git`. The window writes them so.
+- **MCP:** `mcp.config.list` answers every variable's and header's value as stored, and a program server with no
+  `type`; main now hides them. A session's `mcp.list` names only servers it has a client for: a failed one is only in
+  `host.failedServers`, one waiting to sign in only in `needsAuthServers`. A server added to the configuration starts
+  only in new sessions (or by its Start). The Customise page's status listener was cleared at its first draw and never
+  heard a status change.
+- **Without a Copilot account** `models.list` and `account.getQuota` answer "Not authenticated": the runtime is
+  tokenless, so main gives those two the sign-in. Failed methods were said in the model service's words ("Check its
+  API key"); they are said in Ember's now.
+- **The sandbox's remedy** is a long sentence ending in a docs address; the window quotes it without that.
+- **Plan mode can't write its plan under the sandbox.** Copilot writes `plan.md` in its session state, which lies in
+  Ember's data folder, which the sandbox denies (a `readwritePaths` entry doesn't open a denied path, probed), so in
+  plan mode only `exit_plan_mode`'s summary reaches the Plan tab. Not changed here: it needs a decision on where the
+  coding runtime keeps its state.
+- **Not confirmed here** (they need a Copilot account or the network): `models.list`'s and `account.getQuota`'s answers,
+  `mcp.oauth.login`'s address and status, `quota.*` with a plan, plugin installs and marketplaces, `history.compact`'s
+  summary from a real model, `completions.request` (it answered no items and no trigger characters with the mock model).
 
 Not in this build: cloud sessions and handoff, remote control from a phone, canvases and MCP Apps rendering,
 a built-in browser preview. The contract leaves room for each.

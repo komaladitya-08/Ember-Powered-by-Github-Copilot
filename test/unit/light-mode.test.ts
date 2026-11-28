@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { pageSheets } from "../page-sheets";
 import { SettingsSchema } from "../../app/main/settings";
 
 const read = (f: string) => fs.readFileSync(path.resolve(f), "utf8").replace(/\r\n/g, "\n");
@@ -127,7 +128,7 @@ describe("which windows are light", () => {
   });
   it("gives every wash and keycap token a light value, so no white wash is left on a light window", () => {
     for (const t of [...css.matchAll(/^ {2}(--(?:wash-\d+|key-[a-z]+)):/gm)].map(m => m[1])) expect(light[t], t).toBeDefined();
-    for (const page of ["home", "command"]) expect(read(`app/renderer/${page}/styles.css`), page).not.toMatch(/background: rgba\(255, 255, 255/);
+    for (const page of ["home", "command", "code"]) expect(pageSheets(page), page).not.toMatch(/background: rgba\(255, 255, 255/);
   });
   it("leaves a contrast theme its system colours", () => {
     expect(css).toContain(LIGHT);

@@ -2,12 +2,13 @@
  * The Files tab's model, as pure functions: which files the window knows of, in a tree the keyboard walks, and what a
  * file's text looks like in the viewer. No DOM and no IPC: panel-files.ts draws it, test/unit/code-files.test.ts tests it.
  *
- * The constraint behind it: the window never lists or reads a folder itself, and the SDK has no method that lists the
- * session's working folder. `workspaces.listFiles` and `readFile` cover only the session's own workspace folder (its
- * plans and pasted files, in Copilot's state folder), so the tree has two roots: the working folder, as far as the
- * SDK's own listings show it (the files `workspaces.diff` says changed, the paths the session's tools touched, and the
- * composer's `completions.request` paths where the host offers them), and the session's own files. Every path here
- * came from main or the SDK; nothing is made up, and a path for an attachment is built only from one of them.
+ * The constraint behind it: the window never lists or reads a folder itself. The SDK has no method that lists the
+ * session's working folder (`workspaces.listFiles` and `readFile` cover only the session's own workspace folder, its
+ * plans and pasted files in Copilot's state folder: probed on runtime 1.0.97), so main lists it, a folder at a time as
+ * the tree opens (CODE_IPC.listFolder). The tree has two roots: the working folder, as main lists it, with the files
+ * `workspaces.diff` says changed (whose paths are the repository's top's: `fromGitRoot`) and the paths the session's
+ * tools touched marked, and the session's own files. Every path here came from main or the SDK; nothing is made up,
+ * and a path for an attachment is main's own.
  */
 import type { Transcript } from "./transcript";
 import { arr, bool, rec, str, sub } from "./sdk";
@@ -17,8 +18,21 @@ export type FileRoot = "folder" | "session";
 /** How the session changed a file, as the SDK names it (`workspaces.diff`'s change types, a tool's file edits, or the workspace's events). */
 export type FileChange = "added" | "modified" | "deleted" | "renamed" | "edited";
 
-/** One file the window knows of. `path` is relative to its root, with "/" between its parts. */
-export interface KnownFile { root: FileRoot; path: string; change?: FileChange }
+/** One file (or, with `dir`, a folder) the window knows of. `path` is relative to its root, with "/" between its parts. */
+export interface KnownFile { root: FileRoot; path: string; change?: FileChange; dir?: boolean }
+
+/**
+ * A `workspaces.diff` path (relative to the repository's top) as a path in the session's folder, which is `prefix`
+ * below the top (main's `gitPrefix`: "" at the top, "sub/" below it); null for a file outside the session's folder.
+ * Without a prefix (not known yet) the path is taken as it is.
+ */
+export function fromGitRoot(path: string, prefix: string | undefined): string | null {
+  const p = normalise(path);
+  if (!prefix) return p || null;
+  const pre = normalise(prefix);
+  if (!pre) return p || null;
+  return p.startsWith(`${pre}/`) ? p.slice(pre.length + 1) : null;
+}
 
 /** A node of the tree: a folder (with its children) or a file. `id` is unique across both roots. */
 export interface TreeNode { id: string; root: FileRoot; name: string; path: string; dir: boolean; change?: FileChange; children: TreeNode[] }
@@ -143,10 +157,10 @@ export function buildTree(files: readonly KnownFile[], names: Readonly<Record<Fi
     let at = roots[f.root === "folder" ? 0 : 1];
     parts.forEach((name, i) => {
       const path = parts.slice(0, i + 1).join("/");
-      const last = i === parts.length - 1;
+      const last = i === parts.length - 1 && !f.dir;
       let next = at.children.find(c => c.name === name && c.dir === !last);
       if (!next) { next = { id: last ? fileId(f.root, path) : `${f.root}:${path}/`, root: f.root, name, path, dir: !last, children: [] }; at.children.push(next); }
-      if (f.change) { if (last) next.change = f.change; else next.change ??= "edited"; }
+      if (f.change) { if (last || (f.dir && i === parts.length - 1)) next.change = f.change; else next.change ??= "edited"; }
       at = next;
     });
   }

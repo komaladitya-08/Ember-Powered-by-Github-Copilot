@@ -37,7 +37,7 @@ export interface SectionCtx {
   call(scope: Scope, method: string, params?: unknown): Promise<Res>;
   /** Say a change's outcome on the section's status line (once, politely). */
   say(text: string): void;
-  /** The SDK events of `session()` while this section is up (its `dispose` stops them). */
+  /** The SDK events of `session()` while this section is up: register once, as the section is built (`dispose` stops them). */
   onEvent(fn: (e: CodeSdkEvent) => void): void;
 }
 export interface SectionView {
@@ -60,7 +60,8 @@ export function defineSection(label: string, scope: Scope | "both", build: (ctx:
       const head = el("div", { className: "cz-top" }, scopeLine, scope === "client" ? null : chooser);
       host.replaceChildren(head, said, body);
       const listeners = new Set<(e: CodeSdkEvent) => void>();
-      const stopEvents = app.api.onEvent(env => { if (env.sessionId === chosen) for (const fn of listeners) fn(env.event); });
+      // After the store has taken each event (the app's one subscription), never a second one of the page's own.
+      const stopEvents = app.watchEvents(env => { if (env.sessionId === chosen) for (const fn of listeners) fn(env.event); });
       const row = () => (chosen ? app.state.sessions.byId[chosen] ?? null : null);
       const ctx: SectionCtx = {
         app, session: row,
@@ -88,7 +89,8 @@ export function defineSection(label: string, scope: Scope | "both", build: (ctx:
         }
       };
       const draw = () => {
-        listeners.clear();
+        // The section's listeners stay across a draw (they are registered once, as it is built): clearing them here
+        // left the MCP page deaf to every status event after its first draw.
         drawnFor = chosen;
         top();
         setText(said, "");
@@ -272,12 +274,13 @@ export function disclosure(summary: string, fill: (into: HTMLElement) => void): 
 }
 
 /**
- * The folders a client-scoped discovery may scan for the session's project: the project's own folder, never the
- * session's worktree (it lives in Ember's data folder, which main refuses to name in a call that isn't the session's).
+ * The folders a client-scoped discovery scans for the session: the folder it works in (a worktree Ember made for it
+ * too, which main takes as the session's own though it lies in Ember's data folder), so what is listed is what that
+ * session's files hold; else its project's folder.
  */
 export function projectPaths(ctx: SectionCtx): { projectPaths?: string[] } {
   const r = ctx.session();
-  const folder = r ? ctx.app.state.projects.byId[r.projectId]?.folder ?? (r.isolation === "folder" ? r.folder : undefined) : undefined;
+  const folder = r ? r.folder || ctx.app.state.projects.byId[r.projectId]?.folder : undefined;
   return folder ? { projectPaths: [folder] } : {};
 }
 /** The same folder as a working directory (`mcp.discover`, `plugins.*`). */

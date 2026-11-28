@@ -128,11 +128,13 @@ export const MCP_SIGN_IN = "Sign in…";
 export function mcpStartLabel(verb: string, name: string): string { return `${verb} “${name}”`; }
 export function mcpStarted(name: string, verb: "start" | "stop" | "restart"): string { return verb === "stop" ? `“${name}” was stopped.` : verb === "restart" ? `“${name}” is restarting.` : `“${name}” is starting.`; }
 export const SIGNED_IN = "Signed in. The server is connecting again.";
-export const SIGN_IN_LINK = "Open this address in your browser to sign in, then come back here:";
+export const SIGN_IN_LINK = "Sign in in your browser, then come back here. The address it opens:";
+export const SIGN_IN_OPEN = "Open in browser";
+export const SIGN_IN_OPENED = "Your browser has the sign-in page. Ember shows here when the server is connected.";
 export const SIGN_IN_COPY = "Copy address";
 export const SIGN_IN_COPIED = "Address copied.";
 export const SIGN_IN_UNUSABLE = "The server gave a sign-in address Ember won't use, as it isn't a secure one.";
-export const SIGN_IN_WINDOW = "The coding window can't open your browser yet, so copy the address.";
+export const SIGN_IN_WINDOW = "The server wants you to sign in.";
 export const MCP_FIND = "Finding servers in a catalogue isn't in the coding window yet. Add one by its command or address.";
 export const MCP_EVENTS_NOTE = "Status changes show while the session is open in this window.";
 // The form.
@@ -283,7 +285,7 @@ export const ORG_DEVICE = "This computer has managed settings.";
 export const ORG_DEVICE_UNREADABLE = "This computer's managed settings couldn't be read.";
 export const PERM_RULES = "Rules";
 export const PERM_RULES_LEAD = "A rule lets Copilot use a tool without asking. Write a tool's kind, and what it may be given in brackets.";
-export const RULE_EXAMPLES = "For example: Shell(npm test), Shell(git status), write, read.";
+export const RULE_EXAMPLES = "For example: shell(npm test), shell(git:*) for every git command, write, read.";
 export const RULE_LABEL = "Rule";
 export const RULE_SCOPE = "Applies to";
 export const RULE_SCOPE_SESSION = "This session";
@@ -294,7 +296,7 @@ export const RULE_REMOVED = (r: string) => `“${r}” was removed.`;
 export const RULES_NONE = "No rules added from this window yet.";
 export const RULES_UNLISTED = "Copilot can't list the rules already in force, so this shows the ones added here.";
 export const E_RULE_EMPTY = "Write a rule first.";
-export const E_RULE_SHAPE = "Write it as a kind, such as write, or a kind with brackets, such as Shell(npm test).";
+export const E_RULE_SHAPE = "Write it as a kind, such as write, or a kind with brackets, such as shell(npm test).";
 export const FORGET_APPROVALS = "Forget this session's approvals";
 export const FORGET_QUESTION = "Forget every “for this session” approval? Copilot asks again next time.";
 export const FORGET = "Forget";

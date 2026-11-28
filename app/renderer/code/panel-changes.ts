@@ -5,7 +5,7 @@
  * sent to Copilot as one message; rewinding through `history.*`, with a preview and a plain warning that commands
  * already run are not undone; and git actions that are only messages to Copilot, which asks before it runs anything.
  *
- * It reads again when a turn ends, when the SDK says a workspace file changed (after a short settle), after a rewind
+ * It reads again when a turn ends, when a tool changed files or ran a command (after a short settle), after a rewind
  * and on demand, and only while it is up (a change while it is hidden is read when it next shows). Every SDK call goes
  * through `app.rpc`, by name, on CODE_RPC's allow-list; a method that isn't allowed says so instead of failing.
  * Its pure logic is changes-model.ts and its words copy-changes.ts.
@@ -13,7 +13,7 @@
 import { codeRpcAllowed, type CodeDone } from "../../shared/code";
 import { diffRows, type DiffRow } from "../shared/diff-rows";
 import {
-  DIFF_MODES, addComment, busyIn, commentable, commitPrompt, diffFrom, editComment, historyChanged, linesWords, previewFrom, pullRequestPrompt,
+  DIFF_MODES, addComment, busyIn, changesFiles, commentable, commitPrompt, diffFrom, editComment, historyChanged, linesWords, previewFrom, pullRequestPrompt,
   PUSH_PROMPT, rangeOf, removeComment, REVIEW_MAX, reviewPrompt, rewindPointsFrom, rewindResultFrom, shownPath, wantRebuild, COMMENT_MAX,
   type DiffMode, type DiffView, type LineRange, type ReviewComment, type RewindList, type RewindMode, type RewindPoint, type RewindPreview,
 } from "./changes-model";
@@ -24,7 +24,10 @@ import type { PanelContext, PanelInstance, PanelTab } from "./panel";
 import { arrowsBetween, redraw, section, segmented, settle } from "./panel-kit";
 import type { CodeState } from "./store";
 
-/** How long after the SDK's last `session.workspace_file_changed` the diff is read again. */
+/** How long the tab waits to read again after the runtime said it was busy (times the try), and how many tries. */
+const BUSY_WAIT_MS = 700, BUSY_TRIES = 6;
+
+/** How long after the last tool that changed files the diff is read again. */
 export const FILE_CHANGE_SETTLE_MS = 400;
 
 type Load<T> = { state: "idle" } | { state: "loading"; was?: T } | { state: "ok"; value: T } | { state: "failed"; reason: string; was?: T };
@@ -45,6 +48,8 @@ function mountChanges(host: HTMLElement, ctx: PanelContext): PanelInstance {
   let diff: Load<DiffView> = { state: "idle" };
   let points: Load<RewindList> = { state: "idle" };
   let diffToken = 0, pointsToken = 0;
+  /** Reads again after the runtime said it was busy though the window saw the turn end, and how many in a row. */
+  let busyRetry: ReturnType<typeof setTimeout> | null = null, busyTries = 0;
   const open = new Set<string>();
   let sel: { file: string; anchor: number; focus: number } | null = null;
   /** The comment being written: on which file (its SDK path) and which lines. */
@@ -92,7 +97,10 @@ function mountChanges(host: HTMLElement, ctx: PanelContext): PanelInstance {
   const stopWatching = app.watchEvents(env => {
     if (env.sessionId !== sid) return;
     const t = env.event.type;
-    if (t === "session.workspace_file_changed") { if (up()) fileSettle.call(); else dirty = true; }
+    // A tool that changed files (its `fileEdits`, or any command, which may have), or a file of the session's own: the
+    // runtime sends no event for a repository file a tool wrote (probed on runtime 1.0.97: `session.workspace_file_changed`
+    // is the session's state folder only).
+    if (t === "session.workspace_file_changed" || (t === "tool.execution_complete" && changesFiles(env.event.data))) { if (up()) fileSettle.call(); else dirty = true; }
     if (t === "session.snapshot_rewind" || t === "session.truncation") { if (up()) { void readPoints(); void readDiff(); } else dirty = true; }
   });
   const fileSettle = settle(FILE_CHANGE_SETTLE_MS, () => { void readDiff(); });
@@ -119,6 +127,18 @@ function mountChanges(host: HTMLElement, ctx: PanelContext): PanelInstance {
     if (sel && view && !paths.has(sel.file)) { sel = null; commenting = null; }
     drawSummary();
     drawFiles();
+    againIfBusy(view?.unavailable === "session-busy");
+  }
+
+  /**
+   * The runtime answers "session-busy" for a while after a turn's `session.idle` (probed on runtime 1.0.97: its own
+   * work after the turn, a title or the session store, still runs), and nothing of the window's changes when it ends:
+   * so the tab reads again on its own, a few times with longer waits, while the window sees no turn running.
+   */
+  function againIfBusy(said: boolean): void {
+    if (!said) { busyTries = 0; return; }
+    if (busyRetry || busy() || busyTries >= BUSY_TRIES) return;
+    busyRetry = setTimeout(() => { busyRetry = null; busyTries++; if (up() && sid && !busy()) { void readDiff(); void readPoints(); } }, BUSY_WAIT_MS * (busyTries + 1));
   }
 
   async function readPoints(): Promise<void> {
@@ -131,6 +151,7 @@ function mountChanges(host: HTMLElement, ctx: PanelContext): PanelInstance {
     points = list ? { state: "ok", value: list } : { state: "failed", reason: r.ok ? "" : reasonOf(r) };
     if (rewindAt && list && !list.points.some(p => p.eventId === rewindAt!.point.eventId)) rewindAt = null;
     drawRewind();
+    againIfBusy(list?.unavailable === "session-busy");
   }
 
   // ───── The summary line and its notes ─────
@@ -523,6 +544,7 @@ function mountChanges(host: HTMLElement, ctx: PanelContext): PanelInstance {
       justShown = true;
       if (sessionId !== sid) {
         sid = sessionId;
+        busyTries = 0;
         diff = { state: "idle" }; points = { state: "idle" };
         open.clear(); sel = null; commenting = null; editing = null; gitForm = null; gitNote = ""; reviewNote = null; rewindAt = null; rewindNote = "";
         fileSettle.cancel();
@@ -544,6 +566,6 @@ function mountChanges(host: HTMLElement, ctx: PanelContext): PanelInstance {
       }
       if (nowBusy !== wasBusy) { wasBusy = nowBusy; drawReview(); if (rewindAt) drawRewind(); }
     },
-    dispose() { stopWatching(); fileSettle.cancel(); },
+    dispose() { stopWatching(); fileSettle.cancel(); if (busyRetry) clearTimeout(busyRetry); busyRetry = null; },
   };
 }

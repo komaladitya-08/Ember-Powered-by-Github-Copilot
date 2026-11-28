@@ -46,7 +46,11 @@ body.panel-open .code-app { grid-template-columns: var(--side-w, 280px) 1px minm
 .side-empty { margin: 8px 6px; color: var(--label-2); font: var(--type-callout); text-wrap: pretty; }
 .side-h { margin: 8px 6px 4px; font: var(--type-headline); }
 .p-group + .p-group { margin-top: 10px; }
-.p-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.p-head { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; }
+.p-ask { display: grid; gap: 6px; padding: 6px; border-radius: var(--r-sm); background: var(--surface-2); }
+.p-ask-words { margin: 0; min-width: 0; overflow-wrap: anywhere; font: var(--type-footnote); text-wrap: pretty; }
+.p-ask-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.p-danger { color: var(--red-text); }
 .p-fold {
   all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 28px;
   padding: 4px 6px; border-radius: var(--r-xs); color: var(--label-2); font: var(--type-footnote); font-weight: 600;
@@ -84,6 +88,7 @@ body.panel-open .code-app { grid-template-columns: var(--side-w, 280px) 1px minm
 .s-archive::before { -webkit-mask-image: var(--icon-archive); }
 .s-archive[data-archived="true"]::before { -webkit-mask-image: var(--icon-restore); }
 .p-new::before { -webkit-mask-image: var(--icon-plus); }
+.p-remove::before { -webkit-mask-image: var(--icon-close); }
 @media (hover: hover) { .s-act:hover { background: var(--wash-10); } }
 .side-note { margin: 0 12px 8px; color: var(--red-text); font: var(--type-footnote); }
 .side-foot { display: flex; flex-wrap: wrap; gap: 2px 12px; padding: 10px 14px 12px; box-shadow: 0 -1px 0 var(--separator); }
@@ -388,6 +393,7 @@ details.disclose > summary:focus-visible { outline: none; box-shadow: var(--focu
 /* Windows contrast themes: every control and group a real edge, symbols in system colours, chosen items marked. */
 @media (forced-colors: active) {
   .edge { background: CanvasText; }
+  .p-ask { border: 1px solid CanvasText; }
   #side-search, #composer-text, .picker select, .q-edit, .chip { border: 1px solid ButtonText; }
   .card :is(textarea, input[type="text"], input[type="number"], input[type="email"], input[type="url"], input[type="date"], select),
   .start-form :is(input[type="text"], select) { border: 1px solid ButtonText; }

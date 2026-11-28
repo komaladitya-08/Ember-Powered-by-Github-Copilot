@@ -154,12 +154,30 @@ export function taskSignal(t: Transcript | undefined): string {
 
 /** An agent `agent.list` offers to start (only those a person may choose: `userInvocable` isn't false). */
 export interface AgentType { id: string; name: string; description: string }
+
+/**
+ * Copilot's built-in agent types, which `tasks.startAgent` takes by their id but `agent.list` doesn't list, even with
+ * `includeBuiltInAgents` (probed on runtime 1.0.97: it answers `{ agents: [] }`, while the model's `task` tool names
+ * these and `startAgent` starts each). Ember's own words for each.
+ */
+export const BUILTIN_AGENT_TYPES: readonly AgentType[] = [
+  { id: "general-purpose", name: "General purpose", description: "Works on a task of its own with every tool." },
+  { id: "explore", name: "Explore", description: "Reads and searches the code, and changes nothing." },
+  { id: "task", name: "Task", description: "Runs tests, builds and other long commands, and reports how they went." },
+  { id: "code-review", name: "Code review", description: "Reviews the changes for bugs, and changes nothing." },
+  { id: "research", name: "Research", description: "Looks things up on GitHub and the web, with its sources." },
+  { id: "security-review", name: "Security review", description: "Looks for security problems, and changes nothing." },
+];
+
+/** The agents a person may start: those `agent.list` offers, then the built-in types it leaves out. */
 export function agentTypes(result: unknown): AgentType[] {
-  return arr(result, "agents").flatMap(a => {
+  const listed = arr(result, "agents").flatMap(a => {
     const id = str(a, "id") ?? str(a, "name");
     if (!id || bool(a, "userInvocable") === false) return [];
     return [{ id, name: str(a, "displayName") ?? str(a, "name") ?? id, description: str(a, "description", true) ?? "" }];
   });
+  const have = new Set(listed.map(a => a.id));
+  return [...listed, ...BUILTIN_AGENT_TYPES.filter(b => !have.has(b.id))];
 }
 
 /** A scheduled prompt of `schedule.list`. */

@@ -225,6 +225,29 @@ describe.skipIf(gate)("the coding window", () => {
     expect(page.errors).toEqual([]);
   });
 
+  it("removes a project after asking, and says main's sentence while it still has sessions", async () => {
+    const page = await open();
+    // A project with sessions: asked, then main's refusal in the sidebar's note, and the project stays.
+    await page.getByRole("button", { name: "Remove “app” from the list…" }).click();
+    const ask = page.getByRole("group", { name: "Remove “app” from the list? Its folder and files stay as they are." });
+    await ask.waitFor();
+    expect(await focusedText(page)).toBe("Cancel");
+    await page.keyboard.press("Escape");
+    expect(await page.evaluate(() => document.activeElement?.getAttribute("aria-label"))).toBe("Remove “app” from the list…");
+    await page.keyboard.press("Enter");
+    await ask.getByRole("button", { name: "Remove" }).click();
+    await expect.poll(() => page.locator("#side-note").textContent()).toBe("This project still has sessions. Delete them first, then remove the project.");
+    expect(await calls(page)).toContain("removeProject:p-app");
+    expect(await page.locator(".p-name").allTextContents()).toContain("app");
+    // One with none: gone from the list.
+    await page.getByRole("button", { name: "Add project…" }).click();
+    await page.getByRole("button", { name: "Remove “site” from the list…" }).click();
+    await page.getByRole("group", { name: /Remove “site”/ }).getByRole("button", { name: "Remove" }).click();
+    await expect.poll(() => page.locator(".p-name").allTextContents()).not.toContain("site");
+    expect(await page.locator("#side-note").textContent()).toBe("");
+    expect(page.errors).toEqual([]);
+  });
+
   it("fits from 720 px wide, and is a drawer and a single column at 480 px", async () => {
     for (const width of [720, 480]) {
       const page = await open({ width, height: 700 });

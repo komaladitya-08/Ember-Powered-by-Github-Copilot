@@ -82,6 +82,16 @@ export function diffFrom(value: unknown, requested: DiffMode): DiffView | null {
   };
 }
 
+/**
+ * Whether a finished tool (`tool.execution_complete`'s data) may have changed the working folder's files: it says so
+ * (`fileEdits`), or it ran a command (`shellExecution`). The runtime sends no event of its own for a repository file a
+ * tool wrote (probed on runtime 1.0.97: `session.workspace_file_changed` is the session's state folder only).
+ */
+export function changesFiles(data: unknown): boolean {
+  if (!isObj(data)) return false;
+  return (Array.isArray(data.fileEdits) && data.fileEdits.length > 0) || isObj(data.shellExecution);
+}
+
 /** A path as the tab shows it: relative to the session's folder when it is inside it, else as the SDK gave it. */
 export function shownPath(path: string, folder: string | undefined): string {
   if (!folder) return path;
