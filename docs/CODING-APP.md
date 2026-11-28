@@ -118,7 +118,14 @@ session is untrusted text. Stop reaches it first.
    preload. test/integration/code-window-renderer.test.ts plays a session against a scripted `window.emberCode`
    (test/fixtures/code-window/fake-api.js).
 3. **Panels:** Changes, Plan, Files, Terminal, Agents and tasks.
-4. **Customise:** models, MCP, skills, plugins, agents, instructions, hooks, rules, sandbox, schedules, usage.
+4. **Customise:** models, MCP, skills, plugins, agents, instructions, hooks, rules, sandbox, schedules, usage. Built in
+   `app/renderer/code/customise-*.ts`, one file a section over the SDK's own methods through `CODE_RPC`
+   (customise-kit.ts: each says whether it applies to this computer or names the session; a refused or failed call says
+   main's sentence with Try again; a method off the allow-list says it isn't available yet), pure readers and form
+   checks in customise-read.ts and customise-forms.ts, words in copy-customise.ts, styles in customise-sections.css.
+   An MCP server's variable and header values are write-only: never drawn, kept on an edit unless retyped. Modes change
+   only through their own commands; the sandbox is read-only. test/integration/code-customise-renderer.test.ts plays
+   every section against the fake.
 5. **Companion as an option:** the switch, the hub tools, voice in the composer.
 6. **Retire what this replaces:** Home's Chats pane and `app/main/agent/chat-*`, then the isolated-copy coding path
    with its Windows pin workflows.

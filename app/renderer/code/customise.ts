@@ -44,7 +44,7 @@ export function mountCustomise(app: CodeApp, back: () => MainView): Customise {
     if (next) { e.preventDefault(); next.focus(); }
   });
 
-  function render(s: CodeState): void {
+  function render(s: CodeState, prev: CodeState | null): void {
     if (s.view.kind !== "customise") return;
     const id = sections.has(s.view.section) ? s.view.section : sectionId(CUSTOMISE_SECTIONS[0]);
     if (nav.childElementCount !== sections.size) {
@@ -55,14 +55,16 @@ export function mountCustomise(app: CodeApp, back: () => MainView): Customise {
       }));
     }
     for (const b of nav.querySelectorAll<HTMLElement>(".c-link")) { if (b.dataset.section === id) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current"); }
-    if (drawn === id) return;
+    if (drawn === id) { inst?.render?.(s, prev); return; }
     drawn = id;
     inst?.dispose?.();
     const sec = sections.get(id)!;
     heading.textContent = sec.label;
     host.replaceChildren();
     inst = sec.mount(host, { app, state: () => app.state });
-    inst.show(null);
+    // The session a section is about: the one shown before Customise opened.
+    const from = back();
+    inst.show(from.kind === "session" ? from.id : null);
   }
 
   return { render, focus() { title.focus(); } };

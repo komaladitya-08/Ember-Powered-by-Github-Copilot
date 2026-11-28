@@ -242,6 +242,135 @@
   const taskLog = [{ type: "agent", id: "bg-0", toolCallId: "bg-call-0", displayName: "Read the docs", description: "Read the auth docs", status: "completed", startedAt: iso(now - 900_000), completedAt: iso(now - 840_000), agentType: "explore", prompt: "Read", result: "Done." }];
   let schedules = [{ id: 1, intervalMs: 600_000, prompt: "Check CI", displayPrompt: "Check CI", recurring: true, nextRunAt: iso(now + 600_000) }];
   const userRuns = new Map();
+  // ── Customise's methods (test/integration/code-customise-renderer.test.ts): this computer's settings and the
+  // session's, as the SDK's generated types shape them. `refuse` holds methods that answer with a refusal. ──
+  const refuse = new Set();
+  const params = [];
+  const mcp = {
+    servers: {
+      "issues": { type: "stdio", command: "npx", args: ["-y", "@acme/issues-mcp"], env: { ISSUES_TOKEN: "fake-secret-value-123" }, timeout: 30_000 },
+      "docs": { type: "http", url: "https://mcp.example.com/docs", headers: { Authorization: "Bearer fake-header-secret" } },
+    },
+    disabled: new Set(),
+    live: [{ name: "issues", status: "connected", source: "user" }, { name: "docs", status: "needs-auth", source: "user", url: "https://mcp.example.com/docs" }, { name: "browser", status: "connected", source: "plugin", sourcePlugin: "github-copilot-browser" }],
+  };
+  const skills = [
+    { name: "release-notes", description: "Writes release notes from the merged pull requests", source: "project", userInvocable: true, enabled: true, path: "/home/me/work/app/.github/skills/release-notes/SKILL.md", argumentHint: "[version]" },
+    { name: "pdf", description: "Reads and fills PDF forms", source: "personal-copilot", userInvocable: true, enabled: false, path: "/home/me/.copilot/skills/pdf/SKILL.md" },
+    { name: "browser-testing", description: "Drives a browser to check a page", source: "plugin", pluginName: "github-copilot-browser", userInvocable: false, enabled: true },
+  ];
+  const plugins = [
+    { name: "github-copilot-browser", marketplace: "copilot-plugins", version: "1.4.0", enabled: true },
+    { name: "linear", marketplace: "copilot-plugins", version: "0.9.2", enabled: false },
+  ];
+  const markets = [{ name: "copilot-plugins", source: "GitHub: github/copilot-plugins", isDefault: true }, { name: "acme-tools", source: "GitHub: acme/tools" }];
+  const agents = [
+    { id: "explore", name: "explore", displayName: "Explore", description: "Finds things in the code base quickly", source: "builtin", userInvocable: false, tools: ["grep", "glob", "view"] },
+    { id: "reviewer", name: "reviewer", displayName: "Code reviewer", description: "Reviews a change", source: "project", path: "/home/me/work/app/.github/agents/reviewer.agent.md", model: "claude-sonnet-5", tools: ["view", "grep"] },
+  ];
+  let agentNow = null;
+  const trusted = new Set();
+  const allowed = ["/home/me/work/app"];
+  const customiseSchedules = [{ id: 1, intervalMs: 1_800_000, prompt: "Check the build and tell me if it failed", recurring: true, nextRunAt: "2026-11-27T10:30:00Z" }, { id: 2, at: Date.parse("2026-11-27T17:00:00Z"), prompt: "/release-notes 1.5.0", displayPrompt: "/release-notes 1.5.0", recurring: false, nextRunAt: "2026-11-27T17:00:00Z" }];
+  const ok = (value) => ({ ok: true, value });
+  const sidOf = (c) => c.sessionId;
+  function liveStatus(c, name, status) {
+    mcp.live = mcp.live.map(s => (s.name === name ? { ...s, status } : s));
+    later(10, () => emit(sidOf(c), "session.mcp_server_status_changed", { serverName: name, status }, eph));
+  }
+  function customise(c) {
+    const key = `${c.scope}:${c.method}`;
+    if (refuse.has(key) || refuse.has(c.method)) return { ok: false, reason: "Copilot couldn't read that just now." };
+    const p = c.params ?? {};
+    switch (key) {
+      case "session:model.getCurrent": return ok({ modelId: sessions.get(c.sessionId)?.model ?? "gpt-5.5", reasoningEffort: "medium" });
+      case "session:providers.getCatalog": return ok({ providers: [{ adapterId: "ollama", providerKind: "ollama", displayName: "Ollama", provenance: {}, automaticDiscovery: { mode: "automatic", networkScope: "loopbackOnly", requiresInput: false, requiresTrust: false }, operations: [] }] });
+      case "session:providers.discover": params.push({ method: c.method, params: p }); return ok({ outcome: { code: "success" }, instances: [{ reference: { adapterId: "ollama", providerKind: "ollama", id: "ollama:http://127.0.0.1:11434", managementEndpoint: "http://127.0.0.1:11434" }, displayName: "Ollama on this computer", provenance: {} }] });
+      case "session:providers.getStatus": return ok({ outcome: { code: "success" }, status: "healthy", version: "0.12.3" });
+      case "session:providers.models.list": return ok({ outcome: { code: "success" }, models: [{ id: "qwen3-coder:30b", name: "qwen3-coder:30b", sizeBytes: 18_600_000_000, details: {}, capabilities: {}, warnings: [] }] });
+      // MCP: this computer's configuration.
+      case "client:mcp.config.list": return ok({ servers: JSON.parse(JSON.stringify(mcp.servers)) });
+      case "client:mcp.discover": return ok({ servers: [...Object.keys(mcp.servers).map(name => ({ name, source: "user", enabled: !mcp.disabled.has(name) })), { name: "browser", source: "plugin", sourcePlugin: "github-copilot-browser", enabled: true }] });
+      case "client:mcp.config.add": params.push({ method: c.method, params: p }); if (mcp.servers[p.name]) return { ok: false, reason: "There's a server with that name already." }; mcp.servers[p.name] = p.config; return ok(null);
+      case "client:mcp.config.update": params.push({ method: c.method, params: p }); mcp.servers[p.name] = p.config; return ok(null);
+      case "client:mcp.config.remove": params.push({ method: c.method, params: p }); delete mcp.servers[p.name]; return ok(null);
+      case "client:mcp.config.enable": for (const n of p.names) mcp.disabled.delete(n); return ok(null);
+      case "client:mcp.config.disable": for (const n of p.names) mcp.disabled.add(n); return ok(null);
+      case "client:mcp.config.reload": return ok(null);
+      // MCP: the session's servers.
+      case "session:mcp.list": return ok({ servers: mcp.live.map(s => ({ ...s })) });
+      case "session:mcp.listTools": return ok({ tools: p.serverName === "issues" ? [{ name: "create_issue", description: "Opens an issue" }, { name: "search_issues", description: "Finds issues by words" }] : [] });
+      case "session:mcp.resources.list": return ok({ resources: p.serverName === "issues" ? [{ uri: "issues://open", name: "open", title: "Open issues", mimeType: "application/json" }] : [] });
+      case "session:mcp.prompts.list": return ok({ prompts: p.serverName === "issues" ? [{ name: "triage", description: "Sorts new issues", arguments: [{ name: "label" }] }] : [] });
+      case "session:mcp.startServer": liveStatus(c, p.serverName, "connected"); return ok(null);
+      case "session:mcp.restartServer": liveStatus(c, p.serverName, "pending"); later(40, () => liveStatus(c, p.serverName, "connected")); return ok(null);
+      case "session:mcp.stopServer": liveStatus(c, p.serverName, "stopped"); return ok(null);
+      case "session:mcp.oauth.login": return ok({ loginId: "login-1", status: "awaiting-browser", authorizationUrl: "https://mcp.example.com/oauth/authorize?client_id=ember&state=abc" });
+      // Skills.
+      case "session:skills.list": return ok({ skills: skills.map(s => ({ ...s })) });
+      case "client:skills.discover": return ok({ skills: skills.map(s => ({ ...s, projectPath: "/home/me/work/app" })) });
+      case "session:skills.enable": case "session:skills.disable": { const s = skills.find(x => x.name === p.name); if (s) s.enabled = c.method === "skills.enable"; return ok(null); }
+      case "client:skills.config.setSkillDisabled": { const s = skills.find(x => x.name === p.name); if (s) s.enabled = !p.disabled; return ok(null); }
+      case "session:skills.reload": return ok({ warnings: ["A skill has no description."], errors: [] });
+      case "client:skills.getDiscoveryPaths": return ok({ paths: [{ path: "/home/me/work/app/.github/skills", scope: "project", preferredForCreation: true, projectPath: "/home/me/work/app" }, { path: "/home/me/.copilot/skills", scope: "personal-copilot", preferredForCreation: true }] });
+      // Plugins.
+      case "client:plugins.list": return ok({ plugins: plugins.map(x => ({ ...x })) });
+      case "client:plugins.enable": case "client:plugins.disable": for (const n of p.names) { const x = plugins.find(y => `${y.name}@${y.marketplace}` === n); if (x) x.enabled = c.method === "plugins.enable"; } return ok(null);
+      case "client:plugins.install": params.push({ method: c.method, params: p }); { const [name, market = ""] = p.source.split("@"); plugins.push({ name, marketplace: market, version: "1.0.0", enabled: true }); return ok({ plugin: { name, marketplace: market, enabled: true }, skillsInstalled: 2 }); }
+      case "client:plugins.uninstall": { const i = plugins.findIndex(y => `${y.name}@${y.marketplace}` === p.name); if (i >= 0) plugins.splice(i, 1); return ok(null); }
+      case "client:plugins.update": return ok({ previousVersion: "0.9.2", newVersion: "0.9.3", skillsInstalled: 0 });
+      case "client:plugins.updateAll": return ok({ results: [] });
+      case "client:plugins.marketplaces.list": return ok({ marketplaces: markets.map(m => ({ ...m })) });
+      case "client:plugins.marketplaces.add": { const name = p.source.split("/").pop().replace(/#.*/, ""); markets.push({ name, source: `GitHub: ${p.source}` }); return ok({ name }); }
+      case "client:plugins.marketplaces.remove": { const i = markets.findIndex(m => m.name === p.name); if (i >= 0) markets.splice(i, 1); return ok({ removed: true }); }
+      case "client:plugins.marketplaces.browse": return ok({ plugins: [{ name: "deploy-helper", description: "Deploys to the staging site" }, { name: "changelog", description: "Keeps CHANGELOG.md tidy" }] });
+      case "client:plugins.marketplaces.refresh": return ok({ results: markets.map(m => ({ name: m.name, success: true })) });
+      // Agents.
+      case "session:agent.list": return ok({ agents: agents.map(a => ({ ...a })) });
+      case "session:agent.getCurrent": return ok({ agent: agentNow ? agents.find(a => a.name === agentNow) : null });
+      case "session:agent.select": agentNow = p.name; return ok({ agent: agents.find(a => a.name === p.name) });
+      case "session:agent.deselect": agentNow = null; return ok(null);
+      case "session:agent.reload": return ok({ agents: agents.filter(a => a.source !== "builtin") });
+      case "client:agents.getDiscoveryPaths": return ok({ paths: [{ path: "/home/me/work/app/.github/agents", scope: "project", preferredForCreation: true }, { path: "/home/me/.copilot/agents", scope: "user", preferredForCreation: true }] });
+      // Instructions.
+      case "session:instructions.getSources": case "session:instructions.reload": return ok({ sources: [{ id: "repo", label: "Copilot instructions", sourcePath: ".github/copilot-instructions.md", content: "# How we work\n\nRun npm test before you push.\n", type: "repo", location: "repository" }] });
+      case "client:instructions.discover": return ok({ sources: [
+        { id: "repo", label: "Copilot instructions", sourcePath: ".github/copilot-instructions.md", content: "# How we work\n\nRun npm test before you push.\n", type: "repo", location: "repository" },
+        { id: "tests", label: "Tests", sourcePath: ".github/instructions/tests.instructions.md", content: "Use vitest.", type: "child-instructions", location: "repository", applyTo: ["test/**"], defaultDisabled: true },
+      ] });
+      case "client:instructions.getDiscoveryPaths": return ok({ paths: [{ path: "/home/me/work/app/.github/copilot-instructions.md", location: "repository", kind: "file", preferredForCreation: true }, { path: "/home/me/.copilot/copilot-instructions.md", location: "user", kind: "file", preferredForCreation: true }] });
+      // Hooks.
+      case "client:hooks.discover": return ok({ hooks: [
+        { id: "h1", hookType: "preToolUse", origin: "repository", source: ".github/hooks/check.json", enabled: true },
+        { id: "h2", hookType: "sessionEnd", origin: "user", source: "~/.copilot/hooks/notify.json", enabled: false },
+      ], warnings: [], errors: ["A hook file couldn't be read."] });
+      // Permissions.
+      case "session:managedSettings.get": return ok({ bypassPermissionsDisabled: true, deviceManaged: false, serverManaged: true, failClosed: false, managedKeys: ["permissions"], source: "server" });
+      case "client:managedSettings.read": return ok({});
+      case "session:permissions.modifyRules": params.push({ method: c.method, params: p }); return ok({ success: true });
+      case "session:permissions.resetSessionApprovals": params.push({ method: c.method, params: p }); return ok({ success: true });
+      case "session:permissions.paths.list": return ok({ primary: allowed[0], directories: allowed.slice(), sessionApprovedPaths: [] });
+      case "session:permissions.paths.add": allowed.push(p.path); return ok({ success: true });
+      case "session:permissions.folderTrust.isTrusted": return ok({ trusted: trusted.has(p.path) });
+      case "session:permissions.folderTrust.addTrusted": trusted.add(p.path); return ok({ success: true });
+      // The sandbox.
+      case "client:sandbox.getHostSupport": return ok({ supported: true, capabilities: [{ name: "network", supported: false, reason: "Install slirp4netns to give sandboxed commands the network." }, { name: "seccomp", supported: true }] });
+      case "session:sandbox.getEnforcementStatus": return ok({ required: false, blocked: false });
+      // Schedules.
+      case "session:schedule.list": return ok({ entries: customiseSchedules.map(s => ({ ...s })) });
+      case "session:schedule.stop": { const i = customiseSchedules.findIndex(s => s.id === p.id); const [entry] = i >= 0 ? customiseSchedules.splice(i, 1) : []; return ok({ entry }); }
+      // Usage.
+      case "session:usage.getMetrics": return ok({ totalPremiumRequestCost: 7, totalUserRequests: 9, totalApiDurationMs: 312_000, lastCallInputTokens: 21_400, lastCallOutputTokens: 620, sessionStartTime: new Date(now - 3_600_000).toISOString(), currentModel: "gpt-5.5",
+        codeChanges: { filesModified: ["src/login.ts", "src/oauth.ts"], filesModifiedCount: 2, linesAdded: 24, linesRemoved: 6 },
+        modelMetrics: { "gpt-5.5": { requests: { count: 7, cost: 7 }, usage: { inputTokens: 148_000, outputTokens: 5_200, cacheReadTokens: 96_000, cacheWriteTokens: 0 } }, "gpt-5.4-mini": { requests: { count: 3, cost: 0 }, usage: { inputTokens: 12_000, outputTokens: 900, cacheReadTokens: 0, cacheWriteTokens: 0 } } } });
+      case "session:quota.get": case "session:quota.refresh": return ok({ snapshots: { premium_interactions: { isUnlimitedEntitlement: false, entitlementRequests: 300, usedRequests: 87, usageAllowedWithExhaustedQuota: false, overage: 0, overageAllowedWithExhaustedQuota: false, remainingPercentage: 71, resetDateEpochMs: Date.parse("2026-12-01T00:00:00Z") }, chat: { isUnlimitedEntitlement: true, entitlementRequests: -1, usedRequests: 0, usageAllowedWithExhaustedQuota: true, overage: 0, overageAllowedWithExhaustedQuota: true, remainingPercentage: 100 } }, isFreeUser: false, isTbbUser: false, planTier: "pro", premiumRequestsBillable: true, modelCostColumnVisible: true, delegateAvailable: true, canSignupForCopilotFree: false, dynamicWorkflowsEnabled: false, dynamicWorkflowsUiVisible: false });
+      case "client:account.getQuota": return ok({ quotaSnapshots: { premium_interactions: { isUnlimitedEntitlement: false, entitlementRequests: 300, usedRequests: 87, usageAllowedWithExhaustedQuota: false, remainingPercentage: 71, overage: 0, overageAllowedWithExhaustedQuota: false, resetDate: "2026-12-01T00:00:00Z" } } });
+      case "session:metadata.contextInfo": return ok({ contextInfo: { modelName: "gpt-5.5", systemTokens: 9_800, conversationTokens: 31_400, toolDefinitionsTokens: 7_000, mcpToolsTokens: 2_100, totalTokens: 48_200, promptTokenLimit: 128_000, compactionThreshold: 102_400, limit: 128_000, bufferTokens: 6_400 } });
+      case "session:metadata.getContextHeaviestMessages": return ok({ totalTokens: 48_200, messages: [{ id: "m1", label: "tool: bash", role: "tool", tokens: 9_100 }, { id: "m2", label: "tool: view", role: "tool", tokens: 4_300 }] });
+      case "session:history.compact": params.push({ method: c.method, params: p }); return ok({ success: true, tokensRemoved: 28_000, messagesRemoved: 12 });
+      default: return null;
+    }
+  }
 
   const api = {
     async list() { calls.push("list"); return { projects: projects.slice(), sessions: [...sessions.values()] }; },
@@ -322,11 +451,13 @@
         if (panels.fail[c.method]) return { ok: false, reason: panels.fail[c.method] };
         return { ok: true, value: panelRpc[c.method](c, l) };
       }
+      const cz = customise(c);
+      if (cz) return cz;
       switch (c.method) {
         case "models.list": return { ok: true, value: { models: [
-          { id: "gpt-5.5", name: "GPT-5.5", capabilities: { supports: { reasoningEffort: true } }, supportedReasoningEfforts: ["low", "medium", "high", "xhigh"], defaultReasoningEffort: "medium" },
-          { id: "claude-sonnet-5", name: "Claude Sonnet 5", capabilities: { supports: { reasoningEffort: true } }, supportedReasoningEfforts: ["low", "medium", "high"] },
-          { id: "gpt-5.4-mini", name: "GPT-5.4 mini", capabilities: { supports: {} } },
+          { id: "gpt-5.5", name: "GPT-5.5", vendor: "OpenAI", capabilities: { supports: { reasoningEffort: true, vision: true }, limits: { max_context_window_tokens: 400_000, max_output_tokens: 128_000 } }, supportedReasoningEfforts: ["low", "medium", "high", "xhigh"], defaultReasoningEffort: "medium", billing: { multiplier: 1 }, policy: { state: "enabled" } },
+          { id: "claude-sonnet-5", name: "Claude Sonnet 5", vendor: "Anthropic", capabilities: { supports: { reasoningEffort: true, vision: true }, limits: { max_context_window_tokens: 200_000 } }, supportedReasoningEfforts: ["low", "medium", "high"], billing: { multiplier: 1 }, policy: { state: "enabled" } },
+          { id: "gpt-5.4-mini", name: "GPT-5.4 mini", vendor: "OpenAI", capabilities: { supports: {}, limits: { max_context_window_tokens: 128_000 } }, billing: { multiplier: 0 } },
         ] } };
         case "agents.discover": return { ok: true, value: { agents: [{ id: "reviewer", name: "reviewer", displayName: "Code reviewer", description: "Reviews a change" }] } };
         case "commands.list": return { ok: true, value: { commands: [
@@ -400,6 +531,7 @@
   window.emberCode = api;
   window.__fake = {
     calls, emit, sessions, pending, panels, request: openRequest, setRow,
+    calls, emit, sessions, pending, refuse, params, mcp,
     gap() { skip = true; },
     wait(name) { return reached.has(name) ? Promise.resolve() : new Promise(r => waiters.set(name, [...(waiters.get(name) ?? []), r])); },
     reached: (name) => reached.has(name),

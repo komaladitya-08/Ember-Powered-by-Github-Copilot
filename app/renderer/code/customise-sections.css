@@ -1,0 +1,123 @@
+/* Customise's sections (app/renderer/code/customise-*.ts), linked after styles.css: opaque content-window parts on the
+   section's --surface-1 pane, rows on --surface-2 with --separator hairlines, words first and controls at the trailing
+   edge, errors under their field in --red-text. Tokens only; light, Increase Contrast and forced colours below. */
+
+.cz-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 0 0 16px; }
+.cz-scope { flex: 1 1 260px; min-width: 0; margin: 0; color: var(--label-2); font: var(--type-callout); overflow-wrap: anywhere; text-wrap: pretty; }
+.cz-chooser { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--label-2); font: var(--type-footnote); }
+.cz-chooser[hidden] { display: none; }
+.cz-chooser .select-wrap { min-width: 0; }
+.cz-said { margin: -8px 0 12px; color: var(--label-2); font: var(--type-footnote); overflow-wrap: anywhere; }
+.cz-body { display: grid; gap: 20px; min-width: 0; }
+
+.cz-part { display: grid; gap: 8px; min-width: 0; }
+.cz-part-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
+.cz-part-head h3 { margin: 0; font: var(--type-headline); font-weight: 600; letter-spacing: -0.006em; }
+.cz-gap { flex: 1 1 0; }
+.cz-part-body { display: grid; gap: 8px; min-width: 0; }
+.cz-part h4, .cz-also h4, .cz-form h4, .cz-offers-part h4 { margin: 0; font: var(--type-callout); font-weight: 600; }
+.cz-callout { margin: 0; padding: 10px 12px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--separator); color: var(--label-2); font: var(--type-footnote); overflow-wrap: anywhere; text-wrap: pretty; }
+.cz-after { margin-top: -12px; }
+.cz-stack { display: grid; gap: 8px; min-width: 0; }
+.cz-also { display: grid; gap: 6px; margin-top: 6px; }
+
+.cz-list { display: grid; margin: 0; padding: 0; list-style: none; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--separator); overflow: hidden; }
+.cz-list.nested { margin-top: 6px; background: var(--surface-1); }
+.cz-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 12px; min-height: 44px; padding: 8px 12px; box-sizing: border-box; box-shadow: 0 1px 0 var(--separator); }
+.cz-row:last-child { box-shadow: none; }
+.cz-words { flex: 1 1 280px; display: grid; gap: 2px; min-width: 0; }
+.cz-name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0; font: var(--type-body); font-weight: 600; letter-spacing: -0.006em; overflow-wrap: anywhere; min-width: 0; }
+.cz-line { margin: 0; color: var(--label-2); font: var(--type-footnote); overflow-wrap: anywhere; text-wrap: pretty; }
+.cz-mono { margin: 0; color: var(--label-2); font: var(--type-footnote); font-family: var(--ember-mono); overflow-wrap: anywhere; }
+.cz-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; flex: 0 1 auto; min-width: 0; }
+.cz-sub:empty, .cz-err:empty, .cz-said:empty { display: none; }
+.cz-sub { display: grid; gap: 4px; width: 100%; }
+.cz-plain { display: grid; gap: 4px; margin: 4px 0 0; padding: 0; list-style: none; }
+.cz-plain li { display: grid; gap: 1px; min-width: 0; font: var(--type-footnote); overflow-wrap: anywhere; }
+.cz-path { display: grid; gap: 2px; padding: 8px 12px; box-shadow: 0 1px 0 var(--separator); }
+.cz-path:last-child { box-shadow: none; }
+.cz-path .cz-mono { color: var(--label); }
+.cz-disclosed { display: grid; gap: 10px; padding: 6px 0 2px 16px; }
+.cz-offers-part { display: grid; gap: 4px; }
+.cz-pre { margin: 0; max-height: 320px; overflow: auto; padding: 8px 10px; border-radius: var(--r-xs); background: var(--surface-1); box-shadow: inset 0 0 0 1px var(--separator); font: var(--type-footnote); font-family: var(--ember-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.cz-pre:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--separator), var(--focus-ring); }
+.cz-url { padding: 6px 8px; border-radius: var(--r-xs); background: var(--surface-1); box-shadow: inset 0 0 0 1px var(--separator); color: var(--label); user-select: all; }
+.cz-quote-label { font-weight: 600; }
+
+/* States: loading, a refusal with Try again, not available yet, nothing to list. */
+.cz-loading, .cz-na, .cz-empty { margin: 0; color: var(--label-2); font: var(--type-callout); }
+.cz-problem { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--separator); }
+.cz-problem p { flex: 1 1 220px; margin: 0; color: var(--label); font: var(--type-callout); overflow-wrap: anywhere; }
+.cz-problem::before { content: ""; flex: none; width: 14px; height: 14px; background: var(--red); -webkit-mask: var(--sym-failed) center / contain no-repeat; }
+.cz-status { display: flex; align-items: flex-start; gap: 8px; margin: 0; font: var(--type-callout); overflow-wrap: anywhere; }
+.cz-status::before { content: ""; flex: none; width: 14px; height: 14px; margin-top: 2px; background: var(--gray); -webkit-mask: var(--sym-done) center / contain no-repeat; }
+.cz-status[data-state="on"]::before { background: var(--green); }
+.cz-status[data-state="no-network"]::before { background: var(--yellow); -webkit-mask-image: var(--sym-failed); }
+.cz-status[data-state="off"]::before { background: var(--red); -webkit-mask-image: var(--sym-failed); }
+.cz-bad { color: var(--red-text); }
+
+/* The meter: still, its words beside it. */
+.cz-meter { display: grid; gap: 4px; }
+.cz-meter-track { display: block; height: 6px; border-radius: var(--r-capsule); background: var(--wash-10); overflow: hidden; }
+.cz-meter-fill { display: block; width: var(--pct, 0%); height: 100%; border-radius: inherit; background: var(--accent); }
+
+/* Forms: labels over fields, the hint and the error under each. */
+.cz-form { display: grid; gap: 10px; min-width: 0; }
+.cz-form[hidden] { display: none; }
+.cz-form.cz-inline, .cz-form.cz-two { grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); align-items: start; }
+.cz-form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; grid-column: 1 / -1; }
+.cz-one-line { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+/* Level with the field: under its label (a footnote line and the field's 4px gap), centred on its 28px box. */
+.cz-one-line > .btn { margin-top: calc(22px * var(--text-scale)); }
+.cz-rule-form { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); align-items: start; }
+.cz-mcp-form { padding: 12px 14px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--separator); }
+.cz-mcp-form h4:focus { outline: none; }
+.cz-form-host:empty { display: none; }
+.cz-field { display: grid; gap: 4px; min-width: 0; }
+.cz-field > label, .cz-pairs legend { color: var(--label-2); font: var(--type-footnote); font-weight: 500; }
+.cz-field :is(input, textarea, select), .cz-pair input, .cz-chooser select {
+  box-sizing: border-box; width: 100%; min-width: 0; min-height: calc(28px * var(--text-scale)); padding: 4px 8px; border: 0; border-radius: var(--r-xs);
+  background: var(--surface-1); box-shadow: inset 0 0 0 1px var(--control-edge); font: var(--type-callout);
+}
+.cz-field select, .cz-chooser select { -webkit-appearance: none; appearance: none; padding-right: 28px; cursor: pointer; }
+.cz-chooser select { max-width: 22em; }
+.cz-field textarea { resize: vertical; font-family: var(--ember-mono); }
+.cz-field :is(input, textarea, select):focus-visible, .cz-pair input:focus-visible, .cz-chooser select:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.cz-field [aria-invalid="true"], .cz-pair [aria-invalid="true"] { box-shadow: inset 0 0 0 1px var(--red); }
+.cz-field [aria-invalid="true"]:focus-visible, .cz-pair [aria-invalid="true"]:focus-visible { box-shadow: inset 0 0 0 1px var(--red), var(--focus-ring); }
+.cz-err { margin: 0; color: var(--red-text); font: var(--type-footnote); overflow-wrap: anywhere; }
+.cz-pairs { display: grid; gap: 6px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.cz-pairs legend { padding: 0; margin-bottom: 2px; }
+.cz-pair-list { display: grid; gap: 6px; justify-items: start; }
+.cz-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 6px; align-items: start; width: 100%; }
+.cz-pair-cell { display: grid; gap: 2px; min-width: 0; }
+
+/* A destructive action, confirmed in place: its words, the action in red words (never filled), Cancel. */
+.cz-confirm, .cz-ask { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.cz-ask-words { color: var(--label); font: var(--type-footnote); font-weight: 600; overflow-wrap: anywhere; }
+.btn.quiet.cz-danger { color: var(--red-text); }
+
+.cz-row input[type="checkbox"][role="switch"] { flex: none; }
+
+@media (prefers-contrast: more) {
+  .cz-list, .cz-callout, .cz-problem, .cz-mcp-form, .cz-pre, .cz-url { box-shadow: inset 0 0 0 1px var(--control-edge); }
+}
+
+@media (forced-colors: active) {
+  .cz-list, .cz-callout, .cz-problem, .cz-mcp-form, .cz-pre, .cz-url { border: 1px solid CanvasText; }
+  .cz-row:not(:last-child), .cz-path:not(:last-child) { border-bottom: 1px solid CanvasText; }
+  .cz-field :is(input, textarea, select), .cz-pair input, .cz-chooser select { border: 1px solid ButtonText; }
+  .cz-field [aria-invalid="true"], .cz-pair [aria-invalid="true"] { border: 2px solid CanvasText; }
+  .cz-problem::before, .cz-status::before, .cz-status[data-state]::before { background: CanvasText; }
+  .cz-meter-track { border: 1px solid CanvasText; background: Canvas; }
+  .cz-meter-fill { background: CanvasText; }
+  .cz-err, .cz-bad, .btn.quiet.cz-danger { color: CanvasText; }
+  .cz-err:not(:empty)::before { content: "! " / ""; font-weight: 700; }
+}
+
+@media (max-width: 760px) {
+  .cz-rule-form, .cz-one-line { grid-template-columns: minmax(0, 1fr); }
+  .cz-one-line > .btn { margin-top: 0; justify-self: start; }
+  .cz-pair { grid-template-columns: minmax(0, 1fr) auto; }
+  .cz-pair .cz-pair-cell:nth-child(2) { grid-column: 1; }
+}

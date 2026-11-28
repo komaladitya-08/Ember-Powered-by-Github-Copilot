@@ -16,6 +16,7 @@ import { requestTitle } from "./cards";
 import { mountComposer } from "./composer";
 import { CUSTOMISE, GO_TO_REQUEST, NEW_SESSION, PALETTE_ACTIONS, PALETTE_TITLE, SIDEBAR_RESIZE, TAB_NAMES, needsYouBar, paletteHint, paletteTab, pathTail, sandboxWords, sessionTitle } from "./copy";
 import { mountCustomise, sectionId } from "./customise";
+import "./customise-sections";
 import { byId, setText } from "./dom";
 import { mountPalette, primaryKey, slashAction, type PaletteAction } from "./palette";
 import { mountPanel, panelTabs } from "./panel";
