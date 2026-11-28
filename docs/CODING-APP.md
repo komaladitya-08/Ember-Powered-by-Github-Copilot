@@ -101,12 +101,32 @@ from it.
 
 ## 5. The companion
 
-Off by default for new installs; existing users keep it on. When on it is what it was: the character, voice, the
-desktop tools and their rules. It gains tools over the hub, each a `dispatch` as actor `companion`: list sessions
-and projects, read a session's status and recent messages, start a session, send or queue a message, stop a turn,
-list what is waiting. Answering a permission request for the user is not one of them in the first release: it
-reads the request out and the user answers by click, shortcut or voice as for any question. What it reads from a
-session is untrusted text. Stop reaches it first.
+`settings.companion.enabled`: off for a new install, on for an existing user (`migrateCompanion`: a settings file
+that has finished the welcome and has no `companion` key keeps it on). Home's "Companion and coding" group holds its
+switch and the coding sessions' one; the coding window's Customise › Companion shows the state and opens Home there.
+Which parts run is one pure decision, `companionParts()` (app/main/companion.ts), that main and the host follow:
+
+- **Off:** no overlay or handle, no Ask box (its shortcut and mute's are let go), no listening, no greeting, no
+  conversation (the host signs in for the coding sessions but opens no conductor session, so no task or worker runs),
+  and requests are refused. Stop and Settings keep their shortcuts, and Stop reaches the coding sessions. With coding
+  sessions on, a start by hand opens the coding window; with both off, Home, which says what can be turned on
+  (`startOpens`). First run's tries leave out "Say “Hey Ember”" and the Ask box.
+- **Turned off or on while Ember runs:** the windows go or come at once, the microphone closes or opens, the shortcuts
+  are let go or held, and the conversation is let go (every task stopped as Stop stops it, saying why) or opened
+  again, resuming it. Nothing needs a restart, except that the coding tools are fixed for a conversation: turning
+  coding sessions on or off reaches them with the next conversation.
+- **On:** what it was, plus, while coding sessions are on too, seven conductor tools (app/main/agent/coding-tools.ts),
+  each a `dispatch` as `companion`: `list_coding_sessions`, `read_coding_session`, `start_coding_session`,
+  `send_to_coding_session`, `stop_coding_session`, `list_coding_requests`, `show_coding_session`. The hub holds what
+  the companion may do, by actor (app/main/code/companion.ts `companionRefusal`): list, create, send, interrupt and
+  Stop everything only; a session it starts is in a project the user added (never a path), with no mode of its
+  choosing (so the user's defaults), and only for a request in the user's own words this turn; no attachments, no
+  answer, mode, rename, fork, delete, attach or RPC; at most 20 commands a minute (`CompanionPace`); every command,
+  refused ones too, audited with the actor. What it reads is wrapped `untrusted="true"`.
+- **A request waiting:** Ember says so in the bubble and, where replies are spoken, aloud, in its own words from the
+  request's kind and the project's name ("Copilot wants to run a command in “app”. Open it?"), with Open it showing
+  the session. It is no question of Ember's, so a spoken yes never answers it: a coding session's request is
+  answered only in the coding window, by click or key.
 
 ## 6. Build order
 
@@ -127,7 +147,9 @@ session is untrusted text. Stop reaches it first.
    An MCP server's variable and header values are write-only: never drawn, kept on an edit unless retyped. Modes change
    only through their own commands; the sandbox is read-only. test/integration/code-customise-renderer.test.ts plays
    every section against the fake.
-5. **Companion as an option:** the switch, the hub tools, voice in the composer.
+5. **Companion as an option:** the switch, the hub tools, voice in the composer. Built (§5) but for dictation in the
+   composer (§7): app/main/companion.ts, app/main/code/companion.ts, app/main/agent/coding-tools.ts, Home's
+   "Companion and coding" group and Customise › Companion.
 6. **Retire what this replaces:** Home's Chats pane and `app/main/agent/chat-*`, then the isolated-copy coding path
    with its Windows pin workflows.
 
@@ -192,6 +214,21 @@ repository, a subfolder of it and a worktree) and test/integration/code-panels-l
 - **Not confirmed here** (they need a Copilot account or the network): `models.list`'s and `account.getQuota`'s answers,
   `mcp.oauth.login`'s address and status, `quota.*` with a plan, plugin installs and marketplaces, `history.compact`'s
   summary from a real model, `completions.request` (it answered no items and no trigger characters with the mock model).
+
+### The companion as an option
+
+Making the companion an option (step 5, test/integration/companion-live.test.ts) changed the design here:
+
+- **The companion doesn't read a request out for the user to answer by voice.** §5 first had the user answer a
+  session's request "by click, shortcut or voice as for any question"; a spoken yes answers only a question Ember's
+  own Confirmer put up, and a session's request is the SDK's, so it is answered in the coding window alone.
+- **The conversation needs the sign-in but the sign-in doesn't need the conversation.** Coding sessions take their
+  access from the host's connection, so with the companion off the host still connects and only skips the conductor.
+- **The session's modes are the user's, not the companion's to pick.** There is no stored default yet (a session
+  starts as manual and interactive), so the companion picks none.
+- **Dictation in the composer is not in this build.** Listen once delivers its words to the conversation through
+  main's request path; putting them in the composer as a draft needs a channel of its own from the voice process to
+  the coding window, with Home's hold rules, which is more than forwarding one.
 
 Not in this build: cloud sessions and handoff, remote control from a phone, canvases and MCP Apps rendering,
 a built-in browser preview. The contract leaves room for each.

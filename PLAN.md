@@ -4961,3 +4961,16 @@ the token to every command; a value filled from the vault is hidden in a command
 starts after a fill until Ember restarts, because a failed tool's result cannot be rewritten; in `assisted` Ember
 approves once what the SDK's judge recommends, because the SDK only recommends. Not yet answered by the SDK: no
 managed rule covers every web address, so "confirm every action" covers fetches by forbidding `allow-all`.
+
+### The companion as an option (28 November 2026)
+
+Step 5 of docs/CODING-APP.md, on the owner's direction of 27 November 2026 ("have our current companion as an optional
+thing that we can enable"). `settings.companion.enabled` is off for a new install and on for an existing user (an
+onboarded settings file from before it). Off, none of the companion's parts start (app/main/companion.ts
+`companionParts`: overlay, handle, Ask box, listening, greeting, the conversation and so every task); Stop keeps its
+shortcut and reaches coding sessions. Turned on or off while Ember runs, each part starts or stops at once (the
+conversation's tasks stopped as Stop stops them). With coding sessions on too the conductor has seven tools over them,
+each a `CodeHub.dispatch` as `companion`, which the hub holds by actor: no answering a request, no modes, no deleting
+or forking, no RPC, 20 commands a minute. A request waiting is announced in Ember's words, never answered by voice.
+Departure: dictation in the coding window's composer is not built (CODING-APP.md §7). No `CONSENT_VERSION` bump:
+nothing new is read, sent or kept (a session's words reach the conductor on the same service, on the user's request).

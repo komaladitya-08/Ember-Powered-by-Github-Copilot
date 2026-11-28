@@ -1029,7 +1029,13 @@ and bubblewrap for the sandbox). The window against a scripted fake of `window.e
 trimmed, in test/fixtures/code-window/real-shapes.ts, which test/unit/code-real-shapes.test.ts reads the window's
 readers against. The whole thing end to end, the real window in real Electron on the real runtime with the
 mock model, is `EMBER_CODE_LIVE=1 dbus-run-session -- xvfb-run -a npm run test:integration -- test/integration/code-window-live.test.ts`
-(after `npm run build`; Linux with git): it adds a project, allows a command by keyboard, turns down a change with a
+(after `npm run build`; Linux with git). The companion as an option (docs/CODING-APP.md §5: `settings.companion.enabled`,
+off for a new install and on for an existing user's onboarded settings file; Home's "Companion and coding" group) is
+unit-tested in test/unit/companion.test.ts and code-hub.test.ts, and live in
+`EMBER_CODE_LIVE=1 dbus-run-session -- xvfb-run -a npm run test:integration -- test/integration/companion-live.test.ts`:
+with the companion off no overlay or handle opens and Stop works, and with both on the mock model's
+`start_coding_session` and `list_coding_sessions` start and list a session as `companion`, as the audit log records.
+The code-window-live suite: it adds a project, allows a command by keyboard, turns down a change with a
 reason, restarts Ember, starts a worktree session, stops a turn, opens a link, deletes the worktree session from the
 command palette, and checks that Home's page can't reach the coding channels and that with coding sessions off the
 window doesn't open. It replaces main's folder picker and `shell.openExternal` through Playwright, not a switch. Its
