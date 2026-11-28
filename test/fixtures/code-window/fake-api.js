@@ -573,6 +573,8 @@
         ] } };
         case "schedule.list": return { ok: true, value: { entries: schedules.slice() } };
         case "schedule.stop": { const e = schedules.find(x => x.id === c.params.id); schedules = schedules.filter(x => x.id !== c.params.id); return { ok: true, value: e ? { entry: e } : {} }; }
+        // As the runtime answered without an account (1.0.97, the mock model).
+        case "limitPrediction.predict": return { ok: true, value: { kind: "available", prediction: { clientType: "cli-interactive", modelId: "gpt-5.5", source: "global", sourceKey: "global", tiers: [{ tier: "recommended", cap: 459 }, { tier: "additional_headroom", cap: 1877 }], recommendedTier: "recommended", recommendedCap: 459 } } };
         case "sessions.getSizes": return { ok: true, value: { sizes: Object.fromEntries([...sessions.keys()].map((id, i) => [id, 255720 * (i + 1)])) } };
         case "history.summarizeForHandoff": return { ok: true, value: { summary: "The login redirect now keeps `next`; the tests for it pass." } };
         // The real runtime's list (1.0.97, the mock model), titles as it gave them; web_fetch left out by the session.

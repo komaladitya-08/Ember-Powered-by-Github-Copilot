@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { FOLDERS_LEAD, INSTRUCTIONS_LEAD, instructionsCount, modeNotAllowed, summaryName, toolLabel } from "../../app/renderer/code/copy-settings";
 import { defaultsFrom } from "../../app/renderer/code/customise-defaults";
-import { builtinTools, sessionOptionsFrom } from "../../app/renderer/code/customise-session";
+import { builtinTools, creditsFrom, recommendedCap, sessionOptionsFrom } from "../../app/renderer/code/customise-session";
 
 describe("Customise › Defaults and Session settings", () => {
   it("says what the instructions and extra folders are, in Ember's words", () => {
@@ -21,6 +21,14 @@ describe("Customise › Defaults and Session settings", () => {
 
   it("takes an empty choice as no default", () => {
     expect(defaultsFrom({ isolation: "", permissionMode: "assisted", agentMode: "", model: "gpt-5.5", reasoningEffort: "" })).toEqual({ permissionMode: "assisted", model: "gpt-5.5" });
+  });
+
+  it("reads a credit limit typed (empty is none), and the cap the runtime suggests", () => {
+    expect(["", " 300 ", "0", "2.5", "x"].map(creditsFrom)).toEqual([null, 300, "bad", "bad", "bad"]);
+    expect(recommendedCap({ kind: "available", prediction: { recommendedCap: 459, tiers: [] } })).toBe(459);
+    expect(recommendedCap({ kind: "unavailable" })).toBeNull();
+    expect(sessionOptionsFrom({ summary: "", long: false, coauthor: true, off: [], credits: "" }).maxAiCredits).toBeNull();
+    expect(sessionOptionsFrom({ summary: "", long: false, coauthor: true, off: [], credits: "bad" })).not.toHaveProperty("maxAiCredits");
   });
 
   it("lists a session's built-in tools only, and sends what is off once, sorted", () => {

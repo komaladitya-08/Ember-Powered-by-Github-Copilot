@@ -204,9 +204,14 @@ describe.skipIf(gate)("the person's defaults, a project's settings and a session
     await page.locator("[id^='cz-long-']").check();
     await page.locator("[id^='cz-coauthor-']").uncheck();
     await page.getByLabel("bash (Running command)").uncheck();
+    await expect.poll(() => page.locator(".cz-part .hint", { hasText: "Copilot suggests" }).textContent()).toBe("Copilot suggests about 459 credits for a session like this.");
+    await page.locator("input[id^='cz-credits-']").fill("4.5");
+    await page.getByRole("button", { name: "Save session settings" }).click();
+    expect(await page.locator("[id^='cz-credits-'][id$='-err']").textContent()).toBe("Type a whole number of credits, or leave it empty.");
+    await page.locator("input[id^='cz-credits-']").fill("400");
     await page.getByRole("button", { name: "Save session settings" }).click();
     await expect.poll(() => page.locator(".cz-said").textContent()).toBe("Saved. Copilot uses them from its next step.");
-    expect(await calls(page)).toContain('configure:s-login:{"reasoningSummary":"detailed","contextTier":"long_context","coauthor":false,"excludedTools":["bash"]}');
+    expect(await calls(page)).toContain('configure:s-login:{"reasoningSummary":"detailed","contextTier":"long_context","coauthor":false,"excludedTools":["bash"],"maxAiCredits":400}');
     await shot(page, "session-settings");
     // Drawn again: the tool left out is still listed, off, so it can be turned back on.
     await page.locator(".c-link[data-section='usage']").click();

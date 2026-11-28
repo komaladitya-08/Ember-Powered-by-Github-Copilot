@@ -186,6 +186,20 @@ describe("a session's options", () => {
     expect(h.audit).toContainEqual(expect.objectContaining({ phase: "configure", by: "user", keys: ["coauthor", "contextTier", "excludedTools", "reasoningSummary"] }));
   });
 
+  it("sets a credit limit as the session's limits and takes it off again (null)", async () => {
+    const h = harness();
+    const p = await project(h);
+    const r = await h.hub.dispatch({ type: "create", options: { projectId: p } }, "user");
+    if (!r.ok) throw new Error(r.reason);
+    await h.hub.dispatch({ type: "configure", sessionId: r.value.id, options: { maxAiCredits: 300 } }, "user");
+    expect(h.fake.updates.at(-1)).toEqual({ sessionLimits: { maxAiCredits: 300 } });
+    await h.hub.dispose();
+    await h.hub.dispatch({ type: "attach", sessionId: r.value.id }, "user");
+    expect(h.fake.configs.at(-1)).toMatchObject({ sessionLimits: { maxAiCredits: 300 } });
+    await h.hub.dispatch({ type: "configure", sessionId: r.value.id, options: { maxAiCredits: null } }, "user");
+    expect(h.fake.updates.at(-1)).toEqual({ sessionLimits: null });
+  });
+
   it("takes only the keys it knows from the window: never a sandbox, a mode or a tool allow-list", () => {
     const parse = (o: unknown) => CODE_ARGS.configure.args.safeParse(["s1", o]).success;
     expect(parse({ reasoningSummary: "concise" })).toBe(true);

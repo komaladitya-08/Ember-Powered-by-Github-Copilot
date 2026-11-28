@@ -549,12 +549,14 @@ export class SessionRuntime {
 }
 
 /** A session's kept options as `options.update` takes them (the same keys as SessionConfig's, but co-author's name). */
-export function optionsUpdate(o: CodeSessionOptions): { reasoningSummary?: "none" | "concise" | "detailed"; contextTier?: "default" | "long_context"; excludedTools?: string[]; coauthorEnabled?: boolean } {
+export function optionsUpdate(o: CodeSessionOptions): { reasoningSummary?: "none" | "concise" | "detailed"; contextTier?: "default" | "long_context"; excludedTools?: string[]; coauthorEnabled?: boolean; sessionLimits?: { maxAiCredits?: number } | null } {
   return {
     ...(o.reasoningSummary ? { reasoningSummary: o.reasoningSummary } : {}),
     ...(o.contextTier ? { contextTier: o.contextTier } : {}),
     ...(o.excludedTools ? { excludedTools: [...o.excludedTools] } : {}),
     ...(o.coauthor !== undefined ? { coauthorEnabled: o.coauthor } : {}),
+    // A limit, or none (null: probed on runtime 1.0.97, `session.session_limits_changed` then says null).
+    ...(o.maxAiCredits !== undefined ? { sessionLimits: o.maxAiCredits === null ? null : { maxAiCredits: o.maxAiCredits } } : {}),
   };
 }
 
@@ -573,6 +575,7 @@ export function setupConfig(setup: SessionRuntimeOptions["setup"]): Partial<Sess
     ...(o.contextTier ? { contextTier: o.contextTier } : {}),
     ...(o.excludedTools?.length ? { excludedTools: o.excludedTools } : {}),
     ...(o.coauthorEnabled !== undefined ? { coauthorEnabled: o.coauthorEnabled } : {}),
+    ...(o.sessionLimits ? { sessionLimits: o.sessionLimits } : {}),
   };
 }
 

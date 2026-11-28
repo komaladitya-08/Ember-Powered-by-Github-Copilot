@@ -32,6 +32,7 @@ export const SessionOptionsSchema = z.object({
   contextTier: z.enum(["default", "long_context"]).optional(),
   excludedTools: z.array(Text(200).regex(/^[A-Za-z0-9_.:*/-]+$/)).max(CODE_LIMITS.excludedTools).optional(),
   coauthor: z.boolean().optional(),
+  maxAiCredits: z.number().finite().positive().max(10_000_000).nullable().optional(),
 }).strict();
 
 const ProjectSchema = z.object({

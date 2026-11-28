@@ -161,9 +161,12 @@ describe.skipIf(gate)("the SDK's further features on the real runtime", () => {
       await page.getByLabel(/^glob\b/).uncheck();
       await page.locator("select[id^='cz-summary-']").selectOption("concise");
       await page.locator("[id^='cz-long-']").check();
+      await page.locator("input[id^='cz-credits-']").fill("500");
       await page.getByRole("button", { name: "Save session settings" }).click();
       await expect.poll(() => page.locator(".cz-said").textContent(), { timeout: 30_000 }).toBe("Saved. Copilot uses them from its next step.");
       await page.locator(".c-head .btn").click();
+      // The runtime's own word of the new limit, drawn as a note.
+      await expect.poll(() => page.locator("#transcript").innerText(), { timeout: 30_000 }).toContain("This session may now use up to 500 AI credits.");
       await say(page, "hello again", "Hello from the mock model.");
       expect(mock.requests.at(-1)!.tools).not.toContain("glob");
       expect(mock.requests.at(-1)!.tools).toContain("view");

@@ -115,6 +115,7 @@ const Options = z.object({
   contextTier: z.enum(["default", "long_context"]).optional(),
   excludedTools: z.array(z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:*/-]+$/)).max(CODE_LIMITS.excludedTools).optional(),
   coauthor: z.boolean().optional(),
+  maxAiCredits: z.number().finite().positive().max(10_000_000).nullable().optional(),
 }).strict();
 const FolderChange = z.union([z.object({ add: z.literal(true) }).strict(), z.object({ remove: PathText }).strict()]);
 

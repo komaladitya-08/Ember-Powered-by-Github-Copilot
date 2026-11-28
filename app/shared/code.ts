@@ -171,6 +171,8 @@ export interface CodeSessionOptions {
   /** Built-in tools left out, by the names `tools.getCurrentMetadata` lists. */
   excludedTools?: string[];
   coauthor?: boolean;
+  /** The most AI credits the session may use before it asks (`sessionLimits.maxAiCredits`); null: no limit. */
+  maxAiCredits?: number | null;
 }
 
 /** A project's own settings: its defaults, its instructions for Copilot, and folders its sessions may also use. */

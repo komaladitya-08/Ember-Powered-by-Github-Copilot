@@ -7,12 +7,12 @@
  */
 import type { CodeSessionOptions } from "../../shared/code";
 import {
-  COAUTHOR, LONG_CONTEXT, LONG_CONTEXT_LEAD, SAVE_SESSION_SETTINGS, SESSION_SETTINGS_SAVED, SESSION_SETTINGS_SECTION, SUMMARY, SUMMARY_LEAD, TOOLS, TOOLS_EMPTY,
-  TOOLS_LEAD, summaryName, toolLabel,
+  COAUTHOR, CREDIT_LIMIT, CREDIT_LIMIT_BAD, CREDIT_LIMIT_LEAD, LONG_CONTEXT, LONG_CONTEXT_LEAD, NO_CREDIT_LIMIT, SAVE_SESSION_SETTINGS, SESSION_SETTINGS_SAVED,
+  SESSION_SETTINGS_SECTION, SUMMARY, SUMMARY_LEAD, TOOLS, TOOLS_EMPTY, TOOLS_LEAD, creditsRecommended, summaryName, toolLabel,
 } from "./copy-settings";
-import { action, defineSection, field, part, problem } from "./customise-kit";
-import { el, idPart } from "./dom";
-import { arr, str } from "./sdk";
+import { action, defineSection, field, input, part, problem } from "./customise-kit";
+import { el, idPart, setText } from "./dom";
+import { arr, rec, str } from "./sdk";
 
 /** The tools a session lists (`tools.getCurrentMetadata`): name and title, MCP servers' tools left out (MCP servers has them). */
 export function builtinTools(v: unknown): { name: string; title?: string }[] {
@@ -20,13 +20,30 @@ export function builtinTools(v: unknown): { name: string; title?: string }[] {
 }
 
 /** The options a form holds, as main takes them. */
-export function sessionOptionsFrom(f: { summary: string; long: boolean; coauthor: boolean; off: readonly string[] }): CodeSessionOptions {
+export function sessionOptionsFrom(f: { summary: string; long: boolean; coauthor: boolean; off: readonly string[]; credits?: string }): CodeSessionOptions {
+  const credits = f.credits === undefined ? undefined : creditsFrom(f.credits);
   return {
     ...(f.summary ? { reasoningSummary: f.summary as CodeSessionOptions["reasoningSummary"] } : {}),
     contextTier: f.long ? "long_context" : "default",
     coauthor: f.coauthor,
     excludedTools: [...new Set(f.off)].sort(),
+    ...(credits !== undefined && credits !== "bad" ? { maxAiCredits: credits } : {}),
   };
+}
+
+/** A credit limit typed: a positive whole number, null for none (empty), or "bad". */
+export function creditsFrom(text: string): number | null | "bad" {
+  const t = text.trim();
+  if (!t) return null;
+  const n = Number(t);
+  return Number.isInteger(n) && n > 0 && n <= 10_000_000 ? n : "bad";
+}
+
+/** The credit cap `limitPrediction.predict` recommends for this session's model, when it has one. */
+export function recommendedCap(v: unknown): number | null {
+  const p = rec(v);
+  const cap = rec(p?.prediction)?.recommendedCap;
+  return p?.kind === "available" && typeof cap === "number" && Number.isFinite(cap) && cap > 0 ? cap : null;
 }
 
 defineSection(SESSION_SETTINGS_SECTION, "session", ctx => ({
@@ -51,9 +68,18 @@ defineSection(SESSION_SETTINGS_SECTION, "session", ctx => ({
       el("p", { className: "hint", textContent: LONG_CONTEXT_LEAD }),
       el("div", { className: "cz-switch-row" }, el("label", { htmlFor: coId, textContent: COAUTHOR }), coauthor),
     );
+    const credits = input({ type: "number", placeholder: NO_CREDIT_LIMIT });
+    credits.min = "1";
+    const creditField = field(`cz-credits-${id}`, CREDIT_LIMIT, credits, CREDIT_LIMIT_LEAD);
+    const recommended = el("p", { className: "hint" });
+    general.body.append(creditField.root, recommended);
+    void ctx.call("session", "limitPrediction.predict", {}).then(p => { const cap = p.ok ? recommendedCap(p.value) : null; setText(recommended, cap ? creditsRecommended(cap) : ""); });
     const save = action(SAVE_SESSION_SETTINGS, async () => {
       const off = [...boxes].filter(([, b]) => !b.checked).map(([n]) => n);
-      const res = await api.configure!(r.id, sessionOptionsFrom({ summary: summary.value, long: long.checked, coauthor: coauthor.checked, off }));
+      const bad = creditsFrom(credits.value) === "bad";
+      creditField.error(bad ? CREDIT_LIMIT_BAD : "");
+      if (bad) return;
+      const res = await api.configure!(r.id, sessionOptionsFrom({ summary: summary.value, long: long.checked, coauthor: coauthor.checked, off, credits: credits.value }));
       ctx.say(res.ok ? SESSION_SETTINGS_SAVED : res.reason);
     });
     body.replaceChildren(general.root, tools.root, el("div", { className: "cz-form-actions" }, save));
@@ -62,6 +88,7 @@ defineSection(SESSION_SETTINGS_SECTION, "session", ctx => ({
       summary.value = kept.reasoningSummary ?? "";
       long.checked = kept.contextTier === "long_context";
       coauthor.checked = kept.coauthor ?? true;
+      credits.value = typeof kept.maxAiCredits === "number" ? String(kept.maxAiCredits) : "";
       const off = new Set(kept.excludedTools ?? []);
       // A tool left out isn't in the session's list any more: it is still shown, off, so it can be turned on again.
       const listed = t.ok ? builtinTools(t.value) : [];

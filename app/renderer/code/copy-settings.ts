@@ -50,6 +50,11 @@ export function summaryName(v: string): string {
 export const LONG_CONTEXT = "Long context";
 export const LONG_CONTEXT_LEAD = "Lets a model that has a longer context window use it. It may cost more.";
 export const COAUTHOR = "Name Copilot as co-author of commits";
+export const CREDIT_LIMIT = "AI credit limit";
+export const CREDIT_LIMIT_LEAD = "Copilot stops and asks you when the session reaches it. Leave it empty for no limit.";
+export const NO_CREDIT_LIMIT = "No limit";
+export const CREDIT_LIMIT_BAD = "Type a whole number of credits, or leave it empty.";
+export function creditsRecommended(cap: number): string { return `Copilot suggests about ${cap.toLocaleString("en-GB")} credits for a session like this.`; }
 export const TOOLS = "Built-in tools";
 export const TOOLS_LEAD = "Turn a tool off to keep this session from using it. Turning one off never lets anything else through.";
 export const TOOLS_EMPTY = "Open the session to list its tools.";
