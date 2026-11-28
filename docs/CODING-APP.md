@@ -96,14 +96,14 @@ from it.
 |---|---|
 | Sidebar | Projects and their sessions: status (working, needs you, unread), pin, archive and an archived view, search, new session |
 | Start flow | Folder or known project; work in the folder or a new worktree and its base branch; model, reasoning effort, agent, modes |
-| Transcript | Messages with markdown and code; reasoning; tool rows (shell with live output, edits with diffs, reads, searches, fetches, MCP); sub-agent rows that open; plan and to-do updates; compaction and model changes; errors with their remedy; request cards |
+| Transcript | Messages with markdown and code, and the sources a reply cites; reasoning; tool rows (shell with live output, edits with diffs, reads, searches, fetches, MCP, pictures a tool returned); sub-agent rows that open; plan and to-do updates; compaction and model changes; handoffs, context truncation, finished tasks, schedules, workflows; errors with their remedy and the action it names (sign-in, the sandbox, rewind points); request cards |
 | Composer | Text; attachments (files, folders, images, pasted text); @-files and slash commands from the SDK's completions; pickers for model, reasoning effort, agent mode and permission mode; queue and steer while running; the queue itself; Stop; context and usage meter; dictation when the companion's voice is on |
 | Changes | The session's diff (session, unstaged, branch: `workspaces.diff`, its paths the repository top's), by file, with line comments sent back to the agent; rewind points with preview; commit, push and pull request through the agent. Read again after a tool that edited a file or ran a command, and again on its own while the runtime still says it is busy after a turn |
 | Plan | The plan file, to-dos with dependencies, the Autopilot objective, approve or revise when leaving plan mode |
 | Files | The working folder as main lists it (`listFolder`, a folder at a time; `.git` and what git ignores left out) with the session's changes marked, read through main (`readFile`); Copilot's own session files (`workspaces.listFiles`/`readFile`); a read-only viewer; attach to the composer |
 | Terminal | The user's own shell in the session's folder (`shell.executeUserRequested`, which waits for the command and streams `tool.user_requested`, `tool.shell_output`), and the output of the agent's commands |
 | Agents and tasks | Background agents and shells: progress, message, cancel, promote; start an agent (custom ones from `agent.list`, then Copilot's built-in types, which it doesn't list); fleet |
-| Customise | Models and providers; MCP servers (add, sign in in the browser through `openLink`, tools, resources, prompts; values never sent to the window); skills; plugins and marketplaces; custom agents; instructions; hooks; permission rules (`shell(npm test)`, `shell(git:*)`), trusted folders and locations; sandbox; schedules; usage and quota |
+| Customise | Models and providers; MCP servers (add, sign in in the browser through `openLink`, tools, resources, prompts; values never sent to the window); skills; plugins and marketplaces; custom agents; instructions; hooks; permission rules (`shell(npm test)`, `shell(git:*)`), trusted folders and locations; sandbox; schedules; usage and quota; the person's defaults and each project's instructions and extra folders; a session's settings (reasoning summaries, long context, co-author, credit limit, built-in tools left out); storage (sizes, old sessions deleted after a dry run) |
 | Sidebar's projects | Add, and Remove (asked again in place; refused while it has sessions, with main's sentence) |
 | Command palette | Every action and slash command by name |
 
@@ -228,8 +228,9 @@ repository, a subfolder of it and a worktree) and test/integration/code-panels-l
   plan, shows and edits it in the tab, has the model read the edit, and finds another session's state and Ember's
   settings refused by the sandbox. Not changed here: large tool output in the temporary folder is readable by every
   session's tools, and `session_store_sql` (in the runtime, unsandboxed) reads every session's history, as before.
-- **Not confirmed here** (they need a Copilot account or the network): `models.list`'s and `account.getQuota`'s answers,
-  `mcp.oauth.login`'s address and status, `quota.*` with a plan, plugin installs and marketplaces, `history.compact`'s
+- **Not confirmed here** (they need a Copilot account or the network): citations and generated images from a real
+  model (§8: built against the SDK's types, checked in the window with the stand-in only), `models.list`'s and
+  `account.getQuota`'s answers, `mcp.oauth.login`'s address and status, `quota.*` with a plan, plugin installs and marketplaces, `history.compact`'s
   summary from a real model, `completions.request` (it answered no items and no trigger characters with the mock model).
 
 ### The companion as an option
@@ -241,11 +242,56 @@ Making the companion an option (step 5, test/integration/companion-live.test.ts)
   own Confirmer put up, and a session's request is the SDK's, so it is answered in the coding window alone.
 - **The conversation needs the sign-in but the sign-in doesn't need the conversation.** Coding sessions take their
   access from the host's connection, so with the companion off the host still connects and only skips the conductor.
-- **The session's modes are the user's, not the companion's to pick.** There is no stored default yet (a session
-  starts as manual and interactive), so the companion picks none.
+- **The session's modes are the user's, not the companion's to pick.** The companion picks none: its sessions start
+  with the person's own defaults (§8, `CodeHub.userDefaults`), as a start by hand that names none does.
 - **Dictation in the composer is not in this build.** Listen once delivers its words to the conversation through
   main's request path; putting them in the composer as a draft needs a channel of its own from the voice process to
   the coding window, with Home's hold rules, which is more than forwarding one.
 
 Not in this build: cloud sessions and handoff, remote control from a phone, canvases and MCP Apps rendering,
-a built-in browser preview. The contract leaves room for each.
+a built-in browser preview. The contract leaves room for each; §8 says why each waits.
+
+## 8. SDK coverage
+
+An audit of SDK 1.0.21 (runtime 1.0.97) on 28 November 2026: its 393 RPC methods (`rpcmethods.txt`), 145 event types
+(`events.txt`), session options, permission kinds, attachments and hooks, against what the coding window and main
+name (grep of app/renderer/code and app/main/code; `CODE_RPC` in app/shared/code.ts), each new part probed on the
+bundled runtime with the mock model before it was built. **Used**: in the window before this audit. **Built**: added
+with it (test/integration/code-sdk-live.test.ts runs them on the real runtime; code-sdk-renderer.test.ts in the window).
+**Not built**: with the reason. test/unit/code-transcript-events.test.ts fails on an event type the transcript neither
+names nor folds on purpose.
+
+| Capability | State |
+|---|---|
+| Sessions: create, resume, list, delete, fork, attach with replay | Used |
+| Turns: send (queue, steer, agent mode, attachments: file, directory, selection, image blob), abort, interrupt keeping background work, `queue.*` | Used |
+| Permission requests: every kind (shell, write, read, url, mcp, memory, custom-tool, hook, workflow and extensions as "other", shown whole); decisions approve-once, for the session, read-only, for the location, permanently (URL), reject with feedback | Used |
+| Other blocking requests: the model's question, elicitation (form fields from the schema's types, enums, formats, ranges; URL mode opens through main), leaving plan mode, auto-mode switch, session limits, MCP sign-in | Used |
+| Permission and agent modes, rules, paths, trusted folders, locations; sandbox status | Used (modes only by their own commands; the sandbox only read) |
+| Models, reasoning effort, providers; MCP config, status, tools, resources, prompts, sign-in; skills, plugins, marketplaces, custom agents, instructions, hooks (read); schedules; usage, quota; plan, to-dos, objective; diff, rewind; files; the person's shell; background agents, fleet; slash commands, completions | Used |
+| Events: 108 of 145 drawn or kept as state before | Used |
+| The other 37 events: handoff, context truncation (was taken for a history cut, which blanked a kept history after it), cleared context, finished task, tool search, a retried model call (composer), auto tier that couldn't change, schedules, credit limit, permission recovery, an MCP server to restart, a model withdrawn, workflow runs, binary assets (pictures), branch from `session.context_changed` | Built |
+| Hidden on purpose: telemetry (fusion, auto router, usage record, quota observation, completion receipt), events of what Ember never registers (host tools `external_tool.*`, host commands `command.execute`, header refresh, canvases, MCP Apps), side questions | Built (each with why, in transcript.ts) |
+| `session.custom_notification` (an extension's own) | Folded as a generic row |
+| Citations (`enableCitations`) on replies; pictures in tool results (`binaryResultsForLlm`, `contents` of type image) | Built: data URLs of PNG, JPEG, GIF or WebP whose first bytes match, whole base64 only (main cuts strings past 128 KiB, so larger pictures say they aren't shown; the runtime's secret filter can star a short provider key inside base64, which is refused) |
+| Remediations: sign in, switch or show account, review the sandbox, allow outbound, rewind | Built: sign-in opens Home's Copilot section (`openSignIn`), the sandbox's Customise › Sandbox, rewind the Changes tab |
+| The person's defaults (permission mode, agent mode, model, effort, worktree) for every project and per project | Built: Ember's index, `CodeHub.userDefaults(projectId?)`, the start flow preselects; the organisation's modes win |
+| `systemMessage` append (a project's instructions), `additionalDirectories` (extra folders from main's picker), `reasoningSummary`, `contextTier`, `excludedTools`, `coauthorEnabled`, `sessionLimits.maxAiCredits` (with `limitPrediction.predict`'s cap) | Built: create and every resume (the runtime forgets them), changed live through main's `configure` (`options.update`) |
+| `sessions.getSizes`, `sessions.pruneOld` (dry run only), transcript export, `history.summarizeForHandoff` | Built: Customise › Storage deletes through Ember's own Delete (index and worktrees kept whole); export through main's save dialog; a handoff leaves the summary as a draft |
+| `history.truncate` | Not built: it is a rewind of the conversation (`session.snapshot_rewind`, probed), which the Changes tab has |
+| `history.clearContext` | Not built: the runtime takes it only from inside a tool handler (probed), and Ember defines no tools |
+| `name.setAuto` | Not built: it takes the summary the host supplies (probed); `name.set` and the runtime's own titles cover naming |
+| `allowedModels`, `toolSearch`, `largeOutput`, `imageGeneration`, `infiniteSessions` thresholds, `disabledMcpServers`, `agent`/`excludedBuiltinAgents`, `availableTools`, `enableConfigDiscovery` | Not built: tool search and large output keep the runtime's defaults (tool search past 30 tools; large output saved to the temporary folder, §7); an allow-list of tools or models and image generation would need the window to widen or narrow what main passes, which only main decides (the window may only narrow, as excluded tools do); MCP servers start and stop per session in Customise; the start flow picks an agent; generated images need a model that makes them, which the mock can't, and arrive as `session.binary_asset`, which is drawn |
+| MCP sampling (`sampling.requested`) | Not built: the event names only the server and an id, not what it asks the model, so approval would be blind; the card offers only to refuse |
+| MCP resources as attachments, prompts as slash commands | Not built: the SDK's attachment union has no resource kind; Customise › MCP servers lists both |
+| MCP Apps (`enableMcpApps`, `mcp.apps.*`) and canvases (`canvas.*`, `requestCanvasRenderer`) | Not built: they are server-written HTML with scripts. The window's CSP is `script-src 'self'`, which a `srcdoc` frame inherits, so the app could not run; loosening it would let the server's script share the window's policy. A safe host needs a frame on an origin of its own (a custom protocol serving only that resource) with `sandbox="allow-scripts"` and no same-origin, its own CSP with `connect-src 'none'`, and a postMessage bridge that passes only SEP-1865's methods through main's allow-list |
+| Workflows (`workflow.*`, the `workflow` permission kind) | Not built: the runtime answers "Agent workflows are not available for this session" without an account (`quota.get`: `dynamicWorkflowsEnabled: false`), and workflows are defined by the host's code (`defineWorkflow`), of which Ember has none; their events are drawn |
+| Remote and cloud (`cloud`, `remoteSession`, `sessions.open` remote, cloud and handoff, `remote.*`, `environments.*`, remote control) | Not built: `remote.enable` and `environments.list` answer "not authenticated" (probed), `visibility.set` reports nothing synced; an account-backed test would need a Copilot login with Mission Control, a repository on GitHub and network to github.com |
+| Account (`account.getCurrentAuth`, `gitHubAuth.getStatus`, `accounts.*`, login, logout) | Not built beyond the sign-in remedy: the coding runtime is tokenless by design (runtime.ts); Home owns signing in |
+| Quota warnings (`quota.takeWarnings`) | Not built: they answer an empty list without an account; with one, Customise › Usage shows the quota |
+| Hooks: `onPreToolUse` (Ember's data, Stop), `onPostToolUse` (vault values) | Used |
+| Hooks: `onUserPromptSubmitted`, `onSessionStart`/`End`, `onErrorOccurred`, `onAgentStop`, `onSubagentStart`/`Stop`, `onPreMcpToolCall` | Not built: none protects or informs beyond what the events already say (an error with its remedy, a sub-agent's row); retry is the runtime's own (`model.call_failure`); a hook that changes a prompt or a result would change what the person sent without their seeing it |
+| Diagnostics (`debug.collectLogs`, `diagnostics.read`) | Not built: `collectLogs` writes the runtime's logs, which hold prompts and file contents, to a path; `diagnostics.read` reads MCP only |
+| Search across sessions | Not built: only the model's `session_store_sql` tool reaches the session store; the sidebar searches session names |
+| Host-side SDK parts: custom tools, host slash commands, `sessionFs`, `requestHandler`, extensions, telemetry, LSP, AHP host | Not built: each would put Ember's own code in the session's path, which the guards keep to the two hooks above |
+
