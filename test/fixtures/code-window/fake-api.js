@@ -537,7 +537,7 @@
   window.emberCode = api;
   window.__fake = {
     calls, emit, sessions, pending, panels, request: openRequest, setRow,
-    calls, emit, sessions, pending, refuse, params, mcp,
+    refuse, params, mcp,
     gap() { skip = true; },
     /** Main's word that the microphone opened or closed for a request. */
     mic(on) { micHeld = on; for (const fn of listeners.mic) fn(on); },
