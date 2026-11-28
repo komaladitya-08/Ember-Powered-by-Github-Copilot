@@ -994,10 +994,28 @@ default: no coding runtime starts and every coding channel refuses). Its contrac
   mode, no path of Ember's data). The audit log's `code` entries record each session's start, open, close and end,
   each decision with who made it (`by`: user, companion, system or sdk), each mode change and each message's length.
 - **The window**: its creator registers its webContents with main's `codeWindows` (app/main/code/ipc.ts
-  `CodeWindows.register`); until then every sender is refused.
+  `CodeWindows.register`); until then every sender is refused. With coding sessions on, a start by hand (not at login,
+  not for Ask Ember, not before first run) opens it beside whatever else the start shows (launcher.ts
+  `opensCodeAtStart`); closing it lets go of every session it watched (`CodeHub.windowGone`).
+- **Unread**: what happens in a session no window shows with the focus is counted unread and kept in the index as it
+  changes; the window calls `markRead` when it shows a session and has the focus.
+- **Links**: `openLink` opens an http or https address with no user name or password in it (`linkRefusal`) in the
+  person's browser through `shell.openExternal`, audited as a `code` entry with the host alone.
+- **Projects**: removing a project is refused while any session is under it. A session the runtime keeps and the index
+  doesn't is listed under the project of its folder (added as the picker would add it), or under none ("Other
+  sessions") where Ember won't work in that folder.
+- **Forks**: a fork of a worktree session gets a worktree of its own, from the commit its parent's stands at with the
+  parent's uncommitted and untracked (not ignored) files; where that can't be made whole there is no fork.
 
 The integration suite is test/integration/code-session.test.ts (the bundled runtime and the mock model, Linux: git,
-and bubblewrap for the sandbox).
+and bubblewrap for the sandbox). The window against a scripted fake of `window.emberCode` is
+`EMBER_UIUX_TEST=1 EMBER_CHROMIUM_PATH=/usr/bin/google-chrome npm run test:integration -- test/integration/code-window-renderer.test.ts`
+(after `npm run build`). The whole thing end to end, the real window in real Electron on the real runtime with the
+mock model, is `EMBER_CODE_LIVE=1 dbus-run-session -- xvfb-run -a npm run test:integration -- test/integration/code-window-live.test.ts`
+(after `npm run build`; Linux with git): it adds a project, allows a command by keyboard, turns down a change with a
+reason, restarts Ember, starts a worktree session, stops a turn, opens a link, deletes the worktree session from the
+command palette, and checks that Home's page can't reach the coding channels and that with coding sessions off the
+window doesn't open. It replaces main's folder picker and `shell.openExternal` through Playwright, not a switch.
 
 ### Extensions: the runtime and the gate
 

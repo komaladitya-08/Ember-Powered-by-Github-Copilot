@@ -130,5 +130,25 @@ session is untrusted text. Stop reaches it first.
 6. **Retire what this replaces:** Home's Chats pane and `app/main/agent/chat-*`, then the isolated-copy coding path
    with its Windows pin workflows.
 
+## 7. What the first end-to-end run corrected
+
+The real window in real Electron on the real runtime (test/integration/code-window-live.test.ts, 28 November 2026)
+found where the design and the parts built against it were wrong:
+
+- **The window didn't open.** Wiring the coding window into the start detached the greeting (an `else` bound to the
+  new `if`), and opened the window only for a start that greets, never when a setup row opened settings. A start by
+  hand now opens it beside whatever else it shows (`opensCodeAtStart`), and the greeting is back.
+- **A permission's record is the runtime's, not the answer.** `permission.completed` says `approved` for a one-time
+  yes, not the `approve-once` the window sent; the window read it as a bare "Allowed".
+- **"Attach" is not "looked at".** Attaching cleared a session's unread count and nothing counted while any window
+  was attached, so a session kept attached in the background never showed what happened in it. Unread now counts
+  until the window says it shows the session with the focus (`markRead`), and is kept as it changes.
+- **A session couldn't be deleted from the window.** The contract had `remove` and `fork`, the window no control for
+  them; the command palette has both now (Delete asks again, with keeping it first).
+- **A fork shared its parent's worktree,** so deleting the parent took the fork's folder. A fork gets its own.
+- **Links opened nothing.** The contract has `openLink` now, through main.
+- **The microphone's hold** reaches the window over its own channel (`code:mic-held`, from Home's rule
+  `voiceHoldsLive`), not a hook left for later.
+
 Not in this build: cloud sessions and handoff, remote control from a phone, canvases and MCP Apps rendering,
 a built-in browser preview. The contract leaves room for each.
