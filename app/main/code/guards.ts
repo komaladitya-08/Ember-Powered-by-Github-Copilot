@@ -61,6 +61,7 @@ export const CODE_REFUSALS = {
   folderRead: "Ember couldn't read that.",
   instructions: "Those instructions are too long. Shorten them.",
   tooManyFolders: "That's as many extra folders as a project takes.",
+  exportFailed: "Ember couldn't save that file. Choose another place.",
 } as const;
 
 /**

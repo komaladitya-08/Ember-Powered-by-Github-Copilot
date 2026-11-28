@@ -16,5 +16,6 @@ import "./customise-usage";
 // The person's defaults and a project's settings, a session's own options (docs/CODING-APP.md §8).
 import "./customise-defaults";
 import "./customise-session";
+import "./customise-storage";
 // The companion's state, with a way to its switch in settings (not an SDK page: docs/CODING-APP.md §5).
 import "./customise-companion";

@@ -16,6 +16,8 @@ import { requestTitle } from "./cards";
 import { mountComposer } from "./composer";
 import { CUSTOMISE, GO_TO_REQUEST, NEW_SESSION, PALETTE_ACTIONS, PALETTE_TITLE, SIDEBAR_RESIZE, TAB_NAMES, needsYouBar, paletteHint, paletteTab, pathTail, removeSessionAction, sandboxWords, sessionTitle } from "./copy";
 import { branchWords } from "./copy-events";
+import { EXPORT_ACTION, HANDOFF_ACTION } from "./copy-storage";
+import { exportSession, handoff } from "./lifecycle";
 import { mountCustomise, sectionId } from "./customise";
 import "./customise-sections";
 import { byId, setText } from "./dom";
@@ -189,6 +191,8 @@ function start(api: EmberCodeApi): void {
       if (s.transcripts[row.id]?.busy || row.busy) list.push({ id: "stop", label: PALETTE_ACTIONS.stop, run: () => { void app.interrupt(row.id); } });
       list.push(
         { id: "fork", label: PALETTE_ACTIONS.fork, run: () => { void app.fork(row.id); } },
+        { id: "handoff", label: HANDOFF_ACTION, run: () => { void handoff(app, row).then(id => { if (id) composer.focus(); }); } },
+        ...(app.api.exportSession ? [{ id: "export", label: EXPORT_ACTION, run: () => { void exportSession(app, row); } }] : []),
         { id: "remove", label: PALETTE_ACTIONS.remove, run: () => { removing = row.id; palette.open(); } },
       );
       for (const c of app.commands.get(row.id) ?? []) list.push(slashAction(c.name, c.description, words => composer.insert(words)));

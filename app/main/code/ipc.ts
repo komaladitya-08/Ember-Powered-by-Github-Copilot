@@ -150,6 +150,9 @@ export const CODE_ARGS = {
   projectFolders: { args: z.tuple([Id, FolderChange]), command: ([projectId, change]: [string, z.infer<typeof FolderChange>]): CodeCommand => ({ type: "projectFolders", projectId, change }) },
   sessionOptions: { args: z.tuple([Id]), command: ([sessionId]: [string]): CodeCommand => ({ type: "sessionOptions", sessionId }) },
   configure: { args: z.tuple([Id, Options]), command: ([sessionId, options]: [string, z.infer<typeof Options>]): CodeCommand => ({ type: "configure", sessionId, options }) },
+  prune: { args: z.tuple([z.object({ olderThanDays: z.number().int().min(1).max(3650), dryRun: z.boolean() }).strict()]),
+    command: ([o]: [{ olderThanDays: number; dryRun: boolean }]): CodeCommand => ({ type: "prune", olderThanDays: o.olderThanDays, dryRun: o.dryRun }) },
+  exportSession: { args: z.tuple([Id]), command: ([sessionId]: [string]): CodeCommand => ({ type: "exportSession", sessionId }) },
 } as const;
 
 type Channel = keyof typeof CODE_ARGS;

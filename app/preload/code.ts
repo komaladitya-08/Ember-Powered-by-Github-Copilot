@@ -51,6 +51,8 @@ const api: EmberCodeApi = {
   projectFolders: (projectId, change) => ipcRenderer.invoke(CODE_IPC.projectFolders, projectId, change),
   sessionOptions: sessionId => ipcRenderer.invoke(CODE_IPC.sessionOptions, sessionId),
   configure: (sessionId, options) => ipcRenderer.invoke(CODE_IPC.configure, sessionId, options),
+  prune: o => ipcRenderer.invoke(CODE_IPC.prune, o),
+  exportSession: sessionId => ipcRenderer.invoke(CODE_IPC.exportSession, sessionId),
   onShow: listener => listen<unknown>(CODE_IPC.show, v => { if (typeof v === "string" && v.length <= 200) listener(v); }),
 };
 

@@ -204,6 +204,13 @@ export interface CodeSettingsChange {
   instructions?: string;
 }
 
+/** Sessions not used for a while, as the runtime's dry run found them (`prune`), and whether they were deleted. */
+export interface CodePrune {
+  sessions: { id: string; name: string; bytes: number }[];
+  bytes: number;
+  deleted: boolean;
+}
+
 /** A message to a session. */
 export interface CodeSend {
   sessionId: string;
@@ -419,6 +426,10 @@ export const CODE_IPC = {
   sessionOptions: "code:session-options",
   /** (sessionId, CodeSessionOptions) => CodeDone<CodeSessionOptions>: changed now (`options.update`) and kept. */
   configure: "code:configure",
+  /** ({ olderThanDays, dryRun }) => CodeDone<CodePrune>: sessions not used for that long (never open or pinned ones). */
+  prune: "code:prune",
+  /** (sessionId) => CodeDone: the transcript as Markdown, in a file main's save dialog chose. */
+  exportSession: "code:export-session",
 } as const;
 
 /** The API the coding window's preload exposes as `window.emberCode`. */
@@ -469,4 +480,8 @@ export interface EmberCodeApi {
   /** A session's kept options, and a change to them (applied now where the SDK allows it, and kept). */
   sessionOptions?(sessionId: string): Promise<CodeDone<CodeSessionOptions>>;
   configure?(sessionId: string, options: CodeSessionOptions): Promise<CodeDone<CodeSessionOptions>>;
+  /** Sessions not used for `olderThanDays` days: a dry run lists them, then the same call with dryRun false deletes them. */
+  prune?(o: { olderThanDays: number; dryRun: boolean }): Promise<CodeDone<CodePrune>>;
+  /** Saves a session's transcript as Markdown where the person chooses (main's save dialog). */
+  exportSession?(sessionId: string): Promise<CodeDone>;
 }

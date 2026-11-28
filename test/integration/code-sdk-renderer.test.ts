@@ -163,6 +163,39 @@ describe.skipIf(gate)("the person's defaults, a project's settings and a session
     expect(page.errors).toEqual([]);
   });
 
+  it("shows each session's size and deletes old ones only after a dry run and a second press", async () => {
+    const page = await open();
+    await customise(page, "storage");
+    await expect.poll(() => page.locator(".cz-part").first().locator(".cz-row").count()).toBe(3);
+    await page.getByRole("button", { name: "Find old sessions" }).click();
+    await expect.poll(() => page.locator(".cz-prune-found > .cz-line").textContent()).toBe("1 session not used for that long, taking 250 KB:");
+    expect(await calls(page)).toContain("prune:30:true");
+    expect((await calls(page)).filter(c => c.startsWith("prune:30:false"))).toEqual([]);
+    await page.locator(".cz-prune-found").getByRole("button", { name: "Delete 1 session" }).click();
+    await shot(page, "storage-confirm");
+    await page.locator(".cz-ask").getByRole("button", { name: "Delete 1 session" }).click();
+    await expect.poll(() => page.locator(".cz-said").textContent()).toBe("Deleted 1 session, freeing 250 KB.");
+    expect(await calls(page)).toContain("prune:30:false");
+    expect(page.errors).toEqual([]);
+  });
+
+  it("exports a session and starts a new one from its summary, left as a draft to send", async () => {
+    const page = await open();
+    const palette = async (name: string) => {
+      await page.keyboard.press("Control+k");
+      await page.locator("#palette-input").fill(name);
+      await page.keyboard.press("Enter");
+    };
+    await palette("Export this session");
+    await expect.poll(() => calls(page)).toContain("exportSession:s-login");
+    await palette("New session from this one's summary");
+    await expect.poll(async () => (await calls(page)).some(c => c.startsWith('create:{"projectId":"p-app"'))).toBe(true);
+    await expect.poll(() => page.locator("#composer-text, .composer textarea").first().inputValue()).toContain("Carry on from this summary of an earlier session:");
+    expect((await calls(page)).filter(c => c.startsWith("send:s-new"))).toEqual([]);
+    await shot(page, "handoff-draft");
+    expect(page.errors).toEqual([]);
+  });
+
   it("changes a session's summaries, long context, co-author and built-in tools, and keeps them", async () => {
     const page = await open();
     await customise(page, "session-settings");

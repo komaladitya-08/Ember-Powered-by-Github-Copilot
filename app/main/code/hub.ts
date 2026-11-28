@@ -22,7 +22,7 @@ import type { CopilotClient, SessionEvent } from "@github/copilot-sdk";
 import type {
   CodeActor, CodeAgentMode, CodeAttached, CodeAttachment, CodeCreate, CodeDefaults, CodeDone, CodeEventEnvelope, CodeFileRead, CodeFolderListing,
   CodePendingRequest, CodePermissionMode, CodeProject, CodeRequestAnswer, CodeRpcCall, CodeSdkEvent, CodeSend, CodeSessionOptions, CodeSessionRow,
-  CodeSettings, CodeSettingsChange,
+  CodePrune, CodeSettings, CodeSettingsChange,
 } from "../../shared/code";
 import { CODE_IPC, CODE_LIMITS, linkRefusal } from "../../shared/code";
 import type { AuditEntry } from "../policy/audit";
@@ -41,7 +41,8 @@ import type { RequestChange } from "./pending";
 import { codeDir } from "./runtime";
 import { siblingDenials } from "./state";
 import { SessionIndex, indexFile, type IndexSession } from "./session-index";
-import { CodeUnavailable, SessionRuntime, rpcFn, sessionStateDir, type CodeAccess, type CodeSandbox, type SessionRuntimeOptions } from "./session-runtime";
+import { CodeUnavailable, SessionRuntime, readPersistedHistory, rpcFn, sessionStateDir, type CodeAccess, type CodeSandbox, type SessionRuntimeOptions } from "./session-runtime";
+import { exportName, transcriptMarkdown } from "./export";
 import { FolderRefused, createWorktree, forkWorktree, gitFacts, gitRunner, removeWorktree, usableFolder, type GitRunner } from "./workspaces";
 
 /** Every command the hub takes, by the window's channel names (CODE_IPC). */
@@ -71,7 +72,9 @@ export type CodeCommand =
   | { type: "setSettings"; change: CodeSettingsChange }
   | { type: "projectFolders"; projectId: string; change: { add: true } | { remove: string } }
   | { type: "sessionOptions"; sessionId: string }
-  | { type: "configure"; sessionId: string; options: CodeSessionOptions };
+  | { type: "configure"; sessionId: string; options: CodeSessionOptions }
+  | { type: "prune"; olderThanDays: number; dryRun: boolean }
+  | { type: "exportSession"; sessionId: string };
 
 /** What each command answers. */
 export interface CodeAnswers {
@@ -101,6 +104,8 @@ export interface CodeAnswers {
   projectFolders: CodeDone<string[]>;
   sessionOptions: CodeDone<CodeSessionOptions>;
   configure: CodeDone<CodeSessionOptions>;
+  prune: CodeDone<CodePrune>;
+  exportSession: CodeDone;
 }
 
 /** Where a change goes: one window's events, or every window's rows and requests. */
@@ -139,6 +144,8 @@ export interface CodeHubDeps {
   pickFolder(): Promise<string | null>;
   /** Main's own file picker rooted at `root`; null when none was chosen. */
   pickFiles(root: string): Promise<string[] | null>;
+  /** Main's own save dialog for a file named `name`; null when none was chosen. None: sessions aren't exported. */
+  pickSaveFile?: (name: string) => Promise<string | null>;
   /** Opens a checked http or https address in the person's browser (main.ts: shell.openExternal); none: links don't open. */
   openExternal?: (url: string) => Promise<void>;
   log?: { info(event: string, fields?: Record<string, unknown>): void; warn(event: string, fields?: Record<string, unknown>): void };
@@ -245,6 +252,8 @@ export class CodeHub {
       case "projectFolders": return this.projectFolders(c.projectId, c.change, actor);
       case "sessionOptions": return this.sessionOptions(c.sessionId);
       case "configure": return this.configure(c.sessionId, c.options, actor);
+      case "prune": return this.prune(c.olderThanDays, c.dryRun, actor);
+      case "exportSession": return this.exportSession(c.sessionId, actor);
     }
   }
 
@@ -903,6 +912,55 @@ export class CodeHub {
     if (!this.index.updateSession(id, { options: next }, false)) return refuse(CODE_REFUSALS.badArgs);
     this.record(id, { phase: "configure", by: actor, keys: Object.keys(options).sort(), ...(next.excludedTools ? { excludedTools: next.excludedTools.length } : {}) });
     return { ok: true, value: next };
+  }
+
+  // ── Storage and export ────────────────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Sessions not used for `olderThanDays` days: the runtime's own dry run (`sessions.pruneOld` with `dryRun`) says
+   * which, never an open, busy or pinned one (excluded by id), each with its size (`sessions.getSizes`); with `dryRun`
+   * false each is deleted as Delete deletes one (its history, its index record, a worktree Ember made), so the index and
+   * worktrees stay whole: the runtime's own delete would leave both behind. Audited with the count.
+   */
+  private async prune(olderThanDays: number, dryRun: boolean, actor: CodeActor): Promise<CodeDone<CodePrune>> {
+    this.gate();
+    const client = await this.d.client();
+    const keep = [...new Set([...[...this.sessions.entries()].filter(([, s]) => !s.closed).map(([id]) => id), ...this.index.sessionIds().filter(id => this.index.session(id)?.pinned)])];
+    const plan = await this.rpcCall(() => client.rpc.sessions.pruneOld({ olderThanDays, dryRun: true, includeNamed: true, ...(keep.length ? { excludeSessionIds: keep } : {}) }));
+    const sizes = (await this.rpcCall(() => client.rpc.sessions.getSizes()).catch(() => ({ sizes: {} as Record<string, number> }))).sizes ?? {};
+    const ids = (plan.candidates ?? []).filter((id: unknown): id is string => typeof id === "string" && !keep.includes(id));
+    const sessions = ids.map(id => ({ id, name: this.row(id)?.name ?? "", bytes: typeof sizes[id] === "number" ? sizes[id] : 0 }));
+    if (dryRun) return { ok: true, value: { sessions, bytes: sessions.reduce((n, s) => n + s.bytes, 0), deleted: false } };
+    let removed = 0;
+    for (const s of sessions) if ((await this.remove(s.id, actor)).ok) removed++;
+    this.record(null, { phase: "prune", by: actor, olderThanDays, removed });
+    return { ok: true, value: { sessions, bytes: sessions.reduce((n, s) => n + s.bytes, 0), deleted: true } };
+  }
+
+  /**
+   * A session's transcript as Markdown (export.ts) in a file the person chose in main's own save dialog: never a path
+   * from the window, never inside Ember's data, written 0600. Read from the SDK's kept events without opening the
+   * session, redacted and bounded as events are. Audited by its size, never its words or the path.
+   */
+  private async exportSession(id: string, actor: CodeActor): Promise<CodeDone> {
+    this.gate();
+    if (!this.d.pickSaveFile) return refuse(CODE_REFUSALS.rpcUnsupported);
+    const row = this.row(id);
+    if (!row || !this.index.session(id) && !this.sessions.has(id)) return refuse(CODE_REFUSALS.unknown);
+    const open = this.sessions.get(id);
+    const kept = await this.rpcCall(async () => (open && !open.closed ? open.history() : readPersistedHistory(await this.d.client(), id)));
+    const redact = eventRedactor(this.d.redact);
+    const events = kept.map(e => ({ type: String(e.type), data: boundData((e as { data?: unknown }).data ?? {}, redact).data }));
+    const markdown = transcriptMarkdown(events, { title: row.name, folder: row.folder, at: new Date(this.now()) });
+    const file = await this.d.pickSaveFile(exportName(row.name));
+    if (!file) return refuse(CODE_REFUSALS.picked);
+    if (!path.isAbsolute(file) || reachesEmberData([file], { place: { ...this.d.place(), ember: this.emberPaths() } }) !== false) return refuse(CODE_REFUSALS.emberData);
+    if (!this.record(id, { phase: "export", by: actor, chars: markdown.length })) return refuse(CODE_REFUSALS.audit);
+    try { await fs.writeFile(file, markdown, { encoding: "utf8", mode: 0o600 }); } catch (err) {
+      this.d.log?.warn("code.export_failed", { err: err instanceof Error ? err.name : "unknown" });
+      return refuse(CODE_REFUSALS.exportFailed);
+    }
+    return { ok: true };
   }
 
   /** What session `record` opens with: its project's instructions and extra folders (each still usable), its options. */

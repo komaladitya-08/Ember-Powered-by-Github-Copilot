@@ -573,6 +573,8 @@
         ] } };
         case "schedule.list": return { ok: true, value: { entries: schedules.slice() } };
         case "schedule.stop": { const e = schedules.find(x => x.id === c.params.id); schedules = schedules.filter(x => x.id !== c.params.id); return { ok: true, value: e ? { entry: e } : {} }; }
+        case "sessions.getSizes": return { ok: true, value: { sizes: Object.fromEntries([...sessions.keys()].map((id, i) => [id, 255720 * (i + 1)])) } };
+        case "history.summarizeForHandoff": return { ok: true, value: { summary: "The login redirect now keeps `next`; the tests for it pass." } };
         // The real runtime's list (1.0.97, the mock model), titles as it gave them; web_fetch left out by the session.
         case "tools.getCurrentMetadata": return { ok: true, value: { tools: [
           { name: "bash", title: "Running command" }, { name: "view", title: "Viewing file" }, { name: "create", title: "Creating file" },
@@ -626,6 +628,14 @@
       return { ok: true, value: p.folders.slice() };
     },
     async sessionOptions(id) { calls.push(`sessionOptions:${id}`); return { ok: true, value: { ...(kept.options[id] ?? {}) } }; },
+    // Storage: the runtime's dry run finds the archived session (never an open or pinned one), then Delete takes it.
+    async prune(o) {
+      calls.push(`prune:${o.olderThanDays}:${o.dryRun}`);
+      const old = [...sessions.values()].filter(r => r.archived && !r.pinned);
+      if (!o.dryRun) for (const r of old) { sessions.delete(r.id); for (const fn of listeners.row) fn({ removed: r.id }); }
+      return { ok: true, value: { sessions: old.map(r => ({ id: r.id, name: r.name, bytes: 255720 })), bytes: old.length * 255720, deleted: !o.dryRun } };
+    },
+    async exportSession(id) { calls.push(`exportSession:${id}`); return { ok: true }; },
     async configure(id, options) { calls.push(`configure:${id}:${JSON.stringify(options)}`); kept.options[id] = { ...(kept.options[id] ?? {}), ...options }; return { ok: true, value: { ...kept.options[id] } }; },
   };
   const kept = { defaults: {}, projects: {}, options: {} };

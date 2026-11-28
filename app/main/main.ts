@@ -3998,6 +3998,8 @@ function start(): void {
       },
       // An address the hub has checked (http or https, no credentials: linkRefusal), in the person's own browser.
       openExternal: url => shell.openExternal(url),
+      // A session's exported transcript: main's own save dialog (the hub refuses a place in Ember's data).
+      pickSaveFile: async name => { const o = { defaultPath: path.join(app.getPath("documents"), name), filters: [{ name: "Markdown", extensions: ["md"] }] }; const owner = codeOwner(); const r = owner ? await dialog.showSaveDialog(owner, o) : await dialog.showSaveDialog(o); return r.canceled || !r.filePath ? null : r.filePath; },
     });
     settings.onChange(() => { void code.changed(); });
     app.on("will-quit", () => { void code.dispose().finally(() => codeRuntime.stop()); });
