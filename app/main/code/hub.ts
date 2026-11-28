@@ -21,7 +21,7 @@ import path from "node:path";
 import type { CopilotClient, SessionEvent } from "@github/copilot-sdk";
 import type {
   CodeActor, CodeAgentMode, CodeAttached, CodeAttachment, CodeCreate, CodeDone, CodeEventEnvelope, CodeFileRead, CodeFolderListing,
-  CodePendingRequest, CodePermissionMode, CodeProject, CodeRequestAnswer, CodeRpcCall, CodeSend, CodeSessionRow,
+  CodePendingRequest, CodePermissionMode, CodeProject, CodeRequestAnswer, CodeRpcCall, CodeSdkEvent, CodeSend, CodeSessionRow,
 } from "../../shared/code";
 import { CODE_IPC, CODE_LIMITS, linkRefusal } from "../../shared/code";
 import type { AuditEntry } from "../policy/audit";
@@ -35,6 +35,7 @@ import { boundData, EventLog, eventRedactor } from "./events";
 import { CODE_REFUSALS, isInside, reachesEmberData, refuse, rpcFailure, rpcRefusal } from "./guards";
 import { FolderPathRefused, listFolder, readFolderFile } from "./folder";
 import { KeptMissing, hideMcpSecrets, holdsKept, keptMerged } from "./mcp-secrets";
+import { COMPANION_REFUSALS, CompanionPace, companionRefusal } from "./companion";
 import type { RequestChange } from "./pending";
 import { codeDir, codeRuntimeHome } from "./runtime";
 import { SessionIndex, indexFile, type IndexSession } from "./session-index";
@@ -158,11 +159,14 @@ export class CodeHub {
   private readonly index: SessionIndex;
   private readonly git: GitRunner;
   private readonly now: () => number;
+  /** The companion's commands a minute (companion.ts CompanionPace). */
+  private readonly pace: CompanionPace;
 
   constructor(private readonly d: CodeHubDeps) {
     this.index = d.index ?? new SessionIndex(indexFile(codeDir(d.userData)), d.log).load();
     this.git = d.git ?? gitRunner();
     this.now = d.now ?? Date.now;
+    this.pace = new CompanionPace(undefined, this.now);
   }
 
   /** Why nothing may start or be sent now, or null. */
@@ -177,7 +181,12 @@ export class CodeHub {
   /** Runs one command for `actor` (`from`: the window that sent it, for its events). Never throws. */
   async dispatch<C extends CodeCommand>(command: C, actor: CodeActor, from = "window"): Promise<CodeAnswers[C["type"]]> {
     try {
-      if (actor === "companion") this.record(null, { phase: "companion", command: command.type });
+      if (actor === "companion") {
+        // What the companion may ask, and how fast, is the hub's to hold (companion.ts), never the prompt's.
+        const why = companionRefusal(command) ?? (command.type !== "stopAll" && !this.pace.take() ? COMPANION_REFUSALS.paced : null);
+        this.record(null, { phase: "companion", command: command.type, ...(why ? { refused: true } : {}) });
+        if (why) return refuse(why) as unknown as CodeAnswers[C["type"]];
+      }
       return await this.run(command, actor, from) as CodeAnswers[C["type"]];
     } catch (err) {
       if (command.type === "list") return { projects: this.index.projects(), sessions: [] } as unknown as CodeAnswers[C["type"]];
@@ -834,6 +843,30 @@ export class CodeHub {
   /** The requests waiting in every open session (for the companion's "what is waiting"). */
   waiting(): CodePendingRequest[] {
     return [...this.sessions.values()].filter(s => !s.closed).flatMap(s => s.requests());
+  }
+
+  /**
+   * What the companion's read of session `id` sees (companion.ts readText): its row, the events this run holds for it
+   * (none for a session not open in this run: nothing is opened or read from the runtime for a read), what waits in
+   * it and its project's name. Null for a session the hub doesn't know, or while sessions may not run. Audited as a
+   * companion command.
+   */
+  companionRead(id: string): { row: CodeSessionRow; events: CodeSdkEvent[]; waiting: CodePendingRequest[]; project: string } | null {
+    if (this.refusal()) return null;
+    const row = this.row(id);
+    if (!row) return null;
+    this.record(id, { phase: "companion", command: "read" });
+    const s = this.sessions.get(id);
+    return {
+      row, events: (this.logs.get(id)?.held() ?? []).map(e => e.event), waiting: s && !s.closed ? s.requests() : [],
+      project: this.index.project(row.projectId)?.name ?? "",
+    };
+  }
+
+  /** The name of session `id`'s project, for the companion's words about it ("" when it has none). */
+  projectNameOf(id: string): string {
+    const p = this.index.session(id)?.projectId;
+    return (p && this.index.project(p)?.name) || "";
   }
 
   /** One audit entry; one that can't be written stops the session it is about (fail closed). Returns whether it was written. */

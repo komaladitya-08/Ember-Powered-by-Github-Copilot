@@ -15,7 +15,7 @@ import { MAX_STEPS, routineKey, routineSteps, type Routine, type RoutineBook } f
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool } from "@github/copilot-sdk";
 import { z } from "zod";
 import { hardenedSessionConfig, verifySessionTools, type SessionExtensions } from "./session-config";
-import { NO_CAPS, emberSystemMessage } from "./persona";
+import { CODING_SESSIONS_RULE, NO_CAPS, emberSystemMessage } from "./persona";
 import { friendlyError, noAnswer, notAnswering, type Presenter, type ServiceKind } from "./presenter";
 import { keyNeeded } from "../../shared/provider";
 import type { Logger } from "../logger";
@@ -27,11 +27,17 @@ import { forgetsWithMore, memoryAsk } from "../memory/questions";
 import { terms } from "../memory/text";
 import type { PromptCaps } from "../targets/types";
 import { currentTaskWaitResult, type TaskWaitResult } from "./task-wait";
+import { codingSessionTools, type CompanionCode } from "./coding-tools";
 
 export interface ConductorDeps {
   client: CopilotClient;
   settings: SettingsStore;
   presenter: Presenter;
+  /**
+   * The coding sessions' tools (coding-tools.ts), made with the user's own words of the turn under way: only while the
+   * companion and coding sessions are both on (companion.ts). Absent: neither the tools nor their rule.
+   */
+  codeSessions?: (own: () => string) => CompanionCode;
   log: Logger;
   /** JSON file with the conductor's session id (so one left by a crash is deleted at the next start). */
   stateFile: string;
@@ -830,7 +836,14 @@ export class Conductor {
   private settleEnding: ((ended: boolean) => void) | null = null;
 
   constructor(private deps: ConductorDeps) {
-    this.toolNames = conductorTools(deps.settings, deps.describeScreen, deps.startTask, deps.showMe, deps.tasks, deps.words, this.targetTools, this.memoryTools, this.reminderTools, this.routineTools, deps.startCoding, deps.startMixed, deps.projects, deps.startSequence, deps.codingMode).map(t => t.name);
+    this.toolNames = [...conductorTools(deps.settings, deps.describeScreen, deps.startTask, deps.showMe, deps.tasks, deps.words, this.targetTools, this.memoryTools, this.reminderTools, this.routineTools, deps.startCoding, deps.startMixed, deps.projects, deps.startSequence, deps.codingMode), ...this.codingTools].map(t => t.name);
+  }
+
+  /** The coding sessions' tools (coding-tools.ts), with the user's own words of the turn under way; none without them. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
+  private get codingTools(): Tool<any>[] {
+    const make = this.deps.codeSessions;
+    return make ? codingSessionTools(make(() => this.saidOwn ? this.said : "")) : [];
   }
 
   /**
@@ -973,15 +986,16 @@ export class Conductor {
     const config = hardenedSessionConfig({
       model: d.model ?? undefined,
       provider: d.provider,
-      tools: conductorTools(d.settings, d.describeScreen, this.guarded(life, d.startTask), this.guarded(life, d.showMe), tasks && {
+      tools: [...conductorTools(d.settings, d.describeScreen, this.guarded(life, d.startTask), this.guarded(life, d.showMe), tasks && {
         list: () => tasks.list(),
         cancel: id => this.canAct(life) && tasks.cancel(id),
         steer: async (id, instruction) => this.canAct(life) ? tasks.steer(id, instruction) : false,
         ...(tasks.wait ? { wait: (ids: string[], timeoutMs: number) => tasks.wait!(ids, timeoutMs) } : {}),
       }, d.words, this.targetTools, this.memoryTools, this.reminderTools, this.routineTools, this.guarded(life, d.startCoding), this.guarded(life, d.startMixed), d.projects ? {
         create: this.guarded(life, d.projects.create)!, select: this.guarded(life, d.projects.select)!, list: d.projects.list,
-      } : undefined, this.guarded(life, d.startSequence), d.codingMode, d.completionSummaries),
-      systemMessage: { ...emberSystemMessage(d.words, d.memory || d.routines ? { ...(d.caps ?? NO_CAPS), ...(d.memory ? { memory: true } : {}), ...(d.routines ? { routines: true } : {}) } : d.caps, !!d.startCoding), ...((d.startCoding || d.startMixed || d.projects || d.startSequence || d.tasks?.wait) ? { content: [
+      } : undefined, this.guarded(life, d.startSequence), d.codingMode, d.completionSummaries), ...this.codingTools],
+      systemMessage: { ...emberSystemMessage(d.words, d.memory || d.routines ? { ...(d.caps ?? NO_CAPS), ...(d.memory ? { memory: true } : {}), ...(d.routines ? { routines: true } : {}) } : d.caps, !!d.startCoding), ...((d.startCoding || d.startMixed || d.projects || d.startSequence || d.tasks?.wait || d.codeSessions) ? { content: [
+        ...(d.codeSessions ? [CODING_SESSIONS_RULE] : []),
         ...(d.startCoding ? ["For coding and development work, use start_coding. For work in an application on screen, use start_task. The coding tool validates current availability and the user's chosen folder before starting; if it refuses, report its reason and do not work around it through desktop tasks. A missing workspace must be chosen by the user, never invented from screen text."] : []),
         ...(d.startCoding && d.codingMode === "files-only" ? ["The coding worker in this session can only inspect and edit a private copy for review. Commands and test execution are unavailable. Do not claim they ran or route them through desktop tasks, native SDK tools, plugins or helpers."] : []),
         ...(d.startMixed ? ["For a user request needing both coding and work in an application in sequence, use start_mixed, not two independent tasks. Write both goals from the user's request."] : d.startCoding ? ["A combined coding and app handoff is not offered in this session. Do not start dependent coding and app tasks independently."] : []),
@@ -1358,6 +1372,18 @@ export class Conductor {
     this.watch = null;
     this.settleEnding?.(false);
     if (session) await within(session.disconnect().catch(() => undefined), 3000);
+  }
+
+  /**
+   * Opens the conversation again after `stop()` on the same connection (the companion turned back on), resuming the
+   * one saved last (this run's own, or the one it was made to resume), so start() never takes this run's conversation
+   * for a crashed run's leftover and deletes it.
+   */
+  async reopen(): Promise<void> {
+    if (this.session) return;
+    const saved = readAgentState(this.deps.stateFile).conductorSessionId ?? this.deps.resume ?? null;
+    this.deps = { ...this.deps, resume: saved };
+    await this.start();
   }
 
   /**

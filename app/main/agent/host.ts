@@ -13,6 +13,7 @@ import path from "node:path";
 import { CopilotClient, type ProviderConfig } from "@github/copilot-sdk";
 import { viewText, type ViewDoc } from "../../shared/view";
 import type { TaskEntry } from "../../shared/activity";
+import type { CompanionCode } from "./coding-tools";
 import { Conductor, ConnectionLost, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { BubbleOwner, Presenter, lostWords, noAnswer, plainText, SIGN_IN_REFUSED, type LostWords, type NoticeBoard, type PresenterEvent, type PresenterOptions, type ServiceKind } from "./presenter";
@@ -283,6 +284,18 @@ function captureCodingCapability(scoped: ScopedCodingHost, projectId: string | n
 }
 
 export interface HostOptions {
+  /**
+   * Whether the companion is on (app/main/companion.ts, `settings.companion.enabled`): off, the connection still signs in
+   * (coding sessions take its access, `chatAccess`) but opens no conversation, so no conductor or worker session runs.
+   * Absent: on. A change while connected goes through `companionChanged`.
+   */
+  companion?: () => boolean;
+  /**
+   * The coding sessions the conductor may work with for the user (agent/coding-tools.ts `companionCode`, made with the
+   * user's own words of the turn under way), or null while coding sessions are off: read as each conversation is made,
+   * its tools fixed for that conversation.
+   */
+  codeSessions?: () => ((own: () => string) => CompanionCode) | null;
   /** Host-owned project folder grants and private copies. Never falls back to native SDK coding. */
   scopedCoding?: ScopedCodingHost;
   /** An explicitly selected and consented coding workspace, or null. */
@@ -599,6 +612,8 @@ const NO_GUIDE = "Ember can't point at things in this session (no desktop access
 export const POLICY_CHANGED_STOP = "Your organisation changed my policy, so I stopped this.";
 /** What a task this computer's screen lock stopped says (tasks-approvals-r9-5). */
 export const SCREEN_LOCKED_STOP = "The screen locked, so I stopped this.";
+/** What a task stopped because the companion was turned off says (app/main/companion.ts). */
+export const COMPANION_OFF_STOP = "You turned the companion off, so I stopped this.";
 export const CUT_OFF = "Copilot stopped unexpectedly; the task didn't finish.";
 /** The same when the runtime was reconnected because it stopped answering the conversation (it didn't stop). */
 export const CUT_OFF_STALLED = "Copilot didn't answer; the task didn't finish.";
@@ -2941,6 +2956,8 @@ export class AgentHost {
       const extensions = this.o.extensions?.forSession();
       const chatOf = { chat: this.conversationEpoch };
       this.conductorChat = chatOf;
+      // The coding sessions' tools, while the companion and coding sessions are both on (main.ts, companion.ts).
+      const codeSessions = this.o.codeSessions?.() ?? null;
       this.conductor = new Conductor({
         client, settings: this.o.settings, presenter: this.presenter, log: this.o.log.child("conductor"),
         completionSummaries: true,
@@ -2949,6 +2966,7 @@ export class AgentHost {
         ...(extensions ? { extensions } : {}),
         stateFile: this.stateFile,
         resume: this.conversation,
+        ...(codeSessions ? { codeSessions } : {}),
         workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
         model: choice.conductor, provider: provider?.config, service: kindOf(provider),
         // What the conversation reads on the screen goes with the tasks it starts in that turn (their goals may carry it).
@@ -3376,8 +3394,11 @@ export class AgentHost {
           },
         } : undefined,
       });
-      await startStep(this.conductor.start(), "conversation");
-      this.conversation = this.conductor.sessionId;
+      // With the companion off the conversation isn't opened (no conductor session): companionChanged opens it later.
+      if (this.o.companion?.() !== false) {
+        await startStep(this.conductor.start(), "conversation");
+        this.conversation = this.conductor.sessionId;
+      }
       this.convoCaps = caps;
       this.conversationLogin = login;
       this.conversationService = service;
@@ -4108,6 +4129,8 @@ export class AgentHost {
     // A request that waits (for a silent turn's end, or a connection) is answering, for Home, until it is queued or
     // dropped: never a moment's "idle" between its waits and its turn (home-r2-2: Home took that for its turn's end, and
     // said no reply was written as the reply came).
+    // With the companion off there is no conversation: nothing is sent (and nothing reconnects for it).
+    if (this.o.companion?.() === false) { this.o.log.info("agent.ask_refused", { reason: "companion_off" }); return false; }
     const projectId = this.sessionProjects.state().selectedProjectId;
     return this.askCaptured(text, context, epoch, how, { counted: false, projectId, codingIntake: this.captureCodingIntake(projectId) });
   }
@@ -4659,6 +4682,34 @@ export class AgentHost {
    */
   stoppingBecause(why: string): void {
     for (const t of this.tasks?.list() ?? []) if (t.status === "running" || t.status === "queued") this.stoppedWhy.set(t.id, why);
+  }
+
+  /**
+   * The companion was turned on or off while Ember runs (app/main/companion.ts). Off: every task stops as Stop stops it
+   * (a borrow hands back, a question goes), each saying why, and the conversation's session is let go (kept by the
+   * runtime, resumed when it comes back). On: the conversation opens again on this connection, resuming the one let go.
+   * Never rejects; a conversation that can't open is said as any other connection problem, at the next request.
+   */
+  async companionChanged(on: boolean): Promise<void> {
+    try {
+      if (!on) {
+        for (const t of this.tasks?.list() ?? []) {
+          if (t.status !== "running" && t.status !== "queued") continue;
+          this.stoppedWhy.set(t.id, COMPANION_OFF_STOP);
+          this.tasks?.cancel(t.id);
+        }
+        this.queued = [];
+        await this.conductor?.stop();
+        this.o.log.info("agent.companion", { on });
+        return;
+      }
+      if (this.status.phase !== "ready" || !this.conductor || this.conductor.sessionId) return;
+      await this.conductor.reopen();
+      if (this.conductor?.sessionId) this.conversation = this.conductor.sessionId;
+      this.o.log.info("agent.companion", { on });
+    } catch (err) {
+      this.o.log.warn("agent.companion_failed", { on, err: err instanceof Error ? err.name : "unknown" });
+    }
   }
 
   /**

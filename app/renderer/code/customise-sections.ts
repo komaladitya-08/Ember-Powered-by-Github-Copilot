@@ -13,3 +13,5 @@ import "./customise-permissions";
 import "./customise-sandbox";
 import "./customise-schedules";
 import "./customise-usage";
+// The companion's state, with a way to its switch in settings (not an SDK page: docs/CODING-APP.md §5).
+import "./customise-companion";

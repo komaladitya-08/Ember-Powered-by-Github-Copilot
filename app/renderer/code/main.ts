@@ -44,6 +44,8 @@ function start(api: EmberCodeApi): void {
   window.__emberCode = { app, setMicHeld };
   // Main says whether the microphone is open for a request (Home's own rule, voiceHoldsLive): the lines hold meanwhile.
   api.onMicHeld(setMicHeld);
+  // Main asks for a session to show (the companion's show_coding_session, or "Open it" on Ember's word of a request).
+  api.onShow?.(id => { if (app.state.sessions.byId[id]) { void app.openSession(id); app.draw(); } });
 
   const chord = `${primaryKey(navigator.userAgent)}+K`;
   let lastWork: MainView = { kind: "none" };

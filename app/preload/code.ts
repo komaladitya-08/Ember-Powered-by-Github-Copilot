@@ -43,6 +43,9 @@ const api: EmberCodeApi = {
     try { listener(micHeld); } catch { /* the page's own failure */ }
     return listen<unknown>(CODE_IPC.micHeld, v => { listener(v === true); });
   },
+  companionState: () => ipcRenderer.invoke(CODE_IPC.companionState),
+  openCompanionSettings: () => { ipcRenderer.send(CODE_IPC.openCompanionSettings); },
+  onShow: listener => listen<unknown>(CODE_IPC.show, v => { if (typeof v === "string" && v.length <= 200) listener(v); }),
 };
 
 // The latest word of the microphone, kept from before the page subscribes (main sends it as the window loads).

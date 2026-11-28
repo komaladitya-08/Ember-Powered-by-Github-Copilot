@@ -74,6 +74,8 @@ afterEach(async () => { if (!gate) await Promise.all(browser.contexts().map(cont
 
 async function open(seed: Seed = {}): Promise<Page> {
   const settings = structuredClone(DEFAULT_SETTINGS);
+  // These journeys try the companion's ask box, so the companion is on (a new install's is off: its tries are Stop's alone).
+  settings.companion = { enabled: true };
   settings.onboarded = !!seed.home;
   if (seed.provider) settings.provider = { ...settings.provider, ...seed.provider } as typeof settings.provider;
   settings.consent = { version: seed.consent ?? 99, at: "2026-11-04T12:00:00Z" };

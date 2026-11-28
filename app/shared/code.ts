@@ -336,6 +336,12 @@ export const CODE_IPC = {
   listFolder: "code:list-folder",
   /** (sessionId, relPath) => CodeDone<CodeFileRead>: a file of the session's working folder, within CODE_LIMITS.fileBytes. */
   readFile: "code:read-file",
+  /** main → window: sessionId, the session to show (the companion's show_coding_session, or Ember's own "Open it"). */
+  show: "code:show",
+  /** () => { on: boolean }: whether the companion is on (Customise › Companion shows it; Home owns the switch). */
+  companionState: "code:companion-state",
+  /** () => void: opens Ember's settings at the companion's switch. */
+  openCompanionSettings: "code:open-companion-settings",
 } as const;
 
 /** The API the coding window's preload exposes as `window.emberCode`. */
@@ -370,4 +376,10 @@ export interface EmberCodeApi {
   listFolder(sessionId: string, relDir: string): Promise<CodeDone<CodeFolderListing>>;
   /** A file of the session's working folder, by its path relative to that folder: main reads it, bounded. */
   readFile(sessionId: string, relPath: string): Promise<CodeDone<CodeFileRead>>;
+  /** Main asks the window to show a session (a session id); optional, so a stand-in without it still loads. */
+  onShow?(listener: (sessionId: string) => void): () => void;
+  /** Whether the companion is on; optional, as onShow. */
+  companionState?(): Promise<{ on: boolean }>;
+  /** Opens Ember's settings at the companion's switch (the one place it changes). */
+  openCompanionSettings?(): void;
 }

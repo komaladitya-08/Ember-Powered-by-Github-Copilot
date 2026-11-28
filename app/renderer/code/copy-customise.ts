@@ -399,3 +399,14 @@ export const COMPACT_BUSY = "Copilot is working. Compact when the turn ends.";
 export function compactedWords(r: { ok: boolean; tokens: number; messages: number }): string {
   return r.ok ? `Compacted: ${tokenCount(r.tokens)} tokens and ${r.messages.toLocaleString("en-GB")} ${r.messages === 1 ? "message" : "messages"} freed.` : "Copilot couldn't compact the conversation.";
 }
+
+// ───── Companion (docs/CODING-APP.md §5): its state here, its switch in Ember's settings ─────
+export const COMPANION_SECTION = "Companion";
+export const COMPANION_OPEN = "Open in settings…";
+/** What the Companion section says, by whether the companion is on (null: main couldn't say). */
+export function companionState(on: boolean | null): string {
+  if (on === null) return "The companion's setting isn't available here yet.";
+  return on
+    ? "On. The character beside your cursor can start, read, message and stop these sessions when you ask it, and tells you when one needs you. Only you answer a session's requests, here."
+    : "Off. Turn it on in settings to talk to Ember beside your cursor, by voice or by typing, about your apps and these sessions.";
+}

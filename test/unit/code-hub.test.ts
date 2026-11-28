@@ -326,9 +326,11 @@ describe("the coding hub's guards", () => {
     expect(await h.hub.dispatch({ type: "setPermissionMode", sessionId: id, mode: "allow-all" }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.modeRefused, code: "mode:manual" });
     expect(h.fake.called("permissions.setMode").map(c => (c.params as { mode: string }).mode)).not.toContain("allow-all");
     expect(await h.hub.dispatch({ type: "create", options: { permissionMode: "allow-all" } }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.modeRefused });
-    expect(await h.hub.dispatch({ type: "setAgentMode", sessionId: id, mode: "plan" }, "companion")).toEqual({ ok: true, value: { mode: "plan" } });
-    expect(h.audit).toContainEqual(expect.objectContaining({ event: "code", phase: "mode", by: "companion", agentMode: "plan" }));
-    expect(h.audit).toContainEqual(expect.objectContaining({ event: "code", phase: "companion", command: "setAgentMode" }));
+    expect(await h.hub.dispatch({ type: "setAgentMode", sessionId: id, mode: "plan" }, "user")).toEqual({ ok: true, value: { mode: "plan" } });
+    expect(h.audit).toContainEqual(expect.objectContaining({ event: "code", phase: "mode", by: "user", agentMode: "plan" }));
+    // The companion changes no mode (docs/CODING-APP.md §5): refused in the hub, and the refusal audited with its actor.
+    expect(await h.hub.dispatch({ type: "setAgentMode", sessionId: id, mode: "interactive" }, "companion")).toMatchObject({ ok: false });
+    expect(h.audit).toContainEqual(expect.objectContaining({ event: "code", phase: "companion", command: "setAgentMode", refused: true }));
   });
 
   it("record a message as its length only, and stop the session when a record can't be written", async () => {
@@ -646,5 +648,62 @@ describe.skipIf(!hasGit())("listing and reading a session's working folder (list
     const r = await h.hub.dispatch({ type: "listFolder", sessionId: id, relDir: "" }, "user");
     expect(r).toMatchObject({ ok: true, value: { entries: [{ name: "lib", kind: "folder" }, { name: "x.js", kind: "file" }] } });
     expect((r as { value: { gitPrefix?: string } }).value.gitPrefix).toBeUndefined();
+  });
+});
+
+describe("the companion acting for the user (docs/CODING-APP.md §5)", () => {
+  const refused = (r: unknown) => expect(r).toMatchObject({ ok: false });
+
+  it("may list, start in a known project, send, stop and Stop everything, and is refused every other command in the hub, each audited with its actor", async () => {
+    const h = harness();
+    const id = await started(h);
+    const projectId = h.hub.companionRead(id)!.row.projectId;
+    const forbidden = [
+      { type: "respond", answer: { sessionId: id, requestId: "x", kind: "permission", payload: {} } },
+      { type: "setPermissionMode", sessionId: id, mode: "allow-all" }, { type: "setAgentMode", sessionId: id, mode: "autopilot" },
+      { type: "update", sessionId: id, change: { name: "x" } }, { type: "fork", sessionId: id }, { type: "remove", sessionId: id },
+      { type: "addProject" }, { type: "removeProject", projectId }, { type: "pickAttachments", sessionId: id },
+      { type: "rpc", call: { scope: "client", method: "models.list" } }, { type: "attach", sessionId: id }, { type: "openLink", url: "https://example.com" },
+      { type: "create", options: {} }, { type: "create", options: { projectId, permissionMode: "allow-all" } }, { type: "create", options: { projectId, agentMode: "autopilot" } },
+      { type: "send", message: { sessionId: id, prompt: "x", attachments: [{ type: "file", path: path.join(work, "a.txt") }] } },
+      { type: "send", message: { sessionId: id, prompt: "x", agentMode: "shell" } },
+    ] as const;
+    for (const c of forbidden) refused(await h.hub.dispatch(c as never, "companion"));
+    expect(h.fake.called("permissions.setMode").map(c => (c.params as { mode: string }).mode)).not.toContain("allow-all");
+    expect(h.deps.index!.session(id)).toBeDefined();
+    expect(h.audit.filter(e => e.phase === "companion" && e.refused === true)).toHaveLength(forbidden.length);
+    const made = await h.hub.dispatch({ type: "create", options: { projectId } }, "companion");
+    expect(made).toMatchObject({ ok: true, value: { createdBy: "companion", permissionMode: "manual", agentMode: "interactive" } });
+    expect(await h.hub.dispatch({ type: "send", message: { sessionId: id, prompt: "fix the test" } }, "companion")).toMatchObject({ ok: true });
+    expect(h.audit).toContainEqual(expect.objectContaining({ event: "code", phase: "sent", by: "companion", chars: 12 }));
+    expect(await h.hub.dispatch({ type: "interrupt", sessionId: id }, "companion")).toEqual({ ok: true });
+    expect(h.audit).toContainEqual(expect.objectContaining({ event: "code", phase: "interrupt", by: "companion" }));
+  });
+
+  it("is held to its pace: past twenty commands a minute it is refused until the minute moves on, while Stop everything always goes", async () => {
+    let t = 1_000_000;
+    const h = harness({ now: () => t });
+    for (let i = 0; i < 20; i++) expect(await h.hub.dispatch({ type: "list" }, "companion")).toHaveProperty("projects");
+    expect(await h.hub.dispatch({ type: "list" }, "companion")).toMatchObject({ ok: false });
+    await h.hub.dispatch({ type: "stopAll" }, "companion");
+    expect(h.audit.at(-1)).toMatchObject({ phase: "companion", command: "stopAll" });
+    expect(h.audit.at(-1)?.refused).toBeUndefined();
+    t += 60_001;
+    expect(await h.hub.dispatch({ type: "list" }, "companion")).toHaveProperty("projects");
+  });
+
+  it("reads a session's row, held events and waiting requests without opening anything, and nothing while sessions may not run", async () => {
+    let on = true;
+    const h = harness({ enabled: () => on });
+    const id = await started(h);
+    h.fake.emit("permission.requested", { requestId: "c1", ...KINDS[0].data });
+    const seen = h.hub.companionRead(id)!;
+    expect(seen.row.id).toBe(id);
+    expect(seen.waiting.map(w => w.requestId)).toEqual(["c1"]);
+    expect(h.hub.projectNameOf(id)).toBe(path.basename(work));
+    expect(h.audit).toContainEqual(expect.objectContaining({ event: "code", session: id, phase: "companion", command: "read" }));
+    expect(h.hub.companionRead("nobody")).toBeNull();
+    on = false;
+    expect(h.hub.companionRead(id)).toBeNull();
   });
 });

@@ -172,7 +172,10 @@ import type { ExtensionsApi } from "../shared/extensions";
 import { RoutineBook, countStoredRoutines, routinesFile } from "./agent/routines";
 import { reminderNotification, type Reminder } from "./agent/reminders";
 import { ReminderChangeSchema } from "../shared/reminders";
-import { dockMenuItems, jumpListTasks, opensCodeAtStart, startView, wantsAsk } from "./launcher";
+import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "./launcher";
+import { companionParts, startOpens } from "./companion";
+import { companionCode } from "./agent/coding-tools";
+import { announcementLine } from "./code/companion";
 import { pushLater } from "./push-later";
 import { askpassInEmber, isAskpassRun } from "../askpass/in-ember";
 
@@ -857,6 +860,8 @@ function start(): void {
     if (at) sendToHome(IPC.focusSection, at);
   };
   const greet = () => {
+    // No companion, no hello (docs/CODING-APP.md §5): the coding window or settings is what opened.
+    if (!companionParts(settings.get()).greeting) return;
     const phase = agent?.getStatus().phase;
     const connected = phase !== "signed-out" && phase !== "error";
     // Offline at start (a retry waits for the network): Ember connects by itself, there is nothing to set up.
@@ -1499,6 +1504,8 @@ function start(): void {
   /** `how.overEmber`: heard over Ember's own voice (never the user's own words for Assisted's check: host.ts UserRequest.overEmber). */
   const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; manual?: true; verified?: boolean; short?: boolean; suggested?: boolean; heardId?: number; replaces?: boolean; overEmber?: boolean } = {}, read = callContext, stillCurrent?: () => boolean) => {
     if (!consented()) { showHome(); return; }
+    // With the companion off there is no conversation to ask (companion.ts): nothing is sent, settings opens.
+    if (!companionParts(settings.get()).conversation) { log.info("ask.refused", { reason: "companion_off" }); showHome(); return; }
     recentAsks = [...recentAsks, { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}), ...(how.suggested ? { suggested: true } : {}) }].slice(-4);
     // What the user might say next is worked out again once this is answered (app/main/personal/predict.ts).
     personalRef?.asked(text, { unchecked: how.voiceUnchecked, suggested: how.suggested });
@@ -1529,6 +1536,8 @@ function start(): void {
     // Every opening says where it came from (an ask box that opened by itself would show up here), once the box is up
     // where it opens: a line written first would hold up the keyboard (review #78).
     if (!consented()) { log.info("ask.open", { source }); showHome(); return; }
+    // With the companion off there is no ask box (companion.ts): settings opens, which says how to turn it on.
+    if (!companionParts(settings.get()).ask) { log.info("ask.open", { source, companion: false }); showHome(); return; }
     // Already open: the user is typing in it. Looking again would only find the ask box itself.
     if (askWindow.visible) { log.info("ask.open", { source }); askWindow.focus(); return; }
     // From the hotkey, letters typed before the box has the keyboard would go to the user's app: Ember holds the
@@ -1592,6 +1601,34 @@ function start(): void {
   // The coding window (docs/CODING-APP.md §4): opened only while coding sessions are on, and registered with the hub's
   // channels for as long as it is open. False when they are off or the window couldn't open: the caller shows Home.
   const showCode = (): boolean => settings.get().code.enabled && !!openCodeWindow(platform.os, { register: registerCode });
+  /**
+   * A coding session's request opened (CodeHub's `request` emit): with the companion on, Ember says so in the bubble
+   * and, where replies are spoken, aloud, in its own words from the request's kind and the project's name
+   * (code/companion.ts announcementLine: never a command, a path or a file's words), with "Open it" showing the session.
+   * It is no question of Ember's: nothing here answers the request, and a spoken yes can't, since spoken answers go only
+   * to a question the Confirmer put up (voice-answer.ts) and the session's request is answered only in the coding
+   * window, by click or key. Never over a question of Ember's own.
+   */
+  const announceCodingRequest = (payload: unknown) => {
+    if (!payload || typeof payload !== "object" || "resolved" in payload) return;
+    const r = payload as { sessionId?: unknown; kind?: unknown; data?: unknown };
+    if (typeof r.sessionId !== "string" || typeof r.kind !== "string") return;
+    if (!companionParts(settings.get()).codingAnnouncements || !consented() || confirmer?.waiting) return;
+    const line = announcementLine({ kind: r.kind as Parameters<typeof announcementLine>[0]["kind"], data: r.data }, codeRef?.projectNameOf(r.sessionId) ?? "");
+    const bubble = { ...IDLE_BUBBLE, visible: true, mood: "attention" as const, title: "A coding session needs you", thought: line, actions: [{ id: `ui:code-show:${r.sessionId}`, label: "Open it" }] };
+    setState({ emotion: "neutral", talking: false, bubble });
+    hideIfStill(bubble, 15_000);
+    if (maySpeak()) voice?.speak(line);
+    log.info("code.request_announced", { kind: r.kind });
+  };
+  /** The coding window brought forward on session `id` (the companion's show_coding_session, an announcement's Open). */
+  const showCodeSession = (id: string): boolean => {
+    const win = settings.get().code.enabled ? openCodeWindow(platform.os, { register: registerCode }) : null;
+    if (!win) return false;
+    const tell = () => { if (!win.isDestroyed()) win.webContents.send(CODE_IPC.show, id); };
+    if (win.webContents.isLoading()) win.webContents.once("did-finish-load", tell); else tell();
+    return true;
+  };
   /** Whether the microphone is open for a request, as Home's live regions hold for it (codeMicHeld), last sent. */
   let codeMic = false;
   // A coding window's webContents: registered with the hub's channels, told where the microphone stands as it loads,
@@ -3554,6 +3591,9 @@ function start(): void {
     if (id === "ui:close") { closeExpanded(); return; }
     // The administrator's policy changed while Ember ran: a restart reads it whole (run from an AppImage, the AppImage).
     if (id === "ui:restart" && admin.held) { restartForPolicy(); return; }
+    // "Open it" on Ember's word of a coding session's request: the coding window on that session, where only the user
+    // answers it (never here, never by voice).
+    if (id.startsWith("ui:code-show:")) { showCodeSession(id.slice("ui:code-show:".length)); hideIfStill(lastState.bubble, 0); return; }
     // The targets runtime's own: a target picked, an offer, a connection, a panel to show, an announced command's Stop.
     if (targets?.bubbleAction(id)) return;
     if (task) {
@@ -3732,8 +3772,10 @@ function start(): void {
     askWindow.setOpaque(!compositing);
     // Made now (hidden), so the ask shortcut opens it at once: a box still loading took the first letters typed. Agreed
     // to later (the first run), it is made then (review #78).
-    if (consented()) askWindow.prepare();
-    settings.onChange(() => { if (consented()) askWindow.prepare(); askOffersChanged(); });
+    // Only with the companion on (companion.ts): off, there is no ask box to open.
+    const askable = () => consented() && companionParts(settings.get()).ask;
+    if (askable()) askWindow.prepare();
+    settings.onChange(() => { if (askable()) askWindow.prepare(); else askWindow.hide(); askOffersChanged(); });
     // Where the pointer is, in global DIP, and the buttons held: from the window system (X11's XQueryPointer reports
     // physical pixels; Electron's position can be stale there), else Electron's.
     const cursor = () => {
@@ -3776,9 +3818,30 @@ function start(): void {
       old?.destroy();
       deskViewRef?.handleMoved();
     };
-    if (compositing) makeOverlay();
-    else log.warn("overlay.fallback", { reason: "no compositing manager; using the handle card" });
-    makeHandle();
+    // The character and its handle only with the companion on (companion.ts companionParts); turned on or off while
+    // Ember runs, they come or go at once (windows only: they hold no microphone, screen or input of their own).
+    const companionWindows = companionParts(settings.get()).handle;
+    if (companionWindows && compositing) makeOverlay();
+    else if (companionWindows) log.warn("overlay.fallback", { reason: "no compositing manager; using the handle card" });
+    if (companionWindows) makeHandle();
+    let windowsShown = companionWindows;
+    settings.onChange(next => {
+      const want = companionParts(next).handle;
+      if (want === windowsShown) return;
+      windowsShown = want;
+      log.info("companion.windows", { on: want });
+      if (want) {
+        if (compositing) makeOverlay(keptHidden);
+        makeHandle();
+        askWindow.keepClear();
+        stepAside();
+        showBorrowing?.();
+      } else {
+        overlay?.stop(); overlay = null;
+        handle?.destroy(); handle = null;
+      }
+      presenceChanged();
+    });
     // The compositor can go and come back (GNOME Shell restarting, another window manager): Ember follows,
     // so its full-screen overlay never turns the desktop black. (Windows and macOS always composite.)
     if (ws?.compositorMayChange) {
@@ -3791,8 +3854,8 @@ function start(): void {
         // "Hide Ember" outlives the switch (the overlay that knew it is gone while there is no compositor).
         // Shown only for an answer still counts as hidden: it hides again when the answer goes.
         if (overlay) keptHidden = overlay.isHidden() || shownForAnswer;
-        if (now) makeOverlay(keptHidden && !shownForAnswer); else { overlay?.stop(); overlay = null; }
-        makeHandle();
+        if (now && windowsShown) makeOverlay(keptHidden && !shownForAnswer); else { overlay?.stop(); overlay = null; }
+        if (windowsShown) makeHandle();
         askWindow.keepClear();
         // What the new windows don't know yet: the settings window to keep off, a borrow under way.
         stepAside();
@@ -3822,8 +3885,11 @@ function start(): void {
       },
       stop: () => stopEverything("hotkey"), mute: () => toggleMute(),
     };
+    // Stop and Settings always; the ask box's and mute's only with the companion on (companion.ts), so with it off
+    // another app may have them.
+    let heldIds = companionParts(settings.get()).shortcuts;
     const registerShortcuts = () => {
-      const { taken, missing } = holdShortcuts(ALWAYS_HELD, sc, fb, {
+      const { taken, missing } = holdShortcuts(ALWAYS_HELD.filter(id => heldIds.includes(id)), sc, fb, {
         isRegistered: accel => globalShortcut.isRegistered(accel),
         register: (id, accel) => globalShortcut.register(accel, shortcuts[id as keyof typeof shortcuts]),
       });
@@ -3837,6 +3903,14 @@ function start(): void {
       const retry = setInterval(() => { if (!registerShortcuts().length) clearInterval(retry); }, 60_000);
       retry.unref?.();
     }
+    settings.onChange(next => {
+      const want = companionParts(next).shortcuts;
+      if (want.join() === heldIds.join()) return;
+      // Let go of the companion's own chords (Electron unregisters only what Ember registered), then hold what is wanted.
+      for (const id of heldIds) if (!want.includes(id)) for (const accel of [sc[id].accel, fb[id].accel]) if (globalShortcut.isRegistered(accel)) globalShortcut.unregister(accel);
+      heldIds = want;
+      registerShortcuts();
+    });
     // Ask Ember in the OS's launcher, whatever another app holds (D-45b): the jump list (Windows) starts Ember with --ask,
     // the Dock menu (macOS) opens the box here; Linux's is its desktop entry's action (packaging/ember.desktop). Each is
     // logged once set (the smoke test requires it on its OS).
@@ -3908,7 +3982,7 @@ function start(): void {
       vaultFilled: () => vaultRedactor.active, access: () => agent?.chatAccess() ?? null, client: () => codeRuntime.client(), userData,
       protectedPaths: () => emberPathsOf({ os: platform.os, userData, resourcesPath: process.resourcesPath, packaged: app.isPackaged, env: process.env, emberPaths: codingStorage.protectedPaths }),
       place: () => ({ os: platform.os, home: app.getPath("home") }),
-      audit: () => audit, emit: (channel, payload, to) => codeWindows.send(channel, payload, to), log: log.child("code"), redact: vaultRedactor,
+      audit: () => audit, emit: (channel, payload, to) => { codeWindows.send(channel, payload, to); if (channel === CODE_IPC.request) announceCodingRequest(payload); }, log: log.child("code"), redact: vaultRedactor,
       pickFolder: async () => {
         const owner = codeOwner();
         const picked = owner ? await dialog.showOpenDialog(owner, { properties: ["openDirectory"] }) : await dialog.showOpenDialog({ properties: ["openDirectory"] });
@@ -3926,6 +4000,14 @@ function start(): void {
     settings.onChange(() => { void code.changed(); });
     app.on("will-quit", () => { void code.dispose().finally(() => codeRuntime.stop()); });
     registerCodeIpc(ipcMain, code, codeWindows, { log: log.child("code") });
+    // Customise › Companion: the companion's state, and settings opened at its switch (Home owns it; the window only
+    // links). A coding window's own page only, as every coding channel.
+    ipcMain.handle(CODE_IPC.companionState, event => (codeWindows.isCodeWindow(event) ? { on: companionParts(settings.get()).conversation } : { on: false }));
+    ipcMain.on(CODE_IPC.openCompanionSettings, event => {
+      if (!codeWindows.isCodeWindow(event)) return;
+      showHome();
+      sendToHome(IPC.focusSection, "parts");
+    });
     // Perception: the accessibility sidecar (text) and the window system's capture (images). Linux starts the Python
     // AT-SPI sidecar (no launch); Windows and macOS the shared host (Windows: Ember's own binary in node mode; macOS: a
     // utility process, review #177).
@@ -4280,6 +4362,10 @@ function start(): void {
     });
     agent = new AgentHost({
       history,
+      // The companion's conversation only while it is on (companion.ts); its tools over the coding sessions only while
+      // coding sessions are on too, each a dispatch as "companion" (agent/coding-tools.ts).
+      companion: () => companionParts(settings.get()).conversation,
+      codeSessions: () => (companionParts(settings.get()).codingTools && codeRef ? own => companionCode(codeRef!, own, showCodeSession) : null),
       scopedCoding: codingBackend.host({
         available: projectId => consented() && screenLock?.locked === false && policy.features.actions !== false &&
           scopedCodingAvailability(projectId).available,
@@ -4540,6 +4626,15 @@ function start(): void {
       const m = JSON.stringify(next.models);
       if (m !== models) { models = m; void agent?.setModels(next.models); }
     });
+    // The companion turned on or off while Ember runs (companion.ts): off, its tasks stop as Stop stops them and its
+    // conversation's session is let go; on, the conversation opens again. Coding sessions go on either way.
+    let companionWas = companionParts(settings.get()).conversation;
+    settings.onChange(next => {
+      const on = companionParts(next).conversation;
+      if (on === companionWas) return;
+      companionWas = on;
+      void agent?.companionChanged(on);
+    });
 
     // ───── Voice ─────
     const speechModels = voiceModelsRoot();
@@ -4652,7 +4747,8 @@ function start(): void {
     // Before anything starts listening, so the voice process loads the clearer recognizer the first time.
     voice.setClearHearing(settings.get().voice.clearHearing);
     if (settings.get().voice.muted) voice.setMuted(true);
-    const wantVoice = () => policy.features.voice !== false && settings.get().wakeWord && settings.get().voice.consent && consented();
+    // Listening is the companion's: with it off the microphone stays closed whatever the other switches say (companion.ts).
+    const wantVoice = () => companionParts(settings.get()).voice && policy.features.voice !== false && settings.get().wakeWord && settings.get().voice.consent && consented();
     void voice.setWanted(wantVoice());
     let wanted = wantVoice();
     let micConsent = settings.get().voice.consent;
@@ -4753,12 +4849,14 @@ function start(): void {
     // unless the desktop session is one Ember can't use (a Wayland login after an Xorg one): then the check is shown.
     const view = startView({ onboarded: settings.get().onboarded, showSettings: process.argv.includes("--show-settings"), atLogin, sessionProblem: !!sessionGreeting(env), ask: wantsAsk(process.argv),
       setupNeeded: env.checks.some(needsUser) });
-    if (view === "ask") openAsk({ source: "launcher" });
-    else if (view === "settings") showHome();
-    // With coding sessions on, starting Ember by hand opens the coding window too (launcher.ts opensCodeAtStart).
-    if (opensCodeAtStart({ view, onboarded: settings.get().onboarded, atLogin })) showCode();
+    // What opens (companion.ts startOpens): with the companion on, as before, and the coding window beside it for a start
+    // by hand while coding sessions are on; with it off, the coding window is the app, or settings with both off.
+    const opens = startOpens({ ...settings.get(), atLogin, view });
+    if (opens.ask) openAsk({ source: "launcher" });
+    else if (opens.home) showHome();
+    if (opens.code && !showCode() && !opens.home) showHome();
     // The hello waits for Copilot to connect (at most a few seconds), so it doesn't say "not connected" too early.
-    if (view === "greet") setTimeout(() => void Promise.race([brainStart, new Promise(r => setTimeout(r, 5000))]).then(() => greet()), 800);
+    if (opens.greet) setTimeout(() => void Promise.race([brainStart, new Promise(r => setTimeout(r, 5000))]).then(() => greet()), 800);
     // macOS: opening Ember.app again (Dock, Finder) reactivates this one instead of starting a second, so settings
     // opens. Listened for only from here: Electron documents "activate" for a first launch too, and at login that would
     // open settings over the decision just made.

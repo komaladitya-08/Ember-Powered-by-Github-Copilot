@@ -496,7 +496,9 @@ describe("the try step", () => {
     const row = (voice: Parameters<typeof summaryRows>[0]["voice"]) => summaryRows({ character: "Cinder", size: 60, signedIn: null, voice, keys: null })[2];
     expect(row("no-mic")).toEqual({ label: "“Hey Ember”", value: "On, but the microphone isn't working" });
     expect(row("mic-off")).toEqual({ label: "“Hey Ember”", value: "On, but the microphone is off" });
-    expect(SCRIPT).toContain('$("w-try-voice").hidden = vs !== "listening" && vs !== "waiting";');
+    expect(SCRIPT).toContain('$("w-try-voice").hidden = companionOff || (vs !== "listening" && vs !== "waiting");');
+    // With the companion off there is no listening to try (docs/CODING-APP.md §5).
+    expect(SCRIPT).toContain('const companionOff = settings?.companion?.enabled === false;');
     expect(SCRIPT).toContain('$("w-voice-later").textContent = vs === "no-models" ? TRY_TEXT.voiceNoModels : vs === "no-mic" ? TRY_TEXT.voiceNoMic : vs === "cant-listen" ? TRY_TEXT.voiceCantListen : vs === "mic-off" ? TRY_TEXT.voiceMicOff : TRY_TEXT.voiceLater;');
   });
 

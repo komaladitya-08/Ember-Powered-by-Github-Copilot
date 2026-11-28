@@ -28,7 +28,22 @@ export function sessionReviewWords(title: string): { button: string; label: stri
 export function sessionReviewChanged(): string { return "This coding review changed. Open it again from the current session."; }
 
 export const CONVERSATION_RETENTION = `Keeps the latest ${CONVERSATION_LIMIT} messages while Ember runs. Older messages are forgotten as new ones arrive. Closing Ember or signing out forgets this conversation.`;
-export const CONVERSATION_KEEP_LABEL = "Keep my recent conversation after Ember closes";
+/** The companion's switch (docs/CODING-APP.md §5): what it is, said whole under the switch. */
+export const COMPANION_HINT = "A character beside your cursor that you can talk to, by voice or by typing, and that answers you the same way. It can work in your apps and in your coding sessions when you ask. Off, there is no character, no Ask box and no listening; Stop still works.";
+/** The coding sessions' switch. */
+export const CODE_HINT = "GitHub Copilot coding sessions in your own folders, in a window of their own.";
+
+/**
+ * The line under Home's companion and coding switches: what is on, and what to turn on when neither is, said once the
+ * welcome is done. A companion turned off while it worked has stopped its tasks; one turned on opens its conversation.
+ */
+export function partsNote(companion: boolean, code: boolean): string {
+  if (!companion && !code) return "Neither is on, so Ember does nothing yet. Turn on the companion, coding sessions or both.";
+  if (!companion) return "Coding sessions open in their own window. Turn the companion on to talk to Ember beside your cursor.";
+  return "";
+}
+
+export const CONVERSATION_KEEP_LABEL ="Keep my recent conversation after Ember closes";
 export const CONVERSATION_KEEP_HINT = "Off by default. When on, Ember saves these messages on this computer, in a file only you can read, and shows them again after it restarts. They are for you to read: Ember itself starts a fresh conversation and doesn't remember them, and nothing in them is run again.";
 export const CONVERSATION_RETENTION_KEPT = `Keeps the latest ${CONVERSATION_LIMIT} messages on this computer, also after Ember closes. Older messages are forgotten as new ones arrive. Turning this off, New conversation, signing out and Forget everything delete the saved copy.`;
 /** The retention note for the setting as it is now. */

@@ -61,7 +61,7 @@ import { connectLabel, memoryWhatsOn, runtimeState, setupLinkText, statusWord, t
 import { SEARCH_ALIASES, searchMatches, searchMessage, shownText } from "./search-copy";
 import { conversationAdded, conversationChange, conversationShown, earlierLabel, givenBackAbove, givenBackFollow, givenBackKept, givenBackOver, stillUnsent, type GivenBack } from "./conversation-view";
 import { NO_STREAM, STOPPED_NOTE, streamEntries, streamEvent, type StreamEvent } from "./conversation-stream";
-import { problemInHome, PROBLEM_SETTINGS, composerCount, composerDraftBack, composerGivenBack, composerLineBase, composerLineYields, COMPOSER_HELD, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, LISTEN_CONSENT_NOT_SAVED, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount } from "./copy";
+import { problemInHome, PROBLEM_SETTINGS, composerCount, composerDraftBack, composerGivenBack, composerLineBase, composerLineYields, COMPOSER_HELD, COMPOSER_OVER, COMPOSER_SAYS, COMPOSER_THINKING, LISTEN_CONSENT_NOT_SAVED, conversationNewQuestion, CONVERSATION_NOTHING_TO_STOP, CONVERSATION_STOPPED, composerStillWaiting, CONVERSATION_EDIT, CONVERSATION_RESTORED_END, conversationWhen, CONVERSATION_KEEP_HINT, CONVERSATION_KEEP_LABEL, conversationKeepProblem, conversationRetention, CONVERSATION_SCOPE, CONVERSATION_TRUNCATED, conversationMatchesText, conversationSearchCount, COMPANION_HINT, CODE_HINT, partsNote } from "./copy";
 import { composerEditAgain, composerEditCancelled, composerLineConnected, composerLineDisconnected, composerLineFits, STATUS_FAILED } from "./copy";
 import { markHeard, personalMatch, personalSettings, startPersonal } from "./personal";
 import { KeyedRows } from "./keyed-rows";
@@ -191,6 +191,10 @@ function applySettings(s: Settings): void {
   providerSettings(s);
   ($("login") as HTMLInputElement).checked = s.startAtLogin;
   ($("keep-conversation") as HTMLInputElement).checked = s.keepConversation;
+  ($("companion-on") as HTMLInputElement).checked = s.companion.enabled;
+  ($("code-on") as HTMLInputElement).checked = s.code.enabled;
+  const parts = partsNote(s.companion.enabled, s.code.enabled);
+  if ($("parts-note").textContent !== parts) $("parts-note").textContent = parts;
   chats.settings(s);
   $("conversation-retention").textContent = conversationRetention(s.keepConversation);
   ($("reduce-motion") as HTMLInputElement).checked = s.reduceMotion;
@@ -1345,6 +1349,10 @@ $("keep-conversation-hint").textContent = CONVERSATION_KEEP_HINT;
   window.ember.onHistoryProblem(showProblem);
 }
 $("keep-conversation").addEventListener("change", e => { void save({ keepConversation: (e.target as HTMLInputElement).checked }); });
+$("companion-hint").textContent = COMPANION_HINT;
+$("code-hint").textContent = CODE_HINT;
+$("companion-on").addEventListener("change", e => { void save({ companion: { enabled: (e.target as HTMLInputElement).checked } }); });
+$("code-on").addEventListener("change", e => { void save({ code: { enabled: (e.target as HTMLInputElement).checked } }); });
 function conversationRow(e: Entry): HTMLLIElement {
   const li = document.createElement("li");
   li.className = e.who;

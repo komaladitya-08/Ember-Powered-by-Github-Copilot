@@ -58,6 +58,19 @@ export function migrateApprovals(json: unknown): unknown {
   return { ...rest, approvals: { consent: { interactive: { version: Math.min(version, LAST_AUTONOMY_CARD), at: typeof at === "string" ? at : null } } } };
 }
 
+/**
+ * The companion's switch for a settings file from before it (docs/CODING-APP.md §5): off for a new install, on for an
+ * existing user. A file with no `companion` key that has finished the welcome (`onboarded`) is an existing user's, who
+ * had the companion always on, so it stays on; anything else (no file, a file mid-welcome) takes the default, off. A
+ * file that has the key keeps it. Read again at every load, so it holds until the user changes the switch.
+ */
+export function migrateCompanion(json: unknown): unknown {
+  if (!json || typeof json !== "object" || Array.isArray(json)) return json;
+  const file = json as Record<string, unknown>;
+  if ("companion" in file || file.onboarded !== true) return json;
+  return { ...file, companion: { enabled: true } };
+}
+
 export const CHARACTERS = ["cinder", "wisp", "glassling", "glint"] as const;
 
 /** A first-use consent card's record (§7.4): the card's version the user said yes to (0: not yet) and when. */
@@ -319,6 +332,12 @@ export const SettingsSchema = z.object({
    * Copilot mode. Dormant until `enabled` is on: no coding runtime is started and the coding window's channels refuse.
    */
   code: z.object({ enabled: z.boolean().default(false) }).default({ enabled: false }),
+  /**
+   * The companion (docs/CODING-APP.md §5): the character beside the cursor, the ask box, voice, the conversation and
+   * its tasks in the user's apps. Off for a new install, on for an existing user (`migrateCompanion`). Off, none of
+   * its parts start (app/main/companion.ts `companionParts`); Stop still works for coding sessions.
+   */
+  companion: z.object({ enabled: z.boolean().default(false) }).default({ enabled: false }),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -659,6 +678,8 @@ export class SettingsStore {
     }
     // A file from before the approval modes is read as one from now (its old keys go with the next save).
     json = migrateApprovals(json);
+    // A file from before the companion's switch keeps the companion on for a user who had it (migrateCompanion).
+    json = migrateCompanion(json);
     const parsed = SettingsSchema.safeParse(json);
     if (parsed.success && strict) {
       this.current = parsed.data;
