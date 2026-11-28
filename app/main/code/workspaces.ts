@@ -133,6 +133,46 @@ export async function createWorktree(o: { codeDir: string; sessionId: string; gi
   return { folder: plan.folder, branch, baseBranch: base };
 }
 
+/** Files not tracked by git that a fork's worktree takes from its parent's, at most. */
+export const FORK_UNTRACKED_MAX = 2_000;
+
+/**
+ * The worktree of a fork of a worktree session (`sessionId`: the fork's), so that removing either leaves the other
+ * whole: a new branch from the commit the parent's worktree is at (`from`), with the parent's uncommitted changes to
+ * tracked files (git's `stash create`, which leaves the parent's tree as it is) and its untracked files that git
+ * doesn't ignore copied over. Anything it can't carry over whole (git refusing, more than FORK_UNTRACKED_MAX such
+ * files) removes the new worktree and throws FolderRefused: a fork that silently lost work would be worse than none.
+ */
+export async function forkWorktree(o: { codeDir: string; sessionId: string; gitRoot: string | undefined; from: string; git: GitRunner }): Promise<{ folder: string; branch: string; baseBranch: string }> {
+  const refused = () => new FolderRefused("Ember couldn't make a worktree for the copy of this session, so it didn't make the copy.");
+  if (!o.gitRoot) throw refused();
+  const root = worktreesDir(o.codeDir);
+  if (!isInside(o.from, root)) throw refused();
+  let head: string, stash: string, untracked: string[];
+  try {
+    head = (await o.git(["rev-parse", "--verify", "HEAD"], o.from)).trim();
+    stash = (await o.git(["stash", "create"], o.from)).trim();
+    untracked = (await o.git(["ls-files", "--others", "--exclude-standard", "-z"], o.from)).split("\0").filter(Boolean);
+  } catch { throw refused(); }
+  if (!/^[0-9a-f]{40,64}$/.test(head) || (stash && !/^[0-9a-f]{40,64}$/.test(stash)) || untracked.length > FORK_UNTRACKED_MAX) throw refused();
+  const tree = await createWorktree({ codeDir: o.codeDir, sessionId: o.sessionId, gitRoot: o.gitRoot, baseBranch: head, git: o.git }).catch(() => { throw refused(); });
+  try {
+    if (stash) await o.git(["stash", "apply", "--quiet", stash], tree.folder);
+    for (const rel of untracked) {
+      const from = path.join(o.from, rel), to = path.join(tree.folder, rel);
+      if (!isInside(from, o.from) || !isInside(to, tree.folder)) throw new Error("outside");
+      await fs.mkdir(path.dirname(to), { recursive: true });
+      await fs.cp(from, to, { force: true, errorOnExist: false, verbatimSymlinks: true });
+    }
+  } catch {
+    await removeWorktree({ codeDir: o.codeDir, folder: tree.folder, gitRoot: o.gitRoot, git: o.git }).catch(() => undefined);
+    // The branch was made just now and holds no work of its own.
+    await o.git(["branch", "-D", "--", tree.branch], o.gitRoot).catch(() => undefined);
+    throw refused();
+  }
+  return tree;
+}
+
 /**
  * Removes a worktree Ember made: `git worktree remove --force` from its repository, then the folder if anything is
  * left (only ever a folder inside Ember's worktrees folder). The branch is kept: it may hold the session's work.

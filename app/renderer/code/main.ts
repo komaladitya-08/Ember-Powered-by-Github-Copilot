@@ -14,7 +14,7 @@ import { heldLive } from "../shared/held-live";
 import { CodeApp } from "./app";
 import { requestTitle } from "./cards";
 import { mountComposer } from "./composer";
-import { CUSTOMISE, GO_TO_REQUEST, NEW_SESSION, PALETTE_ACTIONS, PALETTE_TITLE, SIDEBAR_RESIZE, TAB_NAMES, needsYouBar, paletteHint, paletteTab, pathTail, sandboxWords, sessionTitle } from "./copy";
+import { CUSTOMISE, GO_TO_REQUEST, NEW_SESSION, PALETTE_ACTIONS, PALETTE_TITLE, SIDEBAR_RESIZE, TAB_NAMES, needsYouBar, paletteHint, paletteTab, pathTail, removeSessionAction, sandboxWords, sessionTitle } from "./copy";
 import { mountCustomise, sectionId } from "./customise";
 import "./customise-sections";
 import { byId, setText } from "./dom";
@@ -40,7 +40,10 @@ function start(api: EmberCodeApi): void {
   const asks = heldLive(byId("live-asks"), 300);
   const said = heldLive(byId("live-said"));
   app.onSaid = (kind, text) => (kind === "asks" ? asks : said).say(text);
-  window.__emberCode = { app, setMicHeld: on => { asks.hold(on); said.hold(on); } };
+  const setMicHeld = (on: boolean) => { asks.hold(on); said.hold(on); };
+  window.__emberCode = { app, setMicHeld };
+  // Main says whether the microphone is open for a request (Home's own rule, voiceHoldsLive): the lines hold meanwhile.
+  api.onMicHeld(setMicHeld);
 
   const chord = `${primaryKey(navigator.userAgent)}+K`;
   let lastWork: MainView = { kind: "none" };
@@ -89,7 +92,9 @@ function start(api: EmberCodeApi): void {
         // A session opened by the person: its name takes focus, so a screen reader hears where it is.
         if (document.activeElement?.closest("#sidebar, #palette") || document.activeElement === document.body) title.focus({ preventScroll: true });
       }
-      if (s.view.kind !== "session") shownId = null;
+      if (s.view.kind !== "session") { shownId = null; app.unmarkRead(); }
+      // Shown with the focus: nothing in it is unread (main counts none while this window shows it).
+      else if (document.hasFocus() && s.sessions.byId[s.view.id]) app.markRead(s.view.id);
       document.body.style.setProperty("--side-w", `${s.ui.sidebarWidth}px`);
       const waiting = allPending(s);
       bar.hidden = !waiting.length;
@@ -110,6 +115,9 @@ function start(api: EmberCodeApi): void {
     });
   });
   byId("transcript").addEventListener("keydown", e => { if (e.key === "Escape") composer.focus(); });
+  // The window coming back to the front with a session shown is a look at it; going behind, the next one marks again.
+  window.addEventListener("focus", () => { const v = app.state.view; if (v.kind === "session") app.markRead(v.id); });
+  window.addEventListener("blur", () => app.unmarkRead());
 
   // ───── Narrow windows: the sidebar is a drawer ─────
   const drawer = byId<HTMLButtonElement>("drawer-toggle");
@@ -147,9 +155,20 @@ function start(api: EmberCodeApi): void {
   });
 
   // ───── The command palette ─────
+  /** The session whose deletion the palette asks about now (its second step), or null. */
+  let removing: string | null = null;
   const actions = (): PaletteAction[] => {
     const s = app.state;
     const row = shownSession(s);
+    const doomed = removing ? s.sessions.byId[removing] : undefined;
+    if (doomed) {
+      const id = doomed.id;
+      // Keeping it comes first, so Enter pressed out of habit keeps it.
+      return [
+        { id: "keep", label: PALETTE_ACTIONS.keep, run: () => { removing = null; } },
+        { id: "remove-now", label: removeSessionAction(sessionTitle(doomed), doomed.isolation === "worktree"), run: () => { removing = null; void app.remove(id); } },
+      ];
+    }
     const list: PaletteAction[] = [
       { id: "new", label: PALETTE_ACTIONS.newSession, run: () => newSession() },
       { id: "add", label: PALETTE_ACTIONS.addProject, run: () => { void app.addProject(); } },
@@ -163,14 +182,18 @@ function start(api: EmberCodeApi): void {
     if (row) {
       list.splice(1, 0, { id: "composer", label: PALETTE_ACTIONS.focusComposer, run: () => composer.focus() }, { id: "attach", label: PALETTE_ACTIONS.attach, run: () => composer.attach() });
       if (s.transcripts[row.id]?.busy || row.busy) list.push({ id: "stop", label: PALETTE_ACTIONS.stop, run: () => { void app.interrupt(row.id); } });
+      list.push(
+        { id: "fork", label: PALETTE_ACTIONS.fork, run: () => { void app.fork(row.id); } },
+        { id: "remove", label: PALETTE_ACTIONS.remove, run: () => { removing = row.id; palette.open(); } },
+      );
       for (const c of app.commands.get(row.id) ?? []) list.push(slashAction(c.name, c.description, words => composer.insert(words)));
     }
     return list;
   };
   const palette = mountPalette(app, actions);
-  byId("palette-button").addEventListener("click", () => palette.open());
+  byId("palette-button").addEventListener("click", () => { removing = null; palette.open(); });
   document.addEventListener("keydown", e => {
-    if (e.key.toLowerCase() === "k" && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) { e.preventDefault(); if (palette.isOpen()) palette.close(); else palette.open(); }
+    if (e.key.toLowerCase() === "k" && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) { e.preventDefault(); if (palette.isOpen()) palette.close(); else { removing = null; palette.open(); } }
   });
 
   void app.refresh();

@@ -237,7 +237,25 @@ export const CODE_LIMITS = {
   replay: 5_000,
   /** Characters of a session's name. */
   name: 120,
+  /** Characters of an address the window asks main to open. */
+  link: 2048,
 } as const;
+
+/**
+ * Why main won't open `url` in the person's browser, or null when it will: only an http or https address within
+ * CODE_LIMITS.link characters, with a host and no user name or password in it (an address that signs in as someone
+ * is not one a transcript should open by a click). Pure, so the window and main agree.
+ */
+export function linkRefusal(url: unknown): "not-web" | "too-long" | "credentials" | null {
+  if (typeof url !== "string" || !url) return "not-web";
+  if (url.length > CODE_LIMITS.link) return "too-long";
+  let u: URL;
+  try { u = new URL(url); } catch { return "not-web"; }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return "not-web";
+  if (!u.hostname) return "not-web";
+  if (u.username || u.password) return "credentials";
+  return null;
+}
 
 /** IPC channels of the coding window. Every handler checks its sender and validates its arguments. */
 export const CODE_IPC = {
@@ -281,6 +299,12 @@ export const CODE_IPC = {
   row: "code:row",
   /** main → window: CodePendingRequest opened, or { resolved: requestId, sessionId, by: CodeActor | "sdk" } */
   request: "code:request",
+  /** (url) => CodeDone: main opens an http or https address in the person's browser (`linkRefusal`). */
+  openLink: "code:open-link",
+  /** (sessionId) => void: the window shows this session and has the focus; its unread count goes to 0. */
+  markRead: "code:mark-read",
+  /** main → window: boolean, whether the microphone is open for a request (live regions hold meanwhile). */
+  micHeld: "code:mic-held",
 } as const;
 
 /** The API the coding window's preload exposes as `window.emberCode`. */
@@ -305,4 +329,10 @@ export interface EmberCodeApi {
   onEvent(listener: (envelope: CodeEventEnvelope) => void): () => void;
   onRow(listener: (change: CodeSessionRow | { removed: string }) => void): () => void;
   onRequest(listener: (change: CodePendingRequest | { resolved: string; sessionId: string; by: CodeActor | "sdk" }) => void): () => void;
+  /** Opens an http or https address in the person's browser, through main (never in the window). */
+  openLink(url: string): Promise<CodeDone>;
+  /** The session shown and focused: main clears its unread count, and counts none while this window shows it. */
+  markRead(sessionId: string): void;
+  /** Whether the microphone is open for a request; called at once with the latest value, then on each change. */
+  onMicHeld(listener: (held: boolean) => void): () => void;
 }

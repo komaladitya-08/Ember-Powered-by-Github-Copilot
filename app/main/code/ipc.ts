@@ -124,12 +124,14 @@ export const CODE_ARGS = {
   remove: { args: z.tuple([Id]), command: ([sessionId]: [string]): CodeCommand => ({ type: "remove", sessionId }) },
   pickAttachments: { args: z.tuple([Id]), command: ([sessionId]: [string]): CodeCommand => ({ type: "pickAttachments", sessionId }) },
   rpc: { args: z.tuple([Rpc]), command: ([call]: [z.infer<typeof Rpc>]): CodeCommand => ({ type: "rpc", call }) },
+  openLink: { args: z.tuple([z.string().min(1).max(CODE_LIMITS.link)]), command: ([url]: [string]): CodeCommand => ({ type: "openLink", url }) },
+  markRead: { args: z.tuple([Id]), command: ([sessionId]: [string]): CodeCommand => ({ type: "markRead", sessionId }) },
 } as const;
 
 type Channel = keyof typeof CODE_ARGS;
 
 /** The channels a window sends without waiting for an answer. */
-const FIRE_AND_FORGET: ReadonlySet<Channel> = new Set(["detach", "stopAll"]);
+const FIRE_AND_FORGET: ReadonlySet<Channel> = new Set(["detach", "stopAll", "markRead"]);
 
 /**
  * Registers every CODE_IPC handler. Each refuses a sender that isn't a registered coding window (throws, as the other

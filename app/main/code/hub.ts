@@ -23,7 +23,7 @@ import type {
   CodeActor, CodeAgentMode, CodeAttached, CodeAttachment, CodeCreate, CodeDone, CodeEventEnvelope, CodePendingRequest,
   CodePermissionMode, CodeProject, CodeRequestAnswer, CodeRpcCall, CodeSend, CodeSessionRow,
 } from "../../shared/code";
-import { CODE_IPC, CODE_LIMITS } from "../../shared/code";
+import { CODE_IPC, CODE_LIMITS, linkRefusal } from "../../shared/code";
 import type { AuditEntry } from "../policy/audit";
 import type { EmberPlace } from "../policy/ember-paths";
 import type { StopPart } from "../agent/killswitch";
@@ -37,7 +37,7 @@ import type { RequestChange } from "./pending";
 import { codeDir, codeRuntimeHome } from "./runtime";
 import { SessionIndex, indexFile, type IndexSession } from "./session-index";
 import { CodeUnavailable, SessionRuntime, rpcFn, sessionStateDir, type CodeAccess, type CodeSandbox, type SessionRuntimeOptions } from "./session-runtime";
-import { FolderRefused, createWorktree, gitFacts, gitRunner, removeWorktree, usableFolder, type GitRunner } from "./workspaces";
+import { FolderRefused, createWorktree, forkWorktree, gitFacts, gitRunner, removeWorktree, usableFolder, type GitRunner } from "./workspaces";
 
 /** Every command the hub takes, by the window's channel names (CODE_IPC). */
 export type CodeCommand =
@@ -57,7 +57,9 @@ export type CodeCommand =
   | { type: "fork"; sessionId: string; toEventId?: string; name?: string }
   | { type: "remove"; sessionId: string }
   | { type: "pickAttachments"; sessionId: string }
-  | { type: "rpc"; call: CodeRpcCall };
+  | { type: "rpc"; call: CodeRpcCall }
+  | { type: "openLink"; url: string }
+  | { type: "markRead"; sessionId: string };
 
 /** What each command answers. */
 export interface CodeAnswers {
@@ -78,6 +80,8 @@ export interface CodeAnswers {
   remove: CodeDone;
   pickAttachments: CodeDone<CodeAttachment[]>;
   rpc: CodeDone<unknown>;
+  openLink: CodeDone;
+  markRead: void;
 }
 
 /** Where a change goes: one window's events, or every window's rows and requests. */
@@ -113,6 +117,8 @@ export interface CodeHubDeps {
   pickFolder(): Promise<string | null>;
   /** Main's own file picker rooted at `root`; null when none was chosen. */
   pickFiles(root: string): Promise<string[] | null>;
+  /** Opens a checked http or https address in the person's browser (main.ts: shell.openExternal); none: links don't open. */
+  openExternal?: (url: string) => Promise<void>;
   log?: { info(event: string, fields?: Record<string, unknown>): void; warn(event: string, fields?: Record<string, unknown>): void };
   redact?: ModelRedactor;
   git?: GitRunner;
@@ -133,8 +139,10 @@ export class CodeHub {
   private readonly logs = new Map<string, EventLog>();
   /** Windows (by their id) attached to each session: they get its events. */
   private readonly watchers = new Map<string, Set<string>>();
-  /** Events since a window last looked, by session (kept in the index when the session closes). */
+  /** Events since a window last looked, by session (kept in the index as it changes). */
   private readonly unread = new Map<string, number>();
+  /** The session each window (by its id) shows with the focus (markRead): what happens there isn't unread. */
+  private readonly looking = new Map<string, string>();
   /** Paths main's pickers offered for each session: only these, or paths in the session's folder, are attached. */
   private readonly offered = new Map<string, Set<string>>();
   private readonly index: SessionIndex;
@@ -163,7 +171,7 @@ export class CodeHub {
       return await this.run(command, actor, from) as CodeAnswers[C["type"]];
     } catch (err) {
       if (command.type === "list") return { projects: this.index.projects(), sessions: [] } as unknown as CodeAnswers[C["type"]];
-      if (command.type === "detach" || command.type === "stopAll") return undefined as unknown as CodeAnswers[C["type"]];
+      if (command.type === "detach" || command.type === "stopAll" || command.type === "markRead") return undefined as unknown as CodeAnswers[C["type"]];
       if (!(err instanceof CodeUnavailable) && !(err instanceof FolderRefused)) this.d.log?.warn("code.command_failed", { command: command.type, err: err instanceof Error ? err.name : "unknown" });
       return refuse(this.why(err)) as unknown as CodeAnswers[C["type"]];
     }
@@ -194,6 +202,8 @@ export class CodeHub {
       case "remove": return this.remove(c.sessionId, actor);
       case "pickAttachments": return this.pickAttachments(c.sessionId);
       case "rpc": return this.rpc(c.call);
+      case "openLink": return this.openLink(c.url, actor);
+      case "markRead": this.markRead(c.sessionId, from); return undefined;
     }
   }
 
@@ -206,12 +216,12 @@ export class CodeHub {
   // ── Projects and the list ────────────────────────────────────────────────────────────────────────────────────
 
   private async list(): Promise<CodeAnswers["list"]> {
-    const projects = this.index.projects();
     const meta = new Map<string, { summary?: string; startTime?: Date | string; modifiedTime?: Date | string; folder?: string }>();
     // The SDK's own metadata only once the feature may run: nothing is read from the runtime before consent.
     if (!this.refusal()) {
       const kept = await (await this.d.client()).listSessions().catch(() => []);
       for (const k of kept) meta.set(k.sessionId, { ...(k.summary ? { summary: k.summary } : {}), startTime: k.startTime, modifiedTime: k.modifiedTime, ...(k.context?.workingDirectory ? { folder: k.context.workingDirectory } : {}) });
+      for (const [id, m] of meta) if (!this.index.session(id) && m.folder) await this.adopt(id, m.folder);
     }
     const ids = new Set([...this.index.sessionIds(), ...meta.keys(), ...this.sessions.keys()]);
     const sessions: CodeSessionRow[] = [];
@@ -219,7 +229,22 @@ export class CodeHub {
       const row = this.row(id, meta.get(id));
       if (row) sessions.push(row);
     }
-    return { projects, sessions };
+    return { projects: this.index.projects(), sessions };
+  }
+
+  /**
+   * A session the runtime keeps that Ember's index doesn't (made before the index, or the index was lost): indexed under
+   * the project of its folder, which is added as the folder picker would add it. A folder Ember won't work in (gone, or
+   * its own data) leaves it under no project (projectId "": the window's "Other sessions"), unindexed.
+   */
+  private async adopt(id: string, folder: string): Promise<void> {
+    try {
+      const usable = await usableFolder(folder, this.d.protectedPaths());
+      const project = this.index.projectAt(usable) ?? this.index.addProject({ folder: usable, name: path.basename(usable) || usable, ...(await gitFacts(usable, this.git)) });
+      if (!this.index.session(id)) this.index.addSession(id, { projectId: project.id, folder: usable, isolation: "folder", createdBy: "system" });
+    } catch (err) {
+      if (!(err instanceof FolderRefused)) this.d.log?.warn("code.adopt_failed", { err: err instanceof Error ? err.name : "unknown" });
+    }
   }
 
   private async addProject(): Promise<CodeDone<CodeProject>> {
@@ -238,7 +263,10 @@ export class CodeHub {
     return this.index.projects().find(x => x.id === p.id)!;
   }
 
+  /** Refused while any session, archived ones too, is under the project: none is left pointing at a project gone. */
   private async removeProject(projectId: string): Promise<CodeDone> {
+    if (!this.index.project(projectId)) return refuse(CODE_REFUSALS.project);
+    if (this.index.sessionIds().some(id => this.index.session(id)?.projectId === projectId)) return refuse(CODE_REFUSALS.projectHasSessions, "has-sessions");
     if (!this.index.removeProject(projectId)) return refuse(CODE_REFUSALS.project);
     return { ok: true };
   }
@@ -369,6 +397,7 @@ export class CodeHub {
 
   private detach(id: string, from: string): void {
     this.watchers.get(id)?.delete(from);
+    if (this.looking.get(from) === id) this.looking.delete(from);
   }
 
   private async send(m: CodeSend, actor: CodeActor): Promise<CodeDone<{ messageId: string }>> {
@@ -470,11 +499,25 @@ export class CodeHub {
     const parent = this.index.session(id);
     if (!parent) return refuse(CODE_REFUSALS.unknown);
     if (name !== undefined && name.length > CODE_LIMITS.name) return refuse(CODE_REFUSALS.name);
-    const forked = await (await this.d.client()).rpc.sessions.fork({ sessionId: id, ...(toEventId ? { toEventId } : {}), ...(name ? { name } : {}) });
-    // The fork works where its parent did; the worktree stays its parent's (removed with the parent).
+    const client = await this.d.client();
+    const forked = await client.rpc.sessions.fork({ sessionId: id, ...(toEventId ? { toEventId } : {}), ...(name ? { name } : {}) });
+    // A fork of a folder session works in that folder. A fork of a worktree session gets a worktree of its own, from
+    // where its parent's stands (workspaces.ts forkWorktree), so removing either leaves the other's folder whole; one
+    // that can't be made means no fork.
+    let tree: { folder: string; branch: string } | undefined;
+    if (parent.worktree) {
+      try {
+        tree = await forkWorktree({ codeDir: codeDir(this.d.userData), sessionId: forked.sessionId, gitRoot: parent.gitRoot, from: parent.worktree, git: this.git });
+      } catch (err) {
+        await client.deleteSession(forked.sessionId).catch(() => undefined);
+        if (!(err instanceof FolderRefused)) this.d.log?.warn("code.fork_tree_failed", { err: err instanceof Error ? err.name : "unknown" });
+        return refuse(CODE_REFUSALS.forkTree);
+      }
+    }
     this.index.addSession(forked.sessionId, {
-      projectId: parent.projectId, folder: parent.folder, isolation: parent.isolation, createdBy: actor, parentId: id,
-      ...(parent.branch ? { branch: parent.branch } : {}), ...(name ?? forked.name ? { name: (name ?? forked.name ?? "").slice(0, CODE_LIMITS.name) } : {}),
+      projectId: parent.projectId, folder: tree?.folder ?? parent.folder, isolation: parent.isolation, createdBy: actor, parentId: id,
+      ...(tree ? { branch: tree.branch, worktree: tree.folder, ...(parent.branch ? { baseBranch: parent.branch } : {}), ...(parent.gitRoot ? { gitRoot: parent.gitRoot } : {}) } : parent.branch ? { branch: parent.branch } : {}),
+      ...(name ?? forked.name ? { name: (name ?? forked.name ?? "").slice(0, CODE_LIMITS.name) } : {}),
       ...(parent.permissionMode ? { permissionMode: parent.permissionMode } : {}), ...(parent.agentMode ? { agentMode: parent.agentMode } : {}),
     });
     this.record(forked.sessionId, { phase: "fork", by: actor, parent: id });
@@ -500,6 +543,7 @@ export class CodeHub {
     this.watchers.delete(id);
     this.unread.delete(id);
     this.offered.delete(id);
+    for (const [w, s] of this.looking) if (s === id) this.looking.delete(w);
     this.record(id, { phase: "end", by: actor, removed: true });
     this.d.emit(CODE_IPC.row, { removed: id });
     return { ok: true };
@@ -554,6 +598,50 @@ export class CodeHub {
     return { ok: true, value: this.bound(value) };
   }
 
+  /**
+   * Opens an address from the transcript or a request in the person's browser: http or https only, bounded, with no
+   * user name or password in it (`linkRefusal`), and audited by its host alone (never the path or query, which may
+   * name a file or carry words). Needs only the feature on and consent: it sends nothing to Copilot.
+   */
+  private async openLink(url: string, actor: CodeActor): Promise<CodeDone> {
+    if (!this.d.enabled()) return refuse(CODE_REFUSALS.off);
+    if (!this.d.hasConsent()) return refuse(CODE_REFUSALS.consent);
+    const why = linkRefusal(url);
+    if (why) return refuse(why === "credentials" ? CODE_REFUSALS.linkCredentials : CODE_REFUSALS.link);
+    const host = new URL(url).hostname;
+    if (!this.d.openExternal || !this.record(null, { phase: "link", by: actor, host })) return refuse(CODE_REFUSALS.linkFailed);
+    try { await this.d.openExternal(url); } catch { return refuse(CODE_REFUSALS.linkFailed); }
+    return { ok: true };
+  }
+
+  /** The window `from` shows session `id` and has the focus: nothing is unread, and nothing counts while it looks. */
+  private markRead(id: string, from: string): void {
+    if (!this.index.session(id) && !this.sessions.has(id)) return;
+    this.looking.set(from, id);
+    const had = this.unread.get(id) ?? this.index.session(id)?.unread ?? 0;
+    this.seen(id);
+    if (had) { const row = this.row(id); if (row) this.d.emit(CODE_IPC.row, row); }
+  }
+
+  /** A coding window closed: it watches and looks at nothing any more. */
+  windowGone(from: string): void {
+    this.looking.delete(from);
+    for (const set of this.watchers.values()) set.delete(from);
+  }
+
+  /** Whether a window shows `id` with the focus now (markRead): its events aren't unread. */
+  private lookedAt(id: string): boolean {
+    for (const s of this.looking.values()) if (s === id) return true;
+    return false;
+  }
+
+  /** One more thing unread in `id`, kept in the index at once (not only when the session closes). */
+  private unreadOne(id: string): void {
+    const n = (this.unread.get(id) ?? this.index.session(id)?.unread ?? 0) + 1;
+    this.unread.set(id, n);
+    this.index.updateSession(id, { unread: n }, false);
+  }
+
   /** An RPC result as a window gets it: redacted and bounded as events are. */
   private bound(v: unknown): unknown { return boundData(v ?? null, eventRedactor(this.d.redact)).data; }
 
@@ -561,8 +649,8 @@ export class CodeHub {
 
   private onEnvelope(e: CodeEventEnvelope): void {
     this.toWatchers(e.sessionId, e);
-    if (!this.watchers.get(e.sessionId)?.size && !e.event.ephemeral) {
-      this.unread.set(e.sessionId, (this.unread.get(e.sessionId) ?? 0) + 1);
+    if (!this.lookedAt(e.sessionId) && !e.event.ephemeral) {
+      this.unreadOne(e.sessionId);
       const row = this.row(e.sessionId);
       if (row) this.d.emit(CODE_IPC.row, row);
     }
@@ -576,7 +664,7 @@ export class CodeHub {
     this.d.emit(CODE_IPC.request, change);
     if ("resolved" in change) return;
     // A request waiting counts as unread for a session nobody is looking at.
-    if (!this.watchers.get(change.sessionId)?.size) this.unread.set(change.sessionId, (this.unread.get(change.sessionId) ?? 0) + 1);
+    if (!this.lookedAt(change.sessionId)) this.unreadOne(change.sessionId);
   }
 
   private readonly factsQueued = new Set<string>();

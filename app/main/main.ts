@@ -164,14 +164,15 @@ import { PROVIDER_SEAL_FILE, ProviderRecord, ProviderSeal, type ProviderRecordDe
 import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, userProviderInForce, checkAgain, createProviderService, ownProviderAuth, providerSummary, providerWaitingHost, redactingLogger, type ActiveProvider, type FetchLike } from "./provider";
 import { CHAT_IPC, PROVIDER_IPC } from "../shared/ipc";
 import { APPROVALS_IPC, modeCardVersion, modeRank } from "../shared/approvals";
-import { recentLimit } from "../shared/ipc";
+import { recentLimit, voiceHoldsLive, type VoiceStatus } from "../shared/ipc";
+import { CODE_IPC } from "../shared/code";
 import { endpointHost } from "../shared/provider";
 import { demoExtensionsApi, demoVariant } from "./extensions-demo";
 import type { ExtensionsApi } from "../shared/extensions";
 import { RoutineBook, countStoredRoutines, routinesFile } from "./agent/routines";
 import { reminderNotification, type Reminder } from "./agent/reminders";
 import { ReminderChangeSchema } from "../shared/reminders";
-import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "./launcher";
+import { dockMenuItems, jumpListTasks, opensCodeAtStart, startView, wantsAsk } from "./launcher";
 import { pushLater } from "./push-later";
 import { askpassInEmber, isAskpassRun } from "../askpass/in-ember";
 
@@ -1590,7 +1591,21 @@ function start(): void {
   const codeWindows = new CodeWindows(isTrustedSender);
   // The coding window (docs/CODING-APP.md §4): opened only while coding sessions are on, and registered with the hub's
   // channels for as long as it is open. False when they are off or the window couldn't open: the caller shows Home.
-  const showCode = (): boolean => settings.get().code.enabled && !!openCodeWindow(platform.os, { register: contents => codeWindows.register(contents) });
+  const showCode = (): boolean => settings.get().code.enabled && !!openCodeWindow(platform.os, { register: registerCode });
+  /** Whether the microphone is open for a request, as Home's live regions hold for it (codeMicHeld), last sent. */
+  let codeMic = false;
+  // A coding window's webContents: registered with the hub's channels, told where the microphone stands as it loads,
+  // and on closing let go of everything it watched.
+  const registerCode = (contents: BrowserWindow["webContents"]): (() => void) => {
+    const off = codeWindows.register(contents);
+    contents.on("did-finish-load", () => { if (!contents.isDestroyed()) contents.send(CODE_IPC.micHeld, codeMic); });
+    return () => { off(); codeRef?.windowGone(String(contents.id)); };
+  };
+  /** Tells the coding windows whether the microphone is open for a request, from a voice status, when that changes. */
+  const tellCodeMic = (v: Pick<VoiceStatus, "state" | "listenOnce" | "match">): void => {
+    const held = voiceHoldsLive(v);
+    if (held !== codeMic) { codeMic = held; codeWindows.send(CODE_IPC.micHeld, held); }
+  };
   const killSwitch = new KillSwitch(() => [
     { name: "borrow", stop: () => borrowRef?.stop() },
     { name: "speech", stop: () => voice?.hush() },
@@ -1748,6 +1763,7 @@ function start(): void {
     askWindow.setListenOnce(ask);
     // A reloaded Home reads the current status when it starts.
     if (home && !home.isDestroyed() && !home.webContents.isCrashed()) sendToHome(IPC.voiceStatus, voiceStatus(voiceDetail));
+    tellCodeMic(voiceStatus(voiceDetail));
   };
   const requestListenOnce = (source: "ask" | "home", on: boolean): ListenOnceStatus => {
     if (!on) {
@@ -2386,6 +2402,8 @@ function start(): void {
   let signInAbort: AbortController | null = null;
   const broadcast = (channel: string, value: unknown) => {
     for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(channel, value);
+    // The coding window holds its live regions as Home does, told only whether the microphone is open, as it changes.
+    if (channel === IPC.voiceStatus && value && typeof value === "object") tellCodeMic(value as VoiceStatus);
   };
   // Coding gets a separate, explicitly agreed workspace: the older selected-files project grant is not one.
   const codingStore = new CodingWorkspaceStore(userData, safeStorage, platform.os === "darwin");
@@ -3902,6 +3920,8 @@ function start(): void {
         const picked = owner ? await dialog.showOpenDialog(owner, o) : await dialog.showOpenDialog(o);
         return picked.canceled ? null : picked.filePaths;
       },
+      // An address the hub has checked (http or https, no credentials: linkRefusal), in the person's own browser.
+      openExternal: url => shell.openExternal(url),
     });
     settings.onChange(() => { void code.changed(); });
     app.on("will-quit", () => { void code.dispose().finally(() => codeRuntime.stop()); });
@@ -4735,10 +4755,10 @@ function start(): void {
       setupNeeded: env.checks.some(needsUser) });
     if (view === "ask") openAsk({ source: "launcher" });
     else if (view === "settings") showHome();
-    // With coding sessions on, starting Ember by hand opens the coding window too (never at login).
-    if (view === "greet" && !atLogin) showCode();
+    // With coding sessions on, starting Ember by hand opens the coding window too (launcher.ts opensCodeAtStart).
+    if (opensCodeAtStart({ view, onboarded: settings.get().onboarded, atLogin })) showCode();
     // The hello waits for Copilot to connect (at most a few seconds), so it doesn't say "not connected" too early.
-    else setTimeout(() => void Promise.race([brainStart, new Promise(r => setTimeout(r, 5000))]).then(() => greet()), 800);
+    if (view === "greet") setTimeout(() => void Promise.race([brainStart, new Promise(r => setTimeout(r, 5000))]).then(() => greet()), 800);
     // macOS: opening Ember.app again (Dock, Finder) reactivates this one instead of starting a second, so settings
     // opens. Listened for only from here: Electron documents "activate" for a first launch too, and at login that would
     // open settings over the decision just made.

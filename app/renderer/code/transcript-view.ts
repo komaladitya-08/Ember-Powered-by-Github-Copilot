@@ -18,7 +18,7 @@ import {
 } from "./copy";
 import { diffView } from "./diff-view";
 import { copyText, el } from "./dom";
-import { copyTarget, markdownNodes } from "./markdown-dom";
+import { copyTarget, linkTarget, markdownNodes } from "./markdown-dom";
 import { permissionCard } from "./requests";
 import { shown as shownValue, str, sub } from "./sdk";
 import type { CodeState } from "./store";
@@ -51,6 +51,9 @@ export function mountTranscript(app: CodeApp, root: HTMLElement): { render(s: Co
   root.addEventListener("scroll", () => { stick = root.scrollHeight - root.scrollTop - root.clientHeight < 48; }, { passive: true });
   earlier.addEventListener("click", () => { windowSize += WINDOW; app.draw(); });
   root.addEventListener("click", e => {
+    // A link opens in the person's browser through main (CODE_IPC.openLink); the window itself never navigates.
+    const href = linkTarget(e.target as HTMLElement);
+    if (href) { e.preventDefault(); if (sessionId) void app.openLink(sessionId, href); return; }
     const b = (e.target as HTMLElement).closest("button[data-copy]");
     if (!b) return;
     const text = copyTarget(b);

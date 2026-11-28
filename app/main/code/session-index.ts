@@ -88,6 +88,8 @@ export interface NewSession {
 export class SessionIndex {
   private data: IndexFile = EMPTY();
   private writing: Promise<void> = Promise.resolve();
+  /** A write waits its turn and will take every change made meanwhile. */
+  private queued = false;
 
   constructor(private readonly file: string, private readonly log?: IndexLog, private readonly now: () => number = Date.now) {}
 
@@ -177,10 +179,15 @@ export class SessionIndex {
   /** Waits for the writes so far. */
   flushed(): Promise<void> { return this.writing; }
 
-  /** Writes the whole index: a temporary file (0600) renamed over the old one, one write after another. */
+  /**
+   * Writes the whole index: a temporary file (0600) renamed over the old one, one write after another. Changes made
+   * while a write waits its turn go in that write (it reads the index as it starts), so a count that changes on every
+   * event (unread) costs one write at a time, not one each.
+   */
   private save(): void {
-    const text = JSON.stringify(this.data);
-    this.writing = this.writing.then(() => writeAtomic(this.file, text)).catch(err => {
+    if (this.queued) return;
+    this.queued = true;
+    this.writing = this.writing.then(() => { this.queued = false; return writeAtomic(this.file, JSON.stringify(this.data)); }).catch(err => {
       this.log?.warn("code.index_write_failed", { code: (err as NodeJS.ErrnoException).code ?? "unknown" });
     });
   }

@@ -9,11 +9,11 @@
  * AGREE_ARM_MS, and never from a held Enter or Space (`heldPress`); Don't allow, Not now and Keep planning are never
  * held back. Nothing on a card moves while it waits.
  */
-import type { CodePendingRequest, CodeRequestKind } from "../../shared/code";
+import { linkRefusal, type CodePendingRequest, type CodeRequestKind } from "../../shared/code";
 import { AGREE_ARM_MS, heldPress } from "../../shared/provider";
 import type { CodeApp } from "./app";
 import {
-  ANSWER_LABEL, ANSWER_SEND, AUTO_ANSWERS, AUTO_TITLE, CARD_LEAD, COPY_ADDRESS, ELICITATION_CANCEL, ELICITATION_DECLINE, ELICITATION_SUBMIT,
+  ANSWER_LABEL, ANSWER_SEND, AUTO_ANSWERS, AUTO_TITLE, CARD_LEAD, COPY_ADDRESS, OPEN_ADDRESS, ELICITATION_CANCEL, ELICITATION_DECLINE, ELICITATION_SUBMIT,
   ELICITATION_URL, ELICITATION_URL_DONE, FIELDS, LIMITS_ADD, LIMITS_AMOUNT, LIMITS_AMOUNT_NEEDED, LIMITS_CANCEL, LIMITS_TITLE, LIMITS_UNSET, MANAGED,
   NEEDS_YOU, NOT_BUILT, OAUTH_NOTE, OAUTH_NOT_NOW, PLAN_EXIT_TITLE, PLAN_FEEDBACK, PLAN_KEEP, PLAN_LABEL, QUESTION_LEAD, READ_ONLY, REASON_LABEL,
   REASON_SUMMARY, RECOMMENDED, SAMPLING_NOTE, SAMPLING_REFUSE, SENDING, WRITES_FILES, answeredRecord, assistedLine, autoLead, autoRecord, covers,
@@ -282,11 +282,14 @@ function drawElicitation(card: HTMLElement, item: RequestItem, ctx: CardContext,
     const url = e.url ?? "";
     const copy = btn(COPY_ADDRESS, "copy-url");
     copy.addEventListener("click", () => { void copyText(url); });
+    // Opened by main in the person's browser, only where main would open it (an http or https address, no sign-in in it).
+    const open = linkRefusal(url) ? null : btn(OPEN_ADDRESS, "open-url");
+    open?.addEventListener("click", () => { void ctx.app.openLink(ctx.sessionId, url); });
     const done = btn(ELICITATION_URL_DONE, "url-done");
     done.addEventListener("click", () => answer({ action: "accept" }));
     const decline = btn(ELICITATION_DECLINE, "decline");
     decline.addEventListener("click", () => answer(EL_DECLINE));
-    card.append(el("p", { className: "card-sub", textContent: ELICITATION_URL }), el("p", { className: "card-address", textContent: url }), el("div", { className: "card-actions" }, copy, done, decline));
+    card.append(el("p", { className: "card-sub", textContent: ELICITATION_URL }), el("p", { className: "card-address", textContent: url }), el("div", { className: "card-actions" }, open, copy, done, decline));
     return;
   }
   const form = el("form", { className: "card-form elicit", attrs: { novalidate: "" } });

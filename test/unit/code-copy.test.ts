@@ -46,6 +46,8 @@ describe("the coding window's words", () => {
 
   it("words a card's records by who answered", () => {
     expect(copy.permissionRecord({ kind: "approved-for-session" }, "user")).toBe("Allowed for this session, by you.");
+    // The runtime's own record of a one-time yes (permission.completed's result), as the real window gets it.
+    expect(copy.permissionRecord({ kind: "approved" }, "user")).toBe("Allowed once, by you.");
     expect(copy.permissionRecord({ kind: "denied-interactively-by-user" }, "companion")).toBe("Not allowed, by Ember's companion.");
     expect(copy.planRecord({ approved: true, selectedAction: "autopilot" }, "user")).toBe("Start on Autopilot: chosen by you.");
     expect(copy.decisionLabel("approve-for-session", "url")).toBe("Allow this site for the session");

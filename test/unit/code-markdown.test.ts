@@ -57,6 +57,9 @@ describe("drawing markdown", () => {
     const p = nodes[1];
     const link = p.find("md-link")!;
     expect(link.dataset.href).toBe("https://example.com/d");
+    // A web address is a real link (opened through main by the transcript's click handler, never by the window).
+    expect(link.tag).toBe("a");
+    expect(link.getAttribute("href")).toBe("https://example.com/d");
     expect(p.find("md-href")!.textContent).toBe("(https://example.com/d)");
     // A link that isn't a web or mail address is only its words.
     expect(p.findAll("md-link")[1].dataset.href).toBeUndefined();

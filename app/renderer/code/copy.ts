@@ -358,6 +358,8 @@ export function permissionRecord(outcome: unknown, by: string | undefined): stri
   if (kind === "approved-for-session" || kind === "approve-for-session") return `Allowed for this session, ${who}.`;
   if (kind === "approved-for-location" || kind === "approve-for-location") return `Allowed in this folder, ${who}.`;
   if (kind === "approve-permanently" || kind === "approved-permanently") return `Always allowed, ${who}.`;
+  // The runtime records a one-time yes as "approved" (no rule kept); the window's own answer is "approve-once".
+  if (kind === "approved" || kind === "approve-once") return `Allowed once, ${who}.`;
   if (kind.startsWith("approve")) return `Allowed, ${who}.`;
   if (kind === "cancelled") return "Cancelled before a decision.";
   if (kind === "denied-by-rules") return "Not allowed, by Copilot's rules.";
@@ -378,6 +380,7 @@ export const ELICITATION_CANCEL = "Cancel";
 export const ELICITATION_URL = "Open this address in your browser to go on:";
 export const ELICITATION_URL_DONE = "I've done it";
 export const COPY_ADDRESS = "Copy address";
+export const OPEN_ADDRESS = "Open in your browser";
 export function fieldProblem(label: string, problem: string): string {
   if (problem === "required") return `“${label}” is needed.`;
   if (problem === "number") return `“${label}” needs a number.`;
@@ -521,7 +524,12 @@ export const PALETTE_EMPTY = "Nothing found";
 export const PALETTE_ACTIONS = {
   newSession: "New session…", addProject: "Add project…", search: "Search sessions", archived: "Show archived sessions", sessions: "Show sessions",
   panel: "Show or hide the panel", customise: "Customise…", stop: "Stop the turn", stopAll: "Stop everything", attach: "Attach files…", focusComposer: "Go to the message box",
+  fork: "Fork this session", remove: "Delete this session…", keep: "Keep the session",
 } as const;
+/** The palette's second step for Delete: what goes with it, said before it goes. */
+export function removeSessionAction(title: string, worktree: boolean): string {
+  return worktree ? `Delete “${title}”, its history and its worktree` : `Delete “${title}” and its history`;
+}
 export function paletteTab(name: string): string { return `Show ${name}`; }
 export function paletteSlash(name: string): string { return `Run /${name}`; }
 export function paletteHint(chord: string): string { return `${chord} opens commands`; }

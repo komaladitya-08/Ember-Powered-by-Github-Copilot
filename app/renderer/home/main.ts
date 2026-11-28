@@ -9,7 +9,7 @@
 import { Rig, FACTORIES, frameSeconds, restingGap, type Character } from "@ember/characters";
 import type { TargetSummary } from "../../shared/targets";
 import type { ActivityEntry, EmberHomeApi, MemoryForgotten, MemoryView, Presence, RetryResult, RoutineRow, Status, StatusPlatform, UpdateStatus, VoiceStatus } from "../../shared/ipc";
-import { MEMORY_UNDO_MS } from "../../shared/ipc";
+import { MEMORY_UNDO_MS, voiceHoldsLive } from "../../shared/ipc";
 import { CONVERSATION_REQUEST_LIMIT, conversationTurnChangeOf, type ConversationTurn, type ConversationTurnEnd, type HistoryProblemKind } from "../../shared/conversation";
 import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, HEAR_WAITING, LISTEN_ONCE_READY, SPEAK_NO_VOICE, SPEAK_RATES, clearHearingLine, hearEmberLine, nearestRate, closedUnexpectedlyText, heardThrough, showLogLabel, modelsDownloadLabel, modelsSize, setupBadge, setupView } from "./copy";
 import { mountListenOnce } from "../shared/listen-once";
@@ -2816,7 +2816,7 @@ const VOICE_LINE_SETTLE_MS = 1000;
  * then: anything else read aloud was taken for one of the owner's phrases, voice-listening-r4-1). Status lines besides
  * the voice line's are held then (held-live.ts).
  */
-const micHeld = (v: VoiceStatus): boolean => v.state === "active" || v.state === "starting" || v.listenOnce?.phase === "starting" || v.listenOnce?.phase === "listening" || !!v.match?.enrolling;
+const micHeld = (v: VoiceStatus): boolean => voiceHoldsLive(v);
 let voiceLineSoon: ReturnType<typeof setTimeout> | undefined;
 /** The microphone's fix beside a voice error (Windows' privacy switch, macOS's permission), when the setup check has it. */
 function renderVoiceFix(): void {

@@ -27,8 +27,11 @@ function inlineNodes(list: readonly Inline[]): Node[] {
       case "br": return document.createElement("br");
       case "link": {
         const kind = linkKind(n.href);
-        const label = h("span", "md-link", ...inlineNodes(n.c));
+        // A web address is a real link, opened by main in the person's browser (the transcript's click handler:
+        // `linkTarget`); a mail address is shown, not opened.
+        const label = h(kind === "web" ? "a" : "span", "md-link", ...inlineNodes(n.c));
         if (kind === "other") return label;
+        if (kind === "web") label.setAttribute("href", n.href);
         label.dataset.href = n.href;
         label.setAttribute("title", n.href);
         const words = n.c.length === 1 && n.c[0].t === "text" ? n.c[0].s : null;
@@ -69,6 +72,13 @@ function blockNode(b: Block): El {
 /** `text` as markdown nodes, ready to append. */
 export function markdownNodes(text: string): El[] {
   return parseMarkdown(text).map(blockNode);
+}
+
+/** The web address a click on `target` opens (a transcript link's), or null: the window never navigates itself. */
+export function linkTarget(target: Element): string | null {
+  const a = target.closest("a.md-link") as HTMLElement | null;
+  const href = a?.dataset?.href;
+  return href && linkKind(href) === "web" ? href : null;
 }
 
 /** The text a Copy button in `root` copies: its code block's code (null for anything else). */

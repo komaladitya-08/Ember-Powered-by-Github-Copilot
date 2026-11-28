@@ -150,6 +150,43 @@ export class CodeApp {
     return row.id;
   }
 
+  /** Delete a session (its history and the worktree Ember made for it): main's row change takes it off the list. */
+  async remove(id: string): Promise<boolean> {
+    let r: CodeDone;
+    try { r = await this.api.remove(id); } catch { r = { ok: false, reason: UNREACHABLE }; }
+    this.attachedOrder = this.attachedOrder.filter(x => x !== id);
+    this.set(s => (r.ok ? rowChanged(s, { removed: id }) : setNote(s, "", "sidebar", reasonOf(r))));
+    return r.ok;
+  }
+
+  /** A copy of a session from its history (a worktree session's copy gets a worktree of its own), then shown. */
+  async fork(id: string): Promise<string | null> {
+    let r: CodeDone<import("../../shared/code").CodeSessionRow>;
+    try { r = await this.api.fork(id); } catch { r = { ok: false, reason: UNREACHABLE }; }
+    if (!r.ok) { this.set(s => setNote(s, id, "composer", reasonOf(r))); return null; }
+    const row = r.value;
+    this.set(s => rowChanged(s, row));
+    await this.openSession(row.id);
+    return row.id;
+  }
+
+  /** The session is shown and the window has the focus: main clears its unread count (once each time it is shown). */
+  markRead(id: string): void {
+    if (this.readMarked === id) return;
+    this.readMarked = id;
+    try { this.api.markRead(id); } catch { /* main unreachable: the count stays until the next look */ }
+  }
+  /** The window looked away (blurred or showing something else): the next look marks again. */
+  unmarkRead(): void { this.readMarked = null; }
+  private readMarked: string | null = null;
+
+  /** Open an address in the person's browser through main; why not, in the session's note. */
+  async openLink(sessionId: string, url: string): Promise<void> {
+    let r: CodeDone;
+    try { r = await this.api.openLink(url); } catch { r = { ok: false, reason: UNREACHABLE }; }
+    this.set(s => setNote(s, sessionId, "composer", r.ok ? "" : reasonOf(r)));
+  }
+
   async updateRow(id: string, change: { name?: string; pinned?: boolean; archived?: boolean }): Promise<void> {
     try {
       const r = await this.api.update(id, change);

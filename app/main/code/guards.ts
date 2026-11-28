@@ -43,6 +43,11 @@ export const CODE_REFUSALS = {
   attachment: "Ember couldn't attach that.",
   emberToolPath: "That path is Ember's own data, which Copilot's tools don't reach.",
   companionAnswer: "You answer this one yourself, in the coding window.",
+  link: "Ember opens only web addresses (http or https) from here.",
+  linkCredentials: "That address has a user name or password in it, so Ember won't open it.",
+  linkFailed: "Ember couldn't open that address in your browser.",
+  projectHasSessions: "This project still has sessions. Delete them first, then remove the project.",
+  forkTree: "Ember couldn't make a worktree for the copy of this session, so it didn't make the copy.",
 } as const;
 
 /** A refusal with its sentence. */

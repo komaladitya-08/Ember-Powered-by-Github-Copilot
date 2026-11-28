@@ -56,3 +56,12 @@ export function startView(o: { onboarded: boolean; showSettings: boolean; atLogi
   if (o.ask) return "ask";
   return o.showSettings || (!o.atLogin && o.setupNeeded === true) ? "settings" : "greet";
 }
+
+/**
+ * Whether a start opens the coding window too, while coding sessions are on (docs/CODING-APP.md §4): a start by the
+ * user once Ember is set up, beside whatever `startView` shows (settings for a setup row the desktop needs, which the
+ * coding window doesn't), never at login and never for a launcher's Ask Ember.
+ */
+export function opensCodeAtStart(o: { view: "settings" | "ask" | "greet"; onboarded: boolean; atLogin: boolean }): boolean {
+  return o.onboarded && !o.atLogin && o.view !== "ask";
+}

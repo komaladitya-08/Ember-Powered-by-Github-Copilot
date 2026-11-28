@@ -6,6 +6,7 @@
  * connection, the audit log, the RPC guards, sign-out).
  */
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +15,7 @@ import type { CopilotClient, SessionConfig } from "@github/copilot-sdk";
 import { CodeHub, type CodeHubDeps } from "../../app/main/code/hub";
 import { CODE_REFUSALS } from "../../app/main/code/guards";
 import { SessionIndex, indexFile } from "../../app/main/code/session-index";
+import { gitRunner } from "../../app/main/code/workspaces";
 import { KillSwitch } from "../../app/main/agent/killswitch";
 import type { ChatPolicy } from "../../app/main/agent/chat-policy";
 import type { AuditEntry } from "../../app/main/policy/audit";
@@ -274,6 +276,8 @@ describe("a coding window's events", () => {
     const h = harness();
     const id = await started(h);
     const base = (await h.hub.dispatch({ type: "attach", sessionId: id }, "user", "w1") as { value: { seq: number } }).value.seq;
+    // Shown with the focus (markRead): what follows while it is isn't unread.
+    await h.hub.dispatch({ type: "markRead", sessionId: id }, "user", "w1");
     h.fake.emit("assistant.message_delta", { deltaContent: "a" }, true);
     h.fake.emit("assistant.message", { content: "ab" });
     expect(h.events().filter(e => e.seq > base).map(e => e.seq)).toEqual([base + 1, base + 2]);
@@ -387,5 +391,122 @@ describe("the coding hub's guards", () => {
     expect(h.deps.index!.session(id)).toBeUndefined();
     expect(h.sent).toContainEqual({ channel: "code:row", payload: { removed: id } });
     expect(await h.hub.dispatch({ type: "remove", sessionId: id }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.unknown });
+  });
+});
+
+const gitEnv = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" };
+function hasGit(): boolean {
+  try { execFileSync("git", ["--version"], { stdio: "ignore" }); return true; } catch { return false; /* no git here: the worktree test skips */ }
+}
+function gitIn(cwd: string, ...args: string[]): string { return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", env: gitEnv }); }
+
+describe("the coding hub's additions to the contract", () => {
+  it("counts what happens in a session nobody shows as unread, kept in the index at once, and nothing while a window shows it with the focus (markRead)", async () => {
+    const h = harness();
+    const id = await started(h);
+    h.fake.emit("assistant.message", { content: "one" });
+    expect(h.rows().filter(r => r.id === id).at(-1)?.unread).toBe(1);
+    await h.deps.index!.flushed();
+    const saved = () => (JSON.parse(fs.readFileSync(indexFile(path.join(userData, "code")), "utf8")) as { sessions: Record<string, { unread: number }> }).sessions[id].unread;
+    expect(saved()).toBe(1);
+    await h.hub.dispatch({ type: "markRead", sessionId: id }, "user", "w1");
+    expect(h.rows().filter(r => r.id === id).at(-1)?.unread).toBe(0);
+    h.fake.emit("assistant.message", { content: "two" });
+    h.fake.emit("permission.requested", { requestId: "r1", ...KINDS[0].data });
+    expect((await h.hub.dispatch({ type: "list" }, "user")).sessions.find(r => r.id === id)?.unread).toBe(0);
+    await h.deps.index!.flushed();
+    expect(saved()).toBe(0);
+    // The window let it go (detached, or closed): what follows is unread again.
+    await h.hub.dispatch({ type: "detach", sessionId: id }, "user", "w1");
+    h.fake.emit("assistant.message", { content: "three" });
+    expect((await h.hub.dispatch({ type: "list" }, "user")).sessions.find(r => r.id === id)?.unread).toBe(1);
+    await h.hub.dispatch({ type: "markRead", sessionId: id }, "user", "w2");
+    h.hub.windowGone("w2");
+    h.fake.emit("assistant.message", { content: "four" });
+    expect((await h.hub.dispatch({ type: "list" }, "user")).sessions.find(r => r.id === id)?.unread).toBe(1);
+  });
+
+  it("refuses to remove a project while any session is under it, in a plain sentence, and removes it once none is", async () => {
+    const h = harness();
+    const id = await started(h);
+    const projectId = h.deps.index!.session(id)!.projectId;
+    await h.hub.dispatch({ type: "update", sessionId: id, change: { archived: true } }, "user");
+    expect(await h.hub.dispatch({ type: "removeProject", projectId }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.projectHasSessions, code: "has-sessions" });
+    expect(h.deps.index!.project(projectId)).toBeDefined();
+    await h.hub.dispatch({ type: "remove", sessionId: id }, "user");
+    expect(await h.hub.dispatch({ type: "removeProject", projectId }, "user")).toEqual({ ok: true });
+    expect(await h.hub.dispatch({ type: "removeProject", projectId }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.project });
+  });
+
+  it("lists a session the runtime keeps and the index doesn't under the project of its folder, and one in a folder Ember won't work in under none", async () => {
+    const fake = fakeClient();
+    (fake.client as unknown as { listSessions: () => Promise<unknown[]> }).listSessions = async () => [
+      { sessionId: "kept-1", summary: "Older work", startTime: "2026-11-01T10:00:00Z", modifiedTime: "2026-11-02T10:00:00Z", context: { workingDirectory: work } },
+      { sessionId: "kept-2", summary: "In Ember's data", startTime: "2026-11-01T10:00:00Z", modifiedTime: "2026-11-02T10:00:00Z", context: { workingDirectory: userData } },
+    ];
+    const h = harness({}, fake);
+    const listed = await h.hub.dispatch({ type: "list" }, "user");
+    const project = listed.projects.find(p => p.folder === work);
+    expect(project).toMatchObject({ name: "work", gitRoot: work });
+    expect(listed.sessions.find(r => r.id === "kept-1")).toMatchObject({ projectId: project!.id, folder: work, name: "Older work", createdBy: "system" });
+    expect(listed.sessions.find(r => r.id === "kept-2")).toMatchObject({ projectId: "", folder: userData });
+    expect(h.deps.index!.session("kept-1")).toMatchObject({ projectId: project!.id });
+    expect(h.deps.index!.session("kept-2")).toBeUndefined();
+  });
+
+  it("opens only an http or https address with no sign-in in it, through main's opener, auditing its host alone", async () => {
+    const opened: string[] = [];
+    const h = harness({ openExternal: async url => { opened.push(url); } });
+    const url = "https://docs.example.com/guide/private-file.md?token=abc";
+    expect(await h.hub.dispatch({ type: "openLink", url }, "user")).toEqual({ ok: true });
+    expect(opened).toEqual([url]);
+    expect(h.audit).toContainEqual({ event: "code", phase: "link", by: "user", host: "docs.example.com" });
+    expect(JSON.stringify(h.audit)).not.toContain("private-file");
+    for (const bad of ["file:///etc/passwd", "javascript:alert(1)", "mailto:a@example.com", "not a url", `https://example.com/${"a".repeat(2100)}`])
+      expect(await h.hub.dispatch({ type: "openLink", url: bad }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.link });
+    expect(await h.hub.dispatch({ type: "openLink", url: "https://me:secret@example.com/" }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.linkCredentials });
+    expect(opened).toHaveLength(1);
+    expect(await harness().hub.dispatch({ type: "openLink", url }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.linkFailed });
+    expect(await harness({ openExternal: async () => { throw new Error("no browser"); } }).hub.dispatch({ type: "openLink", url }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.linkFailed });
+    expect(await harness({ enabled: () => false, openExternal: async u => { opened.push(u); } }).hub.dispatch({ type: "openLink", url }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.off });
+    expect(opened).toHaveLength(1);
+  });
+
+  it.skipIf(!hasGit())("gives a fork of a worktree session a worktree of its own with its parent's work, which outlives the parent", async () => {
+    gitIn(work, "init", "-q", "-b", "main");
+    fs.writeFileSync(path.join(work, "a.txt"), "a\n");
+    gitIn(work, "add", ".");
+    gitIn(work, "commit", "-qm", "init");
+    const h = harness({ git: gitRunner(gitEnv) });
+    const parent = await h.hub.dispatch({ type: "create", options: { isolation: "worktree" } }, "user");
+    if (!parent.ok) throw new Error(parent.reason);
+    const from = parent.value.folder;
+    fs.writeFileSync(path.join(from, "a.txt"), "a changed\n");
+    fs.writeFileSync(path.join(from, "new.txt"), "untracked\n");
+    const forked = await h.hub.dispatch({ type: "fork", sessionId: parent.value.id }, "user");
+    if (!forked.ok) throw new Error(forked.reason);
+    expect(forked.value).toMatchObject({ isolation: "worktree", parentId: parent.value.id });
+    expect(forked.value.folder).not.toBe(from);
+    expect(forked.value.branch).not.toBe(parent.value.branch);
+    expect(fs.readFileSync(path.join(forked.value.folder, "a.txt"), "utf8")).toBe("a changed\n");
+    expect(fs.readFileSync(path.join(forked.value.folder, "new.txt"), "utf8")).toBe("untracked\n");
+    // The parent's own folder is as it was, and removing the parent leaves the fork's whole.
+    expect(fs.readFileSync(path.join(from, "a.txt"), "utf8")).toBe("a changed\n");
+    expect(await h.hub.dispatch({ type: "remove", sessionId: parent.value.id }, "user")).toEqual({ ok: true });
+    expect(fs.existsSync(from)).toBe(false);
+    expect(fs.readFileSync(path.join(forked.value.folder, "a.txt"), "utf8")).toBe("a changed\n");
+    expect(await h.hub.dispatch({ type: "remove", sessionId: forked.value.id }, "user")).toEqual({ ok: true });
+    expect(fs.existsSync(forked.value.folder)).toBe(false);
+  }, 30_000);
+
+  it("makes no fork of a worktree session whose worktree it can't make, deleting the copy the runtime made", async () => {
+    const h = harness();
+    h.deps.index!.addProject({ folder: work, name: "work", gitRoot: work });
+    const projectId = h.deps.index!.projectAt(work)!.id;
+    const tree = path.join(userData, "code", "worktrees", "tree-1");
+    h.deps.index!.addSession("tree-1", { projectId, folder: tree, isolation: "worktree", createdBy: "user", branch: "ember/tree1", worktree: tree, gitRoot: work });
+    expect(await h.hub.dispatch({ type: "fork", sessionId: "tree-1" }, "user")).toEqual({ ok: false, reason: CODE_REFUSALS.forkTree });
+    expect(h.fake.called("deleteSession").at(-1)?.params).toBe("forked-1");
+    expect(h.deps.index!.session("forked-1")).toBeUndefined();
   });
 });

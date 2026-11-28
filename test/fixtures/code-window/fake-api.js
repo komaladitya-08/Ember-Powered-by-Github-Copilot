@@ -6,7 +6,8 @@
 (() => {
   const now = Date.parse("2026-11-27T10:00:00Z");
   const calls = [];
-  const listeners = { event: new Set(), row: new Set(), request: new Set() };
+  const listeners = { event: new Set(), row: new Set(), request: new Set(), mic: new Set() };
+  let micHeld = false;
   const projects = [
     { id: "p-app", folder: "/home/me/work/app", name: "app", gitRoot: "/home/me/work/app", repository: "me/app", branch: "main" },
     { id: "p-notes", folder: "/home/me/notes", name: "notes" },
@@ -529,12 +530,17 @@
     onEvent(fn) { listeners.event.add(fn); return () => listeners.event.delete(fn); },
     onRow(fn) { listeners.row.add(fn); return () => listeners.row.delete(fn); },
     onRequest(fn) { listeners.request.add(fn); return () => listeners.request.delete(fn); },
+    async openLink(url) { calls.push(`openLink:${url}`); return /^https?:\/\//.test(url) ? { ok: true } : { ok: false, reason: "Ember opens only web addresses (http or https) from here." }; },
+    markRead(id) { calls.push(`markRead:${id}`); const r = sessions.get(id); if (r?.unread) { sessions.set(id, { ...r, unread: 0 }); for (const fn of listeners.row) fn(sessions.get(id)); } },
+    onMicHeld(fn) { listeners.mic.add(fn); fn(micHeld); return () => listeners.mic.delete(fn); },
   };
   window.emberCode = api;
   window.__fake = {
     calls, emit, sessions, pending, panels, request: openRequest, setRow,
     calls, emit, sessions, pending, refuse, params, mcp,
     gap() { skip = true; },
+    /** Main's word that the microphone opened or closed for a request. */
+    mic(on) { micHeld = on; for (const fn of listeners.mic) fn(on); },
     wait(name) { return reached.has(name) ? Promise.resolve() : new Promise(r => waiters.set(name, [...(waiters.get(name) ?? []), r])); },
     reached: (name) => reached.has(name),
   };

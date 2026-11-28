@@ -317,6 +317,15 @@ export interface VoiceStatus {
 }
 
 /**
+ * Whether the microphone is open, or opening, for a request (or Voice Match is being taught): live regions say nothing
+ * meanwhile, since a screen reader would say it into what Ember hears (voice-listening-c3-1). Home's and the coding
+ * window's held lines both follow this.
+ */
+export function voiceHoldsLive(v: Pick<VoiceStatus, "state" | "listenOnce" | "match">): boolean {
+  return v.state === "active" || v.state === "starting" || v.listenOnce?.phase === "starting" || v.listenOnce?.phase === "listening" || !!v.match?.enrolling;
+}
+
+/**
  * The effective local voice as Home shows it (VoiceService.naturalStatus): `off` (service stopped); `later` (selected at start:
  * decided the next time it speaks); `checking` (Ember's voice is loading to time this computer); `needs-voice` (Ember's own voice isn't downloaded yet, so nothing can be timed);
  * `downloading` (`percent` of it so far); `ready` (fetched: it speaks from the next reply); `on` (it speaks now, also while

@@ -35,6 +35,16 @@ const api: EmberCodeApi = {
   onEvent: listener => listen(CODE_IPC.event, listener),
   onRow: listener => listen(CODE_IPC.row, listener),
   onRequest: listener => listen(CODE_IPC.request, listener),
+  openLink: url => ipcRenderer.invoke(CODE_IPC.openLink, url),
+  markRead: sessionId => { ipcRenderer.send(CODE_IPC.markRead, sessionId); },
+  onMicHeld: listener => {
+    try { listener(micHeld); } catch { /* the page's own failure */ }
+    return listen<unknown>(CODE_IPC.micHeld, v => { listener(v === true); });
+  },
 };
+
+// The latest word of the microphone, kept from before the page subscribes (main sends it as the window loads).
+let micHeld = false;
+ipcRenderer.on(CODE_IPC.micHeld, (_e, v: unknown) => { micHeld = v === true; });
 
 contextBridge.exposeInMainWorld("emberCode", api);
